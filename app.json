@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "DigitalKontroll",
+    "slug": "digitalkontroll",
+    "icon": "./assets/images/app.icon.vit.png",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "backgroundColor": "#263238",
+      "resizeMode": "contain"
+    },
+    "web": {
+      "favicon": "./assets/images/app.icon.vit.png"
+    },
+    "ios": {
+      "bundleIdentifier": "se.msbygg.digitalkontroll",
+      "splash": {
+        "image": "./assets/images/splash-icon.png",
+        "backgroundColor": "#263238",
+        "resizeMode": "contain"
+      }
+    },
+    "android": {
+      "package": "se.msbygg.digitalkontroll",
+      "splash": {
+        "image": "./assets/images/splash-icon.png",
+        "backgroundColor": "#263238",
+        "resizeMode": "contain"
+      }
+    }
+  }
+}
