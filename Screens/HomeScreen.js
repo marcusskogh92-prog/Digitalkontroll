@@ -476,7 +476,7 @@ export default function HomeScreen({ route }) {
                                 <View key={si} style={{ marginLeft: 18, marginBottom: 6 }}>
                                   <TouchableOpacity onPress={toggleSub} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                                     <MaterialIcons name={isSubExpanded ? 'remove' : 'add'} size={18} color="#555" />
-                                    <Text style={{ fontSize: 16, color: '#555', marginLeft: 6 }}>{s.name} ({s.projects?.length || 0})</Text>
+                                      <Text style={{ fontSize: 18, color: '#555', marginLeft: 6, fontWeight: 'bold' }}>{s.name} ({s.projects?.length || 0})</Text>
                                   </TouchableOpacity>
                                   {isSubExpanded && (
                                     <View style={{ marginTop: 4 }}>
