@@ -18,7 +18,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
 import { fetchCompanyProfile } from '../components/firebase';
 
 function getFullName(email) {
@@ -525,23 +524,9 @@ export default function ProjectDetails({ route }) {
                       .slice()
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
                       .map((item) => (
-                        <Swipeable
-                          key={item.id}
-                          renderRightActions={() => (
-                            <TouchableOpacity
-                              activeOpacity={0.8}
-                              accessibilityRole="button"
-                              accessibilityLabel="Ta bort kontroll"
-                              style={styles.deleteAction}
-                              onPress={() => onDeletePress(item.id)}
-                            >
-                              <MaterialIcons name="delete" size={22} color="#fff" />
-                              <Text style={styles.deleteActionText}>Ta bort</Text>
-                            </TouchableOpacity>
-                          )}
-                        >
+                        <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <TouchableOpacity
-                            style={styles.controlCard}
+                            style={[styles.controlCard, { flex: 1 }]}
                             onPress={() => navigation.navigate('ControlDetails', { control: item, project })}
                           >
                             <Text style={styles.controlType}>
@@ -550,7 +535,17 @@ export default function ProjectDetails({ route }) {
                                 : `${item.byggdel ? item.byggdel + ' ' : ''}${item.description} ${item.date}`}
                             </Text>
                           </TouchableOpacity>
-                        </Swipeable>
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Ta bort kontroll"
+                            style={styles.deleteAction}
+                            onPress={() => onDeletePress(item.id)}
+                          >
+                            <MaterialIcons name="delete" size={22} color="#fff" />
+                            <Text style={styles.deleteActionText}>Ta bort</Text>
+                          </TouchableOpacity>
+                        </View>
                       ))
                   ) : null}
                 </View>

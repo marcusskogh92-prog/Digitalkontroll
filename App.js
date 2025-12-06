@@ -1,6 +1,7 @@
 
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import { Image } from 'react-native';
 
 // Importera skärmar
 import ControlDetails from './Screens/ControlDetails';
@@ -32,7 +33,18 @@ export default function App() {
         <Stack.Screen
           name="Home"
           component={HomeScreen}
-          options={{ title: 'Startsida' }}
+          options={{
+            headerTitle: () => (
+              Image ? (
+                <Image
+                  source={require('./assets/images/kontrollbygg.lang.transparant.jpg')}
+                  style={{ width: 800, height: 240, resizeMode: 'contain', alignSelf: 'flex-start', maxWidth: '100%' }}
+                />
+              ) : null
+            ),
+            headerTitleAlign: 'left',
+            headerStyle: { backgroundColor: '#FFFFFF' },
+          }}
         />
         {/* Projektdetaljer */}
         <Stack.Screen
