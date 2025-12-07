@@ -1,6 +1,3 @@
-
-
-
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
@@ -14,6 +11,183 @@ function getFirstName(email) {
 }
 
 export default function HomeScreen({ route }) {
+  // State för nytt projekt-modal i undermapp
+
+  // Funktion för att alltid nollställa projektfält
+  const resetProjectFields = () => {
+    setNewProjectName("");
+    setNewProjectNumber("");
+  };
+
+  // Nollställ projektfält när popup öppnas eller stängs
+  React.useEffect(() => {
+    if (newProjectModal?.visible) {
+      resetProjectFields();
+    } else {
+      resetProjectFields();
+    }
+  }, [newProjectModal?.visible]);
+      // Kontrollera om projektnummer är unikt i hela hierarkin
+  function isProjectNumberUnique(num) {
+    if (!num) return true;
+    const n = num.trim();
+    for (const main of hierarchy || []) {
+      for (const sub of (main.children || [])) {
+        if (sub.children && Array.isArray(sub.children) && sub.children.some(child => child.type === 'project' && child.id === n)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+    // Filtrera bort projekt med namnet '22 test' vid render
+    React.useEffect(() => {
+      setHierarchy(prev => prev.map(main => ({
+        ...main,
+        children: main.children.map(sub => ({
+          ...sub,
+          children: sub.children ? sub.children.filter(child => !(child.type === 'project' && child.name.trim().toLowerCase() === '22 test')) : []
+        }))
+      })));
+    }, []);
+  // State för nytt projekt-modal i undermapp
+  const [newProjectModal, setNewProjectModal] = useState({ visible: false, parentSubId: null });
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectNumber, setNewProjectNumber] = useState("");
+
+  // Modal för nytt projekt i undermapp (läggs utanför return)
+  const newProjectModalComponent = (
+    <Modal
+      visible={newProjectModal.visible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        setNewProjectModal({ visible: false, parentSubId: null });
+        resetProjectFields();
+      }}
+    >
+      <TouchableOpacity
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+        activeOpacity={1}
+        onPress={() => {
+          setNewProjectModal({ visible: false, parentSubId: null });
+          resetProjectFields();
+        }}
+      >
+        <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, padding: 6 }}
+            onPress={() => {
+              setNewProjectModal({ visible: false, parentSubId: null });
+              resetProjectFields();
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="close" size={26} color="#222" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+            Skapa nytt projekt
+          </Text>
+          <View style={{ marginBottom: 4 }}>
+            <TextInput
+              value={newProjectNumber}
+              onChangeText={setNewProjectNumber}
+              placeholder="Projektnummer..."
+              style={{
+                borderWidth: 1,
+                borderColor: newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber) ? '#D32F2F' : '#e0e0e0',
+                borderRadius: 8,
+                padding: 12,
+                fontSize: 16,
+                backgroundColor: '#fafafa',
+                color: !isProjectNumberUnique(newProjectNumber) && newProjectNumber.trim() !== '' ? '#D32F2F' : '#222',
+              }}
+              autoFocus
+              keyboardType="default"
+            />
+            {newProjectNumber.trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
+              <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold', marginTop: 8, marginLeft: 2, marginBottom: 4 }}>
+                Projektnummer används redan. Välj ett annat nummer.
+              </Text>
+            )}
+          </View>
+          <TextInput
+            value={newProjectName}
+            onChangeText={setNewProjectName}
+            placeholder="Projektnamn..."
+            placeholderTextColor="#888"
+            style={{
+              borderWidth: 1,
+              borderColor: newProjectName.trim() === '' ? '#D32F2F' : '#e0e0e0',
+              borderRadius: 8,
+              padding: 12,
+              fontSize: 16,
+              marginBottom: 12,
+              backgroundColor: '#fafafa',
+              color: '#222'
+            }}
+            keyboardType="default"
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1976D2',
+                borderRadius: 8,
+                paddingVertical: 12,
+                alignItems: 'center',
+                flex: 1,
+                marginRight: 8,
+                opacity: (newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)) ? 0.5 : 1
+              }}
+              disabled={newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)}
+              onPress={() => {
+                // Extra skydd: kontrollera alltid innan skapande
+                if (
+                  newProjectName.trim() === '' ||
+                  newProjectNumber.trim() === '' ||
+                  !isProjectNumberUnique(newProjectNumber)
+                ) {
+                  return;
+                }
+                setHierarchy(prev => prev.map(main => ({
+                  ...main,
+                  children: main.children.map(sub =>
+                    sub.id === newProjectModal.parentSubId
+                      ? {
+                          ...sub,
+                          children: [
+                            ...(sub.children || []),
+                            {
+                              id: newProjectNumber.trim(),
+                              name: newProjectName.trim(),
+                              type: 'project',
+                              status: 'ongoing'
+                            }
+                          ]
+                        }
+                      : sub
+                  )
+                })));
+                setNewProjectModal({ visible: false, parentSubId: null });
+                setNewProjectName("");
+                setNewProjectNumber("");
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+                Skapa
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
+              onPress={() => setNewProjectModal({ visible: false, parentSubId: null })}
+            >
+              <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
     // Ref for main folder long press timers
     const mainTimersRef = React.useRef({});
   // Clean up timer on unmount (only one, correct placement)
@@ -140,11 +314,13 @@ export default function HomeScreen({ route }) {
   }
 
   return (
-    <ImageBackground
-      source={require('../assets/images/inlogg.app.png')}
-      style={{ flex: 1, resizeMode: 'cover' }}
-      imageStyle={{ opacity: 1 }}
-    >
+    <>
+      {newProjectModalComponent}
+      <ImageBackground
+        source={require('../assets/images/inlogg.app.png')}
+        style={{ flex: 1, resizeMode: 'cover' }}
+        imageStyle={{ opacity: 1 }}
+      >
       <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.85)' }}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC' }}>
@@ -269,19 +445,18 @@ export default function HomeScreen({ route }) {
                 <TouchableOpacity
                   style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginBottom: 8 }}
                   onPress={() => {
-                    if (newSubName.trim() !== '' && isFolderNameUnique(newSubName)) {
-                      setHierarchy(prev => [
-                        ...prev,
-                        {
-                          id: (Math.random() * 100000).toFixed(0),
-                          name: newSubName.trim(),
-                          expanded: false,
-                          children: [],
-                        },
-                      ]);
-                      setNewSubName('');
-                      setNewFolderModalVisible(false);
-                    }
+                    if (newSubName.trim() === '' || !isFolderNameUnique(newSubName)) return;
+                    setHierarchy(prev => [
+                      ...prev,
+                      {
+                        id: (Math.random() * 100000).toFixed(0),
+                        name: newSubName.trim(),
+                        expanded: false,
+                        children: [],
+                      },
+                    ]);
+                    setNewSubName('');
+                    setNewFolderModalVisible(false);
                   }}
                   disabled={newSubName.trim() === '' || !isFolderNameUnique(newSubName)}
                 >
@@ -311,11 +486,11 @@ export default function HomeScreen({ route }) {
                 {[...hierarchy]
                   .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                   .map((main) => (
-                    <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 14, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: main.expanded ? 1 : 0, borderColor: '#e0e0e0' }}>
+                    <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 4, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: main.expanded ? 1 : 0, borderColor: '#e0e0e0' }}>
                         <TouchableOpacity
                           style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                          onPress={() => setHierarchy(toggleExpand(0, main.id))}
+                          onPress={() => setHierarchy(prev => prev.map(m => m.id === main.id ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }))}
                           activeOpacity={0.7}
                           onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
                           delayLongPress={2000}
@@ -332,7 +507,8 @@ export default function HomeScreen({ route }) {
                           <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
                           <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                         </TouchableOpacity>
-                        {main.expanded && (
+                        {/* Visa endast om ingen undermapp är expanderad */}
+                        {main.expanded && !main.children?.some(sub => sub.expanded) && (
                           <TouchableOpacity
                             style={{ marginLeft: 8, padding: 4 }}
                             onPress={() => {
@@ -350,17 +526,31 @@ export default function HomeScreen({ route }) {
                           const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
                           // ...existing code...
                           return (
-                            <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 6, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
-                              <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}
-                                onPress={() => setHierarchy(toggleExpand(1, sub.id))}
-                                onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
-                                delayLongPress={2000}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
-                                <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
-                              </TouchableOpacity>
+                            <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 2, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                                <TouchableOpacity
+                                  style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                                  onPress={() => setHierarchy(toggleExpand(1, sub.id))}
+                                  onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
+                                  delayLongPress={2000}
+                                  activeOpacity={0.7}
+                                >
+                                  <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+                                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
+                                </TouchableOpacity>
+                                {sub.expanded && (
+                                  <TouchableOpacity
+                                    style={{ padding: 4 }}
+                                    onPress={() => {
+                                      setNewProjectModal({ visible: true, parentSubId: sub.id });
+                                      setNewProjectName("");
+                                      setNewProjectNumber("");
+                                    }}
+                                  >
+                                    <Ionicons name="add-circle" size={22} color="#1976D2" />
+                                  </TouchableOpacity>
+                                )}
+                              </View>
                                     {/* Edit modal for main/sub group */}
                                     <Modal
                                       visible={editModal.visible}
@@ -685,6 +875,7 @@ export default function HomeScreen({ route }) {
           );
         })()}
       </View>
-    </ImageBackground>
+      </ImageBackground>
+    </>
   );
 }
