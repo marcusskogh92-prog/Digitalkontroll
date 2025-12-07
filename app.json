@@ -26,6 +26,10 @@
         "backgroundColor": "#263238",
         "resizeMode": "contain"
       }
-    }
+    },
+    "plugins": [
+      "expo-font",
+      "expo-web-browser"
+    ]
   }
 }
