@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
 import { ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { auth } from '../components/firebase';
@@ -11,7 +10,7 @@ function getFirstName(email) {
   return localPart.split('.')[0].charAt(0).toUpperCase() + localPart.split('.')[0].slice(1);
 }
 
-export default function HomeScreen({ route }) {
+export default function HomeScreen({ route, navigation }) {
     // State for control type selection modal
     const [showControlTypeModal, setShowControlTypeModal] = useState(false);
   // State för nytt projekt-modal i undermapp
@@ -22,15 +21,7 @@ export default function HomeScreen({ route }) {
     setNewProjectNumber("");
   };
 
-  // Nollställ projektfält när popup öppnas eller stängs
-  React.useEffect(() => {
-    if (newProjectModal?.visible) {
-      resetProjectFields();
-    } else {
-      resetProjectFields();
-    }
-  }, [newProjectModal?.visible]);
-      // Kontrollera om projektnummer är unikt i hela hierarkin
+  // Kontrollera om projektnummer är unikt i hela hierarkin
   function isProjectNumberUnique(num) {
     if (!num) return true;
     const n = num.trim();
@@ -261,7 +252,6 @@ export default function HomeScreen({ route }) {
     });
     return count;
   }
-  const navigation = useNavigation();
   const email = route?.params?.email || '';
   const firstName = getFirstName(email);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -468,6 +458,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               Skapa kontroll
             </Text>
             <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '80%', marginBottom: 18 }} />
+
+
             <TouchableOpacity
               style={{
                 backgroundColor: '#fff',
@@ -516,9 +508,10 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
                     { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
                     { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
-                    { type: 'Riskbedömning', icon: 'alert-circle-outline', color: '#F9A825' },
-                    { type: 'Skyddsrond', icon: 'shield-checkmark-outline', color: '#D32F2F' }
-                  ].map(({ type, icon, color }) => (
+                    { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+                    { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+                    { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+                  ].sort((a, b) => a.type.localeCompare(b.type)).map(({ type, icon, color }) => (
                     <TouchableOpacity
                       key={type}
                       style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
@@ -619,11 +612,13 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                           setSelectProjectModal({ visible: false, type: null });
                                           if (selectProjectModal.type === 'Skyddsrond') {
                                             navigation.navigate('SkyddsrondScreen', {
-                                              projectId: proj.id,
-                                              projectName: proj.name
+                                              project: proj
                                             });
                                           } else {
-                                            // Lägg till navigation för övriga kontrolltyper här
+                                            navigation.navigate('ControlForm', {
+                                              project: proj,
+                                              controlType: selectProjectModal.type
+                                            });
                                           }
                                         }}
                                       >
@@ -912,11 +907,13 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                   setSelectProjectModal({ visible: false, type: null });
                                                   if (selectProjectModal.type === 'Skyddsrond') {
                                                     navigation.navigate('SkyddsrondScreen', {
-                                                      projectId: proj.id,
-                                                      projectName: proj.name
+                                                      project: proj
                                                     });
                                                   } else {
-                                                    // Lägg till navigation för övriga kontrolltyper här
+                                                    navigation.navigate('ControlForm', {
+                                                      project: proj,
+                                                      controlType: selectProjectModal.type
+                                                    });
                                                   }
                                                 }}
                                               >
@@ -973,7 +970,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 if (projektLongPressTimer.current) clearTimeout(projektLongPressTimer.current);
               }}
             >
-              <Text style={{ fontSize: 28, fontWeight: '800', color: '#263238', letterSpacing: 0.2, textAlign: 'left' }}>Projekt</Text>
+              <Text style={{ fontSize: 26, fontWeight: '600', color: '#263238', letterSpacing: 0.2, textAlign: 'center' }}>Projekt</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, borderWidth: 2, borderColor: '#222', paddingHorizontal: 10, paddingVertical: 6, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4, elevation: 2, minHeight: 32, marginLeft: 16 }}

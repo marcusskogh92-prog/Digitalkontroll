@@ -84,6 +84,7 @@ export default function ProjectDetails({ route }) {
     'Arbetsberedning',
     'Egenkontroll',
     'Fuktmätning',
+    'Mottagningskontroll',
     'Riskbedömning',
     'Skyddsrond'
   ].sort();
@@ -226,6 +227,7 @@ export default function ProjectDetails({ route }) {
         initial: newControl,
         performedBy: (getFullName(initialCreator) || initialCreator || '').trim(),
         companyId,
+        controlType: newControl.type
       });
     }
   };
@@ -820,9 +822,10 @@ export default function ProjectDetails({ route }) {
                   { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
                   { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
                   { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
-                  { type: 'Riskbedömning', icon: 'alert-circle-outline', color: '#F9A825' },
-                  { type: 'Skyddsrond', icon: 'shield-checkmark-outline', color: '#D32F2F' }
-                ].map(({ type, icon, color }) => (
+                  { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+                  { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+                  { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+                ].sort((a, b) => a.type.localeCompare(b.type)).map(({ type, icon, color }) => (
                   <TouchableOpacity
                     key={type}
                     style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
@@ -830,6 +833,10 @@ export default function ProjectDetails({ route }) {
                       setShowControlTypeModal(false);
                       if (type === 'Skyddsrond') {
                         navigation.navigate('SkyddsrondScreen', { project });
+                      } else if (type === 'Mottagningskontroll') {
+                        const today = new Date().toISOString().split('T')[0];
+                        setNewControl({ type, date: today, description: '', byggdel: '' });
+                        setShowForm(true);
                       } else {
                         setShowControlPicker(true);
                         setNewControl({ ...newControl, type });
