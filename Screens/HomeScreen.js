@@ -1,4 +1,6 @@
 
+
+
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useState } from 'react';
@@ -13,7 +15,7 @@ function getFirstName(email) {
 
 export default function HomeScreen({ route }) {
   const navigation = useNavigation();
-  const email = route.params?.email || '';
+  const email = route?.params?.email || '';
   const firstName = getFirstName(email);
   const [loggingOut, setLoggingOut] = useState(false);
   const [hierarchy, setHierarchy] = useState([]);
@@ -158,11 +160,3 @@ export default function HomeScreen({ route }) {
     </ImageBackground>
   );
 }
-        {/* Plats för modaler och InfoPopup */}
-        {/*
-          <Modal visible={showNewProjectModal} ... >...</Modal>
-          <InfoPopup ... />
-        */}
-
-
-
