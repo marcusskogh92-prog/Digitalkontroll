@@ -1,7 +1,8 @@
 
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useState } from 'react';
-import { Image, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { ImageBackground, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { auth } from '../components/firebase';
 
 function getFirstName(email) {
@@ -58,10 +59,17 @@ export default function HomeScreen({ route }) {
 
         {/* Knappar och pågående kontroller */}
         <View style={{ marginTop: 32, marginBottom: 16, alignItems: 'center' }}>
+          {/* Rubrik ovanför knappar */}
+          <Text style={{ fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 18, color: '#263238' }}>
+            Skapa ny kontroll
+          </Text>
+          {/* Knappar för kontroller */}
           {[
-            { label: 'Skapa kontroll', icon: require('../assets/images/plus.png'), onPress: () => navigation.navigate('ControlForm') },
-            { label: 'Skyddsrond', icon: require('../assets/images/shield.png'), onPress: () => navigation.navigate('SkyddsrondScreen') },
-            { label: 'Projekt', icon: require('../assets/images/project.png'), onPress: () => navigation.navigate('ProjectDetails') },
+            { label: 'Arbetsberedning', icon: <Ionicons name="construct-outline" size={26} color="#1976D2" style={{ marginRight: 16 }} />, onPress: () => {/* navigation.navigate('ArbetsberedningScreen') */} },
+            { label: 'Egenkontroll', icon: <Ionicons name="checkmark-done-outline" size={26} color="#388E3C" style={{ marginRight: 16 }} />, onPress: () => {/* navigation.navigate('EgenkontrollScreen') */} },
+            { label: 'Fuktmätning', icon: <Ionicons name="water-outline" size={26} color="#0288D1" style={{ marginRight: 16 }} />, onPress: () => {/* navigation.navigate('FuktmatningScreen') */} },
+            { label: 'Riskbedömning', icon: <Ionicons name="alert-circle-outline" size={26} color="#F9A825" style={{ marginRight: 16 }} />, onPress: () => {/* navigation.navigate('RiskbedomningScreen') */} },
+            { label: 'Skyddsrond', icon: <Ionicons name="shield-checkmark-outline" size={26} color="#D32F2F" style={{ marginRight: 16 }} />, onPress: () => navigation.navigate('SkyddsrondScreen') },
           ].map((btn) => (
             <TouchableOpacity
               key={btn.label}
@@ -79,10 +87,10 @@ export default function HomeScreen({ route }) {
                 elevation: 2,
                 minHeight: 56,
                 minWidth: 0,
-                maxWidth: 320,
-                width: '100%',
-                paddingLeft: 24,
-                paddingRight: 18,
+                maxWidth: 240,
+                width: '90%',
+                paddingLeft: 14,
+                paddingRight: 10,
                 overflow: 'hidden',
                 borderWidth: 2,
                 borderColor: '#222',
@@ -90,52 +98,10 @@ export default function HomeScreen({ route }) {
               activeOpacity={0.85}
               onPress={btn.onPress}
             >
-              <Image source={btn.icon} style={{ width: 26, height: 26, marginRight: 16, resizeMode: 'contain', zIndex: 1 }} />
+              {btn.icon}
               <Text style={{ color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 }}>{btn.label}</Text>
             </TouchableOpacity>
           ))}
-          {/* Pågående kontroller-knapp */}
-          <TouchableOpacity
-            style={{
-              backgroundColor: '#fff',
-              borderRadius: 16,
-              marginBottom: 16,
-              alignItems: 'center',
-              flexDirection: 'row',
-              justifyContent: 'flex-start',
-              shadowColor: '#1976D2',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.10,
-              shadowRadius: 6,
-              elevation: 2,
-              minHeight: 56,
-              minWidth: 0,
-              maxWidth: 320,
-              width: '100%',
-              paddingLeft: 24,
-              paddingRight: 18,
-              overflow: 'hidden',
-              borderWidth: 2,
-              borderColor: '#222',
-            }}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('ControlDetails')}
-          >
-            <Image source={require('../assets/images/app.icon.png')} style={{ width: 26, height: 26, marginRight: 16, resizeMode: 'contain', zIndex: 1 }} />
-            <Text style={{ color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5 }}>Pågående kontroller</Text>
-            <View style={{
-              marginLeft: 12,
-              backgroundColor: '#222',
-              borderRadius: 12,
-              minWidth: 28,
-              height: 24,
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingHorizontal: 8,
-            }}>
-              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>{3}</Text>
-            </View>
-          </TouchableOpacity>
         </View>
 
         {/* Projektlista */}
