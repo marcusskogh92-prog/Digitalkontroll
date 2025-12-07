@@ -20,6 +20,29 @@ import {
     View,
 } from 'react-native';
 import { fetchCompanyProfile } from '../components/firebase';
+  // State for long-press popup for edit/delete control
+  const [showControlOptions, setShowControlOptions] = useState(false);
+  const [selectedControl, setSelectedControl] = useState(null);
+
+  // Handler for long-press on a control
+  const handleControlLongPress = (control) => {
+    setSelectedControl(control);
+    setShowControlOptions(true);
+  };
+
+  // Handler for deleting selected control
+  const handleDeleteSelectedControl = async () => {
+    if (!selectedControl) return;
+    await onDeletePress(selectedControl.id);
+    setShowControlOptions(false);
+    setSelectedControl(null);
+  };
+
+  // Handler for editing selected control (placeholder)
+  const handleEditSelectedControl = () => {
+    setShowControlOptions(false);
+    // Exempel: navigation.navigate('ControlEdit', { control: selectedControl, project })
+  };
 
 function getFullName(email) {
   if (!email) return '';
@@ -61,6 +84,9 @@ export default function ProjectDetails({ route }) {
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const undoTimerRef = useRef(null);
   const [expandedByType, setExpandedByType] = useState({});
+  // Flyttade hit från render: hanterar expand/collapse och valda kontroller i skriv ut-popup
+  const [expandedType, setExpandedType] = useState(null);
+  const [selectedControls, setSelectedControls] = useState([]);
 
   const controlTypes = [
     'Arbetsberedning',
@@ -860,22 +886,14 @@ export default function ProjectDetails({ route }) {
                           <TouchableOpacity
                             style={[styles.controlCard, { flex: 1 }]}
                             onPress={() => navigation.navigate('ControlDetails', { control: item, project })}
+                            onLongPress={() => handleControlLongPress(item)}
+                            delayLongPress={600}
                           >
                             <Text style={styles.controlType}>
                               {item.type === 'Skyddsrond'
-                                ? `${item.description} ${item.date}`
+                                ? `${item.description ? item.description + ' ' : ''}${item.date}`
                                 : `${item.byggdel ? item.byggdel + ' ' : ''}${item.description} ${item.date}`}
                             </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            activeOpacity={0.8}
-                            accessibilityRole="button"
-                            accessibilityLabel="Ta bort kontroll"
-                            style={styles.deleteAction}
-                            onPress={() => onDeletePress(item.id)}
-                          >
-                            <MaterialIcons name="delete" size={22} color="#fff" />
-                            <Text style={styles.deleteActionText}>Ta bort</Text>
                           </TouchableOpacity>
                         </View>
                       ))
@@ -883,6 +901,7 @@ export default function ProjectDetails({ route }) {
                 </View>
               );
             });
+                {/* Modal for edit/delete control (long-press) */}
           })()}
         </View>
       )}
@@ -1002,7 +1021,15 @@ export default function ProjectDetails({ route }) {
         <TouchableOpacity style={styles.centerOverlay} activeOpacity={1} onPress={() => setShowSummary(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80}>
             <View style={styles.summaryCard}>
-              <Text style={styles.modalText}>Sammanställning av utförda kontroller</Text>
+              {/* Stäng (X) knapp uppe till höger */}
+              <TouchableOpacity
+                style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+                onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(false); }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={26} color="#222" />
+              </TouchableOpacity>
+              <Text style={styles.modalText}>Skriv ut</Text>
               {/* Export filter selector */}
               {(() => {
                 const byType = controls.reduce((acc, c) => {
@@ -1038,18 +1065,14 @@ export default function ProjectDetails({ route }) {
 
               <ScrollView style={{ maxHeight: 380 }}>
                 {(() => {
-                  const byType = controls.reduce((acc, c) => {
-                    const t = c.type || 'Okänd';
-                    acc[t] = acc[t] || [];
-                    acc[t].push(c);
-                    return acc;
-                  }, {});
-
-                  const typesOrdered = Object.keys(byType).sort((a, b) => a.localeCompare(b));
-                  if (typesOrdered.length === 0) {
-                    return <Text style={{ color: '#555' }}>Inga kontroller utförda ännu.</Text>;
-                  }
-
+                  // Ikoner för varje typ
+                  const typeIcons = {
+                    Arbetsberedning: { icon: 'construct-outline', color: '#1976D2' },
+                    Egenkontroll: { icon: 'checkmark-done-outline', color: '#388E3C' },
+                    Fuktmätning: { icon: 'water-outline', color: '#0288D1' },
+                    Riskbedömning: { icon: 'alert-circle-outline', color: '#F9A825' },
+                    Skyddsrond: { icon: 'shield-checkmark-outline', color: '#D32F2F' },
+                  };
                   const pluralLabels = {
                     Arbetsberedning: 'Arbetsberedningar',
                     Egenkontroll: 'Egenkontroller',
@@ -1057,40 +1080,99 @@ export default function ProjectDetails({ route }) {
                     Skyddsrond: 'Skyddsronder',
                     Riskbedömning: 'Riskbedömningar',
                   };
-
+                  // Gruppindelning
+                  const byType = controls.reduce((acc, c) => {
+                    const t = c.type || 'Okänd';
+                    acc[t] = acc[t] || [];
+                    acc[t].push(c);
+                    return acc;
+                  }, {});
+                  const typesOrdered = Object.keys(byType).sort((a, b) => a.localeCompare(b));
+                  if (typesOrdered.length === 0) {
+                    return <Text style={{ color: '#555' }}>Inga kontroller utförda ännu.</Text>;
+                  }
+                  const toggleControl = (id) => {
+                    setSelectedControls((prev) =>
+                      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+                    );
+                  };
                   return typesOrdered.map((t) => (
                     <View key={t} style={{ marginBottom: 12 }}>
-                      <Text style={{ fontWeight: '700', color: '#263238', marginBottom: 6 }}>{pluralLabels[t] || t}</Text>
-                      {byType[t]
-                        .slice()
-                        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                        .map((c) => (
-                          <View key={c.id} style={styles.summaryRow}>
-                            <Text style={styles.summaryRowText}>{c.description || '—'}</Text>
-                            <Text style={styles.summaryRowText}>{c.date || ''}</Text>
-                          </View>
-                        ))}
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                        onPress={() => setExpandedType(expandedType === t ? null : t)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name={typeIcons[t]?.icon || 'document-outline'} size={22} color={typeIcons[t]?.color || '#222'} style={{ marginRight: 10 }} />
+                        <Text style={{ fontWeight: '700', color: '#263238', fontSize: 16 }}>{pluralLabels[t] || t}</Text>
+                        <MaterialIcons name={expandedType === t ? 'expand-less' : 'expand-more'} size={22} color="#263238" style={{ marginLeft: 6 }} />
+                      </TouchableOpacity>
+                      {expandedType === t && (
+                        <View style={{ marginLeft: 32, marginTop: 4 }}>
+                          {byType[t]
+                            .slice()
+                            .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                            .map((c) => (
+                              <TouchableOpacity
+                                key={c.id}
+                                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}
+                                activeOpacity={0.7}
+                                onPress={() => toggleControl(c.id)}
+                              >
+                                <MaterialIcons
+                                  name={selectedControls.includes(c.id) ? 'check-box' : 'check-box-outline-blank'}
+                                  size={22}
+                                  color={selectedControls.includes(c.id) ? '#1976D2' : '#888'}
+                                  style={{ marginRight: 8 }}
+                                />
+                                <Text style={styles.summaryRowText}>{c.description || '—'}</Text>
+                                <Text style={[styles.summaryRowText, { marginLeft: 8 }]}>{c.date || ''}</Text>
+                              </TouchableOpacity>
+                            ))}
+                        </View>
+                      )}
                     </View>
                   ));
                 })()}
               </ScrollView>
               <View style={{ marginTop: 10 }}>
                 <TouchableOpacity
-                  style={[styles.saveButton, { marginBottom: 8, opacity: exportingPdf ? 0.7 : 1 }]}
+                  style={[
+                    {
+                      backgroundColor: '#fff',
+                      borderRadius: 8,
+                      borderWidth: 2,
+                      borderColor: '#222',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: 44,
+                      marginBottom: 8,
+                      opacity: exportingPdf || controls.length === 0 ? 0.7 : 1,
+                    },
+                  ]}
                   onPress={handlePreviewPdf}
                   disabled={exportingPdf || controls.length === 0}
                 >
-                  <Text style={styles.saveButtonText}>Förhandsvisa PDF</Text>
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Förhandsvisa PDF</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.saveButton, { marginBottom: 8, opacity: exportingPdf ? 0.7 : 1 }]}
+                  style={[
+                    {
+                      backgroundColor: '#fff',
+                      borderRadius: 8,
+                      borderWidth: 2,
+                      borderColor: '#222',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: 44,
+                      marginBottom: 8,
+                      opacity: exportingPdf || controls.length === 0 ? 0.7 : 1,
+                    },
+                  ]}
                   onPress={handleExportPdf}
                   disabled={exportingPdf || controls.length === 0}
                 >
-                  <Text style={styles.saveButtonText}>{exportingPdf ? 'Genererar…' : 'Exportera PDF'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.cancelButton} onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(false); }}>
-                  <Text style={styles.cancelText}>Stäng</Text>
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>{exportingPdf ? 'Genererar…' : 'Exportera PDF'}</Text>
                 </TouchableOpacity>
               </View>
             </View>

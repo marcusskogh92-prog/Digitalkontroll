@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
 import { ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -264,7 +265,7 @@ export default function HomeScreen({ route }) {
   const email = route?.params?.email || '';
   const firstName = getFirstName(email);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [hierarchy, setHierarchy] = useState([
+  const defaultHierarchy = [
     {
       id: '1',
       name: 'Entreprenad',
@@ -274,13 +275,13 @@ export default function HomeScreen({ route }) {
           id: '1-1',
           name: '2025',
           expanded: false,
-          children: [] // Inga projekt
+          children: []
         },
         {
           id: '1-2',
           name: 'Anna Projektledare',
           expanded: false,
-          children: [] // Inga projekt
+          children: []
         },
       ],
     },
@@ -293,11 +294,37 @@ export default function HomeScreen({ route }) {
           id: '2-1',
           name: 'Andersson AB',
           expanded: false,
-          children: [] // Inga projekt
+          children: []
         },
       ],
     },
-  ]);
+  ];
+  const [hierarchy, setHierarchy] = useState(defaultHierarchy);
+
+  // Ladda hierarchy från AsyncStorage vid appstart
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem('hierarchy');
+        if (saved) {
+          setHierarchy(JSON.parse(saved));
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
+
+  // Spara hierarchy till AsyncStorage varje gång den ändras
+  React.useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.setItem('hierarchy', JSON.stringify(hierarchy));
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [hierarchy]);
 
   // Remove all top-level folders named 'test' after initial load
   React.useEffect(() => {

@@ -1,25 +1,128 @@
-import { StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-// Props: projectNumber, projectName ska skickas in från parent eller context
-const SkyddsrondScreen = ({ projectNumber, projectName }) => {
-  // Hämta dagens datum
+
+// Props: project (objekt med id, name, adress, fastighetsbeteckning)
+const SkyddsrondScreen = ({ route, navigation }) => {
+  const { project } = route.params || {};
   const today = new Date();
   const dateString = today.toLocaleDateString('sv-SE');
+  // Veckonummer
+  const getWeek = (d) => {
+    d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+    return weekNo;
+  };
+  const week = getWeek(today);
+
+  // Form state
+  const [adress, setAdress] = useState(project?.adress || '');
+  const [fastighet, setFastighet] = useState(project?.fastighetsbeteckning || '');
+  const [personer, setPersoner] = useState([
+    { namn: '', foretag: '', roll: '', mobil: '' }
+  ]);
+
+  // Hantera ändring av deltagare
+  const updatePerson = (idx, field, value) => {
+    setPersoner(prev => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+  };
+  const addPerson = () => setPersoner(prev => [...prev, { namn: '', foretag: '', roll: '', mobil: '' }]);
+  const removePerson = (idx) => setPersoner(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+
+  // Spara skyddsrond till projektets kontroller
+  const handleSave = async () => {
+    if (!project?.id) return;
+    // Enkel validering
+    if (personer.some(p => !p.namn.trim() || !p.foretag.trim() || !p.roll.trim())) {
+      Alert.alert('Fyll i alla obligatoriska fält för deltagare (namn, företag, roll)');
+      return;
+    }
+    const newRond = {
+      id: 'skyddsrond-' + Date.now(),
+      type: 'Skyddsrond',
+      date: dateString, // dagens datum
+      vecka: week,
+      projektnummer: project.id,
+      projektnamn: project.name,
+      adress,
+      fastighetsbeteckning: fastighet,
+      deltagare: personer,
+    };
+    try {
+      // companyId kan skickas med i route.params, annars defaulta till demo-company
+      const companyId = (route.params && route.params.companyId) || 'demo-company';
+      const key = `company:${companyId}:project:${project.id}:controls`;
+      const prev = await AsyncStorage.getItem(key);
+      const arr = prev ? JSON.parse(prev) : [];
+      arr.push(newRond);
+      await AsyncStorage.setItem(key, JSON.stringify(arr));
+      Alert.alert('Skyddsrond sparad!');
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Kunde inte spara skyddsronden');
+    }
+  };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Skyddsrond</Text>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.header}>{`Skyddsrond V.${week}`}</Text>
       <Text style={styles.label}>Datum: {dateString}</Text>
-      <Text style={styles.label}>Projektnummer: {projectNumber}</Text>
-      <Text style={styles.label}>Projektnamn: {projectName}</Text>
-      {/* Beskrivning, deltagare, kontrollpunkter kommer här */}
-    </View>
+      <Text style={styles.label}>Projektnummer: {project?.id || ''}</Text>
+      <Text style={styles.label}>Projektnamn: {project?.name || ''}</Text>
+      <Text style={styles.label}>Adress: <Text style={styles.value}>{adress || '-'}</Text></Text>
+      <Text style={styles.label}>Fastighetsbeteckning: <Text style={styles.value}>{fastighet || '-'}</Text></Text>
+      <Text style={[styles.label, { marginTop: 16 }]}>Utförare och närvarande personal</Text>
+      {personer.map((p, idx) => (
+        <View key={idx} style={{ marginBottom: 12, borderBottomWidth: 1, borderColor: '#eee', paddingBottom: 8 }}>
+          <TextInput
+            style={styles.input}
+            value={p.namn}
+            onChangeText={v => updatePerson(idx, 'namn', v)}
+            placeholder="För- och efternamn*"
+          />
+          <TextInput
+            style={styles.input}
+            value={p.foretag}
+            onChangeText={v => updatePerson(idx, 'foretag', v)}
+            placeholder="Företag*"
+          />
+          <TextInput
+            style={styles.input}
+            value={p.roll}
+            onChangeText={v => updatePerson(idx, 'roll', v)}
+            placeholder="Roll*"
+          />
+          <TextInput
+            style={styles.input}
+            value={p.mobil}
+            onChangeText={v => updatePerson(idx, 'mobil', v)}
+            placeholder="Mobilnummer (valfritt)"
+            keyboardType="phone-pad"
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+            <TouchableOpacity onPress={() => removePerson(idx)} disabled={personer.length === 1}>
+              <Text style={{ color: '#D32F2F', fontSize: 14, marginTop: 2 }}>Ta bort</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ))}
+      <TouchableOpacity onPress={addPerson} style={{ marginBottom: 18 }}>
+        <Text style={{ color: '#1976D2', fontWeight: 'bold', fontSize: 16 }}>+ Lägg till person</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+        <Text style={styles.saveButtonText}>Spara skyddsrond</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 };
 
+
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     padding: 20,
     backgroundColor: '#fff',
   },
@@ -31,6 +134,28 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 18,
     marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 16,
+    marginBottom: 8,
+    backgroundColor: '#fafafa',
+    color: '#222',
+  },
+  saveButton: {
+    backgroundColor: '#1976D2',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
   },
 });
 
