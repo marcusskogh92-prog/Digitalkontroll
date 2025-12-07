@@ -347,7 +347,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
         {/* Allt under headern är skrollbart */}
         <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
           {/* Knappar för att skapa kontroller */}
-          <View style={{ marginTop: 32, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ marginTop: 18, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ fontSize: 22, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
               Skapa kontroll
             </Text>
@@ -403,6 +403,11 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     onPress={() => setSelectProjectModal({ visible: false, type: null })}
                   >
                     <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 360, maxHeight: 540 }}>
+                      {selectProjectModal.type && (
+                        <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 6, color: '#222', textAlign: 'center' }}>
+                          {selectProjectModal.type}
+                        </Text>
+                      )}
                       <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj projekt</Text>
                       <View style={{ position: 'relative', marginBottom: 14 }}>
                         <TextInput
@@ -774,7 +779,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
           </View>
           {/* Projektträd */}
           {/* Rubrik och sök-knapp */}
-          <View style={{ width: '100%', alignItems: 'center', marginTop: 32 }}>
+          <View style={{ width: '100%', alignItems: 'center', marginTop: 18 }}>
             <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '80%', marginBottom: 12 }} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingHorizontal: 16 }}>

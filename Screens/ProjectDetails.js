@@ -26,11 +26,16 @@ function getFullName(email) {
   return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
+import { auth } from '../components/firebase';
+
 export default function ProjectDetails({ route }) {
   const navigation = useNavigation();
   const { project, createdBy, selectedAction, companyId: passedCompanyId } = route.params;
   const companyId = passedCompanyId || 'demo-company';
-  const initialCreator = project?.createdBy || createdBy || '';
+  // Hämta inloggad användares namn
+  const loggedInEmail = auth?.currentUser?.email || '';
+  const loggedInFullName = getFullName(loggedInEmail);
+  const initialCreator = project?.createdBy || createdBy || loggedInFullName;
   const [editableProject, setEditableProject] = useState({
     id: project.id,
     name: project.name,
@@ -421,25 +426,52 @@ export default function ProjectDetails({ route }) {
     >
       {/* Titel */}
       <Text style={styles.title}>{project.id} - {project.name}</Text>
+      <View style={{ height: 1, backgroundColor: '#263238', marginVertical: 8, marginLeft: 0 }} />
 
-      {/* Info under titeln */}
-      <Text style={styles.subInfo}>Skapad: {editableProject.createdAt}</Text>
-      <Text style={styles.subInfo}>Av: {editableProject.createdBy}</Text>
+      {/* Info under titeln i lodrät linje */}
+      <View style={{ marginBottom: 12, marginTop: 2 }}>
+        {[ 
+          { label: 'Skapad', value: editableProject.createdAt },
+          { label: 'Av', value: editableProject.createdBy },
+          { label: 'Status', value: editableProject.status === 'done' ? 'Avslutat' : 'Pågående' },
+          { label: 'Kund', value: editableProject.client || 'Ej angivet' },
+          { label: 'Adress', value: editableProject.address || 'Ej angivet' },
+          { label: 'Fastighetsbeteckning', value: editableProject.propertyId || 'Ej angivet' }
+        ].map((row) => {
+          const isEmpty = !row.value || row.value === 'Ej angivet';
+          return (
+            <React.Fragment key={row.label}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 0 }}>
+                <Text style={{ fontSize: 14, color: '#666', width: 170, textAlign: 'left', marginRight: 0 }}>{row.label}:</Text>
+                <View style={{ flex: 1, marginLeft: 24 }}>
+                  <Text style={{ fontSize: 14, color: isEmpty ? '#D32F2F' : '#222', fontStyle: isEmpty ? 'italic' : 'normal' }}>
+                    {isEmpty ? 'Ej angivet' : row.value}
+                  </Text>
+                </View>
+              </View>
+              <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6, marginLeft: 0 }} />
+            </React.Fragment>
+          );
+        })}
+      </View>
 
       {/* Redigera projektinfo */}
-      <View style={{ marginTop: 12 }}>
+      <View style={{ marginTop: 2 }}>
         {!editingInfo ? (
-          <TouchableOpacity style={styles.editButton} onPress={() => setEditingInfo(true)}>
-            <Text style={styles.editButtonText}>Ändra</Text>
-          </TouchableOpacity>
+          <>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 }}>
+              <TouchableOpacity style={[styles.editButton, { marginTop: 0 }]} onPress={() => setEditingInfo(true)}>
+                <Text style={styles.editButtonText}>Ändra</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 8, marginLeft: 0 }} />
+          </>
         ) : (
           <View style={styles.editForm}>
             <TextInput style={styles.input} placeholder="Projektnummer" value={editableProject.id} onChangeText={(t) => setEditableProject({ ...editableProject, id: t })} />
             <Text style={styles.helperLabel}>Projektnummer</Text>
             <TextInput style={styles.input} placeholder="Projektnamn" value={editableProject.name} onChangeText={(t) => setEditableProject({ ...editableProject, name: t })} />
             <Text style={styles.helperLabel}>Projektnamn</Text>
-            <TextInput style={styles.input} placeholder="Kund/Beställare" value={editableProject.client} onChangeText={(t) => setEditableProject({ ...editableProject, client: t })} />
-            <Text style={styles.helperLabel}>Kund/Beställare</Text>
             <TextInput
               style={styles.input}
               placeholder="Skapad av"
@@ -448,6 +480,8 @@ export default function ProjectDetails({ route }) {
               onChangeText={(t) => setEditableProject({ ...editableProject, createdBy: t })}
             />
             <Text style={styles.helperLabel}>Skapad av</Text>
+            <TextInput style={styles.input} placeholder="Kund/Beställare" value={editableProject.client} onChangeText={(t) => setEditableProject({ ...editableProject, client: t })} />
+            <Text style={styles.helperLabel}>Kund/Beställare</Text>
             <View style={styles.buttonRow}>
               <TouchableOpacity style={[styles.saveButton, styles.inlineButton]} onPress={async () => {
                 // Persist editable project info for this project
@@ -477,17 +511,34 @@ export default function ProjectDetails({ route }) {
         )}
       </View>
 
-      {/* Kund/beställare */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Kund/Beställare</Text>
-        <Text style={styles.sectionContent}>{editableProject.client || 'Ej angivet'}</Text>
-      </View>
 
       {/* Kontroller */}
-      <Text style={styles.subtitle}>Utförda kontroller:</Text>
+      {/* Knappar för skapa kontroll och PDF, centrerade mellan linje och rubrik */}
+      {!showForm && !showControlPicker && (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, marginBottom: 0 }}>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1976D2', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, marginRight: 12, shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 3, elevation: 1, minWidth: 0 }}
+              onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowControlPicker(true); }}
+            >
+              <MaterialIcons name="add" size={17} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Ny kontroll</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#D32F2F', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 3, elevation: 1, minWidth: 0 }}
+              onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(true); }}
+            >
+              <MaterialIcons name="picture-as-pdf" size={17} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Sammanställning</Text>
+            </TouchableOpacity>
+        </View>
+      )}
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
+        <Text style={[styles.subtitle, { lineHeight: 32 }]}>Utförda kontroller:</Text>
+      </View>
 
       {controls.length === 0 ? (
-        <Text style={styles.noControls}>Inga kontroller är utförda i projektet än</Text>
+        <Text style={[styles.noControls, { color: '#D32F2F' }]}>Inga kontroller utförda än</Text>
       ) : (
         <View>
           {(() => {
@@ -555,21 +606,6 @@ export default function ProjectDetails({ route }) {
         </View>
       )}
 
-      {/* Knapp för att visa kontrolltyper */}
-      {!showForm && !showControlPicker && (
-        <TouchableOpacity style={styles.addButton} onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowControlPicker(true); }}>
-          <Text style={styles.addButtonText}>Skapa kontroll</Text>
-        </TouchableOpacity>
-      )}
-
-      {!showForm && !showControlPicker && (
-        <TouchableOpacity
-          style={[styles.addButton, { backgroundColor: '#455A64', marginTop: 10 }]}
-          onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(true); }}
-        >
-          <Text style={styles.addButtonText}>Utförda kontroller</Text>
-        </TouchableOpacity>
-      )}
 
       {/* Välj kontrolltyp */}
       {showControlPicker && (
