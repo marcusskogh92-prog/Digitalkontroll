@@ -1,4 +1,5 @@
 
+import { Ionicons } from '@expo/vector-icons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -29,6 +30,8 @@ function getFullName(email) {
 import { auth } from '../components/firebase';
 
 export default function ProjectDetails({ route }) {
+    // State for control type selection modal
+    const [showControlTypeModal, setShowControlTypeModal] = useState(false);
   const navigation = useNavigation();
   const { project, createdBy, selectedAction, companyId: passedCompanyId } = route.params;
   const companyId = passedCompanyId || 'demo-company';
@@ -513,23 +516,102 @@ export default function ProjectDetails({ route }) {
 
 
       {/* Kontroller */}
-      {/* Knappar för skapa kontroll och PDF, centrerade mellan linje och rubrik */}
+      {/* Knappar för skapa kontroll och PDF, med popup för kontrolltyp */}
       {!showForm && !showControlPicker && (
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, marginBottom: 0 }}>
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              borderWidth: 2,
+              borderColor: '#222',
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              marginRight: 12,
+              shadowColor: '#1976D2',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.10,
+              shadowRadius: 3,
+              elevation: 1,
+              minWidth: 0,
+            }}
+            activeOpacity={0.85}
+            onPress={() => setShowControlTypeModal(true)}
+          >
+            <Ionicons name="add-circle-outline" size={26} color="#222" style={{ marginRight: 16 }} />
+            <Text style={{ color: '#222', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Ny kontroll</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#fff',
+              borderRadius: 14,
+              borderWidth: 2,
+              borderColor: '#222',
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              minWidth: 0,
+              shadowColor: '#1976D2',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.10,
+              shadowRadius: 5,
+              elevation: 1,
+              marginBottom: 0,
+            }}
+            activeOpacity={0.85}
+            onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(true); }}
+          >
+            <MaterialIcons name="picture-as-pdf" size={20} color="#222" style={{ marginRight: 10 }} />
+            <Text style={{ color: '#222', fontWeight: '600', fontSize: 16, letterSpacing: 0.4, zIndex: 1 }}>Skriv ut</Text>
+          </TouchableOpacity>
+          {/* Modal för val av kontrolltyp */}
+          <Modal
+            visible={showControlTypeModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowControlTypeModal(false)}
+          >
             <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1976D2', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, marginRight: 12, shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 3, elevation: 1, minWidth: 0 }}
-              onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowControlPicker(true); }}
+              style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+              activeOpacity={1}
+              onPress={() => setShowControlTypeModal(false)}
             >
-              <MaterialIcons name="add" size={17} color="#fff" style={{ marginRight: 6 }} />
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Ny kontroll</Text>
+              <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+                  Välj kontrolltyp
+                </Text>
+                {[
+                  { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+                  { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+                  { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+                  { type: 'Riskbedömning', icon: 'alert-circle-outline', color: '#F9A825' },
+                  { type: 'Skyddsrond', icon: 'shield-checkmark-outline', color: '#D32F2F' }
+                ].map(({ type, icon, color }) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
+                    onPress={() => {
+                      setShowControlTypeModal(false);
+                      setShowControlPicker(true);
+                      setNewControl({ ...newControl, type });
+                    }}
+                  >
+                    <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
+                    <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>{type}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={{ marginTop: 8, alignSelf: 'center' }}
+                  onPress={() => setShowControlTypeModal(false)}
+                >
+                  <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#D32F2F', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 3, elevation: 1, minWidth: 0 }}
-              onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(true); }}
-            >
-              <MaterialIcons name="picture-as-pdf" size={17} color="#fff" style={{ marginRight: 6 }} />
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Sammanställning</Text>
-            </TouchableOpacity>
+          </Modal>
         </View>
       )}
 

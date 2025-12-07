@@ -11,6 +11,8 @@ function getFirstName(email) {
 }
 
 export default function HomeScreen({ route }) {
+    // State for control type selection modal
+    const [showControlTypeModal, setShowControlTypeModal] = useState(false);
   // State för nytt projekt-modal i undermapp
 
   // Funktion för att alltid nollställa projektfält
@@ -346,32 +348,84 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
         </View>
         {/* Allt under headern är skrollbart */}
         <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-          {/* Knappar för att skapa kontroller */}
+          {/* Skapa kontroll-knapp och popup för val av kontrolltyp */}
           <View style={{ marginTop: 18, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ fontSize: 22, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
               Skapa kontroll
             </Text>
             <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '80%', marginBottom: 18 }} />
-            <TouchableOpacity style={kontrollKnappStil} activeOpacity={0.85} onPress={() => setSelectProjectModal({ visible: true, type: 'Arbetsberedning' })}>
-              <Ionicons name="construct-outline" size={26} color="#1976D2" style={{ marginRight: 16 }} />
-              <Text style={kontrollTextStil}>Arbetsberedning</Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#fff',
+                borderRadius: 16,
+                borderWidth: 2,
+                borderColor: '#222',
+                paddingVertical: 14,
+                paddingHorizontal: 32,
+                alignItems: 'center',
+                flexDirection: 'row',
+                justifyContent: 'center',
+                shadowColor: '#1976D2',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.10,
+                shadowRadius: 6,
+                elevation: 2,
+                minHeight: 56,
+                maxWidth: 240,
+                width: '90%',
+                marginBottom: 16,
+                overflow: 'hidden',
+              }}
+              activeOpacity={0.85}
+              onPress={() => setShowControlTypeModal(true)}
+            >
+              <Ionicons name="add-circle-outline" size={26} color="#222" style={{ marginRight: 16 }} />
+              <Text style={{ color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={kontrollKnappStil} activeOpacity={0.85} onPress={() => setSelectProjectModal({ visible: true, type: 'Egenkontroll' })}>
-              <Ionicons name="checkmark-done-outline" size={26} color="#388E3C" style={{ marginRight: 16 }} />
-              <Text style={kontrollTextStil}>Egenkontroll</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={kontrollKnappStil} activeOpacity={0.85} onPress={() => setSelectProjectModal({ visible: true, type: 'Fuktmätning' })}>
-              <Ionicons name="water-outline" size={26} color="#0288D1" style={{ marginRight: 16 }} />
-              <Text style={kontrollTextStil}>Fuktmätning</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={kontrollKnappStil} activeOpacity={0.85} onPress={() => setSelectProjectModal({ visible: true, type: 'Riskbedömning' })}>
-              <Ionicons name="alert-circle-outline" size={26} color="#F9A825" style={{ marginRight: 16 }} />
-              <Text style={kontrollTextStil}>Riskbedömning</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={kontrollKnappStil} activeOpacity={0.85} onPress={() => setSelectProjectModal({ visible: true, type: 'Skyddsrond' })}>
-              <Ionicons name="shield-checkmark-outline" size={26} color="#D32F2F" style={{ marginRight: 16 }} />
-              <Text style={kontrollTextStil}>Skyddsrond</Text>
-            </TouchableOpacity>
+            {/* Modal för val av kontrolltyp */}
+            <Modal
+              visible={showControlTypeModal}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setShowControlTypeModal(false)}
+            >
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+                activeOpacity={1}
+                onPress={() => setShowControlTypeModal(false)}
+              >
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                  <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+                    Välj kontrolltyp
+                  </Text>
+                  {[
+                    { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+                    { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+                    { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+                    { type: 'Riskbedömning', icon: 'alert-circle-outline', color: '#F9A825' },
+                    { type: 'Skyddsrond', icon: 'shield-checkmark-outline', color: '#D32F2F' }
+                  ].map(({ type, icon, color }) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
+                      onPress={() => {
+                        setSelectProjectModal({ visible: true, type });
+                        setShowControlTypeModal(false);
+                      }}
+                    >
+                      <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
+                      <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>{type}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={{ marginTop: 8, alignSelf: 'center' }}
+                    onPress={() => setShowControlTypeModal(false)}
+                  >
+                    <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </Modal>
             {/* Modal för att välja projekt till kontroll */}
             {/* Välj projekt-modal med exakt samma struktur och stil som projektlistan */}
             {(() => {
