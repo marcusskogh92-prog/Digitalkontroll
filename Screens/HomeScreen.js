@@ -380,10 +380,16 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               const [quickAddModal, setQuickAddModal] = React.useState({ visible: false, parentSubId: null });
               const [quickAddName, setQuickAddName] = React.useState("");
               const [quickAddNumber, setQuickAddNumber] = React.useState("");
-              const isMainExpanded = id => expandedMain.includes(id);
+              const [showProjectCreated, setShowProjectCreated] = React.useState(false);
+              // Endast en huvudmapp expanderad åt gången
+              const isMainExpanded = id => expandedMain[0] === id;
               const isSubExpanded = id => expandedSub.includes(id);
-              const toggleMain = id => setExpandedMain(exp => exp.includes(id) ? exp.filter(e => e !== id) : [...exp, id]);
+              const toggleMain = id => setExpandedMain(exp => exp[0] === id ? [] : [id]);
               const toggleSub = id => setExpandedSub(exp => exp.includes(id) ? exp.filter(e => e !== id) : [...exp, id]);
+              // Stäng alla huvudmappar när modal öppnas
+              React.useEffect(() => {
+                if (selectProjectModal.visible) setExpandedMain([]);
+              }, [selectProjectModal.visible]);
               return (
                 <Modal
                   visible={selectProjectModal.visible}
@@ -413,6 +419,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                             color: '#222',
                             paddingRight: 38 // plats för knappen
                           }}
+                          autoCorrect={false}
+                          autoCapitalize="none"
                         />
                         <TouchableOpacity
                           style={{ position: 'absolute', right: 8, top: '50%', marginTop: -11, backgroundColor: '#1976D2', borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 1, elevation: 1 }}
@@ -420,6 +428,41 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                         >
                           <Ionicons name="add" size={12} color="#fff" />
                         </TouchableOpacity>
+                        {/* Autocomplete-lista */}
+                        {searchText.trim().length > 0 && (
+                          <View style={{ position: 'absolute', top: 44, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0', zIndex: 10, maxHeight: 180 }}>
+                            <ScrollView keyboardShouldPersistTaps="handled">
+                              {hierarchy.flatMap(main =>
+                                main.children.flatMap(sub =>
+                                  (sub.children || [])
+                                    .filter(child => child.type === 'project' &&
+                                      child.id.toLowerCase().startsWith(searchText.toLowerCase())
+                                    )
+                                    .map(proj => (
+                                      <TouchableOpacity
+                                        key={proj.id}
+                                        style={{ padding: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
+                                        onPress={() => {
+                                          setSelectProjectModal({ visible: false, type: null });
+                                          if (selectProjectModal.type === 'Skyddsrond') {
+                                            navigation.navigate('SkyddsrondScreen', {
+                                              projectId: proj.id,
+                                              projectName: proj.name
+                                            });
+                                          } else {
+                                            // Lägg till navigation för övriga kontrolltyper här
+                                          }
+                                        }}
+                                      >
+                                        <Ionicons name="folder-open" size={16} color="#1976D2" style={{ marginRight: 7 }} />
+                                        <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.id} - {proj.name}</Text>
+                                      </TouchableOpacity>
+                                    ))
+                                )
+                              )}
+                            </ScrollView>
+                          </View>
+                        )}
                       </View>
                                             {/* Modal för snabbskapa projekt */}
                                             <Modal
@@ -595,6 +638,17 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                         setQuickAddModal({ visible: false, parentSubId: null, parentMainId: null });
                                                         setQuickAddName("");
                                                         setQuickAddNumber("");
+                                                        setShowProjectCreated(true);
+                                                                            {/* Bekräftelse-toast/snackbar */}
+                                                                            {showProjectCreated && (
+                                                                              <View style={{ position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center', zIndex: 100 }}>
+                                                                                <View style={{ backgroundColor: '#1976D2', borderRadius: 24, paddingVertical: 10, paddingHorizontal: 28, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, elevation: 4 }}>
+                                                                                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Projekt skapat!</Text>
+                                                                                </View>
+                                                                              </View>
+                                                                            )}
+                                                                            {/* Auto-hide toast efter 2 sekunder */}
+                                                                            {showProjectCreated && setTimeout(() => setShowProjectCreated(false), 2000)}
                                                       }}
                                                     >
                                                       <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
