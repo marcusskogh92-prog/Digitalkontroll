@@ -1,28 +1,92 @@
 
+
+
+
 import { Ionicons } from '@expo/vector-icons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useRef, useState } from 'react';
 import {
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { fetchCompanyProfile } from '../components/firebase';
+
+function getFullName(email) {
+  if (!email) return '';
+  const parts = email.split('@')[0].split('.');
+  return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+
+export default function ProjectDetails({ route }) {
+  // State för modal för val av kontrolltyp
+  // Viktig: controls måste alltid vara ett array!
+  const [controls, setControls] = useState([]);
+  const [showControlTypeModal, setShowControlTypeModal] = useState(false);
+  // State för kontrolltypväljare
+  const [showControlPicker, setShowControlPicker] = useState(false);
+  // Säker destructure av params
+  const { project, createdBy, selectedAction, companyId: passedCompanyId } = route.params || {};
+  // Fallback: försök hämta companyId från projektet, annars defaulta till demo-company
+  const companyId = passedCompanyId || (project && project.companyId) || 'demo-company';
+
+  // State för redigera-projektinfo-modal
+  const [editingInfo, setEditingInfo] = useState(false);
   // State for long-press popup for edit/delete control
   const [showControlOptions, setShowControlOptions] = useState(false);
   const [selectedControl, setSelectedControl] = useState(null);
+  // Initiera editableProject med fallback om project saknas
+  const [editableProject, setEditableProject] = useState(() => {
+    if (project) {
+      return {
+        id: project.id,
+        name: project.name,
+        client: project.client || '',
+        createdAt: project.createdAt,
+        createdBy: project.createdBy || createdBy || '',
+      };
+    } else {
+      return {
+        id: '',
+        name: '',
+        client: '',
+        createdAt: '',
+        createdBy: createdBy || '',
+      };
+    }
+  });
+  // Övrig state
+  const [showForm, setShowForm] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportFilter, setExportFilter] = useState('Alla');
+  const [companyLogoUri, setCompanyLogoUri] = useState(null);
+  const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
+  const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
+  const undoTimerRef = useRef(null);
+  const [expandedByType, setExpandedByType] = useState({});
+  // Flyttade hit från render: hanterar expand/collapse och valda kontroller i skriv ut-popup
+  const [expandedType, setExpandedType] = useState(null);
+  const [selectedControls, setSelectedControls] = useState([]);
+  const controlTypes = [
+    'Arbetsberedning',
+    'Egenkontroll',
+    'Fuktmätning',
+    'Riskbedömning',
+    'Skyddsrond'
+  ].sort();
 
   // Handler for long-press on a control
   const handleControlLongPress = (control) => {
@@ -43,58 +107,6 @@ import { fetchCompanyProfile } from '../components/firebase';
     setShowControlOptions(false);
     // Exempel: navigation.navigate('ControlEdit', { control: selectedControl, project })
   };
-
-function getFullName(email) {
-  if (!email) return '';
-  const parts = email.split('@')[0].split('.');
-  return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-}
-
-import { auth } from '../components/firebase';
-
-export default function ProjectDetails({ route }) {
-    // State for control type selection modal
-    const [showControlTypeModal, setShowControlTypeModal] = useState(false);
-  const navigation = useNavigation();
-  const { project, createdBy, selectedAction, companyId: passedCompanyId } = route.params;
-  const companyId = passedCompanyId || 'demo-company';
-  // Hämta inloggad användares namn
-  const loggedInEmail = auth?.currentUser?.email || '';
-  const loggedInFullName = getFullName(loggedInEmail);
-  const initialCreator = project?.createdBy || createdBy || loggedInFullName;
-  const [editableProject, setEditableProject] = useState({
-    id: project.id,
-    name: project.name,
-    client: project.client || '',
-    createdAt: project.createdAt,
-    createdBy: initialCreator,
-  });
-  const [editingInfo, setEditingInfo] = useState(false);
-  const fullName = getFullName(initialCreator);
-
-  // Lista med kontroller
-  const [controls, setControls] = useState([]);
-  const [showControlPicker, setShowControlPicker] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [showSummary, setShowSummary] = useState(false);
-  const [exportingPdf, setExportingPdf] = useState(false);
-  const [exportFilter, setExportFilter] = useState('Alla');
-  const [companyLogoUri, setCompanyLogoUri] = useState(null);
-  const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
-  const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
-  const undoTimerRef = useRef(null);
-  const [expandedByType, setExpandedByType] = useState({});
-  // Flyttade hit från render: hanterar expand/collapse och valda kontroller i skriv ut-popup
-  const [expandedType, setExpandedType] = useState(null);
-  const [selectedControls, setSelectedControls] = useState([]);
-
-  const controlTypes = [
-    'Arbetsberedning',
-    'Egenkontroll',
-    'Fuktmätning',
-    'Riskbedömning',
-    'Skyddsrond'
-  ].sort();
 
   // Om selectedAction skickas med från HomeScreen, öppna direkt formuläret
   React.useEffect(() => {
@@ -895,6 +907,7 @@ export default function ProjectDetails({ route }) {
                                 : `${item.byggdel ? item.byggdel + ' ' : ''}${item.description} ${item.date}`}
                             </Text>
                           </TouchableOpacity>
+                          {/* Ta bort-knapp borttagen, endast long-press popup gäller */}
                         </View>
                       ))
                   ) : null}
@@ -1387,6 +1400,7 @@ const styles = StyleSheet.create({
   filterChipSelected: {
     backgroundColor: '#263238',
   },
-  filterChipText: { color: '#263238', fontSize: 13, fontWeight: '700' },
-  filterChipTextSelected: { color: '#FFFFFF' },
+	filterChipText: { color: '#263238', fontSize: 13, fontWeight: '700' },
+	filterChipTextSelected: { color: '#FFFFFF' },
 });
+

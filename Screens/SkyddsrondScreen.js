@@ -43,6 +43,7 @@ const SkyddsrondScreen = ({ route, navigation }) => {
     const newRond = {
       id: 'skyddsrond-' + Date.now(),
       type: 'Skyddsrond',
+      description: `Skyddsrond V.${week}`,
       date: dateString, // dagens datum
       vecka: week,
       projektnummer: project.id,
