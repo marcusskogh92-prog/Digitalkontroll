@@ -373,11 +373,13 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <Text style={kontrollTextStil}>Skyddsrond</Text>
             </TouchableOpacity>
             {/* Modal för att välja projekt till kontroll */}
-            {/* Expanderbar välj projekt-modal */}
+            {/* Välj projekt-modal med exakt samma struktur och stil som projektlistan */}
             {(() => {
               const [expandedMain, setExpandedMain] = React.useState([]);
               const [expandedSub, setExpandedSub] = React.useState([]);
-              // Helper
+              const [quickAddModal, setQuickAddModal] = React.useState({ visible: false, parentSubId: null });
+              const [quickAddName, setQuickAddName] = React.useState("");
+              const [quickAddNumber, setQuickAddNumber] = React.useState("");
               const isMainExpanded = id => expandedMain.includes(id);
               const isSubExpanded = id => expandedSub.includes(id);
               const toggleMain = id => setExpandedMain(exp => exp.includes(id) ? exp.filter(e => e !== id) : [...exp, id]);
@@ -394,26 +396,228 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     activeOpacity={1}
                     onPress={() => setSelectProjectModal({ visible: false, type: null })}
                   >
-                    <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 340, maxHeight: 520 }}>
+                    <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 360, maxHeight: 540 }}>
                       <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj projekt</Text>
-                      {/* Sökruta */}
-                      <TextInput
-                        value={searchText}
-                        onChangeText={setSearchText}
-                        placeholder="Sök projektnamn eller nummer..."
-                        style={{
-                          borderWidth: 1,
-                          borderColor: '#e0e0e0',
-                          borderRadius: 8,
-                          padding: 10,
-                          fontSize: 15,
-                          marginBottom: 14,
-                          backgroundColor: '#fafafa',
-                          color: '#222',
-                        }}
-                      />
-                      <ScrollView style={{ maxHeight: 340 }}>
-                        {hierarchy
+                      <View style={{ position: 'relative', marginBottom: 14 }}>
+                        <TextInput
+                          value={searchText}
+                          onChangeText={setSearchText}
+                          placeholder="Sök projektnamn eller nummer..."
+                          style={{
+                            borderWidth: 1,
+                            borderColor: '#e0e0e0',
+                            borderRadius: 8,
+                            padding: 10,
+                            fontSize: 15,
+                            backgroundColor: '#fafafa',
+                            color: '#222',
+                            paddingRight: 38 // plats för knappen
+                          }}
+                        />
+                        <TouchableOpacity
+                          style={{ position: 'absolute', right: 8, top: '50%', marginTop: -11, backgroundColor: '#1976D2', borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 1, elevation: 1 }}
+                          onPress={() => setQuickAddModal({ visible: true, parentSubId: null })}
+                        >
+                          <Ionicons name="add" size={12} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                                            {/* Modal för snabbskapa projekt */}
+                                            <Modal
+                                              visible={quickAddModal.visible}
+                                              transparent
+                                              animationType="fade"
+                                              onRequestClose={() => {
+                                                setQuickAddModal({ visible: false, parentSubId: null });
+                                                setQuickAddName("");
+                                                setQuickAddNumber("");
+                                              }}
+                                            >
+                                              <TouchableOpacity
+                                                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+                                                activeOpacity={1}
+                                                onPress={() => {
+                                                  setQuickAddModal({ visible: false, parentSubId: null });
+                                                  setQuickAddName("");
+                                                  setQuickAddNumber("");
+                                                }}
+                                              >
+                                                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                                                  <TouchableOpacity
+                                                    style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, padding: 6 }}
+                                                    onPress={() => {
+                                                      setQuickAddModal({ visible: false, parentSubId: null });
+                                                      setQuickAddName("");
+                                                      setQuickAddNumber("");
+                                                    }}
+                                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                                  >
+                                                    <Ionicons name="close" size={26} color="#222" />
+                                                  </TouchableOpacity>
+                                                  <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+                                                    Skapa nytt projekt
+                                                  </Text>
+                                                  {/* Expanderbar huvudmapp-dropdown */}
+                                                  <View style={{ marginBottom: 8 }}>
+                                                    <TouchableOpacity
+                                                      style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fafafa' }}
+                                                      onPress={() => setQuickAddModal(modal => ({ ...modal, showMainList: !modal.showMainList }))}
+                                                    >
+                                                      <Text style={{ color: '#222', fontWeight: '600', flex: 1 }}>
+                                                        {quickAddModal.parentMainId ? (hierarchy.find(m => m.id === quickAddModal.parentMainId)?.name || 'Välj huvudmapp...') : 'Välj huvudmapp...'}
+                                                      </Text>
+                                                      <Ionicons name={quickAddModal.showMainList ? 'chevron-up' : 'chevron-down'} size={18} color="#222" />
+                                                    </TouchableOpacity>
+                                                    {quickAddModal.showMainList && (
+                                                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fff', marginTop: 2, maxHeight: 120 }}>
+                                                        <ScrollView style={{ maxHeight: 120 }}>
+                                                          {hierarchy.map(main => (
+                                                            <TouchableOpacity
+                                                              key={main.id}
+                                                              style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: quickAddModal.parentMainId === main.id ? '#e3f2fd' : '#fff' }}
+                                                              onPress={() => setQuickAddModal(modal => ({ ...modal, parentMainId: main.id, parentSubId: null, showMainList: false, showSubList: false }))}
+                                                            >
+                                                              <Text style={{ color: '#222', fontWeight: '600' }}>{main.name}</Text>
+                                                            </TouchableOpacity>
+                                                          ))}
+                                                        </ScrollView>
+                                                      </View>
+                                                    )}
+                                                  </View>
+                                                  {/* Expanderbar undermapp-dropdown */}
+                                                  {quickAddModal.parentMainId && (
+                                                    <View style={{ marginBottom: 8 }}>
+                                                      <TouchableOpacity
+                                                        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fafafa' }}
+                                                        onPress={() => setQuickAddModal(modal => ({ ...modal, showSubList: !modal.showSubList }))}
+                                                        disabled={!quickAddModal.parentMainId}
+                                                      >
+                                                        <Text style={{ color: '#222', fontWeight: '600', flex: 1 }}>
+                                                          {quickAddModal.parentSubId ? (hierarchy.find(m => m.id === quickAddModal.parentMainId)?.children.find(s => s.id === quickAddModal.parentSubId)?.name || 'Välj undermapp...') : 'Välj undermapp...'}
+                                                        </Text>
+                                                        <Ionicons name={quickAddModal.showSubList ? 'chevron-up' : 'chevron-down'} size={18} color="#222" />
+                                                      </TouchableOpacity>
+                                                      {quickAddModal.showSubList && (
+                                                        <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fff', marginTop: 2, maxHeight: 120 }}>
+                                                          <ScrollView style={{ maxHeight: 120 }}>
+                                                            {(() => {
+                                                              const main = hierarchy.find(m => m.id === quickAddModal.parentMainId);
+                                                              if (!main) return null;
+                                                              return main.children.map(sub => (
+                                                                <TouchableOpacity
+                                                                  key={sub.id}
+                                                                  style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: quickAddModal.parentSubId === sub.id ? '#e3f2fd' : '#fff' }}
+                                                                  onPress={() => setQuickAddModal(modal => ({ ...modal, parentSubId: sub.id, showSubList: false }))}
+                                                                >
+                                                                  <Text style={{ color: '#222', fontWeight: '600' }}>{sub.name}</Text>
+                                                                </TouchableOpacity>
+                                                              ));
+                                                            })()}
+                                                          </ScrollView>
+                                                        </View>
+                                                      )}
+                                                    </View>
+                                                  )}
+                                                  <TextInput
+                                                    value={quickAddNumber}
+                                                    onChangeText={setQuickAddNumber}
+                                                    placeholder="Projektnummer..."
+                                                    style={{
+                                                      borderWidth: 1,
+                                                      borderColor: quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) ? '#D32F2F' : '#e0e0e0',
+                                                      borderRadius: 8,
+                                                      padding: 12,
+                                                      fontSize: 16,
+                                                      backgroundColor: '#fafafa',
+                                                      color: !isProjectNumberUnique(quickAddNumber) && quickAddNumber.trim() !== '' ? '#D32F2F' : '#222',
+                                                      marginBottom: 10
+                                                    }}
+                                                    autoFocus
+                                                    keyboardType="default"
+                                                  />
+                                                  {quickAddNumber.trim() !== '' && !isProjectNumberUnique(quickAddNumber) && (
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 4 }}>
+                                                      <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
+                                                      <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>
+                                                        Projektnummer används redan.
+                                                      </Text>
+                                                    </View>
+                                                  )}
+                                                  <TextInput
+                                                    value={quickAddName}
+                                                    onChangeText={setQuickAddName}
+                                                    placeholder="Projektnamn..."
+                                                    placeholderTextColor="#888"
+                                                    style={{
+                                                      borderWidth: 1,
+                                                      borderColor: quickAddName.trim() === '' ? '#D32F2F' : '#e0e0e0',
+                                                      borderRadius: 8,
+                                                      padding: 12,
+                                                      fontSize: 16,
+                                                      marginBottom: 12,
+                                                      backgroundColor: '#fafafa',
+                                                      color: '#222'
+                                                    }}
+                                                    keyboardType="default"
+                                                  />
+                                                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+                                                    <TouchableOpacity
+                                                      style={{
+                                                        backgroundColor: '#1976D2',
+                                                        borderRadius: 8,
+                                                        paddingVertical: 12,
+                                                        alignItems: 'center',
+                                                        flex: 1,
+                                                        marginRight: 8,
+                                                        opacity: (quickAddName.trim() === '' || quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) || !quickAddModal.parentMainId || !quickAddModal.parentSubId) ? 0.5 : 1
+                                                      }}
+                                                      disabled={quickAddName.trim() === '' || quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) || !quickAddModal.parentMainId || !quickAddModal.parentSubId}
+                                                      onPress={() => {
+                                                        // Skapa projekt i vald undermapp
+                                                        setHierarchy(prev => prev.map(main => ({
+                                                          ...main,
+                                                          children: main.children.map(sub =>
+                                                            sub.id === quickAddModal.parentSubId
+                                                              ? {
+                                                                  ...sub,
+                                                                  children: [
+                                                                    ...(sub.children || []),
+                                                                    {
+                                                                      id: quickAddNumber.trim(),
+                                                                      name: quickAddName.trim(),
+                                                                      type: 'project',
+                                                                      status: 'ongoing'
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              : sub
+                                                          )
+                                                        })));
+                                                        setQuickAddModal({ visible: false, parentSubId: null, parentMainId: null });
+                                                        setQuickAddName("");
+                                                        setQuickAddNumber("");
+                                                      }}
+                                                    >
+                                                      <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+                                                        Skapa
+                                                      </Text>
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity
+                                                      style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
+                                                      onPress={() => {
+                                                        setQuickAddModal({ visible: false, parentSubId: null, parentMainId: null });
+                                                        setQuickAddName("");
+                                                        setQuickAddNumber("");
+                                                      }}
+                                                    >
+                                                      <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                                                    </TouchableOpacity>
+                                                  </View>
+                                                </View>
+                                              </TouchableOpacity>
+                                            </Modal>
+                      <ScrollView style={{ maxHeight: 370 }}>
+                        {[...hierarchy]
+                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                           .filter(main =>
                             main.name.toLowerCase().includes(searchText.toLowerCase()) ||
                             main.children.some(sub =>
@@ -427,14 +631,18 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                               )
                             )
                           )
-                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                           .map(main => (
-                            <View key={main.id} style={{ marginBottom: 8 }}>
-                              <TouchableOpacity onPress={() => toggleMain(main.id)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}>
-                                <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={18} color="#1976D2" style={{ marginRight: 6 }} />
-                                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#1976D2' }}>{main.name}</Text>
+                            <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 4, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
+                              <TouchableOpacity
+                                style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                                onPress={() => toggleMain(main.id)}
+                                activeOpacity={0.7}
+                              >
+                                <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
+                                <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                               </TouchableOpacity>
-                              {isMainExpanded(main.id) && main.children
+                              {isMainExpanded(main.id) && main.children && [...main.children]
+                                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                                 .filter(sub =>
                                   sub.name.toLowerCase().includes(searchText.toLowerCase()) ||
                                   (sub.children || []).some(child =>
@@ -445,44 +653,56 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                     )
                                   )
                                 )
-                                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                .map(sub => (
-                                  <View key={sub.id} style={{ marginLeft: 16, marginBottom: 2 }}>
-                                    <TouchableOpacity onPress={() => toggleSub(sub.id)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}>
-                                      <Ionicons name={isSubExpanded(sub.id) ? 'chevron-down' : 'chevron-forward'} size={16} color="#388E3C" style={{ marginRight: 5 }} />
-                                      <Text style={{ fontWeight: '600', fontSize: 15, color: '#388E3C' }}>{sub.name}</Text>
-                                    </TouchableOpacity>
-                                    {isSubExpanded(sub.id) && (sub.children || [])
-                                      .filter(child =>
-                                        child.type === 'project' &&
-                                        (
-                                          child.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                                          child.id.toLowerCase().includes(searchText.toLowerCase())
+                                .map(sub => {
+                                  const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
+                                  return (
+                                    <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 2, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
+                                      <TouchableOpacity
+                                        style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                                        onPress={() => toggleSub(sub.id)}
+                                        activeOpacity={0.7}
+                                      >
+                                        <Ionicons name={isSubExpanded(sub.id) ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+                                        <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
+                                      </TouchableOpacity>
+                                      {isSubExpanded(sub.id) && (
+                                        projects.length === 0 ? (
+                                          <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
+                                            Inga projekt skapade
+                                          </Text>
+                                        ) : (
+                                          projects
+                                            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                                            .filter(proj =>
+                                              proj.name.toLowerCase().includes(searchText.toLowerCase()) ||
+                                              proj.id.toLowerCase().includes(searchText.toLowerCase())
+                                            )
+                                            .map(proj => (
+                                              <TouchableOpacity
+                                                key={proj.id}
+                                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
+                                                onPress={() => {
+                                                  setSelectProjectModal({ visible: false, type: null });
+                                                  if (selectProjectModal.type === 'Skyddsrond') {
+                                                    navigation.navigate('SkyddsrondScreen', {
+                                                      projectId: proj.id,
+                                                      projectName: proj.name
+                                                    });
+                                                  } else {
+                                                    // Lägg till navigation för övriga kontrolltyper här
+                                                  }
+                                                }}
+                                              >
+                                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
+                                                <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
+                                                <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
+                                              </TouchableOpacity>
+                                            ))
                                         )
-                                      )
-                                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                      .map(proj => (
-                                        <TouchableOpacity
-                                          key={proj.id}
-                                          style={{ padding: 8, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}
-                                          onPress={() => {
-                                            setSelectProjectModal({ visible: false, type: null });
-                                            if (selectProjectModal.type === 'Skyddsrond') {
-                                              navigation.navigate('SkyddsrondScreen', {
-                                                projectId: proj.id,
-                                                projectName: proj.name
-                                              });
-                                            } else {
-                                              // Lägg till navigation för övriga kontrolltyper här
-                                            }
-                                          }}
-                                        >
-                                          <Ionicons name="folder-open" size={17} color="#1976D2" style={{ marginRight: 7 }} />
-                                          <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.id} - {proj.name}</Text>
-                                        </TouchableOpacity>
-                                      ))}
-                                  </View>
-                                ))}
+                                      )}
+                                    </View>
+                                  );
+                                })}
                             </View>
                           ))}
                       </ScrollView>
