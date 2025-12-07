@@ -428,7 +428,20 @@ export default function ProjectDetails({ route }) {
       contentContainerStyle={{ paddingBottom: 240 }}
     >
       {/* Titel */}
-      <Text style={styles.title}>{project.id} - {project.name}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+        <View style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          borderWidth: editableProject.status === 'done' ? 2 : 1,
+          borderColor: '#222',
+          backgroundColor: editableProject.status === 'done' ? '#222' : '#4CAF50',
+          marginRight: 10,
+          alignSelf: 'center',
+          marginTop: -4,
+        }} />
+        <Text style={styles.title}>{project.id} - {project.name}</Text>
+      </View>
       <View style={{ height: 1, backgroundColor: '#263238', marginVertical: 8, marginLeft: 0 }} />
 
       {/* Info under titeln i lodrät linje */}
@@ -436,7 +449,7 @@ export default function ProjectDetails({ route }) {
         {[ 
           { label: 'Skapad', value: editableProject.createdAt },
           { label: 'Av', value: editableProject.createdBy },
-          { label: 'Status', value: editableProject.status === 'done' ? 'Avslutat' : 'Pågående' },
+          { label: 'Status', value: editableProject.status === 'done' ? 'Avslutat' : 'Pågående', status: true },
           { label: 'Kund', value: editableProject.client || 'Ej angivet' },
           { label: 'Adress', value: editableProject.address || 'Ej angivet' },
           { label: 'Fastighetsbeteckning', value: editableProject.propertyId || 'Ej angivet' }
@@ -446,11 +459,29 @@ export default function ProjectDetails({ route }) {
             <React.Fragment key={row.label}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 0 }}>
                 <Text style={{ fontSize: 14, color: '#666', width: 170, textAlign: 'left', marginRight: 0 }}>{row.label}:</Text>
-                <View style={{ flex: 1, marginLeft: 24 }}>
-                  <Text style={{ fontSize: 14, color: isEmpty ? '#D32F2F' : '#222', fontStyle: isEmpty ? 'italic' : 'normal' }}>
-                    {isEmpty ? 'Ej angivet' : row.value}
-                  </Text>
-                </View>
+                {/* Status-rad: text lodrät med övriga, cirkel till höger */}
+                {row.status ? (
+                  <View style={{ flex: 1, marginLeft: 24, flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 14, color: isEmpty ? '#D32F2F' : '#222', fontStyle: isEmpty ? 'italic' : 'normal', lineHeight: 20 }}>
+                      {isEmpty ? 'Ej angivet' : row.value}
+                    </Text>
+                    <View style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 7,
+                      borderWidth: editableProject.status === 'done' ? 2 : 1,
+                      borderColor: '#222',
+                      backgroundColor: editableProject.status === 'done' ? '#222' : '#4CAF50',
+                      marginLeft: 8,
+                    }} />
+                  </View>
+                ) : (
+                  <View style={{ flex: 1, marginLeft: 24 }}>
+                    <Text style={{ fontSize: 14, color: isEmpty ? '#D32F2F' : '#222', fontStyle: isEmpty ? 'italic' : 'normal', lineHeight: 20 }}>
+                      {isEmpty ? 'Ej angivet' : row.value}
+                    </Text>
+                  </View>
+                )}
               </View>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6, marginLeft: 0 }} />
             </React.Fragment>
@@ -460,58 +491,222 @@ export default function ProjectDetails({ route }) {
 
       {/* Redigera projektinfo */}
       <View style={{ marginTop: 2 }}>
-        {!editingInfo ? (
-          <>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 }}>
-              <TouchableOpacity style={[styles.editButton, { marginTop: 0 }]} onPress={() => setEditingInfo(true)}>
-                <Text style={styles.editButtonText}>Ändra</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 }}>
+          <TouchableOpacity style={[styles.editButton, { marginTop: 0 }]} onPress={() => setEditingInfo(true)}>
+            <Text style={styles.editButtonText}>Ändra</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 8, marginLeft: 0 }} />
+        <Modal
+          visible={editingInfo}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setEditingInfo(false)}
+        >
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+            activeOpacity={1}
+            onPress={() => setEditingInfo(false)}
+          >
+            <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, position: 'relative', alignItems: 'center' }}>
+              {/* Stäng (X) knapp */}
+              <TouchableOpacity
+                style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+                onPress={() => setEditingInfo(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={26} color="#222" />
               </TouchableOpacity>
+              <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6, letterSpacing: 0.2 }}>
+                Ändra projektinfo
+              </Text>
+              {/* Projektnummer */}
+              <Text style={{
+                fontWeight: '600',
+                marginTop: 2,
+                marginBottom: 2,
+                textAlign: 'left',
+                alignSelf: 'flex-start',
+                color: !editableProject.id ? '#D32F2F' : '#222'
+              }}>Projektnummer</Text>
+              <TextInput
+                style={[styles.input, { marginBottom: 8, width: '100%', alignSelf: 'stretch', color: !editableProject.id ? '#D32F2F' : '#222' }]}
+                placeholder="Projektnummer"
+                value={editableProject.id}
+                onChangeText={(t) => setEditableProject({ ...editableProject, id: t })}
+              />
+
+              {/* Projektnamn */}
+              <Text style={{
+                fontWeight: '600',
+                marginTop: 2,
+                marginBottom: 2,
+                textAlign: 'left',
+                alignSelf: 'flex-start',
+                color: !editableProject.name ? '#D32F2F' : '#222'
+              }}>Projektnamn</Text>
+              <TextInput
+                style={[styles.input, { marginBottom: 8, width: '100%', alignSelf: 'stretch', color: !editableProject.name ? '#D32F2F' : '#222' }]}
+                placeholder="Projektnamn"
+                value={editableProject.name}
+                onChangeText={(t) => setEditableProject({ ...editableProject, name: t })}
+              />
+
+              {/* Status */}
+              <Text
+                style={{
+                  fontWeight: '600',
+                  marginTop: 2,
+                  marginBottom: 2,
+                  textAlign: 'left',
+                  alignSelf: 'flex-start'
+                }}
+              >Status</Text>
+              <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                {/* Pågående först */}
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#fff',
+                    borderColor: '#222',
+                    borderWidth: 1.5,
+                    borderRadius: 8,
+                    paddingVertical: 8,
+                    marginRight: 6,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={() => setEditableProject({ ...editableProject, status: 'ongoing' })}
+                >
+                  {/* Grön cirkel om aktiv */}
+                  <View style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    borderWidth: 2,
+                    borderColor: '#222',
+                    backgroundColor: editableProject.status !== 'done' ? '#4CAF50' : '#fff',
+                    marginRight: 8,
+                  }} />
+                  <Text style={{ color: '#222', textAlign: 'center', fontWeight: '600' }}>Pågående</Text>
+                </TouchableOpacity>
+                {/* Avslutat */}
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#fff',
+                    borderColor: '#222',
+                    borderWidth: 1.5,
+                    borderRadius: 8,
+                    paddingVertical: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={() => setEditableProject({ ...editableProject, status: 'done' })}
+                >
+                  {/* Svart cirkel om aktiv */}
+                  <View style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    borderWidth: 2,
+                    borderColor: '#222',
+                    backgroundColor: editableProject.status === 'done' ? '#222' : '#fff',
+                    marginRight: 8,
+                  }} />
+                  <Text style={{ color: '#222', textAlign: 'center', fontWeight: '600' }}>Avslutat</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Kund */}
+              <Text style={{
+                fontWeight: '600',
+                marginTop: 2,
+                marginBottom: 2,
+                textAlign: 'left',
+                alignSelf: 'flex-start',
+                color: !editableProject.client ? '#D32F2F' : '#222'
+              }}>Kund/Beställare</Text>
+              <TextInput
+                style={[styles.input, { marginBottom: 8, width: '100%', alignSelf: 'stretch', color: !editableProject.client ? '#D32F2F' : '#222' }]}
+                placeholder="Kund/Beställare"
+                value={editableProject.client}
+                onChangeText={(t) => setEditableProject({ ...editableProject, client: t })}
+              />
+
+              {/* Adress */}
+              <Text style={{
+                fontWeight: '600',
+                marginTop: 2,
+                marginBottom: 2,
+                textAlign: 'left',
+                alignSelf: 'flex-start',
+                color: !editableProject.address ? '#D32F2F' : '#222'
+              }}>Adress</Text>
+              <TextInput
+                style={[styles.input, { marginBottom: 8, width: '100%', alignSelf: 'stretch', color: !editableProject.address ? '#D32F2F' : '#222' }]}
+                placeholder="Adress"
+                placeholderTextColor="#888"
+                value={editableProject.address || ''}
+                onChangeText={(t) => setEditableProject({ ...editableProject, address: t })}
+              />
+
+              {/* Fastighetsbeteckning */}
+              <Text style={{ fontWeight: '600', marginTop: 2, marginBottom: 2, textAlign: 'left', alignSelf: 'flex-start' }}>Fastighetsbeteckning</Text>
+              <Text style={{ fontStyle: 'italic', color: '#888', fontSize: 13, marginBottom: 2, alignSelf: 'flex-start' }}>(valfritt)</Text>
+              <TextInput style={[styles.input, { marginBottom: 8, width: '100%', alignSelf: 'stretch' }]} placeholder="Fastighetsbeteckning" placeholderTextColor="#888" value={editableProject.propertyId || ''} onChangeText={(t) => setEditableProject({ ...editableProject, propertyId: t })} />
+
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#1976D2',
+                    borderRadius: 10,
+                    paddingVertical: 10,
+                    paddingHorizontal: 28,
+                    alignItems: 'center',
+                    marginRight: 8,
+                    marginTop: 8,
+                  }}
+                  onPress={async () => {
+                    // Persist editable project info for this project
+                    try {
+                      const { info } = getKeys();
+                      await AsyncStorage.setItem(info, JSON.stringify(editableProject));
+                    } catch (e) {}
+                    setEditingInfo(false);
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>Spara</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#e0e0e0',
+                    borderRadius: 10,
+                    paddingVertical: 10,
+                    paddingHorizontal: 28,
+                    alignItems: 'center',
+                    marginTop: 8,
+                  }}
+                  onPress={() => {
+                    // Revert to original from route
+                    setEditableProject({
+                      id: project.id,
+                      name: project.name,
+                      client: project.client || '',
+                      createdAt: project.createdAt,
+                      createdBy: initialCreator,
+                    });
+                    setEditingInfo(false);
+                  }}
+                >
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 8, marginLeft: 0 }} />
-          </>
-        ) : (
-          <View style={styles.editForm}>
-            <TextInput style={styles.input} placeholder="Projektnummer" value={editableProject.id} onChangeText={(t) => setEditableProject({ ...editableProject, id: t })} />
-            <Text style={styles.helperLabel}>Projektnummer</Text>
-            <TextInput style={styles.input} placeholder="Projektnamn" value={editableProject.name} onChangeText={(t) => setEditableProject({ ...editableProject, name: t })} />
-            <Text style={styles.helperLabel}>Projektnamn</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Skapad av"
-              placeholderTextColor="#666"
-              value={editableProject.createdBy}
-              onChangeText={(t) => setEditableProject({ ...editableProject, createdBy: t })}
-            />
-            <Text style={styles.helperLabel}>Skapad av</Text>
-            <TextInput style={styles.input} placeholder="Kund/Beställare" value={editableProject.client} onChangeText={(t) => setEditableProject({ ...editableProject, client: t })} />
-            <Text style={styles.helperLabel}>Kund/Beställare</Text>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity style={[styles.saveButton, styles.inlineButton]} onPress={async () => {
-                // Persist editable project info for this project
-                try {
-                  const { info } = getKeys();
-                  await AsyncStorage.setItem(info, JSON.stringify(editableProject));
-                } catch (e) {}
-                setEditingInfo(false);
-              }}>
-                <Text style={styles.saveButtonText}>Spara</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.cancelButton, styles.inlineButton, { marginLeft: 8 }]} onPress={() => {
-                // Revert to original from route
-                setEditableProject({
-                  id: project.id,
-                  name: project.name,
-                  client: project.client || '',
-                  createdAt: project.createdAt,
-                  createdBy: initialCreator,
-                });
-                setEditingInfo(false);
-              }}>
-                <Text style={styles.cancelText}>Avbryt</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+          </TouchableOpacity>
+        </Modal>
       </View>
 
 
@@ -595,8 +790,12 @@ export default function ProjectDetails({ route }) {
                     style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
                     onPress={() => {
                       setShowControlTypeModal(false);
-                      setShowControlPicker(true);
-                      setNewControl({ ...newControl, type });
+                      if (type === 'Skyddsrond') {
+                        navigation.navigate('SkyddsrondScreen', { project });
+                      } else {
+                        setShowControlPicker(true);
+                        setNewControl({ ...newControl, type });
+                      }
                     }}
                   >
                     <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
@@ -692,7 +891,7 @@ export default function ProjectDetails({ route }) {
       {/* Välj kontrolltyp */}
       {showControlPicker && (
         <View style={styles.picker}>
-          <Text style={styles.pickerTitle}>Välj kontroll:</Text>
+          <Text style={styles.pickerTitle}>Välj kontrolltyp</Text>
           {controlTypes.map((type) => (
             <TouchableOpacity
               key={type}
@@ -700,9 +899,14 @@ export default function ProjectDetails({ route }) {
               onPress={() => {
                 try { Haptics.selectionAsync(); } catch {}
                 const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-                setNewControl({ ...newControl, type, date: today });
-                setShowControlPicker(false);
-                setShowForm(true);
+                if (type === 'Skyddsrond') {
+                  setShowControlPicker(false);
+                  navigation.navigate('SkyddsrondScreen', { project });
+                } else {
+                  setNewControl({ ...newControl, type, date: today });
+                  setShowControlPicker(false);
+                  setShowForm(true);
+                }
               }}
             >
               <Text style={styles.pickerText}>{type}</Text>

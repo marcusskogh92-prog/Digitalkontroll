@@ -156,6 +156,14 @@ export default function HomeScreen({ route }) {
                 ) {
                   return;
                 }
+                const newProj = {
+                  id: newProjectNumber.trim(),
+                  name: newProjectName.trim(),
+                  type: 'project',
+                  status: 'ongoing',
+                  createdAt: new Date().toISOString().split('T')[0],
+                  createdBy: (auth?.currentUser?.email ? getFirstName(auth.currentUser.email) : 'Okänd')
+                };
                 setHierarchy(prev => prev.map(main => ({
                   ...main,
                   children: main.children.map(sub =>
@@ -164,12 +172,7 @@ export default function HomeScreen({ route }) {
                           ...sub,
                           children: [
                             ...(sub.children || []),
-                            {
-                              id: newProjectNumber.trim(),
-                              name: newProjectName.trim(),
-                              type: 'project',
-                              status: 'ongoing'
-                            }
+                            newProj
                           ]
                         }
                       : sub
@@ -178,6 +181,9 @@ export default function HomeScreen({ route }) {
                 setNewProjectModal({ visible: false, parentSubId: null });
                 setNewProjectName("");
                 setNewProjectNumber("");
+                setTimeout(() => {
+                  navigation.navigate('ProjectDetails', { project: newProj });
+                }, 300);
               }}
             >
               <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
@@ -318,6 +324,87 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
 
   return (
     <>
+      {/* Sök-popup/modal */}
+      <Modal
+        visible={searchModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSearchModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setSearchModalVisible(false)}
+        >
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, position: 'relative' }}>
+            {/* Stäng (X) knapp */}
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+              onPress={() => setSearchModalVisible(false)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="close" size={26} color="#222" />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 14, color: '#222', textAlign: 'center', marginTop: 6 }}>
+              Sök projekt
+            </Text>
+            <TextInput
+              value={searchText}
+              onChangeText={setSearchText}
+              placeholder="Skriv projektnummer..."
+              style={{
+                borderWidth: 1,
+                borderColor: '#e0e0e0',
+                borderRadius: 8,
+                padding: 10,
+                fontSize: 16,
+                backgroundColor: '#fafafa',
+                color: '#222',
+                marginBottom: 12
+              }}
+              autoFocus
+              keyboardType="default"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
+              {hierarchy.flatMap(main =>
+                main.children.flatMap(sub =>
+                  (sub.children || [])
+                    .filter(child => child.type === 'project' &&
+                      searchText.trim() !== '' &&
+                      child.id.toLowerCase().startsWith(searchText.toLowerCase())
+                    )
+                    .map(proj => (
+                      <TouchableOpacity
+                        key={proj.id}
+                        style={{ paddingVertical: 8, borderBottomWidth: 1, borderColor: '#eee' }}
+                        onPress={() => {
+                          setSearchModalVisible(false);
+                          navigation.navigate('ProjectDetails', {
+                            project: {
+                              id: proj.id,
+                              name: proj.name,
+                              ansvarig: proj.ansvarig || '',
+                              adress: proj.adress || '',
+                              fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                              client: proj.client || ''
+                            }
+                          });
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{proj.id} - {proj.name}</Text>
+                      </TouchableOpacity>
+                    ))
+                )
+              )}
+              {searchText.trim() !== '' && hierarchy.flatMap(main => main.children.flatMap(sub => (sub.children || []).filter(child => child.type === 'project' && child.id.toLowerCase().startsWith(searchText.toLowerCase())))).length === 0 && (
+                <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 12 }}>Inga projekt hittades.</Text>
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
       {newProjectModalComponent}
       <ImageBackground
         source={require('../assets/images/inlogg.app.png')}
@@ -806,7 +893,17 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                   }
                                                 }}
                                               >
-                                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
+                                                <View
+                                                  style={{
+                                                    width: 16,
+                                                    height: 16,
+                                                    borderRadius: 8,
+                                                    backgroundColor: proj.status === 'completed' ? '#222' : '#4CAF50',
+                                                    marginRight: 8,
+                                                    borderWidth: proj.status === 'completed' ? 2 : 1,
+                                                    borderColor: '#222',
+                                                  }}
+                                                />
                                                 <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
                                                 <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
                                               </TouchableOpacity>
