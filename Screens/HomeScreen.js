@@ -106,9 +106,12 @@ export default function HomeScreen({ route }) {
               keyboardType="default"
             />
             {newProjectNumber.trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
-              <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold', marginTop: 8, marginLeft: 2, marginBottom: 4 }}>
-                Projektnummer används redan. Välj ett annat nummer.
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 4 }}>
+                <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>
+                  Projektnummer används redan. Välj ett annat nummer.
+                </Text>
+              </View>
             )}
           </View>
           <TextInput
@@ -261,19 +264,13 @@ export default function HomeScreen({ route }) {
           id: '1-1',
           name: '2025',
           expanded: false,
-          children: [
-            { id: '1-1-1', name: '10001 - Skola A', type: 'project', status: 'ongoing' },
-            { id: '1-1-2', name: '10002 - Kontor B', type: 'project', status: 'ongoing' },
-            { id: '1-1-3', name: '10003 - Avslutat Projekt', type: 'project', status: 'completed' },
-          ],
+          children: [] // Inga projekt
         },
         {
           id: '1-2',
           name: 'Anna Projektledare',
           expanded: false,
-          children: [
-            { id: '1-2-1', name: '10003 - Villa C', type: 'project' },
-          ],
+          children: [] // Inga projekt
         },
       ],
     },
@@ -286,9 +283,7 @@ export default function HomeScreen({ route }) {
           id: '2-1',
           name: 'Andersson AB',
           expanded: false,
-          children: [
-            { id: '2-1-1', name: '20001 - Servicejobb', type: 'project' },
-          ],
+          children: [] // Inga projekt
         },
       ],
     },
@@ -709,7 +704,10 @@ export default function HomeScreen({ route }) {
                                       .map((proj) => (
                                         <View key={proj.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}>
                                           <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                          <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 8 }}>{proj.name}</Text>
+                                          {/* Projektnummer */}
+                                          <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
+                                          {/* Projektnamn */}
+                                          <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
                                         </View>
                                       ))
                                   )}
