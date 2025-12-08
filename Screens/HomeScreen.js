@@ -473,12 +473,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           onChangeText={setSearchText}
                           placeholder="Sök projektnamn eller nummer..."
                           style={{
-                            borderWidth: 1,
-                            borderColor: '#e0e0e0',
-                            borderRadius: 8,
+                            borderWidth: 2,
+                            borderColor: '#222',
+                            borderRadius: 16,
                             padding: 10,
-                            fontSize: 15,
-                            backgroundColor: '#fafafa',
+                            fontSize: 16,
+                            backgroundColor: '#fff',
                             color: '#222',
                             paddingRight: 38 // plats för knappen
                           }}
@@ -508,6 +508,17 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                         onPress={() => {
                                           setSelectProjectModal({ visible: false, type: null });
                                           if (selectProjectModal.type === 'Skyddsrond') {
+                                            navigation.navigate('SkyddsrondScreen', {
+                                              project: proj
+                                            });
+                                          } else if (['Arbetsberedning','Mottagningskontroll','Egenkontroll','Fuktmätning','Riskbedömning'].includes(selectProjectModal.type)) {
+                                            navigation.navigate('ControlForm', {
+                                              project: proj,
+                                              initial: { type: selectProjectModal.type },
+                                              performedBy: null,
+                                              companyId: proj?.companyId || null,
+                                            });
+                                          } else if (selectProjectModal.type === 'Skyddsrond') {
                                             navigation.navigate('SkyddsrondScreen', {
                                               project: proj
                                             });

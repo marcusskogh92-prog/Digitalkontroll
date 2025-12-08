@@ -514,11 +514,7 @@ export default function ProjectDetails({ route, navigation }) {
         animationType="fade"
         onRequestClose={() => setShowControlTypeModal(false)}
       >
-        <TouchableOpacity
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
-          activeOpacity={1}
-          onPress={() => setShowControlTypeModal(false)}
-        >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
             <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
               Välj kontrolltyp
@@ -536,15 +532,32 @@ export default function ProjectDetails({ route, navigation }) {
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
                 onPress={() => {
                   setShowControlTypeModal(false);
-                  // TODO: Lägg till logik för att skapa kontroll av vald typ
+                  if (['Mottagningskontroll','Arbetsberedning','Egenkontroll','Fuktmätning','Riskbedömning'].includes(type)) {
+                    navigation.navigate('ControlForm', {
+                      project,
+                      initial: { type },
+                      performedBy: null,
+                      companyId: project?.companyId || null,
+                    });
+                  } else if (type === 'Skyddsrond') {
+                    navigation.navigate('SkyddsrondScreen', {
+                      project
+                    });
+                  }
                 }}
               >
                 <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
                 <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{type}</Text>
               </TouchableOpacity>
             ))}
+                      <TouchableOpacity
+                        style={{ marginTop: 8, alignSelf: 'center' }}
+                        onPress={() => setShowControlTypeModal(false)}
+                      >
+                        <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+                      </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
               {/* Modal: Bekräfta radering om inga kontroller */}
