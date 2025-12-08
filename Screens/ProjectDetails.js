@@ -54,6 +54,7 @@ const styles = StyleSheet.create({
 });
 
 export default function ProjectDetails({ route, navigation }) {
+              const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
           // Sätt navigationstitel och bild i headern
@@ -436,7 +437,7 @@ export default function ProjectDetails({ route, navigation }) {
               overflow: 'hidden',
             }}
             activeOpacity={0.85}
-            onPress={() => setShowControlPicker(true)}
+            onPress={() => setShowControlTypeModal(true)}
           >
             <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
             <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
@@ -505,6 +506,46 @@ export default function ProjectDetails({ route, navigation }) {
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
+
+      {/* Modal för val av kontrolltyp */}
+      <Modal
+        visible={showControlTypeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowControlTypeModal(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1}
+          onPress={() => setShowControlTypeModal(false)}
+        >
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+              Välj kontrolltyp
+            </Text>
+            {[
+              { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+              { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+              { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+              { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+              { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+              { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+            ].sort((a, b) => a.type.localeCompare(b.type)).map(({ type, icon, color }) => (
+              <TouchableOpacity
+                key={type}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
+                onPress={() => {
+                  setShowControlTypeModal(false);
+                  // TODO: Lägg till logik för att skapa kontroll av vald typ
+                }}
+              >
+                <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
+                <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{type}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
               {/* Modal: Bekräfta radering om inga kontroller */}
               <Modal visible={showDeleteModal} transparent animationType="fade" onRequestClose={() => setShowDeleteModal(false)}>

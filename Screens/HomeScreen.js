@@ -77,135 +77,11 @@ export default function HomeScreen({ route, navigation }) {
         resetProjectFields();
       }}
     >
-      <TouchableOpacity
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
-        activeOpacity={1}
-        onPress={() => {
-          setNewProjectModal({ visible: false, parentSubId: null });
-          resetProjectFields();
-        }}
-      >
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
         <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-          <TouchableOpacity
-            style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, padding: 6 }}
-            onPress={() => {
-              setNewProjectModal({ visible: false, parentSubId: null });
-              resetProjectFields();
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="close" size={26} color="#222" />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
-            Skapa nytt projekt
-          </Text>
-          <View style={{ marginBottom: 4 }}>
-            <TextInput
-              value={newProjectNumber}
-              onChangeText={setNewProjectNumber}
-              placeholder="Projektnummer..."
-              style={{
-                borderWidth: 1,
-                borderColor: newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber) ? '#D32F2F' : '#e0e0e0',
-                borderRadius: 8,
-                padding: 12,
-                fontSize: 16,
-                backgroundColor: '#fafafa',
-                color: !isProjectNumberUnique(newProjectNumber) && newProjectNumber.trim() !== '' ? '#D32F2F' : '#222',
-              }}
-              autoFocus
-              keyboardType="default"
-            />
-            {newProjectNumber.trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 4 }}>
-                <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
-                <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>
-                  Projektnummer används redan. Välj ett annat nummer.
-                </Text>
-              </View>
-            )}
-          </View>
-          <TextInput
-            value={newProjectName}
-            onChangeText={setNewProjectName}
-            placeholder="Projektnamn..."
-            placeholderTextColor="#888"
-            style={{
-              borderWidth: 1,
-              borderColor: newProjectName.trim() === '' ? '#D32F2F' : '#e0e0e0',
-              borderRadius: 8,
-              padding: 12,
-              fontSize: 16,
-              marginBottom: 12,
-              backgroundColor: '#fafafa',
-              color: '#222'
-            }}
-            keyboardType="default"
-          />
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#1976D2',
-                borderRadius: 8,
-                paddingVertical: 12,
-                alignItems: 'center',
-                flex: 1,
-                marginRight: 8,
-                opacity: (newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)) ? 0.5 : 1
-              }}
-              disabled={newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)}
-              onPress={() => {
-                // Extra skydd: kontrollera alltid innan skapande
-                if (
-                  newProjectName.trim() === '' ||
-                  newProjectNumber.trim() === '' ||
-                  !isProjectNumberUnique(newProjectNumber)
-                ) {
-                  return;
-                }
-                const newProj = {
-                  id: newProjectNumber.trim(),
-                  name: newProjectName.trim(),
-                  type: 'project',
-                  status: 'ongoing',
-                  createdAt: new Date().toLocaleDateString('sv-SE'),
-                  createdBy: (auth?.currentUser?.email ? getFirstName(auth.currentUser.email) : 'Okänd')
-                };
-                setHierarchy(prev => prev.map(main => ({
-                  ...main,
-                  children: main.children.map(sub =>
-                    sub.id === newProjectModal.parentSubId
-                      ? {
-                          ...sub,
-                          children: [
-                            ...(sub.children || []),
-                            newProj
-                          ]
-                        }
-                      : sub
-                  )
-                })));
-                setNewProjectModal({ visible: false, parentSubId: null });
-                setNewProjectName("");
-                setNewProjectNumber("");
-                setTimeout(() => {
-                  navigation.navigate('ProjectDetails', { project: newProj });
-                }, 300);
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
-                Skapa
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
-              onPress={() => setNewProjectModal({ visible: false, parentSubId: null })}
-            >
-              <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
-            </TouchableOpacity>
-          </View>
+          {/* ...existing content for new project modal... */}
         </View>
-      </TouchableOpacity>
+      </View>
     </Modal>
   );
     // Ref for main folder long press timers
@@ -385,12 +261,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               onChangeText={setSearchText}
               placeholder="Skriv projektnummer..."
               style={{
-                borderWidth: 1,
-                borderColor: '#e0e0e0',
-                borderRadius: 8,
+                borderWidth: 2,
+                borderColor: '#222',
+                borderRadius: 16,
                 padding: 10,
                 fontSize: 16,
-                backgroundColor: '#fafafa',
+                backgroundColor: '#fff',
                 color: '#222',
                 marginBottom: 12
               }}
@@ -520,11 +396,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               animationType="fade"
               onRequestClose={() => setShowControlTypeModal(false)}
             >
-              <TouchableOpacity
-                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
-                activeOpacity={1}
-                onPress={() => setShowControlTypeModal(false)}
-              >
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
                 <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
                   <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
                     Välj kontrolltyp
@@ -556,7 +428,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
                   </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+              </View>
             </Modal>
             {/* Modal för att välja projekt till kontroll */}
             {/* Välj projekt-modal med exakt samma struktur och stil som projektlistan */}
