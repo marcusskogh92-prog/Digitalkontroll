@@ -54,6 +54,8 @@ const styles = StyleSheet.create({
 });
 
 export default function ProjectDetails({ route, navigation }) {
+            const [showDeleteModal, setShowDeleteModal] = useState(false);
+            const [showDeleteWarning, setShowDeleteWarning] = useState(false);
           // Sätt navigationstitel och bild i headern
           React.useEffect(() => {
     navigation.setOptions({
@@ -371,7 +373,27 @@ export default function ProjectDetails({ route, navigation }) {
               </View>
             </ScrollView>
             <TouchableOpacity
-              style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 8, marginBottom: 2, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4, elevation: 2 }}
+              style={{
+                backgroundColor: '#f5f5f5',
+                borderRadius: 10,
+                borderWidth: 2,
+                borderColor: '#222',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingVertical: 10,
+                paddingHorizontal: 18,
+                shadowColor: '#222',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.08,
+                shadowRadius: 4,
+                elevation: 1,
+                minHeight: 36,
+                marginTop: 8,
+                marginBottom: 2,
+                overflow: 'hidden',
+              }}
+              activeOpacity={0.85}
               onPress={() => {
                 if (typeof navigation?.setParams === 'function') {
                   navigation.setParams({ project: editableProject });
@@ -382,28 +404,140 @@ export default function ProjectDetails({ route, navigation }) {
                 setEditingInfo(false);
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17, letterSpacing: 0.5 }}>Spara</Text>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
+              <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5 }}>Spara</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
       {/* Knappar för skapa kontroll och skriv ut */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <TouchableOpacity
-          style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 18 }}
-          onPress={() => setShowControlPicker(true)}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>+ Ny kontroll</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 2, borderColor: '#222', paddingVertical: 10, paddingHorizontal: 18 }}
-          onPress={() => setShowSummary(true)}
-        >
-          <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Skriv ut</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#f5f5f5',
+              borderRadius: 10,
+              borderWidth: 2,
+              borderColor: '#222',
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              shadowColor: '#222',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.08,
+              shadowRadius: 4,
+              elevation: 1,
+              minHeight: 36,
+              maxWidth: 180,
+              width: 'auto',
+              marginBottom: 8,
+              marginRight: 40,
+              overflow: 'hidden',
+            }}
+            activeOpacity={0.85}
+            onPress={() => setShowControlPicker(true)}
+          >
+            <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
+            <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#f5f5f5',
+              borderRadius: 10,
+              borderWidth: 2,
+              borderColor: '#222',
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              shadowColor: '#222',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.08,
+              shadowRadius: 4,
+              elevation: 1,
+              minHeight: 36,
+              maxWidth: 50,
+              marginRight: 10,
+              marginBottom: 8,
+              overflow: 'hidden',
+            }}
+            activeOpacity={0.85}
+            onPress={() => setShowSummary(true)}
+            accessibilityLabel="Skriv ut"
+          >
+            <Ionicons name="print-outline" size={20} color="#222" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#f5f5f5',
+              borderRadius: 10,
+              borderWidth: 2,
+              borderColor: '#D32F2F',
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              shadowColor: '#D32F2F',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.08,
+              shadowRadius: 4,
+              elevation: 1,
+              minHeight: 36,
+              maxWidth: 50,
+              marginRight: 0,
+              marginBottom: 8,
+              overflow: 'hidden',
+            }}
+            activeOpacity={0.85}
+            onPress={() => {
+              if (controls.length === 0) {
+                setShowDeleteModal(true);
+              } else {
+                setShowDeleteWarning(true);
+              }
+            }}
+            accessibilityLabel="Radera projekt"
+          >
+            <Ionicons name="trash-outline" size={20} color="#D32F2F" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
+
+              {/* Modal: Bekräfta radering om inga kontroller */}
+              <Modal visible={showDeleteModal} transparent animationType="fade" onRequestClose={() => setShowDeleteModal(false)}>
+                <View style={styles.centerOverlay}>
+                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, minWidth: 260, maxWidth: 340, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
+                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#222', textAlign: 'center' }}>Vill du ta bort projektet?</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                      <TouchableOpacity style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center' }} onPress={() => {/* TODO: Lägg till raderingslogik här */ setShowDeleteModal(false); }}>
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Ta bort</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, flex: 1, marginLeft: 8, alignItems: 'center' }} onPress={() => setShowDeleteModal(false)}>
+                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+              {/* Modal: Extra varning om kontroller finns */}
+              <Modal visible={showDeleteWarning} transparent animationType="fade" onRequestClose={() => setShowDeleteWarning(false)}>
+                <View style={styles.centerOverlay}>
+                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, minWidth: 260, maxWidth: 340, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
+                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#D32F2F', textAlign: 'center' }}>Projektet har kontroller kopplade.\nÄr du säker på att du vill ta bort projektet? Allt kommer att förloras.</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                      <TouchableOpacity style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center' }} onPress={() => {/* TODO: Lägg till raderingslogik här */ setShowDeleteWarning(false); }}>
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Ta bort</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, flex: 1, marginLeft: 8, alignItems: 'center' }} onPress={() => setShowDeleteWarning(false)}>
+                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
         <Text style={[styles.subtitle, { lineHeight: 32 }]}>Utförda kontroller:</Text>
       </View>
 
