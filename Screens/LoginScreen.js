@@ -165,8 +165,8 @@ export default function LoginScreen() {
       </View>
 
       <Image
-        source={require('../assets/images/kontrollbygg.transparant.png')}
-        style={styles.logo}
+        source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
+        style={[styles.logo, { alignSelf: 'center' }]}
         resizeMode="contain"
       />
 

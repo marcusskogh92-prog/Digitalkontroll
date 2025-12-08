@@ -4,8 +4,9 @@ import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View 
 
 
 // Props: project (objekt med id, name, adress, fastighetsbeteckning)
-const SkyddsrondScreen = ({ route, navigation }) => {
-  const { project } = route.params || {};
+const SkyddsrondScreen = ({ route, navigation: navProp }) => {
+  const { project, navigation: navParam } = route.params || {};
+  const navigation = navProp || navParam;
   const today = new Date();
   const dateString = today.toLocaleDateString('sv-SE');
   // Veckonummer
@@ -70,11 +71,24 @@ const SkyddsrondScreen = ({ route, navigation }) => {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.header}>{`Skyddsrond V.${week}`}</Text>
-      <Text style={styles.label}>Datum: {dateString}</Text>
-      <Text style={styles.label}>Projektnummer: {project?.id || ''}</Text>
-      <Text style={styles.label}>Projektnamn: {project?.name || ''}</Text>
-      <Text style={styles.label}>Adress: <Text style={styles.value}>{adress || '-'}</Text></Text>
-      <Text style={styles.label}>Fastighetsbeteckning: <Text style={styles.value}>{fastighet || '-'}</Text></Text>
+      <View style={{ marginBottom: 18, marginTop: 2 }}>
+        {[ 
+          { label: 'Datum', value: dateString },
+          { label: 'Projektnummer', value: project?.id || '' },
+          { label: 'Projektnamn', value: project?.name || '' },
+          { label: 'Adress', value: adress || '-' },
+          { label: 'Fastighetsbeteckning', value: fastighet || '-' }
+        ].map((row, i) => {
+          const isEmpty = !row.value || row.value === '-';
+          return (
+            <View key={row.label} style={{ flexDirection: 'column', alignItems: 'flex-start', marginBottom: 0 }}>
+              <Text style={{ fontSize: 14, color: '#666', fontWeight: '600', marginBottom: 2 }}>{row.label}:</Text>
+              <Text style={{ fontSize: 16, color: isEmpty ? '#D32F2F' : '#222', fontStyle: isEmpty ? 'italic' : 'normal', marginBottom: 8 }}>{isEmpty ? '-' : row.value}</Text>
+              <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 4, alignSelf: 'stretch', width: '100%' }} />
+            </View>
+          );
+        })}
+      </View>
       <Text style={[styles.label, { marginTop: 16 }]}>Utförare och närvarande personal</Text>
       {personer.map((p, idx) => (
         <View key={idx} style={{ marginBottom: 12, borderBottomWidth: 1, borderColor: '#eee', paddingBottom: 8 }}>

@@ -11,6 +11,21 @@ function getFirstName(email) {
 }
 
 export default function HomeScreen({ route, navigation }) {
+      // Funktion för att uppdatera projektinfo i hierarchy
+      function updateProject(updatedProject) {
+        setHierarchy(prev => prev.map(main => ({
+          ...main,
+          children: main.children.map(sub => ({
+            ...sub,
+            children: sub.children ? sub.children.map(child => {
+              if (child.type === 'project' && child.id === updatedProject.id) {
+                return { ...child, ...updatedProject };
+              }
+              return child;
+            }) : []
+          }))
+        })));
+      }
     // State for control type selection modal
     const [showControlTypeModal, setShowControlTypeModal] = useState(false);
   // State för nytt projekt-modal i undermapp
@@ -153,7 +168,7 @@ export default function HomeScreen({ route, navigation }) {
                   name: newProjectName.trim(),
                   type: 'project',
                   status: 'ongoing',
-                  createdAt: new Date().toISOString().split('T')[0],
+                  createdAt: new Date().toLocaleDateString('sv-SE'),
                   createdBy: (auth?.currentUser?.email ? getFirstName(auth.currentUser.email) : 'Okänd')
                 };
                 setHierarchy(prev => prev.map(main => ({
@@ -390,7 +405,10 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                   (sub.children || [])
                     .filter(child => child.type === 'project' &&
                       searchText.trim() !== '' &&
-                      child.id.toLowerCase().startsWith(searchText.toLowerCase())
+                      (
+                        child.id.toLowerCase().includes(searchText.toLowerCase()) ||
+                        child.name.toLowerCase().includes(searchText.toLowerCase())
+                      )
                     )
                     .map(proj => (
                       <TouchableOpacity
@@ -405,8 +423,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                               ansvarig: proj.ansvarig || '',
                               adress: proj.adress || '',
                               fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                              client: proj.client || ''
-                            }
+                              client: proj.client || '',
+                              status: proj.status || 'ongoing',
+                              createdAt: proj.createdAt || '',
+                              createdBy: proj.createdBy || ''
+                            },
+                            updateProject
                           });
                         }}
                       >
@@ -415,7 +437,10 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     ))
                 )
               )}
-              {searchText.trim() !== '' && hierarchy.flatMap(main => main.children.flatMap(sub => (sub.children || []).filter(child => child.type === 'project' && child.id.toLowerCase().startsWith(searchText.toLowerCase())))).length === 0 && (
+              {searchText.trim() !== '' && hierarchy.flatMap(main => main.children.flatMap(sub => (sub.children || []).filter(child => child.type === 'project' && (
+                child.id.toLowerCase().includes(searchText.toLowerCase()) ||
+                child.name.toLowerCase().includes(searchText.toLowerCase())
+              )))).length === 0 && (
                 <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 12 }}>Inga projekt hittades.</Text>
               )}
             </ScrollView>
@@ -895,39 +920,28 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                         ) : (
                                           projects
                                             .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                            .filter(proj =>
-                                              proj.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                                              proj.id.toLowerCase().includes(searchText.toLowerCase())
-                                            )
-                                            .map(proj => (
+                                            .map((proj) => (
                                               <TouchableOpacity
                                                 key={proj.id}
                                                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
                                                 onPress={() => {
-                                                  setSelectProjectModal({ visible: false, type: null });
-                                                  if (selectProjectModal.type === 'Skyddsrond') {
-                                                    navigation.navigate('SkyddsrondScreen', {
-                                                      project: proj
-                                                    });
-                                                  } else {
-                                                    navigation.navigate('ControlForm', {
-                                                      project: proj,
-                                                      controlType: selectProjectModal.type
-                                                    });
-                                                  }
+                                                  navigation.navigate('ProjectDetails', {
+                                                    project: {
+                                                      id: proj.id,
+                                                      name: proj.name,
+                                                      ansvarig: proj.ansvarig || '',
+                                                      adress: proj.adress || '',
+                                                      fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                                                      client: proj.client || '',
+                                                      status: proj.status || 'ongoing',
+                                                      createdAt: proj.createdAt || '',
+                                                      createdBy: proj.createdBy || ''
+                                                    },
+                                                    updateProject
+                                                  });
                                                 }}
                                               >
-                                                <View
-                                                  style={{
-                                                    width: 16,
-                                                    height: 16,
-                                                    borderRadius: 8,
-                                                    backgroundColor: proj.status === 'completed' ? '#222' : '#4CAF50',
-                                                    marginRight: 8,
-                                                    borderWidth: proj.status === 'completed' ? 2 : 1,
-                                                    borderColor: '#222',
-                                                  }}
-                                                />
+                                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
                                                 <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
                                                 <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
                                               </TouchableOpacity>
@@ -1297,8 +1311,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                 ansvarig: proj.ansvarig || '',
                                                 adress: proj.adress || '',
                                                 fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                                                client: proj.client || ''
-                                              }
+                                                client: proj.client || '',
+                                                status: proj.status || 'ongoing',
+                                                createdAt: proj.createdAt || '',
+                                                createdBy: proj.createdBy || ''
+                                              },
+                                              updateProject
                                             });
                                           }}
                                         >
