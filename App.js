@@ -11,6 +11,7 @@ import ControlForm from './Screens/ControlForm';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
 import ProjectDetails from './Screens/ProjectDetails';
+import SkyddsrondScreen from './Screens/SkyddsrondScreen';
 
 const Stack = createStackNavigator();
 
@@ -42,6 +43,7 @@ export default function App() {
         <Stack.Screen name="ControlDetails" component={ControlDetails} options={{ title: 'Kontrolldetaljer' }} />
         <Stack.Screen name="ControlForm" component={ControlForm} options={{ title: 'Ny kontroll' }} />
         <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
+        <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={{ title: 'Skyddsrond' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

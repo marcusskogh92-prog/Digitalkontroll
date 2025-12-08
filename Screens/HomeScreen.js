@@ -518,10 +518,6 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                               performedBy: null,
                                               companyId: proj?.companyId || null,
                                             });
-                                          } else if (selectProjectModal.type === 'Skyddsrond') {
-                                            navigation.navigate('SkyddsrondScreen', {
-                                              project: proj
-                                            });
                                           } else {
                                             navigation.navigate('ControlForm', {
                                               project: proj,
