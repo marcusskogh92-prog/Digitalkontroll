@@ -1,3 +1,4 @@
+// ...existing code...
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -65,11 +66,10 @@ function getDefaultChecklist(type) {
       ];
     case 'mottagningskontroll':
       return [
-        { label: '1 - Leveranskontroll', description: 'Beskrivning för kontrollpunkt 1', done: false, note: '' },
-        { label: '2 - Leverans', description: 'Beskrivning för kontrollpunkt 2', done: false, note: '' },
-        { label: '3 - Kvalitet och skick', description: 'Beskrivning för kontrollpunkt 3', done: false, note: '' },
-        { label: '4 - Förvaring och täckning', description: 'Beskrivning för kontrollpunkt 4', done: false, note: '' },
-        { label: '5 - Signatur', description: 'Beskrivning för kontrollpunkt 5', done: false, note: '' },
+        { label: '1 - Leverans', description: '', questions: LEVERANS_QUESTIONS, done: false, note: '' },
+          { label: '2 - Kvalitet och skick', description: '', questions: KVALITET_QUESTIONS, done: false, note: '' },
+          { label: '3 - Förvaring och täckning', description: '', questions: FORVARING_QUESTIONS, done: false, note: '' },
+          { label: '4 - Signatur', description: '', questions: [], done: false, note: '' },
       ];
     default:
       return base;
@@ -95,6 +95,10 @@ function formatPhoneNumber(num) {
 }
 
 export default function ControlForm({ route, navigation }) {
+    // Answers for relevant sub-questions per checklist item
+    const [questionAnswers, setQuestionAnswers] = useState({});
+    // General notes for the form
+    const [generalNotes, setGeneralNotes] = useState("");
   // Datumhantering
   const today = new Date();
   const defaultDate = today.toISOString().slice(0, 10);
@@ -331,33 +335,107 @@ export default function ControlForm({ route, navigation }) {
         {/* Checklist rendering med expanderande punkter och Ja/Nej-frågor */}
         <View style={{ marginBottom: 24 }}>
           {checklist.map((item, idx) => (
-            <View key={idx} style={{ marginBottom: 12, backgroundColor: item.done ? '#E0F7FA' : '#FFF3E0', borderRadius: 8, padding: 10 }}>
-              <TouchableOpacity onPress={() => toggleItem(idx)}>
-                <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
-                <Text style={{ color: '#666', fontSize: 13 }}>{item.description}</Text>
-              </TouchableOpacity>
+             <View key={idx} style={{ marginBottom: 12, backgroundColor: '#F5F7FB', borderRadius: 8, padding: 10 }}>
+               <TouchableOpacity onPress={() => toggleItem(idx)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                 <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                   <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
+                 </View>
+                 {(idx === 0 || idx === 1 || idx === 2) && (() => {
+                   const answersArr = item.questions?.map((_, qIdx) => questionAnswers[idx]?.[qIdx]);
+                   if (answersArr && answersArr.length > 0) {
+                     if (answersArr.every(ans => ans === 'Ja')) {
+                       return <Ionicons name="checkmark-circle" size={22} color="#4CAF50" style={{ marginRight: 8 }} />;
+                     }
+                     if (answersArr.some(ans => ans === 'Nej')) {
+                       return <Ionicons name="warning" size={22} color="#FFA726" style={{ marginRight: 8 }} />;
+                     }
+                   }
+                   return null;
+                 })()}
+                 <Ionicons name={expandedChecklist.includes(idx) ? 'chevron-down' : 'chevron-forward'} size={22} color="#888" style={{ marginLeft: 8 }} />
+               </TouchableOpacity>
               {expandedChecklist.includes(idx) && (
                 <View style={{ marginTop: 8 }}>
                   {/* Ja/Nej-frågor */}
                   <View style={{ flexDirection: 'row', marginBottom: 8 }}>
-                    <TouchableOpacity onPress={() => handleAnswer(idx, 'Ja')} style={{ marginRight: 12 }}>
-                      <Text style={{ color: answers[idx] === 'Ja' ? '#388E3C' : '#888' }}>Ja</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleAnswer(idx, 'Nej')}>
-                      <Text style={{ color: answers[idx] === 'Nej' ? '#D32F2F' : '#888' }}>Nej</Text>
-                    </TouchableOpacity>
                   </View>
-                  {/* Relevant questions */}
-                  {getRelevantQuestions(idx) && getRelevantQuestions(idx).map((q, qIdx) => (
-                    <Text key={qIdx} style={{ fontSize: 14, color: '#444', marginBottom: 4 }}>- {q}</Text>
-                  ))}
-                  {/* Note input */}
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={{ fontSize: 13, color: '#888' }}>Anteckning:</Text>
-                    <TouchableOpacity onPress={() => setItemNote(idx, 'Exempel anteckning')}>
-                      <Text style={{ color: '#1976D2', fontSize: 13 }}>Lägg till/ändra anteckning</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {/* Relevant questions with Ja/Nej buttons */}
+                   {item.questions && item.questions.map((q, qIdx) => (
+                     <View key={qIdx} style={{ marginBottom: 12 }}>
+                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                         <Text style={{ fontSize: 14, color: '#444', flex: 1, flexWrap: 'wrap' }}>{q}</Text>
+                         <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+                           <TouchableOpacity
+                             onPress={() => {
+                               setQuestionAnswers(prev => ({
+                                 ...prev,
+                                 [idx]: {
+                                   ...(prev[idx] || {}),
+                                   [qIdx]: 'Ja'
+                                 }
+                               }));
+                             }}
+                             style={{
+                               backgroundColor: questionAnswers[idx]?.[qIdx] === 'Ja' ? '#388E3C' : '#eee',
+                               borderRadius: 8,
+                               paddingVertical: 6,
+                               paddingHorizontal: 16,
+                               marginRight: 6,
+                             }}
+                           >
+                             <Text style={{ color: questionAnswers[idx]?.[qIdx] === 'Ja' ? '#fff' : '#388E3C', fontWeight: 'bold', fontSize: 14 }}>Ja</Text>
+                           </TouchableOpacity>
+                           <TouchableOpacity
+                             onPress={() => {
+                               setQuestionAnswers(prev => ({
+                                 ...prev,
+                                 [idx]: {
+                                   ...(prev[idx] || {}),
+                                   [qIdx]: 'Nej'
+                                 }
+                               }));
+                             }}
+                             style={{
+                               backgroundColor: questionAnswers[idx]?.[qIdx] === 'Nej' ? '#D32F2F' : '#eee',
+                               borderRadius: 8,
+                               paddingVertical: 6,
+                               paddingHorizontal: 16,
+                             }}
+                           >
+                             <Text style={{ color: questionAnswers[idx]?.[qIdx] === 'Nej' ? '#fff' : '#D32F2F', fontWeight: 'bold', fontSize: 14 }}>Nej</Text>
+                           </TouchableOpacity>
+                         </View>
+                       </View>
+                     </View>
+                   ))}
+                  {/* Note input for 1-3 only */}
+                  {(idx === 0 || idx === 1 || idx === 2) && (
+                     <View style={{ marginTop: 12 }}>
+                       <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Anteckningar</Text>
+                       {(() => {
+                         const answersArr = item.questions?.map((_, qIdx) => questionAnswers[idx]?.[qIdx]);
+                         const hasDeviation = answersArr && answersArr.some(ans => ans === 'Nej');
+                         const noteIsEmpty = !item.note || item.note.trim() === "";
+                         return (
+                           <>
+                             <TextInput
+                               style={{ backgroundColor: noteIsEmpty && hasDeviation ? '#FFF3E0' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: noteIsEmpty && hasDeviation ? '#FFA726' : '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40 }}
+                               placeholder="Skriv anteckningar här..."
+                               placeholderTextColor="#888"
+                               value={item.note}
+                               onChangeText={text => setItemNote(idx, text)}
+                               multiline
+                             />
+                             {hasDeviation && noteIsEmpty && (
+                               <Text style={{ color: '#FFA726', fontSize: 13, marginTop: 4 }}>
+                                 Anteckning krävs vid avvikelse!
+                               </Text>
+                             )}
+                           </>
+                         );
+                       })()}
+                     </View>
+                  )}
                 </View>
               )}
             </View>
@@ -381,7 +459,8 @@ export default function ControlForm({ route, navigation }) {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <TextInput
-                style={{ flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16 }}
+                style={{ flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16, color: '#222', backgroundColor: '#fff' }}
+                placeholderTextColor="#888"
                 keyboardType="numeric"
                 value={temperatureInput}
                 onChangeText={setTemperatureInput}
