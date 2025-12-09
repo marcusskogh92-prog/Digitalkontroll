@@ -3,7 +3,15 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+const WEATHER_OPTIONS = [
+  { label: 'Sol', icon: 'sunny-outline' },
+  { label: 'Dimma', icon: 'cloudy-outline' },
+  { label: 'Regn', icon: 'rainy-outline' },
+  { label: 'Snö', icon: 'snow-outline' },
+  { label: 'Vind', icon: 'cloud-outline' },
+  { label: 'Ostadigt', icon: 'partly-sunny-outline' },
+];
 
 const PRIMARY = '#263238';
 
@@ -53,6 +61,9 @@ function formatPhoneNumber(num) {
 }
 
 export default function ControlForm({ route, navigation }) {
+    // Väderlek state (endast för mottagningskontroll)
+    const [weatherModalVisible, setWeatherModalVisible] = useState(false);
+    const [selectedWeather, setSelectedWeather] = useState(null);
   // State for expanded checklist items (for mottagningskontroll)
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   // Modal for add/edit participant
@@ -131,75 +142,107 @@ export default function ControlForm({ route, navigation }) {
 
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>Ny kontroll: {type}</Text>
+      <Text style={styles.title}>{type}</Text>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Text style={[styles.label, { fontWeight: 'bold' }]}>Datum</Text>
-        <View style={{ position: 'relative', marginBottom: 8 }}>
-          <TextInput
-            style={[styles.input, { color: '#888', backgroundColor: '#F7FAFC', borderColor: '#E0E0E0' }]}
-            placeholder="ÅÅÅÅ-MM-DD"
-            placeholderTextColor="#888"
-            value={date}
-            editable={false}
-          />
-          <TouchableOpacity
-            style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 2 }}
-            activeOpacity={1}
-            onLongPress={() => {
+        {/* Grå projektinfo-ruta */}
+        <View style={{ backgroundColor: '#f7f7f7', borderRadius: 10, padding: 14, marginBottom: 18 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginRight: 8 }}>{project?.id || '-'}</Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>{project?.name || '-'}</Text>
+          </View>
+          <View style={{ marginBottom: 2 }}>
+            <Text style={{ fontSize: 15, color: '#555' }}>
+              <Text style={{ fontWeight: '700' }}>Ansvarig:</Text> {project?.ansvarig ? project.ansvarig : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
+            </Text>
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
+            <Text style={{ fontSize: 15, color: '#555' }}>
+              <Text style={{ fontWeight: '700' }}>Kund:</Text> {project?.client ? project.client : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
+            </Text>
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
+            <Text style={{ fontSize: 15, color: '#555' }}>
+              <Text style={{ fontWeight: '700' }}>Adress:</Text> {project?.adress ? project.adress : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
+            </Text>
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
+            <Text style={{ fontSize: 15, color: '#555' }}>
+              <Text style={{ fontWeight: '700' }}>Fastighetsbeteckning:</Text> {project?.fastighetsbeteckning
+                ? project.fastighetsbeteckning
+                : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Valfritt</Text>}
+            </Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, position: 'relative' }}>
+          <Text style={[styles.label, { fontWeight: 'bold', marginRight: 10 }]}>Datum:</Text>
+          <Text style={{ color: '#263238', fontSize: 16 }}>{date}</Text>
+        <TouchableOpacity
+          style={{
+            position: 'absolute',
+            top: -10,
+            right: -10,
+            padding: 12,
+            borderRadius: 20,
+            justifyContent: 'center',
+            alignItems: 'center',
+            elevation: 2,
+          }}
+            onPress={() => {
               setShowDateEditModal(true);
               setPendingDate(date);
             }}
-            delayLongPress={2000}
+            accessibilityLabel="Ändra datum"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <View style={{ flex: 1 }} />
+            <Ionicons name="create-outline" size={22} color="#888" />
           </TouchableOpacity>
-          <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
-            Håll in för att ändra datum (2 sek)
-          </Text>
-          {showDateEditModal && (
-            <View style={{ position: 'absolute', top: 50, left: '10%', right: '10%', backgroundColor: '#fff', borderRadius: 12, borderWidth: 2, borderColor: PRIMARY, padding: 20, zIndex: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4, minWidth: 280, maxWidth: 400 }}>
-              <TouchableOpacity
-                onPress={() => { setShowDateEditModal(false); setDateError(''); }}
-                style={{ position: 'absolute', top: 12, right: 12, padding: 6, zIndex: 20 }}
-                hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-              >
-                <MaterialIcons name="close" size={28} color={PRIMARY} />
-              </TouchableOpacity>
-              <Text style={[styles.sectionTitle, { textAlign: 'center', marginTop: 8 }]}>Ändra datum</Text>
-              <TextInput
-                style={[styles.input, { marginBottom: 16, color: '#222', backgroundColor: '#F7FAFC', borderColor: PRIMARY, fontSize: 16 }]}
-                value={pendingDate}
-                onChangeText={setPendingDate}
-                placeholder="ÅÅÅÅ-MM-DD"
-                placeholderTextColor="#888"
-                autoFocus
-              />
-              <TouchableOpacity
-                onPress={() => {
-                  const todayStr = new Date().toISOString().slice(0, 10);
-                  if (pendingDate > todayStr) {
-                    setDateError('Du kan inte välja ett framtida datum');
-                    return;
-                  }
-                  setDate(pendingDate);
-                  setShowDateEditModal(false);
-                  setDateError('');
-                }}
-                style={{ backgroundColor: '#F7FAFC', borderRadius: 8, borderWidth: 2, borderColor: '#222', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, marginTop: 8, alignSelf: 'center' }}
-              >
-                <MaterialIcons name="check" size={22} color="#222" style={{ marginRight: 8 }} />
-                <Text style={{ color: '#222', fontSize: 16, fontWeight: 'bold' }}>Spara</Text>
-              </TouchableOpacity>
-              {dateError ? (
-                <Text style={{ color: '#FF3B30', fontSize: 14, marginTop: 10, textAlign: 'center' }}>{dateError}</Text>
-              ) : null}
-            </View>
-          )}
         </View>
+        {showDateEditModal && (
+          <View style={{ position: 'absolute', top: 50, left: '10%', right: '10%', backgroundColor: '#fff', borderRadius: 12, borderWidth: 2, borderColor: PRIMARY, padding: 20, zIndex: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4, minWidth: 280, maxWidth: 400 }}>
+            <TouchableOpacity
+              onPress={() => { setShowDateEditModal(false); setDateError(''); }}
+              style={{ position: 'absolute', top: 12, right: 12, padding: 6, zIndex: 20 }}
+              hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+            >
+              <MaterialIcons name="close" size={28} color={PRIMARY} />
+            </TouchableOpacity>
+            <Text style={[styles.sectionTitle, { textAlign: 'center', marginTop: 8 }]}>Ändra datum</Text>
+             <TextInput
+               style={[styles.input, { marginBottom: 16, color: '#222', backgroundColor: '#F7FAFC', borderColor: PRIMARY, fontSize: 16 }]}
+               value={pendingDate}
+               onChangeText={text => {
+                 // Tillåt endast siffror och bindestreck, max 10 tecken
+                 let filtered = text.replace(/[^0-9-]/g, '').slice(0, 10);
+                 setPendingDate(filtered);
+               }}
+               placeholder="ÅÅÅÅ-MM-DD"
+               placeholderTextColor="#888"
+               autoFocus
+               keyboardType="numeric"
+               maxLength={10}
+             />
+            <TouchableOpacity
+              onPress={() => {
+                const todayStr = new Date().toISOString().slice(0, 10);
+                if (pendingDate > todayStr) {
+                  setDateError('Du kan inte välja ett framtida datum');
+                  return;
+                }
+                setDate(pendingDate);
+                setShowDateEditModal(false);
+                setDateError('');
+              }}
+              style={{ backgroundColor: '#F7FAFC', borderRadius: 8, borderWidth: 2, borderColor: '#222', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, marginTop: 8, alignSelf: 'center' }}
+            >
+              <MaterialIcons name="check" size={22} color="#222" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#222', fontSize: 16, fontWeight: 'bold' }}>Spara</Text>
+            </TouchableOpacity>
+            {dateError ? (
+              <Text style={{ color: '#FF3B30', fontSize: 14, marginTop: 10, textAlign: 'center' }}>{dateError}</Text>
+            ) : null}
+          </View>
+        )}
         <View style={{ marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 10, marginTop: 2 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={styles.sectionTitle}>Deltagare</Text>
+            <Text style={styles.sectionTitle}>{type.toLowerCase() === 'mottagningskontroll' ? 'Mottagare' : 'Deltagare'}</Text>
             <TouchableOpacity
               onPress={() => {
                 setParticipantEditIndex(null);
@@ -207,7 +250,7 @@ export default function ControlForm({ route, navigation }) {
                 setParticipantModalVisible(true);
               }}
               style={{ marginLeft: 10, backgroundColor: '#1976D2', borderRadius: 12, width: 24, height: 24, alignItems: 'center', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 1, elevation: 1 }}
-              accessibilityLabel="Lägg till deltagare"
+              accessibilityLabel={type.toLowerCase() === 'mottagningskontroll' ? 'Lägg till mottagare' : 'Lägg till deltagare'}
             >
               <Ionicons name="add" size={14} color="#fff" />
             </TouchableOpacity>
@@ -231,7 +274,7 @@ export default function ControlForm({ route, navigation }) {
                   setParticipantForm({ name: p.name, company: p.company, role: p.role, phone: p.phone });
                   setParticipantModalVisible(true);
                 }}
-                accessibilityLabel="Redigera deltagare"
+                accessibilityLabel={type.toLowerCase() === 'mottagningskontroll' ? 'Redigera mottagare' : 'Redigera deltagare'}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
                 <Ionicons name="create-outline" size={24} color="#888" />
@@ -239,6 +282,7 @@ export default function ControlForm({ route, navigation }) {
             </View>
           ))}
           {/* add participant button moved to header */}
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 14 }} />
           <View style={{ marginTop: 16, marginBottom: 8 }}>
             <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#263238', marginBottom: 4 }}>Leverans av:</Text>
             <View style={{ position: 'relative' }}>
@@ -278,7 +322,9 @@ export default function ControlForm({ route, navigation }) {
                         <MaterialIcons name="close" size={24} color="#222" />
                       </TouchableOpacity>
                       <Text style={{ fontSize: 17, color: '#222', fontWeight: 'bold', marginBottom: 14, marginTop: 2 }}>
-                        {participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare'}
+                        {type.toLowerCase() === 'mottagningskontroll'
+                          ? (participantEditIndex === null ? 'Lägg till mottagare' : 'Redigera mottagare')
+                          : (participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare')}
                       </Text>
                       <TextInput
                         style={{ backgroundColor: '#F7FAFC', borderColor: '#222', borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, height: 40, fontSize: 15, color: !participantForm.name.trim() ? '#D32F2F' : '#000', fontStyle: !participantForm.name.trim() ? 'italic' : 'normal', marginBottom: 10, width: '100%' }}
@@ -365,7 +411,7 @@ export default function ControlForm({ route, navigation }) {
                   paddingVertical: 14,
                   paddingHorizontal: 16,
                   marginBottom: 6,
-                  borderWidth: 2,
+                  borderWidth: 1,
                   borderColor: expandedChecklist.includes(idx) ? '#1976D2' : '#E0E0E0',
                   shadowColor: '#1976D2',
                   shadowOffset: { width: 0, height: 2 },
@@ -374,7 +420,9 @@ export default function ControlForm({ route, navigation }) {
                   elevation: expandedChecklist.includes(idx) ? 2 : 1,
                 }}
               >
-                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>{item.label}</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>{
+                  type.toLowerCase() === 'mottagningskontroll' && idx === 0 ? 'Väderlek vid leverans' : item.label
+                }</Text>
                 {'description' in item && (
                   <Ionicons
                     name={expandedChecklist.includes(idx) ? 'chevron-up' : 'chevron-down'}
@@ -384,6 +432,108 @@ export default function ControlForm({ route, navigation }) {
                   />
                 )}
               </TouchableOpacity>
+              {/* Väderval för första kontrollpunkten i mottagningskontroll */}
+              {type.toLowerCase() === 'mottagningskontroll' && idx === 0 ? (
+                <View style={{ marginTop: 10 }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#fff',
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#222',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 12,
+                      paddingHorizontal: 22,
+                      alignSelf: 'flex-start',
+                    }}
+                    onPress={() => setWeatherModalVisible(true)}
+                  >
+                    <Ionicons name={selectedWeather?.icon || 'cloud-outline'} size={20} color="#222" style={{ marginRight: 10 }} />
+                    <Text style={{ color: '#222', fontWeight: '700', fontSize: 16, letterSpacing: 0.5 }}>
+                      {selectedWeather ? selectedWeather.label : 'Välj väderlek'}
+                    </Text>
+                  </TouchableOpacity>
+                  {/* Modal för väderval */}
+                  <Modal
+                    visible={weatherModalVisible}
+                    animationType="fade"
+                    transparent
+                    onRequestClose={() => setWeatherModalVisible(false)}
+                  >
+                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' }}>
+                      <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 24, width: '85%', maxWidth: 340, alignItems: 'center', borderWidth: 1, borderColor: '#222' }}>
+                        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18 }}>Välj väderlek</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+                          {WEATHER_OPTIONS.map(option => (
+                            <TouchableOpacity
+                              key={option.label}
+                              style={{
+                                backgroundColor: '#fff',
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: '#222',
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                paddingVertical: 10,
+                                paddingHorizontal: 16,
+                                margin: 6,
+                              }}
+                              onPress={() => {
+                                setSelectedWeather(option);
+                                setWeatherModalVisible(false);
+                              }}
+                            >
+                              <Ionicons name={option.icon} size={20} color="#222" style={{ marginRight: 8 }} />
+                              <Text style={{ color: '#222', fontWeight: '700', fontSize: 15 }}>{option.label}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#fff',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#222',
+                              paddingVertical: 10,
+                              paddingHorizontal: 18,
+                              marginRight: 10,
+                            }}
+                            onPress={() => {
+                              setSelectedWeather(null);
+                            }}
+                          >
+                            <Text style={{ color: '#222', fontWeight: '700', fontSize: 16 }}>Återställ</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={{
+                              backgroundColor: '#fff',
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: '#222',
+                              paddingVertical: 10,
+                              paddingHorizontal: 18,
+                            }}
+                            onPress={() => setWeatherModalVisible(false)}
+                          >
+                            <Text style={{ color: '#222', fontWeight: '700', fontSize: 16 }}>Start</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {/* Kryss för att stänga popup */}
+                        <TouchableOpacity
+                          onPress={() => setWeatherModalVisible(false)}
+                          style={{ position: 'absolute', top: 12, right: 12, padding: 6, zIndex: 20 }}
+                          hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                        >
+                          <MaterialIcons name="close" size={28} color="#222" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </Modal>
+                </View>
+              ) : null}
+              {/* ...övriga checklistpunkter... */}
               {'description' in item && expandedChecklist.includes(idx) && (
                 <>
                   <Text style={{ color: '#555', fontSize: 14, marginBottom: 6, marginTop: 2 }}>{item.description}</Text>

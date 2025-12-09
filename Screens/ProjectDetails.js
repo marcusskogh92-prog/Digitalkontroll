@@ -6,16 +6,16 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useRef, useState } from 'react';
 import {
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Image,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 const styles = StyleSheet.create({
@@ -166,6 +166,8 @@ export default function ProjectDetails({ route, navigation }) {
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: 240 }}
     >
+      {/* Rubrik för projektinfo */}
+      <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 18, color: '#333' }}>Projektinformation</Text>
       {/* Projektinfo med logga, status, projektnummer, projektnamn */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
         {companyLogoUri ? (
@@ -233,7 +235,7 @@ export default function ProjectDetails({ route, navigation }) {
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Fastighetsbeteckning:</Text> {editableProject?.fastighetsbeteckning
                   ? editableProject.fastighetsbeteckning
-                  : <Text style={{ color: '#888', fontStyle: 'italic' }}>Valfritt</Text>}
+                  : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Valfritt</Text>}
               </Text>
             </View>
           </View>
