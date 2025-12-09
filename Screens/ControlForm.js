@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 // ...existing code...
 
 const styles = StyleSheet.create({
@@ -95,35 +95,42 @@ function formatPhoneNumber(num) {
 }
 
 export default function ControlForm({ route, navigation }) {
-    // Extract params safely
-    const params = route?.params || {};
-    const project = params.project || {};
-    const initial = params.initial || {};
-    const performedBy = params.performedBy || '';
-    const companyId = params.companyId || '';
+  // Datumhantering
+  const today = new Date();
+  const defaultDate = today.toISOString().slice(0, 10);
+  const params = route?.params || {};
+  const project = params.project || {};
+  const initial = params.initial || {};
+  const performedBy = params.performedBy || '';
+  const companyId = params.companyId || '';
+  const [date, setDate] = useState(initial?.date || defaultDate);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [dateInput, setDateInput] = useState(date);
   // Väderlek och temperatur
   const [weatherModalVisible, setWeatherModalVisible] = useState(false);
   const [selectedWeather, setSelectedWeather] = useState(null);
   const [temperature, setTemperature] = useState("");
-
+  const [temperatureModalVisible, setTemperatureModalVisible] = useState(false);
+  const [temperatureInput, setTemperatureInput] = useState("");
   // Deltagare/mottagare
-    const [temperatureModalVisible, setTemperatureModalVisible] = useState(false);
-    const [temperatureInput, setTemperatureInput] = useState("");
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
   const [participantEditIndex, setParticipantEditIndex] = useState(null);
-     const [type, setType] = useState(initial?.type || '');
-     // Mottagare (huvudmottagare, separat från deltagare)
-     const [mainRecipient, setMainRecipient] = useState(initial?.mainRecipient || { name: '', company: '' });
-     const [mainRecipientModalVisible, setMainRecipientModalVisible] = useState(false);
-     const [mainRecipientForm, setMainRecipientForm] = useState({ name: '', company: '' });
+  const [type, setType] = useState(initial?.type || '');
+  const [mainRecipient, setMainRecipient] = useState(initial?.mainRecipient || { name: '', company: '' });
+  const [mainRecipientModalVisible, setMainRecipientModalVisible] = useState(false);
+  const [mainRecipientForm, setMainRecipientForm] = useState({ name: '', company: '' });
   const [participants, setParticipants] = useState([]);
-    // Ta bort deltagare
-    const handleDeleteParticipant = (index) => {
-      setParticipants(prev => prev.filter((_, i) => i !== index));
-      setParticipantModalVisible(false);
-      setParticipantEditIndex(null);
-    };
   const [participantForm, setParticipantForm] = useState({ name: '', company: '', role: '', phone: '' });
+  // Checklist
+  const [expandedChecklist, setExpandedChecklist] = useState([]);
+  const [checklist, setChecklist] = useState(() => getDefaultChecklist(type));
+  const [answers, setAnswers] = useState({});
+  // Functions
+  const handleDeleteParticipant = (index) => {
+    setParticipants(prev => prev.filter((_, i) => i !== index));
+    setParticipantModalVisible(false);
+    setParticipantEditIndex(null);
+  };
   const handleSaveParticipant = () => {
     if (!participantForm.name.trim()) return;
     const next = participants.slice();
@@ -137,10 +144,29 @@ export default function ControlForm({ route, navigation }) {
     setParticipantEditIndex(null);
     setParticipantForm({ name: '', company: '', role: '', phone: '' });
   };
-
-  // Expanderande checklistpunkter
-  const [expandedChecklist, setExpandedChecklist] = useState([]);
-  const [checklist, setChecklist] = useState(() => getDefaultChecklist(type));
+  const handleSave = async () => {
+    if (!type || !date) return;
+    try {
+      const key = `company:${companyId || 'demo-company'}:project:${project.id}:controls`;
+      const saved = await AsyncStorage.getItem(key);
+      const list = saved ? JSON.parse(saved) : [];
+      const newEntry = {
+        id: (list.length + 1).toString(),
+        type,
+        date,
+        performedBy,
+        participants,
+        checklist,
+        weather: selectedWeather,
+        temperature,
+        answers,
+      };
+      await AsyncStorage.setItem(key, JSON.stringify([...list, newEntry]));
+      navigation.goBack();
+    } catch (e) {
+      // Error handling
+    }
+  };
   const toggleItem = (idx) => {
     setExpandedChecklist(expandedChecklist.includes(idx)
       ? expandedChecklist.filter(i => i !== idx)
@@ -151,42 +177,9 @@ export default function ControlForm({ route, navigation }) {
     next[idx] = { ...next[idx], note: text };
     setChecklist(next);
   };
-
-  // Ja/Nej-frågor
-  const [answers, setAnswers] = useState({});
   const handleAnswer = (idx, value) => {
     setAnswers({ ...answers, [idx]: value });
   };
-
-  // Spara-funktion
-  const handleSave = async () => {
-    if (!type || !date || !description) return;
-    try {
-      const key = `company:${companyId || 'demo-company'}:project:${project.id}:controls`;
-      const saved = await AsyncStorage.getItem(key);
-      const list = saved ? JSON.parse(saved) : [];
-      const newEntry = {
-        id: (list.length + 1).toString(),
-        type,
-        date,
-        byggdel: byggdel,
-        description,
-        performedBy: performedBy || null,
-        participants: (participants || []).filter(p => (p.name||'').trim() || (p.company||'').trim() || (p.role||'').trim() || (p.phone||'').trim()),
-        checklist,
-        weather: selectedWeather,
-        temperature,
-        answers,
-      };
-      const updated = [...list, newEntry];
-      await AsyncStorage.setItem(key, JSON.stringify(updated));
-      navigation.goBack();
-    } catch (e) {
-      // Error handling
-    }
-  };
-
-  // Render relevant questions for checklist items 2, 3, 4
   const getRelevantQuestions = (idx) => {
     if (idx === 1) return LEVERANS_QUESTIONS;
     if (idx === 2) return KVALITET_QUESTIONS;
@@ -194,14 +187,25 @@ export default function ControlForm({ route, navigation }) {
     return null;
   };
 
+  // Main return
+
   return (
+    <View style={{ flex: 1 }}>
+      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>{type}</Text>
+        {/* Låst datumfält */}
+        <TouchableOpacity
+          onLongPress={() => setShowDateModal(true)}
+          delayLongPress={2000}
+          activeOpacity={1}
+          style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start', marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
+        >
+          <Text style={{ color: '#888', fontSize: 15, fontWeight: 'bold', letterSpacing: 0.5 }}>
+            Datum: {date}
+          </Text>
+          <Text style={{ color: '#bbb', fontSize: 12, fontStyle: 'italic' }}>(håll in för att ändra)</Text>
+        </TouchableOpacity>
 
-    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>{type}</Text>
-
-
-
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         {/* Projektinformation - visas alltid */}
         <View style={{ backgroundColor: '#f7f7f7', borderRadius: 10, padding: 14, marginBottom: 18 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -228,7 +232,6 @@ export default function ControlForm({ route, navigation }) {
             </Text>
           </View>
         </View>
-
 
         {/* Väderlek och temperatur */}
         <View style={{ marginBottom: 18 }}>
@@ -358,209 +361,57 @@ export default function ControlForm({ route, navigation }) {
         <TouchableOpacity style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 24 }} onPress={handleSave}>
           <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Spara</Text>
         </TouchableOpacity>
-        {/* Modal för deltagare */}
-        {participantModalVisible && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: '85%', borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={{ fontWeight: 'bold', fontSize: 18 }}>{participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare'}</Text>
-                <TouchableOpacity onPress={() => setParticipantModalVisible(false)}>
-                  <Ionicons name="close" size={28} color="#888" />
-                </TouchableOpacity>
-              </View>
-              <View style={{ marginBottom: 12 }}>
-                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Namn</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                  <View style={{ flex: 1, position: 'relative' }}>
-                    <TextInput
-                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: '#222', fontStyle: 'italic' }}
-                      value={participantForm.name}
-                      onChangeText={text => setParticipantForm({ ...participantForm, name: text })}
-                      placeholder="Namn"
-                      placeholderTextColor="#D32F2F"
-                    />
-                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
-                      {participantForm.name.trim() ? (
-                        <Ionicons name="checkmark" size={22} color="#388E3C" />
-                      ) : (
-                        <Ionicons name="close" size={22} color="#D32F2F" />
-                      )}
-                    </View>
-                  </View>
-                </View>
-                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Företag</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                  <View style={{ flex: 1, position: 'relative' }}>
-                    <TextInput
-                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.company.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.company.trim() ? 'normal' : 'italic' }}
-                      value={participantForm.company}
-                      onChangeText={text => setParticipantForm({ ...participantForm, company: text })}
-                      placeholder="Företag"
-                      placeholderTextColor="#D32F2F"
-                    />
-                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
-                      {participantForm.company.trim() ? (
-                        <Ionicons name="checkmark" size={22} color="#388E3C" />
-                      ) : (
-                        <Ionicons name="close" size={22} color="#D32F2F" />
-                      )}
-                    </View>
-                  </View>
-                </View>
-                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Roll</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                  <View style={{ flex: 1, position: 'relative' }}>
-                    <TextInput
-                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.role.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.role.trim() ? 'normal' : 'italic' }}
-                      value={participantForm.role}
-                      onChangeText={text => setParticipantForm({ ...participantForm, role: text })}
-                      placeholder="Roll"
-                      placeholderTextColor="#D32F2F"
-                    />
-                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
-                      {participantForm.role.trim() ? (
-                        <Ionicons name="checkmark" size={22} color="#388E3C" />
-                      ) : (
-                        <Ionicons name="close" size={22} color="#D32F2F" />
-                      )}
-                    </View>
-                  </View>
-                </View>
-                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Mobilnummer</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                  <View style={{ flex: 1, position: 'relative' }}>
-                    <TextInput
-                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.phone.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.phone.trim() ? 'normal' : 'italic' }}
-                      value={participantForm.phone}
-                      onChangeText={text => {
-                        // Remove all non-digit characters
-                        const digits = text.replace(/\D/g, '');
-                        // Format as Swedish mobile: 3-3-2-2 (xxx xxx xx xx)
-                        let formatted = '';
-                        if (digits.length <= 3) {
-                          formatted = digits;
-                        } else if (digits.length <= 6) {
-                          formatted = digits.slice(0,3) + ' ' + digits.slice(3);
-                        } else if (digits.length <= 8) {
-                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6);
-                        } else if (digits.length <= 10) {
-                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6,8) + ' ' + digits.slice(8);
-                        } else {
-                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6,8) + ' ' + digits.slice(8,10) + ' ' + digits.slice(10);
-                        }
-                        setParticipantForm({ ...participantForm, phone: formatted });
-                      }}
-                      placeholder="Mobilnummer"
-                      placeholderTextColor="#D32F2F"
-                      keyboardType="phone-pad"
-                    />
-                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
-                      {participantForm.phone.trim() ? (
-                        <Ionicons name="checkmark" size={22} color="#388E3C" />
-                      ) : (
-                        <Ionicons name="close" size={22} color="#D32F2F" />
-                      )}
-                    </View>
-                  </View>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 12 }}>
-                <TouchableOpacity onPress={handleSaveParticipant} style={{
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: 10,
-                  borderWidth: 2,
-                  borderColor: '#222',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 6,
-                  paddingHorizontal: 12,
-                  shadowColor: '#222',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 4,
-                  elevation: 1,
-                  minHeight: 36,
-                  maxWidth: 240,
-                  width: 'auto',
-                  paddingHorizontal: 32,
-                  marginRight: 10,
-                  overflow: 'hidden',
-                }}>
-                  <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
-                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Spara</Text>
-                </TouchableOpacity>
-                {participantEditIndex !== null && (
-                  <TouchableOpacity onPress={() => handleDeleteParticipant(participantEditIndex)} style={{ marginLeft: 8 }}>
-                    <Ionicons name="trash" size={28} color="#D32F2F" />
-                  </TouchableOpacity>
-                )}
-              </View>
+      </ScrollView>
+
+      {/* Modal för temperatur */}
+      {temperatureModalVisible && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 320, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222' }}>Temperatur</Text>
+              <TouchableOpacity onPress={() => setTemperatureModalVisible(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={24} color="#222" />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 16, fontSize: 16 }}
+              keyboardType="numeric"
+              value={temperatureInput}
+              onChangeText={setTemperatureInput}
+              placeholder="Ange temperatur (°C)"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
+              <TouchableOpacity onPress={() => { setTemperature(temperatureInput); setTemperatureModalVisible(false); }}>
+                <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        )}
-        {/* Modal för väderlek */}
-                {/* Modal för temperatur */}
-                {temperatureModalVisible && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.15)', zIndex: 9999, justifyContent: 'center', alignItems: 'center' }}>
-                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-                      <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: 320, borderWidth: 2, borderColor: '#1976D2', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 20, justifyContent: 'center', alignItems: 'center' }}>
-                        <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10, textAlign: 'center' }}>Ange temperatur (°C)</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 16, backgroundColor: '#fff', borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8 }}>
-                          <TextInput
-                            style={{ borderWidth: 0, borderColor: '#ccc', borderRadius: 8, padding: 8, width: 80, fontSize: 16, textAlign: 'center', backgroundColor: '#fff', color: '#222' }}
-                            keyboardType="numbers-and-punctuation"
-                            inputMode="text"
-                            value={temperatureInput}
-                            onChangeText={text => setTemperatureInput(text.replace(/[^0-9-]/g, ''))}
-                            placeholder="0 eller -5"
-                            maxLength={5}
-                          />
-                          <Text style={{ fontSize: 16, marginLeft: 8 }}>°C</Text>
-                        </View>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setTemperature(temperatureInput);
-                            setTemperatureModalVisible(false);
-                          }}
-                          style={{ backgroundColor: '#f7f7f7', borderRadius: 16, borderWidth: 2, borderColor: '#222', paddingVertical: 10, paddingHorizontal: 24, alignItems: 'center', marginBottom: 10 }}
-                        >
-                          <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16, backgroundColor: '#fff', borderWidth: 0, borderColor: '#fff', borderRadius: 10, paddingVertical: 0, paddingHorizontal: 0, textAlign: 'center' }}>Spara</Text>
-                        </TouchableOpacity>
-                        <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
-                          <TouchableOpacity onPress={() => setTemperatureModalVisible(false)} style={{ marginRight: 18 }}>
-                            <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => { setTemperature(""); setTemperatureModalVisible(false); }}>
-                            <Text style={{ color: '#D32F2F', fontSize: 16 }}>Nollställ</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    </KeyboardAvoidingView>
-                  </View>
-                )}
-        {weatherModalVisible && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }}>
-            <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: '80%' }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10, textAlign: 'center' }}>Välj väderlek</Text>
-              {WEATHER_OPTIONS.map((opt, idx) => (
-                <TouchableOpacity key={idx} onPress={() => { setSelectedWeather(opt); setWeatherModalVisible(false); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
-                  <Ionicons name={opt.icon} size={24} color={opt.color} style={{ marginRight: 10 }} />
-                  <Text style={{ fontSize: 16 }}>{opt.label}</Text>
-                </TouchableOpacity>
-              ))}
-              <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
-                <TouchableOpacity onPress={() => setWeatherModalVisible(false)} style={{ marginRight: 18 }}>
-                  <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setSelectedWeather(null); setWeatherModalVisible(false); }}>
-                  <Text style={{ color: '#D32F2F', fontSize: 16 }}>Nollställ</Text>
-                </TouchableOpacity>
-              </View>
+        </View>
+      )}
+
+      {/* Modal för väderlek */}
+      {weatherModalVisible && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: '80%' }}>
+            <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10, textAlign: 'center' }}>Välj väderlek</Text>
+            {WEATHER_OPTIONS.map((opt, idx) => (
+              <TouchableOpacity key={idx} onPress={() => { setSelectedWeather(opt); setWeatherModalVisible(false); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
+                <Ionicons name={opt.icon} size={24} color={opt.color} style={{ marginRight: 10 }} />
+                <Text style={{ fontSize: 16 }}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
+              <TouchableOpacity onPress={() => setWeatherModalVisible(false)} style={{ marginRight: 18 }}>
+                <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setSelectedWeather(null); setWeatherModalVisible(false); }}>
+                <Text style={{ color: '#D32F2F', fontSize: 16 }}>Nollställ</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        )}
-      </KeyboardAvoidingView>
-    </ScrollView>
-  );
-}
+        </View>
+      )}
+      </View>
+    );
+  }
 
