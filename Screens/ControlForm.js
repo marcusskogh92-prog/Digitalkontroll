@@ -16,10 +16,18 @@ function getDefaultChecklist(type) {
   switch ((type || '').toLowerCase()) {
     case 'arbetsberedning':
       return [
-
         { label: 'Genomgång av arbetsplats', done: false, note: '' },
         { label: 'Brister noterade', done: false, note: '' },
         { label: 'Åtgärdslista skapad', done: false, note: '' },
+      ];
+    case 'mottagningskontroll':
+      return [
+        { label: '1 - Leveranskontroll', description: 'Beskrivning för kontrollpunkt 1', done: false, note: '' },
+        { label: '2 - Kvalitet och skick', description: 'Beskrivning för kontrollpunkt 2', done: false, note: '' },
+        { label: 'Kontrollpunkt 3', description: 'Beskrivning för kontrollpunkt 3', done: false, note: '' },
+        { label: 'Kontrollpunkt 4', description: 'Beskrivning för kontrollpunkt 4', done: false, note: '' },
+        { label: 'Kontrollpunkt 5', description: 'Beskrivning för kontrollpunkt 5', done: false, note: '' },
+        { label: 'Kontrollpunkt 6', description: 'Beskrivning för kontrollpunkt 6', done: false, note: '' },
       ];
     default:
       return base;
@@ -45,6 +53,8 @@ function formatPhoneNumber(num) {
 }
 
 export default function ControlForm({ route, navigation }) {
+  // State for expanded checklist items (for mottagningskontroll)
+  const [expandedChecklist, setExpandedChecklist] = useState([]);
   // Modal for add/edit participant
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
   const [participantEditIndex, setParticipantEditIndex] = useState(null);
@@ -123,7 +133,7 @@ export default function ControlForm({ route, navigation }) {
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>Ny kontroll: {type}</Text>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <Text style={styles.label}>Datum</Text>
+        <Text style={[styles.label, { fontWeight: 'bold' }]}>Datum</Text>
         <View style={{ position: 'relative', marginBottom: 8 }}>
           <TextInput
             style={[styles.input, { color: '#888', backgroundColor: '#F7FAFC', borderColor: '#E0E0E0' }]}
@@ -229,7 +239,34 @@ export default function ControlForm({ route, navigation }) {
             </View>
           ))}
           {/* add participant button moved to header */}
-                          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 10, marginBottom: 10 }} />
+          <View style={{ marginTop: 16, marginBottom: 8 }}>
+            <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#263238', marginBottom: 4 }}>Leverans av:</Text>
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                style={{
+                  backgroundColor: '#fff',
+                  borderColor: '#ccc',
+                  borderWidth: 1,
+                  borderRadius: 8,
+                  paddingRight: 40,
+                  height: 44,
+                  fontSize: 16,
+                  color: '#000',
+                  fontStyle: description.trim() === '' ? 'italic' : 'normal',
+                }}
+                placeholder="Beskriv leveransen"
+                placeholderTextColor="#D32F2F"
+                value={description}
+                onChangeText={setDescription}
+              />
+              {description.trim() === '' ? (
+                <MaterialIcons name="close" size={22} color="#D32F2F" style={{ position: 'absolute', right: 10, top: 11 }} />
+              ) : (
+                <MaterialIcons name="check" size={22} color="#388E3C" style={{ position: 'absolute', right: 10, top: 11 }} />
+              )}
+            </View>
+          </View>
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 10, marginBottom: 10 }} />
                 {participantModalVisible && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 100, justifyContent: 'center', alignItems: 'center' }}>
                     <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 2, borderColor: '#222', padding: 22, minWidth: 280, maxWidth: 340, width: '80%', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4, alignItems: 'center', position: 'relative' }}>
@@ -313,14 +350,52 @@ export default function ControlForm({ route, navigation }) {
               {item.done ? <Text style={styles.checkboxMark}>✓</Text> : null}
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={styles.checkLabel}>{item.label}</Text>
-              <TextInput
-                style={styles.noteInput}
-                placeholder="Anteckning (valfritt)"
-                placeholderTextColor="#888"
-                value={item.note}
-                onChangeText={(t) => setItemNote(idx, t)}
-              />
+              <TouchableOpacity
+                onPress={() => {
+                  setExpandedChecklist(expandedChecklist.includes(idx)
+                    ? expandedChecklist.filter(i => i !== idx)
+                    : [...expandedChecklist, idx]);
+                }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: '#E9ECEF',
+                  borderRadius: 8,
+                  paddingVertical: 14,
+                  paddingHorizontal: 16,
+                  marginBottom: 6,
+                  borderWidth: 2,
+                  borderColor: expandedChecklist.includes(idx) ? '#1976D2' : '#E0E0E0',
+                  shadowColor: '#1976D2',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: expandedChecklist.includes(idx) ? 0.12 : 0.06,
+                  shadowRadius: 4,
+                  elevation: expandedChecklist.includes(idx) ? 2 : 1,
+                }}
+              >
+                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>{item.label}</Text>
+                {'description' in item && (
+                  <Ionicons
+                    name={expandedChecklist.includes(idx) ? 'chevron-up' : 'chevron-down'}
+                    size={20}
+                    color={expandedChecklist.includes(idx) ? '#1976D2' : '#888'}
+                    style={{ marginLeft: 8 }}
+                  />
+                )}
+              </TouchableOpacity>
+              {'description' in item && expandedChecklist.includes(idx) && (
+                <>
+                  <Text style={{ color: '#555', fontSize: 14, marginBottom: 6, marginTop: 2 }}>{item.description}</Text>
+                  <TextInput
+                    style={styles.noteInput}
+                    placeholder="Anteckning (valfritt)"
+                    placeholderTextColor="#888"
+                    value={item.note}
+                    onChangeText={(t) => setItemNote(idx, t)}
+                  />
+                </>
+              )}
             </View>
           </View>
         ))}
