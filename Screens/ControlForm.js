@@ -3,14 +3,14 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 const WEATHER_OPTIONS = [
-  { label: 'Sol', icon: 'sunny-outline' },
-  { label: 'Dimma', icon: 'cloudy-outline' },
-  { label: 'Regn', icon: 'rainy-outline' },
-  { label: 'Snö', icon: 'snow-outline' },
-  { label: 'Vind', icon: 'cloud-outline' },
-  { label: 'Ostadigt', icon: 'partly-sunny-outline' },
+  { label: 'Sol', icon: 'sunny-outline', color: '#FFD600' },
+  { label: 'Dimma', icon: 'cloudy-outline', color: '#B0BEC5' },
+  { label: 'Regn', icon: 'rainy-outline', color: '#2196F3' },
+  { label: 'Snö', icon: 'snow-outline', color: '#90CAF9' },
+  { label: 'Vind', icon: 'cloud-outline', color: '#90A4AE' },
+  { label: 'Ostadigt', icon: 'partly-sunny-outline', color: '#FFD54F' },
 ];
 
 const PRIMARY = '#263238';
@@ -64,6 +64,7 @@ export default function ControlForm({ route, navigation }) {
     // Väderlek state (endast för mottagningskontroll)
     const [weatherModalVisible, setWeatherModalVisible] = useState(false);
     const [selectedWeather, setSelectedWeather] = useState(null);
+    const [temperature, setTemperature] = useState("");
   // State for expanded checklist items (for mottagningskontroll)
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   // Modal for add/edit participant
@@ -391,11 +392,8 @@ export default function ControlForm({ route, navigation }) {
 
         <Text style={styles.sectionTitle}>Kontrollpunkter</Text>
         {checklist.map((item, idx) => (
-          <View key={idx} style={styles.checkRow}>
-            <TouchableOpacity style={[styles.checkbox, item.done && styles.checkboxChecked]} onPress={() => toggleItem(idx)}>
-              {item.done ? <Text style={styles.checkboxMark}>✓</Text> : null}
-            </TouchableOpacity>
-            <View style={{ flex: 1 }}>
+          <View key={idx} style={[styles.checkRow, { flexDirection: 'column', alignItems: 'stretch' }]}> 
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TouchableOpacity
                 onPress={() => {
                   setExpandedChecklist(expandedChecklist.includes(idx)
@@ -403,16 +401,24 @@ export default function ControlForm({ route, navigation }) {
                     : [...expandedChecklist, idx]);
                 }}
                 style={{
+                  flex: 1,
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  backgroundColor: '#E9ECEF',
+                  backgroundColor:
+                    type.toLowerCase() === 'mottagningskontroll' && idx === 0
+                      ? (selectedWeather || temperature)
+                        ? 'rgba(56, 142, 60, 0.22)'
+                        : 'rgba(211, 47, 47, 0.18)'
+                      : item.done
+                        ? 'rgba(56, 142, 60, 0.22)'
+                        : 'rgba(211, 47, 47, 0.18)',
                   borderRadius: 8,
                   paddingVertical: 14,
                   paddingHorizontal: 16,
                   marginBottom: 6,
                   borderWidth: 1,
-                  borderColor: expandedChecklist.includes(idx) ? '#1976D2' : '#E0E0E0',
+                  borderColor: expandedChecklist.includes(idx) ? '#222' : '#E0E0E0',
                   shadowColor: '#1976D2',
                   shadowOffset: { width: 0, height: 2 },
                   shadowOpacity: expandedChecklist.includes(idx) ? 0.12 : 0.06,
@@ -420,133 +426,129 @@ export default function ControlForm({ route, navigation }) {
                   elevation: expandedChecklist.includes(idx) ? 2 : 1,
                 }}
               >
-                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>{
-                  type.toLowerCase() === 'mottagningskontroll' && idx === 0 ? 'Väderlek vid leverans' : item.label
-                }</Text>
+                {type.toLowerCase() === 'mottagningskontroll' && idx === 0 ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>
+                      1 - Väderlek vid leverans
+                      {(!selectedWeather && !temperature) && (
+                        <Text style={{ fontWeight: 'normal', fontSize: 12, color: '#888', marginLeft: 8 }}>
+                          (valfritt)
+                        </Text>
+                      )}
+                    </Text>
+                    {selectedWeather && (
+                      <Ionicons name={selectedWeather.icon} size={20} color={'#43A047'} style={{ marginLeft: 10 }} />
+                    )}
+                    {temperature && (
+                      <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#263238', marginLeft: 8 }}>{temperature}°C</Text>
+                    )}
+                  </View>
+                ) : (
+                  <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#263238', letterSpacing: 0.2 }}>{item.label}</Text>
+                )}
                 {'description' in item && (
                   <Ionicons
                     name={expandedChecklist.includes(idx) ? 'chevron-up' : 'chevron-down'}
                     size={20}
-                    color={expandedChecklist.includes(idx) ? '#1976D2' : '#888'}
+                    color={'#222'}
                     style={{ marginLeft: 8 }}
                   />
                 )}
               </TouchableOpacity>
-              {/* Väderval för första kontrollpunkten i mottagningskontroll */}
-              {type.toLowerCase() === 'mottagningskontroll' && idx === 0 ? (
-                <View style={{ marginTop: 10 }}>
-                  <TouchableOpacity
+            </View>
+            {/* Expanderbart innehåll */}
+            {type.toLowerCase() === 'mottagningskontroll' && idx === 0 && expandedChecklist.includes(idx) && (
+              <View style={{ marginTop: 0, width: '100%', paddingLeft: 24, backgroundColor: '#f8f8f8', borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0', paddingBottom: 10 }}>
+                {/* Temperaturfält med nollställ-knapp */}
+                <View style={{ marginTop: 10, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 15, color: '#263238', marginRight: 10, fontWeight: 'bold' }}>Temperatur:</Text>
+                  <TextInput
                     style={{
                       backgroundColor: '#fff',
+                      borderColor: '#ccc',
+                      borderWidth: 1,
                       borderRadius: 8,
+                      paddingHorizontal: 10,
+                      height: 36,
+                      fontSize: 15,
+                      color: '#000',
+                      width: 80
+                    }}
+                    placeholder="t.ex. 5"
+                    placeholderTextColor="#888"
+                    value={temperature}
+                    onChangeText={setTemperature}
+                    keyboardType="numeric"
+                    maxLength={5}
+                  />
+                  <Text style={{ fontSize: 15, color: '#263238', marginLeft: 6 }}>°C</Text>
+                  <View style={{ flex: 1 }} />
+                  <TouchableOpacity
+                    onPress={() => {
+                      // Spara temperatur/väder och stäng popup
+                      if ((selectedWeather || temperature) && type.toLowerCase() === 'mottagningskontroll' && idx === 0) {
+                        const updated = [...checklist];
+                        updated[idx].done = true;
+                        setChecklist(updated);
+                      }
+                      setExpandedChecklist(expandedChecklist.filter(i => i !== idx));
+                    }}
+                    style={{ marginLeft: 6, padding: 6, justifyContent: 'center', alignItems: 'center' }}
+                    accessibilityLabel="Spara väder och temperatur"
+                  >
+                    <MaterialIcons name="check" size={22} color="#43A047" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedWeather(null);
+                      setTemperature("");
+                      // Sätt checklistans punkt till ofylld om väder och temperatur är nollställda
+                      if (type.toLowerCase() === 'mottagningskontroll' && idx === 0) {
+                        const updated = [...checklist];
+                        updated[idx].done = false;
+                        setChecklist(updated);
+                      } else if (checklist[idx]?.done) {
+                        const updated = [...checklist];
+                        updated[idx].done = false;
+                        setChecklist(updated);
+                      }
+                    }}
+                    style={{ marginLeft: 6, padding: 6, borderRadius: 16, backgroundColor: '#f8f8f8', justifyContent: 'center', alignItems: 'center' }}
+                    accessibilityLabel="Nollställ väder och temperatur"
+                  >
+                    <MaterialIcons name="close" size={22} color="#D32F2F" />
+                  </TouchableOpacity>
+                {/* Spara-knapp för temperatur/väder */}
+                </View>
+                {/* Väderval */}
+                {WEATHER_OPTIONS.map((option, i) => (
+                  <TouchableOpacity
+                    key={option.label}
+                    style={{
+                      backgroundColor: '#fff',
+                      borderRadius: 0,
+                      borderBottomLeftRadius: i === WEATHER_OPTIONS.length - 1 ? 8 : 0,
+                      borderBottomRightRadius: i === WEATHER_OPTIONS.length - 1 ? 8 : 0,
                       borderWidth: 1,
                       borderColor: '#222',
+                      borderTopWidth: 0,
                       flexDirection: 'row',
                       alignItems: 'center',
                       paddingVertical: 12,
-                      paddingHorizontal: 22,
-                      alignSelf: 'flex-start',
+                      paddingHorizontal: 20,
+                      width: '100%',
                     }}
-                    onPress={() => setWeatherModalVisible(true)}
+                    onPress={() => {
+                      setSelectedWeather(option);
+                      // Popupen förblir öppen
+                    }}
                   >
-                    <Ionicons name={selectedWeather?.icon || 'cloud-outline'} size={20} color="#222" style={{ marginRight: 10 }} />
-                    <Text style={{ color: '#222', fontWeight: '700', fontSize: 16, letterSpacing: 0.5 }}>
-                      {selectedWeather ? selectedWeather.label : 'Välj väderlek'}
-                    </Text>
+                    <Ionicons name={option.icon} size={20} color={option.color} style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#222', fontWeight: '700', fontSize: 15 }}>{option.label}</Text>
                   </TouchableOpacity>
-                  {/* Modal för väderval */}
-                  <Modal
-                    visible={weatherModalVisible}
-                    animationType="fade"
-                    transparent
-                    onRequestClose={() => setWeatherModalVisible(false)}
-                  >
-                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' }}>
-                      <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 24, width: '85%', maxWidth: 340, alignItems: 'center', borderWidth: 1, borderColor: '#222' }}>
-                        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18 }}>Välj väderlek</Text>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
-                          {WEATHER_OPTIONS.map(option => (
-                            <TouchableOpacity
-                              key={option.label}
-                              style={{
-                                backgroundColor: '#fff',
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: '#222',
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                paddingVertical: 10,
-                                paddingHorizontal: 16,
-                                margin: 6,
-                              }}
-                              onPress={() => {
-                                setSelectedWeather(option);
-                                setWeatherModalVisible(false);
-                              }}
-                            >
-                              <Ionicons name={option.icon} size={20} color="#222" style={{ marginRight: 8 }} />
-                              <Text style={{ color: '#222', fontWeight: '700', fontSize: 15 }}>{option.label}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
-                          <TouchableOpacity
-                            style={{
-                              backgroundColor: '#fff',
-                              borderRadius: 8,
-                              borderWidth: 1,
-                              borderColor: '#222',
-                              paddingVertical: 10,
-                              paddingHorizontal: 18,
-                              marginRight: 10,
-                            }}
-                            onPress={() => {
-                              setSelectedWeather(null);
-                            }}
-                          >
-                            <Text style={{ color: '#222', fontWeight: '700', fontSize: 16 }}>Återställ</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={{
-                              backgroundColor: '#fff',
-                              borderRadius: 8,
-                              borderWidth: 1,
-                              borderColor: '#222',
-                              paddingVertical: 10,
-                              paddingHorizontal: 18,
-                            }}
-                            onPress={() => setWeatherModalVisible(false)}
-                          >
-                            <Text style={{ color: '#222', fontWeight: '700', fontSize: 16 }}>Start</Text>
-                          </TouchableOpacity>
-                        </View>
-                        {/* Kryss för att stänga popup */}
-                        <TouchableOpacity
-                          onPress={() => setWeatherModalVisible(false)}
-                          style={{ position: 'absolute', top: 12, right: 12, padding: 6, zIndex: 20 }}
-                          hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
-                        >
-                          <MaterialIcons name="close" size={28} color="#222" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </Modal>
-                </View>
-              ) : null}
-              {/* ...övriga checklistpunkter... */}
-              {'description' in item && expandedChecklist.includes(idx) && (
-                <>
-                  <Text style={{ color: '#555', fontSize: 14, marginBottom: 6, marginTop: 2 }}>{item.description}</Text>
-                  <TextInput
-                    style={styles.noteInput}
-                    placeholder="Anteckning (valfritt)"
-                    placeholderTextColor="#888"
-                    value={item.note}
-                    onChangeText={(t) => setItemNote(idx, t)}
-                  />
-                </>
-              )}
-            </View>
+                ))}
+              </View>
+            )}
           </View>
         ))}
 
@@ -577,7 +579,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: PRIMARY, marginTop: 12, marginBottom: 8 },
-  checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
+  checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 4 },
   checkbox: {
     width: 22,
     height: 22,
