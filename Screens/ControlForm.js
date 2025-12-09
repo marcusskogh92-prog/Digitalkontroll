@@ -117,6 +117,12 @@ export default function ControlForm({ route, navigation }) {
      const [mainRecipientModalVisible, setMainRecipientModalVisible] = useState(false);
      const [mainRecipientForm, setMainRecipientForm] = useState({ name: '', company: '' });
   const [participants, setParticipants] = useState([]);
+    // Ta bort deltagare
+    const handleDeleteParticipant = (index) => {
+      setParticipants(prev => prev.filter((_, i) => i !== index));
+      setParticipantModalVisible(false);
+      setParticipantEditIndex(null);
+    };
   const [participantForm, setParticipantForm] = useState({ name: '', company: '', role: '', phone: '' });
   const handleSaveParticipant = () => {
     if (!participantForm.name.trim()) return;
@@ -192,6 +198,9 @@ export default function ControlForm({ route, navigation }) {
 
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>{type}</Text>
+
+
+
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         {/* Projektinformation - visas alltid */}
         <View style={{ backgroundColor: '#f7f7f7', borderRadius: 10, padding: 14, marginBottom: 18 }}>
@@ -220,12 +229,13 @@ export default function ControlForm({ route, navigation }) {
           </View>
         </View>
 
+
         {/* Väderlek och temperatur */}
         <View style={{ marginBottom: 18 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <TouchableOpacity
               onPress={() => setWeatherModalVisible(true)}
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginVertical: 2, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
             >
               <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Väderlek vid leverans</Text>
               {selectedWeather ? (
@@ -247,7 +257,7 @@ export default function ControlForm({ route, navigation }) {
           <View style={{ marginTop: 8 }}>
             <TouchableOpacity
               onPress={() => setTemperatureModalVisible(true)}
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginVertical: 2, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
             >
               <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Temperatur</Text>
               {temperature ? (
@@ -267,27 +277,46 @@ export default function ControlForm({ route, navigation }) {
         </View>
 
         {/* Deltagare (alltid synlig) */}
-        <View style={{ marginBottom: 18 }}>
-          <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 6 }}>Deltagare:</Text>
-          {participants.map((p, idx) => (
-            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-              <Text style={{ flex: 1 }}>{p.name} ({p.company})</Text>
-              <TouchableOpacity onPress={() => {
-                setParticipantEditIndex(idx);
-                setParticipantForm(p);
-                setParticipantModalVisible(true);
-              }}>
-                <Text style={{ color: '#1976D2' }}>Redigera</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-          <TouchableOpacity onPress={() => {
-            setParticipantEditIndex(null);
-            setParticipantForm({ name: '', company: '', role: '', phone: '' });
-            setParticipantModalVisible(true);
-          }}>
-            <Text style={{ color: '#1976D2' }}>Lägg till deltagare</Text>
+        <View style={{ marginTop: -10, marginBottom: 18 }}>
+          <TouchableOpacity
+            onPress={() => {
+              setParticipantEditIndex(null);
+              setParticipantForm({ name: '', company: '', role: '', phone: '' });
+              setParticipantModalVisible(true);
+            }}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginVertical: 2, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
+          >
+            <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Deltagare:</Text>
+            <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 10 }}>Lägg till</Text>
+            <Ionicons name="person-add" size={24} color="#1976D2" style={{ marginLeft: 'auto' }} />
           </TouchableOpacity>
+          {/* Visa lista med deltagare under knappen */}
+          {participants.length > 0 && (
+            <View style={{ marginTop: 8 }}>
+              {participants.map((p, idx) => (
+                <View key={idx} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 16, flex: 1 }}>{p.name}</Text>
+                    <Text style={{ fontSize: 15, color: '#222', marginLeft: 4, minWidth: 80 }}>{p.company}</Text>
+                    <TouchableOpacity onPress={() => {
+                      setParticipantEditIndex(idx);
+                      setParticipantForm(p);
+                      setParticipantModalVisible(true);
+                    }}>
+                      <Ionicons name="create-outline" size={20} color="#1976D2" />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                    <Text style={{ fontSize: 14, color: '#555', flex: 1 }}>{p.role}</Text>
+                    <Text style={{ fontSize: 14, color: '#555', marginLeft: 4, minWidth: 80 }}>{p.phone}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+          {/* Horisontell avdelare och rubrik */}
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 12 }} />
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 10 }}>Kontrollpunkter</Text>
         </View>
 
         {/* Checklist rendering med expanderande punkter och Ja/Nej-frågor */}
@@ -326,37 +355,145 @@ export default function ControlForm({ route, navigation }) {
           ))}
         </View>
         {/* Spara-knapp */}
-        <TouchableOpacity style={{ backgroundColor: '#1976D2', padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 24 }} onPress={handleSave}>
-          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara mottagningskontroll</Text>
+        <TouchableOpacity style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 24 }} onPress={handleSave}>
+          <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Spara</Text>
         </TouchableOpacity>
         {/* Modal för deltagare */}
         {participantModalVisible && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }}>
-            <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: '80%' }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>{participantEditIndex === null ? 'Lägg till mottagare' : 'Redigera mottagare'}</Text>
-              <Text>Namn:</Text>
-              <TouchableOpacity>
-                <Text style={{ borderBottomWidth: 1, borderColor: '#ccc', marginBottom: 8 }}>{participantForm.name}</Text>
-              </TouchableOpacity>
-              <Text>Företag:</Text>
-              <TouchableOpacity>
-                <Text style={{ borderBottomWidth: 1, borderColor: '#ccc', marginBottom: 8 }}>{participantForm.company}</Text>
-              </TouchableOpacity>
-              <Text>Roll:</Text>
-              <TouchableOpacity>
-                <Text style={{ borderBottomWidth: 1, borderColor: '#ccc', marginBottom: 8 }}>{participantForm.role}</Text>
-              </TouchableOpacity>
-              <Text>Telefon:</Text>
-              <TouchableOpacity>
-                <Text style={{ borderBottomWidth: 1, borderColor: '#ccc', marginBottom: 8 }}>{participantForm.phone}</Text>
-              </TouchableOpacity>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }}>
-                <TouchableOpacity onPress={handleSaveParticipant} style={{ backgroundColor: '#1976D2', padding: 10, borderRadius: 6 }}>
-                  <Text style={{ color: '#fff' }}>Spara</Text>
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: '85%', borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 18 }}>{participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare'}</Text>
+                <TouchableOpacity onPress={() => setParticipantModalVisible(false)}>
+                  <Ionicons name="close" size={28} color="#888" />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setParticipantModalVisible(false)} style={{ backgroundColor: '#ccc', padding: 10, borderRadius: 6 }}>
-                  <Text>Avbryt</Text>
+              </View>
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Namn</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={{ flex: 1, position: 'relative' }}>
+                    <TextInput
+                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: '#222', fontStyle: 'italic' }}
+                      value={participantForm.name}
+                      onChangeText={text => setParticipantForm({ ...participantForm, name: text })}
+                      placeholder="Namn"
+                      placeholderTextColor="#D32F2F"
+                    />
+                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
+                      {participantForm.name.trim() ? (
+                        <Ionicons name="checkmark" size={22} color="#388E3C" />
+                      ) : (
+                        <Ionicons name="close" size={22} color="#D32F2F" />
+                      )}
+                    </View>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Företag</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={{ flex: 1, position: 'relative' }}>
+                    <TextInput
+                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.company.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.company.trim() ? 'normal' : 'italic' }}
+                      value={participantForm.company}
+                      onChangeText={text => setParticipantForm({ ...participantForm, company: text })}
+                      placeholder="Företag"
+                      placeholderTextColor="#D32F2F"
+                    />
+                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
+                      {participantForm.company.trim() ? (
+                        <Ionicons name="checkmark" size={22} color="#388E3C" />
+                      ) : (
+                        <Ionicons name="close" size={22} color="#D32F2F" />
+                      )}
+                    </View>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Roll</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={{ flex: 1, position: 'relative' }}>
+                    <TextInput
+                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.role.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.role.trim() ? 'normal' : 'italic' }}
+                      value={participantForm.role}
+                      onChangeText={text => setParticipantForm({ ...participantForm, role: text })}
+                      placeholder="Roll"
+                      placeholderTextColor="#D32F2F"
+                    />
+                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
+                      {participantForm.role.trim() ? (
+                        <Ionicons name="checkmark" size={22} color="#388E3C" />
+                      ) : (
+                        <Ionicons name="close" size={22} color="#D32F2F" />
+                      )}
+                    </View>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>Mobilnummer</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={{ flex: 1, position: 'relative' }}>
+                    <TextInput
+                      style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 8, paddingRight: 32, fontSize: 16, backgroundColor: '#f7f7f7', color: participantForm.phone.trim() ? '#222' : '#D32F2F', fontStyle: participantForm.phone.trim() ? 'normal' : 'italic' }}
+                      value={participantForm.phone}
+                      onChangeText={text => {
+                        // Remove all non-digit characters
+                        const digits = text.replace(/\D/g, '');
+                        // Format as Swedish mobile: 3-3-2-2 (xxx xxx xx xx)
+                        let formatted = '';
+                        if (digits.length <= 3) {
+                          formatted = digits;
+                        } else if (digits.length <= 6) {
+                          formatted = digits.slice(0,3) + ' ' + digits.slice(3);
+                        } else if (digits.length <= 8) {
+                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6);
+                        } else if (digits.length <= 10) {
+                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6,8) + ' ' + digits.slice(8);
+                        } else {
+                          formatted = digits.slice(0,3) + ' ' + digits.slice(3,6) + ' ' + digits.slice(6,8) + ' ' + digits.slice(8,10) + ' ' + digits.slice(10);
+                        }
+                        setParticipantForm({ ...participantForm, phone: formatted });
+                      }}
+                      placeholder="Mobilnummer"
+                      placeholderTextColor="#D32F2F"
+                      keyboardType="phone-pad"
+                    />
+                    <View style={{ position: 'absolute', right: 8, top: 10 }}>
+                      {participantForm.phone.trim() ? (
+                        <Ionicons name="checkmark" size={22} color="#388E3C" />
+                      ) : (
+                        <Ionicons name="close" size={22} color="#D32F2F" />
+                      )}
+                    </View>
+                  </View>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 12 }}>
+                <TouchableOpacity onPress={handleSaveParticipant} style={{
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: 10,
+                  borderWidth: 2,
+                  borderColor: '#222',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  shadowColor: '#222',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 4,
+                  elevation: 1,
+                  minHeight: 36,
+                  maxWidth: 240,
+                  width: 'auto',
+                  paddingHorizontal: 32,
+                  marginRight: 10,
+                  overflow: 'hidden',
+                }}>
+                  <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Spara</Text>
                 </TouchableOpacity>
+                {participantEditIndex !== null && (
+                  <TouchableOpacity onPress={() => handleDeleteParticipant(participantEditIndex)} style={{ marginLeft: 8 }}>
+                    <Ionicons name="trash" size={28} color="#D32F2F" />
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -387,7 +524,7 @@ export default function ControlForm({ route, navigation }) {
                           }}
                           style={{ backgroundColor: '#f7f7f7', borderRadius: 16, borderWidth: 2, borderColor: '#222', paddingVertical: 10, paddingHorizontal: 24, alignItems: 'center', marginBottom: 10 }}
                         >
-                          <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+                          <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16, backgroundColor: '#fff', borderWidth: 0, borderColor: '#fff', borderRadius: 10, paddingVertical: 0, paddingHorizontal: 0, textAlign: 'center' }}>Spara</Text>
                         </TouchableOpacity>
                         <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
                           <TouchableOpacity onPress={() => setTemperatureModalVisible(false)} style={{ marginRight: 18 }}>
