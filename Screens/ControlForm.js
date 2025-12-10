@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -28,6 +29,78 @@ function formatPhoneNumber(num) {
 import { useRoute } from '@react-navigation/native';
 
 export default function ControlForm({ date, participants = [] }) {
+          // Spara kontrollen som utförd
+          const saveCompletedControl = async () => {
+            try {
+              const completed = {
+                date: dateValue,
+                project,
+                weather: selectedWeather,
+                participants: localParticipants,
+                checklist,
+                deliveryDesc,
+                status: 'UTFÖRD',
+                savedAt: new Date().toISOString(),
+              };
+              // Spara till AsyncStorage, t.ex. i en lista
+              const existing = await AsyncStorage.getItem('completed_controls');
+              let arr = [];
+              if (existing) arr = JSON.parse(existing);
+              arr.push(completed);
+              console.log('[SAVE] completed_controls:', JSON.stringify(arr, null, 2));
+              await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+              // Ta bort utkastet för detta projekt
+              const draft = await AsyncStorage.getItem('draft_control');
+              if (draft) {
+                const parsed = JSON.parse(draft);
+                if (parsed.project?.id === project?.id) {
+                  await AsyncStorage.removeItem('draft_control');
+                }
+              }
+              // Log what is in AsyncStorage after save
+              const after = await AsyncStorage.getItem('completed_controls');
+              console.log('[AFTER SAVE] completed_controls:', after);
+              alert('Kontrollen har sparats som utförd!');
+            } catch (e) {
+              alert('Kunde inte spara kontrollen: ' + e.message);
+            }
+          };
+        // Sätt Ja/Nej-svar på en fråga i checklistan
+        const setAnswer = (itemIdx, questionIdx, value) => {
+          setChecklist(checklist => checklist.map((item, idx) =>
+            idx === itemIdx
+              ? {
+                  ...item,
+                  answers: item.answers.map((a, qIdx) => qIdx === questionIdx ? value : a)
+                }
+              : item
+          ));
+        };
+      // Toggla expand/collapse för checklist-sektion
+      const toggleItem = idx => {
+        setExpandedChecklist(expandedChecklist =>
+          expandedChecklist.includes(idx)
+            ? expandedChecklist.filter(i => i !== idx)
+            : [...expandedChecklist, idx]
+        );
+      };
+    // Funktion för att spara kontrollen som utkast
+    const saveDraftControl = async () => {
+      try {
+        const draft = {
+          date,
+          project,
+          weather: selectedWeather,
+          participants: localParticipants,
+          checklist,
+        };
+        // Spara till AsyncStorage, t.ex. med en unik nyckel
+        await AsyncStorage.setItem('draft_control', JSON.stringify(draft));
+        alert('Kontrollen har sparats som utkast!');
+      } catch (e) {
+        alert('Kunde inte spara utkast: ' + e.message);
+      }
+    };
   const route = useRoute();
   const project = route.params?.project;
   const [weatherModalVisible, setWeatherModalVisible] = useState(false);
@@ -94,10 +167,10 @@ export default function ControlForm({ date, participants = [] }) {
             <View style={{ padding: 16 }}>
               <TouchableOpacity
                 style={{ backgroundColor: canSave ? '#1976D2' : '#B0BEC5', borderRadius: 8, padding: 14, alignItems: 'center' }}
-                onPress={() => canSave && alert('Sparad! (demo)')}
+                onPress={() => canSave ? saveDraftControl() : null}
                 disabled={!canSave}
               >
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara och slutför senare</Text>
               </TouchableOpacity>
               {!canSave && (
                 <Text style={{ color: '#D32F2F', fontSize: 15, marginTop: 8, marginHorizontal: 16, textAlign: 'center' }}>
@@ -492,11 +565,17 @@ export default function ControlForm({ date, participants = [] }) {
                 </Text>
               )}
               <TouchableOpacity
-                style={{ backgroundColor: canSave ? '#1976D2' : '#B0BEC5', borderRadius: 8, padding: 14, alignItems: 'center' }}
-                onPress={() => canSave && alert('Sparad! (demo)')}
+                style={{ backgroundColor: canSave ? '#1976D2' : '#B0BEC5', borderRadius: 8, padding: 14, alignItems: 'center', marginBottom: 10 }}
+                onPress={() => canSave ? saveCompletedControl() : null}
                 disabled={!canSave}
               >
                 <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: '#FFA726', borderRadius: 8, padding: 14, alignItems: 'center' }}
+                onPress={saveDraftControl}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara och slutför senare</Text>
               </TouchableOpacity>
             </View>
           );

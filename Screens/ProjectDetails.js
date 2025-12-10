@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
     Image,
     KeyboardAvoidingView,
@@ -17,6 +17,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { fetchProjectControls } from '../components/fetchProjectControls';
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#fff' },
@@ -117,6 +118,12 @@ export default function ProjectDetails({ route, navigation }) {
       </View>
     );
   }
+    // ...befintlig kod...
+    // Visa lista med kontroller under projektinfo
+    // Placera där du vill i din layout, t.ex. direkt efter projektinfo:
+    // ...befintlig kod...
+    // Exempel på integration:
+    // <ProjectControlsList projectId={project.id} />
   const controlTypes = [
     'Arbetsberedning',
     'Egenkontroll',
@@ -126,6 +133,23 @@ export default function ProjectDetails({ route, navigation }) {
     'Skyddsrond'
   ].sort();
   const [controls, setControls] = useState([]);
+
+  // Ladda kontroller för projektet
+  const loadControls = useCallback(async () => {
+    if (!project?.id) return;
+    const arr = await fetchProjectControls(project.id);
+    setControls(arr);
+  }, [project?.id]);
+
+  // Ladda kontroller när sidan visas (fokus)
+  React.useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadControls();
+    });
+    // Ladda direkt vid mount också
+    loadControls();
+    return unsubscribe;
+  }, [navigation, loadControls]);
   const [editableProject, setEditableProject] = useState(project);
   const [showControlPicker, setShowControlPicker] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -202,39 +226,39 @@ export default function ProjectDetails({ route, navigation }) {
             <View style={{ marginBottom: 2 }}>
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Skapad:</Text> {editableProject?.createdAt
-                  ? new Date(editableProject.createdAt).toLocaleDateString()
+                  ? <Text>{new Date(editableProject.createdAt).toLocaleDateString()}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Ansvarig:</Text> {editableProject?.ansvarig
-                  ? editableProject.ansvarig
+                  ? <Text>{editableProject.ansvarig}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Status:</Text> {editableProject?.status === 'completed'
-                  ? 'Avslutat'
+                  ? <Text>Avslutat</Text>
                   : editableProject?.status === 'ongoing'
-                    ? 'Pågående'
+                    ? <Text>Pågående</Text>
                     : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Kund:</Text> {editableProject?.client
-                  ? editableProject.client
+                  ? <Text>{editableProject.client}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Adress:</Text> {editableProject?.adress
-                  ? editableProject.adress
+                  ? <Text>{editableProject.adress}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Fastighetsbeteckning:</Text> {editableProject?.fastighetsbeteckning
-                  ? editableProject.fastighetsbeteckning
+                  ? <Text>{editableProject.fastighetsbeteckning}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Valfritt</Text>}
               </Text>
             </View>

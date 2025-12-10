@@ -1,7 +1,7 @@
 
+import { useRef } from 'react';
 import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import SignatureScreen from 'react-native-signature-canvas';
-import React, { useRef } from 'react';
 
 export default function SignatureModal({ visible, onOK, onCancel }) {
   const signRef = useRef();
