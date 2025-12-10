@@ -61,37 +61,43 @@ export default function ControlForm({ date, participants = [] }) {
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   const [generalNote, setGeneralNote] = useState('');
   const [signatureName, setSignatureName] = useState('');
+  // Delivery description modal and value
+  const [showDeliveryDescModal, setShowDeliveryDescModal] = useState(false);
+  const [deliveryDesc, setDeliveryDesc] = useState('');
   // Date logic
   const todayStr = new Date().toISOString().slice(0, 10);
   const [showDateModal, setShowDateModal] = useState(false);
   const [dateValue, setDateValue] = useState(date || todayStr);
   const [dateInput, setDateInput] = useState(date || todayStr);
 
-  const toggleItem = idx => {
-    setExpandedChecklist(expandedChecklist.includes(idx)
-      ? expandedChecklist.filter(i => i !== idx)
-      : [...expandedChecklist, idx]);
-  };
+        {/* Spara-knapp */}
+        {(() => {
+          const allAnswered = checklist.every(item => item.answers.every(a => a === 'Ja' || a === 'Nej'));
+          const allNotes = checklist.every(item => !item.answers.some(a => a === 'Nej') || (item.note && item.note.trim() !== ''));
+          const hasDate = !!dateValue;
+          const hasWeather = !!selectedWeather;
+          const hasDeliveryDesc = !!deliveryDesc && deliveryDesc.trim() !== '';
+          const canSave = allAnswered && allNotes && hasDate && hasWeather && hasDeliveryDesc;
+          return (
+            <View style={{ padding: 16 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: canSave ? '#1976D2' : '#B0BEC5', borderRadius: 8, padding: 14, alignItems: 'center' }}
+                onPress={() => canSave && alert('Sparad! (demo)')}
+                disabled={!canSave}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+              </TouchableOpacity>
+              {!canSave && (
+                <Text style={{ color: '#D32F2F', fontSize: 15, marginTop: 8, marginHorizontal: 16, textAlign: 'center' }}>
+                  Du måste fylla i datum, väderlek, beskrivning av leverans samt svara på alla frågor och skriva anteckning vid avvikelse för att spara.
+                </Text>
+              )}
+            </View>
+          );
+          })()}
 
-  const setItemNote = (idx, text) => {
-    const next = checklist.slice();
-    next[idx] = { ...next[idx], note: text };
-    setChecklist(next);
-  };
+        // ...existing code...
 
-  const setAnswer = (idx, qIdx, value) => {
-    const next = checklist.slice();
-    next[idx].answers[qIdx] = value;
-    // Status logic
-    if (next[idx].answers.every(a => a === 'Ja')) {
-      next[idx].status = 'ok';
-    } else if (next[idx].answers.some(a => a === 'Nej')) {
-      next[idx].status = 'deviation';
-    } else {
-      next[idx].status = null;
-    }
-    setChecklist(next);
-  };
 
   const handleSaveParticipant = () => {
     if (!participantForm.name.trim()) return;
@@ -231,6 +237,64 @@ export default function ControlForm({ date, participants = [] }) {
           </View>
         </View>
 
+        {/* Rad för Beskrivning av leverans med redigeringsknapp */}
+        <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: deliveryDesc && deliveryDesc.trim() !== '' ? '#F7FAFC' : '#FFEBEE',
+            borderRadius: 10,
+            padding: 10,
+            borderWidth: 1,
+            borderColor: deliveryDesc && deliveryDesc.trim() !== '' ? '#e0e0e0' : '#D32F2F',
+            position: 'relative'
+          }}>
+            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', flex: 1 }}>Beskrivning av leverans</Text>
+            <TouchableOpacity
+              onPress={() => setShowDeliveryDescModal(true)}
+              style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
+              accessibilityLabel="Redigera beskrivning av leverans"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="create-outline" size={24} color="#888" />
+            </TouchableOpacity>
+          </View>
+          {deliveryDesc ? (
+            <View style={{ marginTop: 6, marginLeft: 2 }}>
+              <Text style={{ fontSize: 15, color: '#1976D2' }}>{deliveryDesc}</Text>
+            </View>
+          ) : null}
+        </View>
+          // State for delivery description popup
+          const [showDeliveryDescModal, setShowDeliveryDescModal] = useState(false);
+          const [deliveryDesc, setDeliveryDesc] = useState('');
+              {/* Popup/modal för beskrivning av leverans */}
+              {showDeliveryDescModal && (
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
+                  <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 320, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 220 }}>
+                    <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 12 }}>Beskrivning av leverans</Text>
+                    <TextInput
+                      style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff', minHeight: 60 }}
+                      value={deliveryDesc}
+                      onChangeText={setDeliveryDesc}
+                      placeholder="Skriv beskrivning här..."
+                      placeholderTextColor="#888"
+                      multiline
+                    />
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
+                      <TouchableOpacity
+                        onPress={() => setShowDeliveryDescModal(false)}
+                        style={{ marginRight: 18 }}
+                      >
+                        <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setShowDeliveryDescModal(false)}>
+                        <Text style={{ color: '#D32F2F', fontSize: 16, textAlign: 'center' }}>Avbryt</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              )}
         {/* Divider mellan väderlek och deltagare */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', marginHorizontal: 16, marginBottom: 16 }} />
 
@@ -273,66 +337,99 @@ export default function ControlForm({ date, participants = [] }) {
         {/* Checklista med sektioner, ja/nej, statusikon och anteckning */}
         <View style={{ paddingHorizontal: 16 }}>
           <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Checklista</Text>
-          {checklist.map((item, idx) => (
-            <View key={idx} style={{ marginBottom: 16, backgroundColor: '#F5F7FB', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
-              <TouchableOpacity onPress={() => toggleItem(idx)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
-                {item.status === 'ok' && <Ionicons name="checkmark-circle" size={22} color="#388E3C" style={{ marginRight: 8 }} />}
-                {item.status === 'deviation' && <Ionicons name="alert-circle" size={22} color="#FFA000" style={{ marginRight: 8 }} />}
-                <Ionicons name={expandedChecklist.includes(idx) ? 'chevron-down' : 'chevron-forward'} size={22} color="#888" style={{ marginLeft: 8 }} />
-              </TouchableOpacity>
-              {expandedChecklist.includes(idx) && (
-                <View style={{ marginTop: 8 }}>
-                  {item.questions.map((q, qIdx) => (
-                    <View key={qIdx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                      <Text style={{ fontSize: 14, color: '#444', flex: 1 }}>{q}</Text>
-                      <TouchableOpacity
-                        onPress={() => setAnswer(idx, qIdx, 'Ja')}
-                        style={{ backgroundColor: item.answers[qIdx] === 'Ja' ? '#388E3C' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16, marginRight: 6 }}
-                      >
-                        <Text style={{ color: item.answers[qIdx] === 'Ja' ? '#fff' : '#388E3C', fontWeight: 'bold', fontSize: 14 }}>Ja</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => setAnswer(idx, qIdx, 'Nej')}
-                        style={{ backgroundColor: item.answers[qIdx] === 'Nej' ? '#D32F2F' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16 }}
-                      >
-                        <Text style={{ color: item.answers[qIdx] === 'Nej' ? '#fff' : '#D32F2F', fontWeight: 'bold', fontSize: 14 }}>Nej</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  {/* Note input for deviations */}
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Anteckningar</Text>
-                    <TextInput
-                      style={{ backgroundColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFF3E0' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFA726' : '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40 }}
-                      placeholder="Skriv anteckningar här..."
-                      placeholderTextColor="#888"
-                      value={item.note}
-                      onChangeText={text => setItemNote(idx, text)}
-                      multiline
-                    />
-                    {item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') && (
-                      <Text style={{ color: '#FFA726', fontSize: 13, marginTop: 4 }}>
-                        Anteckning krävs vid avvikelse!
-                      </Text>
-                    )}
-                  </View>
+          {[...checklist, {
+            label: 'Allmän anteckning (frivillig)',
+            questions: [],
+            answers: [],
+            note: generalNote,
+            status: '',
+          }].map((item, idx, arr) => {
+            // For the last item (general note), render only the note input
+            if (idx === arr.length - 1) {
+              return (
+                <View key={idx} style={{
+                  marginBottom: 16,
+                  backgroundColor: '#F5F7FB',
+                  borderRadius: 8,
+                  padding: 10,
+                  borderWidth: 1,
+                  borderColor: '#e0e0e0'
+                }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>Allmän anteckning (frivillig)</Text>
+                  <TextInput
+                    style={{ borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40, backgroundColor: '#fff' }}
+                    placeholder="Skriv allmän anteckning här..."
+                    placeholderTextColor="#888"
+                    value={generalNote}
+                    onChangeText={setGeneralNote}
+                    multiline
+                  />
                 </View>
-              )}
-            </View>
-          ))}
+              );
+            }
+            // ...existing checklist rendering for other items...
+            const incomplete = item.answers.some(a => a !== 'Ja' && a !== 'Nej') || (item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === ''));
+            return (
+              <View key={idx} style={{
+                marginBottom: 16,
+                backgroundColor: incomplete ? '#FFEBEE' : '#F5F7FB',
+                borderRadius: 8,
+                padding: 10,
+                borderWidth: 1,
+                borderColor: incomplete ? '#D32F2F' : '#e0e0e0'
+              }}>
+                <TouchableOpacity onPress={() => toggleItem(idx)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {item.status === 'ok' && <Ionicons name="checkmark-circle" size={22} color="#388E3C" style={{ marginRight: 4 }} />}
+                    {item.status === 'deviation' && <Ionicons name="alert-circle" size={22} color="#FFA000" style={{ marginRight: 4 }} />}
+                    <Ionicons name={expandedChecklist.includes(idx) ? 'chevron-down' : 'chevron-forward'} size={22} color="#888" style={{ marginLeft: 4 }} />
+                  </View>
+                </TouchableOpacity>
+                {expandedChecklist.includes(idx) && (
+                  <View style={{ marginTop: 8 }}>
+                    {item.questions.map((q, qIdx) => (
+                      <View key={qIdx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                        <Text style={{ fontSize: 14, color: '#444', flex: 1 }}>{q}</Text>
+                        <TouchableOpacity
+                          onPress={() => setAnswer(idx, qIdx, 'Ja')}
+                          style={{ backgroundColor: item.answers[qIdx] === 'Ja' ? '#388E3C' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16, marginRight: 6 }}
+                        >
+                          <Text style={{ color: item.answers[qIdx] === 'Ja' ? '#fff' : '#388E3C', fontWeight: 'bold', fontSize: 14 }}>Ja</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setAnswer(idx, qIdx, 'Nej')}
+                          style={{ backgroundColor: item.answers[qIdx] === 'Nej' ? '#D32F2F' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16 }}
+                        >
+                          <Text style={{ color: item.answers[qIdx] === 'Nej' ? '#fff' : '#D32F2F', fontWeight: 'bold', fontSize: 14 }}>Nej</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {/* Note input for deviations */}
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Anteckningar</Text>
+                      <TextInput
+                        style={{ backgroundColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFF3E0' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFA726' : '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40 }}
+                        placeholder="Skriv anteckningar här..."
+                        placeholderTextColor="#888"
+                        value={item.note}
+                        onChangeText={text => setItemNote(idx, text)}
+                        multiline
+                      />
+                      {item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') && (
+                        <Text style={{ color: '#FFA726', fontSize: 13, marginTop: 4 }}>
+                          Anteckning krävs vid avvikelse!
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
 
-        {/* Allmän anteckning längst ner */}
-        <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
-          <TextInput
-            style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
-            value={generalNote}
-            onChangeText={setGeneralNote}
-            placeholder="Allmän anteckning..."
-            multiline
-          />
-        </View>
+        {/* Allmän anteckning är nu en del av checklistan som punkt 4 */}
 
         {/* Signatur */}
         <View style={{ padding: 16, marginTop: 16 }}>
@@ -345,12 +442,30 @@ export default function ControlForm({ date, participants = [] }) {
           />
         </View>
 
-        {/* Spara-knapp */}
-        <View style={{ padding: 16 }}>
-          <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 14, alignItems: 'center' }} onPress={() => alert('Sparad! (demo)')}>
-            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
-          </TouchableOpacity>
-        </View>
+
+        {/* Spara-knapp med info text ovanför */}
+        {(() => {
+          const allAnswered = checklist.every(item => item.answers.every(a => a === 'Ja' || a === 'Nej'));
+          const allNotes = checklist.every(item => !item.answers.some(a => a === 'Nej') || (item.note && item.note.trim() !== ''));
+          const hasDeliveryDesc = !!deliveryDesc && deliveryDesc.trim() !== '';
+          const canSave = allAnswered && allNotes && hasDeliveryDesc;
+          return (
+            <View style={{ padding: 16 }}>
+              {!canSave && (
+                <Text style={{ color: '#D32F2F', fontSize: 15, marginBottom: 8, marginHorizontal: 16, textAlign: 'center' }}>
+                  Du måste fylla i beskrivning av leverans samt svara på alla frågor och skriva anteckning vid avvikelse för att spara.
+                </Text>
+              )}
+              <TouchableOpacity
+                style={{ backgroundColor: canSave ? '#1976D2' : '#B0BEC5', borderRadius: 8, padding: 14, alignItems: 'center' }}
+                onPress={() => canSave && alert('Sparad! (demo)')}
+                disabled={!canSave}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
       </ScrollView>
 
         {/* Modal för väderlek */}
