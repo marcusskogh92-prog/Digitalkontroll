@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import SignatureModal from '../components/SignatureModal';
 
 const WEATHER_OPTIONS = [
   { label: 'Sol', icon: 'sunny-outline', color: '#FFD600' },
@@ -52,6 +53,17 @@ export default function ControlForm({ date, participants = [] }) {
       'Är täckningen tillräcklig?'
     ], answers: [null, null, null], note: '', status: null },
   ]);
+  // State for vilken deltagare som ska signera
+  const [signatureForIndex, setSignatureForIndex] = useState(null);
+  // Handler för att spara signatur (base64)
+  const handleSignatureOK = (sig) => {
+    if (signatureForIndex !== null && localParticipants[signatureForIndex]) {
+      const next = [...localParticipants];
+      next[signatureForIndex] = { ...next[signatureForIndex], signature: sig };
+      setLocalParticipants(next);
+    }
+    setSignatureForIndex(null);
+  };
 
   // Input refs for participant modal
   const nameInputRef = React.useRef();
@@ -95,6 +107,7 @@ export default function ControlForm({ date, participants = [] }) {
             </View>
           );
           })()}
+          // ...existing code...
 
         // ...existing code...
 
@@ -433,14 +446,36 @@ export default function ControlForm({ date, participants = [] }) {
 
         {/* Signatur */}
         <View style={{ padding: 16, marginTop: 16 }}>
-          <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Signatur</Text>
-          <TextInput
-            style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
-            value={signatureName}
-            onChangeText={setSignatureName}
-            placeholder="Namn på signatur..."
-          />
+          <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>Signaturer</Text>
+          {localParticipants.length === 0 ? (
+            <Text style={{ color: '#888', fontSize: 15 }}>Lägg till deltagare för att koppla signatur.</Text>
+          ) : (
+            localParticipants.map((p, i) => (
+              <View key={i}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 16, flex: 1 }}>{p.name}</Text>
+                  <TouchableOpacity onPress={() => setSignatureForIndex(i)}>
+                    <Ionicons name="add-circle-outline" size={22} color="#1976D2" />
+                  </TouchableOpacity>
+                  {p.signature && (
+                    <View style={{ marginLeft: 8, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 4, backgroundColor: '#fff', paddingHorizontal: 6, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 12, color: '#1976D2' }}>Signerad</Text>
+                    </View>
+                  )}
+                </View>
+                {i < localParticipants.length - 1 && (
+                  <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
+                )}
+              </View>
+            ))
+          )}
         </View>
+      {/* Modal för signatur per deltagare */}
+      <SignatureModal
+        visible={signatureForIndex !== null}
+        onOK={handleSignatureOK}
+        onCancel={() => setSignatureForIndex(null)}
+      />
 
 
         {/* Spara-knapp med info text ovanför */}
