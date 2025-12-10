@@ -210,19 +210,8 @@ export default function ControlForm({ date, participants = [] }) {
         {/* Deltagare */}
         <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
           <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Deltagare</Text>
-          {localParticipants.map((p, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-              <Text style={{ fontSize: 15 }}>{p.name} {p.company ? `(${p.company})` : ''}</Text>
-              <TouchableOpacity onPress={() => { setParticipantEditIndex(i); setParticipantForm(p); setParticipantModalVisible(true); }} style={{ marginLeft: 8 }}>
-                <Ionicons name="create-outline" size={18} color="#1976D2" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDeleteParticipant(i)} style={{ marginLeft: 8 }}>
-                <Ionicons name="trash" size={18} color="#D32F2F" />
-              </TouchableOpacity>
-            </View>
-          ))}
-          <View style={{ backgroundColor: '#F7FAFC', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', alignItems: 'center', position: 'relative', marginTop: 8 }}>
-            <Text style={{ fontSize: 15, color: '#1976D2', flex: 1 }}>Lägg till deltagare</Text>
+          <View style={{ backgroundColor: '#F7FAFC', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', alignItems: 'center', position: 'relative', marginBottom: 8 }}>
+            <Text style={{ fontSize: 18, color: '#1976D2', flex: 1 }}>Lägg till deltagare</Text>
             <TouchableOpacity
               onPress={() => { setParticipantEditIndex(null); setParticipantForm({ name: '', company: '', role: '', phone: '' }); setParticipantModalVisible(true); }}
               style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
@@ -232,6 +221,23 @@ export default function ControlForm({ date, participants = [] }) {
               <Ionicons name="add-circle-outline" size={24} color="#1976D2" />
             </TouchableOpacity>
           </View>
+          {/* Sortera deltagare på namn A-Ö */}
+          {localParticipants
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name, 'sv', { sensitivity: 'base' }))
+            .map((p, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 18, flex: 1 }}>{p.name} {p.company ? `(${p.company})` : ''}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => { setParticipantEditIndex(i); setParticipantForm(p); setParticipantModalVisible(true); }} style={{ marginLeft: 8 }}>
+                    <Ionicons name="create-outline" size={18} color="#1976D2" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteParticipant(i)} style={{ marginLeft: 8 }}>
+                    <Ionicons name="trash" size={18} color="#D32F2F" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
         </View>
 
         {/* Checklista med sektioner, ja/nej, statusikon och anteckning */}
