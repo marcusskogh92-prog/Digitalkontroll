@@ -1,45 +1,8 @@
-// ...existing code...
-import { Ionicons } from '@expo/vector-icons';
+
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-// ...existing code...
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    padding: 16,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#263238',
-  },
-  label: {
-    fontSize: 16,
-    color: '#263238',
-  },
-});
-
-// Frågor för respektive kontrollpunkt
-export const LEVERANS_QUESTIONS = [
-  'Är leveransen komplett?',
-  'Är leveransen oskadad?',
-  'Stämmer leveransen mot beställning?'
-];
-
-export const KVALITET_QUESTIONS = [
-  'Är materialet av rätt kvalitet?',
-  'Finns det synliga skador eller brister?',
-  'Uppfyller produkten ställda krav?'
-];
-
-export const FORVARING_QUESTIONS = [
-  'Förvaras materialet på rätt sätt?',
-  'Är materialet skyddat mot väder och vind?',
-  'Är täckningen tillräcklig?'
-];
 const WEATHER_OPTIONS = [
   { label: 'Sol', icon: 'sunny-outline', color: '#FFD600' },
   { label: 'Dimma', icon: 'cloudy-outline', color: '#B0BEC5' },
@@ -49,536 +12,143 @@ const WEATHER_OPTIONS = [
   { label: 'Ostadigt', icon: 'partly-sunny-outline', color: '#FFD54F' },
 ];
 
-const PRIMARY = '#263238';
-
-function getDefaultChecklist(type) {
-  const base = [
-    { label: 'Genomgång utförd', done: false, note: '' },
-    { label: 'Avvikelser kontrollerade', done: false, note: '' },
-    { label: 'Signerat av ansvarig', done: false, note: '' },
-  ];
-  switch ((type || '').toLowerCase()) {
-    case 'arbetsberedning':
-      return [
-        { label: 'Genomgång av arbetsplats', done: false, note: '' },
-        { label: 'Brister noterade', done: false, note: '' },
-        { label: 'Åtgärdslista skapad', done: false, note: '' },
-      ];
-    case 'mottagningskontroll':
-      return [
-        { label: '1 - Leverans', description: '', questions: LEVERANS_QUESTIONS, done: false, note: '' },
-          { label: '2 - Kvalitet och skick', description: '', questions: KVALITET_QUESTIONS, done: false, note: '' },
-          { label: '3 - Förvaring och täckning', description: '', questions: FORVARING_QUESTIONS, done: false, note: '' },
-          { label: '4 - Signatur', description: '', questions: [], done: false, note: '' },
-      ];
-    default:
-      return base;
-  }
-}
-
-// Format Swedish mobile number with spaces: "0701234567" -> "070 123 45 67"
 function formatPhoneNumber(num) {
   if (!num) return '';
-  // Remove all non-digit characters
   const digits = num.replace(/\D/g, '');
   if (digits.length < 7) return digits;
-  // Format as "XXX XXX XX XX" (for 10 digits)
   if (digits.length === 10) {
     return `${digits.slice(0,3)} ${digits.slice(3,6)} ${digits.slice(6,8)} ${digits.slice(8,10)}`;
   }
-  // Format as "XXX XXX XX" (for 9 digits)
   if (digits.length === 9) {
     return `${digits.slice(0,3)} ${digits.slice(3,6)} ${digits.slice(6,8)} ${digits.slice(8,9)}`;
   }
-  // Otherwise, just group by 3s
   return digits.replace(/(\d{3})(\d{3})(\d{2})(\d{2})/, '$1 $2 $3 $4');
 }
 
-export default function ControlForm({ route, navigation }) {
-    // Answers for relevant sub-questions per checklist item
-    const [questionAnswers, setQuestionAnswers] = useState({});
-    // General notes for the form
-    const [generalNotes, setGeneralNotes] = useState("");
-  // Datumhantering
-  const today = new Date();
-  const defaultDate = today.toISOString().slice(0, 10);
-  const params = route?.params || {};
-  const project = params.project || {};
-  const initial = params.initial || {};
-  const performedBy = params.performedBy || '';
-  const companyId = params.companyId || '';
-  const [date, setDate] = useState(initial?.date || defaultDate);
-  const [showDateModal, setShowDateModal] = useState(false);
-  const [dateInput, setDateInput] = useState(date);
-  // Väderlek och temperatur
+import { useRoute } from '@react-navigation/native';
+
+export default function ControlForm({ date, participants = [] }) {
+  const route = useRoute();
+  const project = route.params?.project;
   const [weatherModalVisible, setWeatherModalVisible] = useState(false);
   const [selectedWeather, setSelectedWeather] = useState(null);
-  const [temperature, setTemperature] = useState("");
-  const [temperatureModalVisible, setTemperatureModalVisible] = useState(false);
-  const [temperatureInput, setTemperatureInput] = useState("");
-  // Deltagare/mottagare
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
   const [participantEditIndex, setParticipantEditIndex] = useState(null);
-  const [type, setType] = useState(initial?.type || '');
-  const [mainRecipient, setMainRecipient] = useState(initial?.mainRecipient || { name: '', company: '' });
-  const [mainRecipientModalVisible, setMainRecipientModalVisible] = useState(false);
-  const [mainRecipientForm, setMainRecipientForm] = useState({ name: '', company: '' });
-  const [participants, setParticipants] = useState([]);
   const [participantForm, setParticipantForm] = useState({ name: '', company: '', role: '', phone: '' });
-  // Checklist
+  const [localParticipants, setLocalParticipants] = useState(participants);
+  const [checklist, setChecklist] = useState([
+    { label: '1 - Leverans', questions: [
+      'Är leveransen komplett?',
+      'Är produkten oskadad?',
+      'Stämmer antal mot följesedel?'
+    ], answers: [null, null, null], note: '', status: null },
+    { label: '2 - Kvalitet och skick', questions: [
+      'Är materialet av rätt kvalitet?',
+      'Finns det synliga skador eller brister?',
+      'Uppfyller produkten ställda krav?'
+    ], answers: [null, null, null], note: '', status: null },
+    { label: '3 - Förvaring och täckning', questions: [
+      'Förvaras materialet på rätt sätt?',
+      'Är materialet skyddat mot väder och vind?',
+      'Är täckningen tillräcklig?'
+    ], answers: [null, null, null], note: '', status: null },
+  ]);
   const [expandedChecklist, setExpandedChecklist] = useState([]);
-  const [checklist, setChecklist] = useState(() => getDefaultChecklist(type));
-  const [answers, setAnswers] = useState({});
-  // Functions
-  const handleDeleteParticipant = (index) => {
-    setParticipants(prev => prev.filter((_, i) => i !== index));
-    setParticipantModalVisible(false);
-    setParticipantEditIndex(null);
-  };
-  const handleSaveParticipant = () => {
-    if (!participantForm.name.trim()) return;
-    const next = participants.slice();
-    // Format phone number before saving
-    const formattedParticipant = {
-      ...participantForm,
-      phone: formatPhoneNumber(participantForm.phone)
-    };
-    if (participantEditIndex === null) {
-      next.push(formattedParticipant);
-    } else {
-      next[participantEditIndex] = formattedParticipant;
-    }
-    setParticipants(next);
-    setParticipantModalVisible(false);
-    setParticipantEditIndex(null);
-    setParticipantForm({ name: '', company: '', role: '', phone: '' });
-  };
-  const handleSave = async () => {
-    if (!type || !date) return;
-    try {
-      const key = `company:${companyId || 'demo-company'}:project:${project.id}:controls`;
-      const saved = await AsyncStorage.getItem(key);
-      const list = saved ? JSON.parse(saved) : [];
-      const newEntry = {
-        id: (list.length + 1).toString(),
-        type,
-        date,
-        performedBy,
-        participants,
-        checklist,
-        weather: selectedWeather,
-        temperature,
-        answers,
-      };
-      await AsyncStorage.setItem(key, JSON.stringify([...list, newEntry]));
-      navigation.goBack();
-    } catch (e) {
-      // Error handling
-    }
-  };
-  const toggleItem = (idx) => {
+  const [generalNote, setGeneralNote] = useState('');
+  const [signatureName, setSignatureName] = useState('');
+  // Date logic
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [dateValue, setDateValue] = useState(date || todayStr);
+  const [dateInput, setDateInput] = useState(date || todayStr);
+
+  const toggleItem = idx => {
     setExpandedChecklist(expandedChecklist.includes(idx)
       ? expandedChecklist.filter(i => i !== idx)
       : [...expandedChecklist, idx]);
   };
+
   const setItemNote = (idx, text) => {
     const next = checklist.slice();
     next[idx] = { ...next[idx], note: text };
     setChecklist(next);
   };
-  const handleAnswer = (idx, value) => {
-    setAnswers({ ...answers, [idx]: value });
-  };
-  const getRelevantQuestions = (idx) => {
-    if (idx === 1) return LEVERANS_QUESTIONS;
-    if (idx === 2) return KVALITET_QUESTIONS;
-    if (idx === 3) return FORVARING_QUESTIONS;
-    return null;
+
+  const setAnswer = (idx, qIdx, value) => {
+    const next = checklist.slice();
+    next[idx].answers[qIdx] = value;
+    // Status logic
+    if (next[idx].answers.every(a => a === 'Ja')) {
+      next[idx].status = 'ok';
+    } else if (next[idx].answers.some(a => a === 'Nej')) {
+      next[idx].status = 'deviation';
+    } else {
+      next[idx].status = null;
+    }
+    setChecklist(next);
   };
 
-  // Main return
+  const handleSaveParticipant = () => {
+    if (!participantForm.name.trim()) return;
+    const next = localParticipants.slice();
+    const formatted = { ...participantForm, phone: formatPhoneNumber(participantForm.phone) };
+    if (participantEditIndex === null) {
+      next.push(formatted);
+    } else {
+      next[participantEditIndex] = formatted;
+    }
+    setLocalParticipants(next);
+    setParticipantModalVisible(false);
+    setParticipantEditIndex(null);
+    setParticipantForm({ name: '', company: '', role: '', phone: '' });
+  };
+
+  const handleDeleteParticipant = idx => {
+    setLocalParticipants(localParticipants.filter((_, i) => i !== idx));
+    setParticipantModalVisible(false);
+    setParticipantEditIndex(null);
+  };
 
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>{type}</Text>
-        {/* Låst datumfält */}
-        <TouchableOpacity
-          onLongPress={() => setShowDateModal(true)}
-          delayLongPress={2000}
-          activeOpacity={1}
-          style={{ backgroundColor: '#fff', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignSelf: 'flex-start', marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0' }}
-        >
-          <Text style={{ color: '#222', fontSize: 15, fontWeight: 'bold', letterSpacing: 0.5 }}>
-            Datum: {date ? <Text style={{ color: '#1976D2' }}>{date}</Text> : <Text style={{ color: '#1976D2' }}>yyyy-mm-dd</Text>}
-          </Text>
-          <Text style={{ color: '#bbb', fontSize: 12, fontStyle: 'italic' }}>(håll in för att ändra)</Text>
-        </TouchableOpacity>
 
-        {/* Projektinformation - visas alltid */}
-        <View style={{ backgroundColor: '#f7f7f7', borderRadius: 10, padding: 14, marginBottom: 18 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginRight: 8 }}>{project?.id || '-'}</Text>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>{project?.name || '-'}</Text>
-          </View>
-          <View style={{ marginBottom: 2 }}>
-            <Text style={{ fontSize: 15, color: '#555' }}>
-              <Text style={{ fontWeight: '700' }}>Ansvarig:</Text> {project?.ansvarig ? project.ansvarig : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
-            </Text>
-            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
-            <Text style={{ fontSize: 15, color: '#555' }}>
-              <Text style={{ fontWeight: '700' }}>Kund:</Text> {project?.client ? project.client : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
-            </Text>
-            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
-            <Text style={{ fontSize: 15, color: '#555' }}>
-              <Text style={{ fontWeight: '700' }}>Adress:</Text> {project?.adress ? project.adress : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
-            </Text>
-            <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
-            <Text style={{ fontSize: 15, color: '#555' }}>
-              <Text style={{ fontWeight: '700' }}>Fastighetsbeteckning:</Text> {project?.fastighetsbeteckning
-                ? project.fastighetsbeteckning
-                : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Valfritt</Text>}
-            </Text>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+        {/* Projektinfo */}
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 12, color: '#1976D2', letterSpacing: 0.5 }}>Mottagningskontroll</Text>
+          <View style={{ backgroundColor: '#F5F7FB', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 8 }}>
+            <Text style={{ fontSize: 16, marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Projektnummer:</Text> {project?.id || '-'}</Text>
+            <Text style={{ fontSize: 16, marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Projektnamn:</Text> {project?.name || '-'}</Text>
+            <Text style={{ fontSize: 16, marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Ansvarig:</Text> {project?.ansvarig || '-'}</Text>
+            <Text style={{ fontSize: 16, marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Kund:</Text> {project?.kund || '-'}</Text>
+            <Text style={{ fontSize: 16, marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Adress:</Text> {project?.adress || '-'}</Text>
+            <Text style={{ fontSize: 16, marginBottom: 0 }}><Text style={{ fontWeight: 'bold' }}>Fastighetsbeteckning:</Text> {project?.fastighetsbeteckning || '-'}</Text>
           </View>
         </View>
 
-        {/* Väderlek och temperatur */}
-        <View style={{ marginBottom: 18 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Datum på egen rad, likt väderlek */}
+        <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#e0e0e0', position: 'relative' }}>
+            <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginRight: 6 }}>Datum:</Text>
+            <Text style={{ fontSize: 15, color: '#1976D2', marginRight: 10 }}>{dateValue}</Text>
             <TouchableOpacity
-              onPress={() => setWeatherModalVisible(true)}
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
+              onPress={() => { setDateInput(dateValue); setShowDateModal(true); }}
+              style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
+              accessibilityLabel="Ändra datum"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Väderlek vid leverans</Text>
-              {selectedWeather ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 10 }}>
-                  <Ionicons name={selectedWeather.icon} size={32} color={selectedWeather.color} style={{ marginRight: 10 }} />
-                  <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#1976D2' }}>{selectedWeather.label}</Text>
-                </View>
-              ) : (
-                <Text style={{ fontSize: 15, color: '#888', marginLeft: 10 }}>Välj</Text>
-              )}
-              {selectedWeather ? (
-                <Ionicons name="checkmark" size={26} color="#388E3C" style={{ marginLeft: 'auto', marginRight: 2 }} />
-              ) : (
-                <Text style={{ color: '#D32F2F', fontSize: 24, marginLeft: 'auto', marginRight: 2 }}>×</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-          {/* Visa ikon, väderlek och temperatur under raden */}
-          <View style={{ marginTop: 8 }}>
-            <TouchableOpacity
-              onPress={() => setTemperatureModalVisible(true)}
-              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
-            >
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Temperatur</Text>
-              {temperature ? (
-                <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#1976D2', marginLeft: 10 }}>{temperature}°C</Text>
-              ) : (
-                <Text style={{ fontSize: 15, color: '#888', marginLeft: 10 }}>Välj</Text>
-              )}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 'auto' }}>
-                {temperature ? (
-                  <Ionicons name="checkmark" size={26} color="#388E3C" style={{ marginLeft: 8 }} />
-                ) : (
-                  <Text style={{ color: '#D32F2F', fontSize: 24, marginLeft: 8 }}>×</Text>
-                )}
-              </View>
+              <Ionicons name="create-outline" size={24} color="#888" />
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Deltagare (alltid synlig) */}
-        <View style={{ marginTop: -10, marginBottom: 18 }}>
-          <TouchableOpacity
-            onPress={() => {
-              setParticipantEditIndex(null);
-              setParticipantForm({ name: '', company: '', role: '', phone: '' });
-              setParticipantModalVisible(true);
-            }}
-            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7f7f7', borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginVertical: 2, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 48 }}
-          >
-            <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222' }}>Deltagare:</Text>
-            <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 10 }}>Lägg till</Text>
-            <Ionicons name="person-add" size={24} color="#1976D2" style={{ marginLeft: 'auto' }} />
-          </TouchableOpacity>
-          {/* Visa lista med deltagare under knappen */}
-          {participants.length > 0 && (
-            <View style={{ marginTop: 8 }}>
-              {participants.map((p, idx) => (
-                <View key={idx} style={{ backgroundColor: '#fff', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                    <Text style={{ fontWeight: 'bold', fontSize: 16, minWidth: 80 }}>{p.name}</Text>
-                    <Text style={{ fontSize: 15, color: '#222', marginLeft: 12, minWidth: 80 }}>{p.company}</Text>
-                    <View style={{ flex: 1 }} />
-                    <TouchableOpacity onPress={() => {
-                      setParticipantEditIndex(idx);
-                      setParticipantForm(p);
-                      setParticipantModalVisible(true);
-                    }}>
-                      <Ionicons name="create-outline" size={20} color="#1976D2" />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                    <Text style={{ fontSize: 14, color: '#555', minWidth: 80 }}>{p.role}</Text>
-                    <Text style={{ fontSize: 14, color: '#555', marginLeft: 12, minWidth: 80 }}>{p.phone}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-          {/* Horisontell avdelare och rubrik */}
-          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 12 }} />
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 10 }}>Kontrollpunkter</Text>
-        </View>
-
-        {/* Checklist rendering med expanderande punkter och Ja/Nej-frågor */}
-        <View style={{ marginBottom: 24 }}>
-          {checklist.map((item, idx) => (
-             <View key={idx} style={{ marginBottom: 12, backgroundColor: '#F5F7FB', borderRadius: 8, padding: 10 }}>
-               <TouchableOpacity onPress={() => toggleItem(idx)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                 <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                   <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
-                 </View>
-                 {(idx === 0 || idx === 1 || idx === 2) && (() => {
-                   const answersArr = item.questions?.map((_, qIdx) => questionAnswers[idx]?.[qIdx]);
-                   if (answersArr && answersArr.length > 0) {
-                     if (answersArr.every(ans => ans === 'Ja')) {
-                       return <Ionicons name="checkmark-circle" size={22} color="#4CAF50" style={{ marginRight: 8 }} />;
-                     }
-                     if (answersArr.some(ans => ans === 'Nej')) {
-                       return <Ionicons name="warning" size={22} color="#FFA726" style={{ marginRight: 8 }} />;
-                     }
-                   }
-                   return null;
-                 })()}
-                 <Ionicons name={expandedChecklist.includes(idx) ? 'chevron-down' : 'chevron-forward'} size={22} color="#888" style={{ marginLeft: 8 }} />
-               </TouchableOpacity>
-              {expandedChecklist.includes(idx) && (
-                <View style={{ marginTop: 8 }}>
-                  {/* Ja/Nej-frågor */}
-                  <View style={{ flexDirection: 'row', marginBottom: 8 }}>
-                  </View>
-                  {/* Relevant questions with Ja/Nej buttons */}
-                   {item.questions && item.questions.map((q, qIdx) => (
-                     <View key={qIdx} style={{ marginBottom: 12 }}>
-                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                         <Text style={{ fontSize: 14, color: '#444', flex: 1, flexWrap: 'wrap' }}>{q}</Text>
-                         <View style={{ flexDirection: 'row', marginLeft: 8 }}>
-                           <TouchableOpacity
-                             onPress={() => {
-                               setQuestionAnswers(prev => ({
-                                 ...prev,
-                                 [idx]: {
-                                   ...(prev[idx] || {}),
-                                   [qIdx]: 'Ja'
-                                 }
-                               }));
-                             }}
-                             style={{
-                               backgroundColor: questionAnswers[idx]?.[qIdx] === 'Ja' ? '#388E3C' : '#eee',
-                               borderRadius: 8,
-                               paddingVertical: 6,
-                               paddingHorizontal: 16,
-                               marginRight: 6,
-                             }}
-                           >
-                             <Text style={{ color: questionAnswers[idx]?.[qIdx] === 'Ja' ? '#fff' : '#388E3C', fontWeight: 'bold', fontSize: 14 }}>Ja</Text>
-                           </TouchableOpacity>
-                           <TouchableOpacity
-                             onPress={() => {
-                               setQuestionAnswers(prev => ({
-                                 ...prev,
-                                 [idx]: {
-                                   ...(prev[idx] || {}),
-                                   [qIdx]: 'Nej'
-                                 }
-                               }));
-                             }}
-                             style={{
-                               backgroundColor: questionAnswers[idx]?.[qIdx] === 'Nej' ? '#D32F2F' : '#eee',
-                               borderRadius: 8,
-                               paddingVertical: 6,
-                               paddingHorizontal: 16,
-                             }}
-                           >
-                             <Text style={{ color: questionAnswers[idx]?.[qIdx] === 'Nej' ? '#fff' : '#D32F2F', fontWeight: 'bold', fontSize: 14 }}>Nej</Text>
-                           </TouchableOpacity>
-                         </View>
-                       </View>
-                     </View>
-                   ))}
-                  {/* Note input for 1-3 only */}
-                  {(idx === 0 || idx === 1 || idx === 2) && (
-                     <View style={{ marginTop: 12 }}>
-                       <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Anteckningar</Text>
-                       {(() => {
-                         const answersArr = item.questions?.map((_, qIdx) => questionAnswers[idx]?.[qIdx]);
-                         const hasDeviation = answersArr && answersArr.some(ans => ans === 'Nej');
-                         const noteIsEmpty = !item.note || item.note.trim() === "";
-                         return (
-                           <>
-                             <TextInput
-                               style={{ backgroundColor: noteIsEmpty && hasDeviation ? '#FFF3E0' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: noteIsEmpty && hasDeviation ? '#FFA726' : '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40 }}
-                               placeholder="Skriv anteckningar här..."
-                               placeholderTextColor="#888"
-                               value={item.note}
-                               onChangeText={text => setItemNote(idx, text)}
-                               multiline
-                             />
-                             {hasDeviation && noteIsEmpty && (
-                               <Text style={{ color: '#FFA726', fontSize: 13, marginTop: 4 }}>
-                                 Anteckning krävs vid avvikelse!
-                               </Text>
-                             )}
-                           </>
-                         );
-                       })()}
-                     </View>
-                  )}
-                </View>
-              )}
-            </View>
-          ))}
-        </View>
-        {/* Spara-knapp */}
-        <TouchableOpacity style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 24 }} onPress={handleSave}>
-          <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Spara</Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* Modal för temperatur */}
-      {temperatureModalVisible && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
-          <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 320, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 240 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222' }}>Temperatur</Text>
-              <TouchableOpacity onPress={() => setTemperatureModalVisible(false)} style={{ padding: 4 }}>
-                <Ionicons name="close" size={24} color="#222" />
-              </TouchableOpacity>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <TextInput
-                style={{ flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16, color: '#222', backgroundColor: '#fff' }}
-                placeholderTextColor="#888"
-                keyboardType="numeric"
-                value={temperatureInput}
-                onChangeText={setTemperatureInput}
-                placeholder="Ange temperatur (°C)"
-              />
-              <TouchableOpacity
-                onPress={() => {
-                  if (temperatureInput.startsWith('-')) {
-                    setTemperatureInput(temperatureInput.slice(1));
-                  } else {
-                    setTemperatureInput('-' + temperatureInput);
-                  }
-                }}
-                style={{ marginLeft: 8, backgroundColor: '#eee', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14 }}
-              >
-                <Text style={{ fontSize: 18, color: '#222', fontWeight: 'bold' }}>-</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
-              <TouchableOpacity onPress={() => { setTemperature(temperatureInput); setTemperatureModalVisible(false); }}>
-                <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {/* Modal för väderlek */}
-      {weatherModalVisible && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-          <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: '80%' }}>
-            <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10, textAlign: 'center' }}>Välj väderlek</Text>
-            {WEATHER_OPTIONS.map((opt, idx) => (
-              <TouchableOpacity key={idx} onPress={() => { setSelectedWeather(opt); setWeatherModalVisible(false); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
-                <Ionicons name={opt.icon} size={24} color={opt.color} style={{ marginRight: 10 }} />
-                <Text style={{ fontSize: 16 }}>{opt.label}</Text>
-              </TouchableOpacity>
-            ))}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
-              <TouchableOpacity onPress={() => setWeatherModalVisible(false)} style={{ marginRight: 18 }}>
-                <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setSelectedWeather(null); setWeatherModalVisible(false); }}>
-                <Text style={{ color: '#D32F2F', fontSize: 16 }}>Nollställ</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
-      {/* Modal för deltagare */}
-      {participantModalVisible && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
-          <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 340, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 120 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222' }}>{participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare'}</Text>
-              <TouchableOpacity onPress={() => setParticipantModalVisible(false)} style={{ padding: 4 }}>
-                <Ionicons name="close" size={24} color="#222" />
-              </TouchableOpacity>
-            </View>
-            <TextInput
-              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16 }}
-              value={participantForm.name}
-              onChangeText={text => setParticipantForm({ ...participantForm, name: text })}
-              placeholder="Namn"
-            />
-            <TextInput
-              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16 }}
-              value={participantForm.company}
-              onChangeText={text => setParticipantForm({ ...participantForm, company: text })}
-              placeholder="Företag"
-            />
-            <TextInput
-              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, color: '#222' }}
-              value={participantForm.role}
-              onChangeText={text => setParticipantForm({ ...participantForm, role: text })}
-              placeholder="Roll (t.ex. Montör, Arbetsledare)"
-              placeholderTextColor="#888"
-            />
-            <TextInput
-              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, color: '#222' }}
-              value={formatPhoneNumber(participantForm.phone)}
-              onChangeText={text => setParticipantForm({ ...participantForm, phone: text })}
-              placeholder="Mobilnummer (t.ex. 070 123 45 67)"
-              placeholderTextColor="#888"
-              keyboardType="phone-pad"
-            />
-            <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
-              {participantEditIndex !== null && (
-                <TouchableOpacity onPress={() => handleDeleteParticipant(participantEditIndex)} style={{ marginRight: 18 }}>
-                  <Ionicons name="trash" size={22} color="#D32F2F" />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={handleSaveParticipant}>
-                <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
-      {/* Modal för datum */}
+      {/* Modal för att ändra datum */}
       {showDateModal && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
           <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 320, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 240 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222' }}>Ändra datum</Text>
-              <TouchableOpacity onPress={() => setShowDateModal(false)} style={{ padding: 4 }}>
-                <Ionicons name="close" size={24} color="#222" />
-              </TouchableOpacity>
-            </View>
-            <TextInput
-              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 8, fontSize: 16 }}
-              value={dateInput}
-              onChangeText={setDateInput}
-              placeholder="ÅÅÅÅ-MM-DD"
-            />
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 12 }}>Ändra datum</Text>
+              {/* ...existing code... */}
             {(() => {
               // Validate date format and future date
-              const todayStr = new Date().toISOString().slice(0, 10);
               let warning = '';
               let isFuture = false;
               if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
@@ -592,25 +162,248 @@ export default function ControlForm({ route, navigation }) {
               ) : null;
             })()}
             <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
-              {(() => {
-                const todayStr = new Date().toISOString().slice(0, 10);
-                const validFormat = /^\d{4}-\d{2}-\d{2}$/.test(dateInput);
-                const isFuture = validFormat && dateInput > todayStr;
-                return (
-                  <TouchableOpacity
-                    onPress={() => { if (validFormat && !isFuture) { setDate(dateInput); setShowDateModal(false); } }}
-                    disabled={!validFormat || isFuture}
-                    style={{ opacity: (!validFormat || isFuture) ? 0.5 : 1 }}
-                  >
-                    <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
-                  </TouchableOpacity>
-                );
-              })()}
+              <TouchableOpacity
+                onPress={() => {
+                  // Only save if valid and not future
+                  const validFormat = /^\d{4}-\d{2}-\d{2}$/.test(dateInput);
+                  const isFuture = validFormat && dateInput > todayStr;
+                  if (validFormat && !isFuture) {
+                    setDateValue(dateInput);
+                    setShowDateModal(false);
+                  }
+                }}
+                disabled={!/^\d{4}-\d{2}-\d{2}$/.test(dateInput) || (dateInput > todayStr)}
+                style={{ opacity: (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput) || (dateInput > todayStr)) ? 0.5 : 1, marginRight: 18 }}
+              >
+                <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowDateModal(false)}>
+                <Text style={{ color: '#D32F2F', fontSize: 16, textAlign: 'center' }}>Avbryt</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
       )}
+
+        {/* Väderlek */}
+        <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F7FAFC', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: '#e0e0e0', position: 'relative' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginRight: 8 }}>Väderlek:</Text>
+              <Ionicons name={selectedWeather ? selectedWeather.icon : 'cloud-outline'} size={22} color={selectedWeather ? selectedWeather.color : '#888'} style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 15, color: '#1976D2' }}>{selectedWeather ? selectedWeather.label : 'Välj'}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setWeatherModalVisible(true)}
+              style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
+              accessibilityLabel="Ändra väderlek"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="create-outline" size={24} color="#888" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Divider mellan väderlek och deltagare */}
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginHorizontal: 16, marginBottom: 16 }} />
+
+        {/* Deltagare */}
+        <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Deltagare</Text>
+          {localParticipants.map((p, i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+              <Text style={{ fontSize: 15 }}>{p.name} {p.company ? `(${p.company})` : ''}</Text>
+              <TouchableOpacity onPress={() => { setParticipantEditIndex(i); setParticipantForm(p); setParticipantModalVisible(true); }} style={{ marginLeft: 8 }}>
+                <Ionicons name="create-outline" size={18} color="#1976D2" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDeleteParticipant(i)} style={{ marginLeft: 8 }}>
+                <Ionicons name="trash" size={18} color="#D32F2F" />
+              </TouchableOpacity>
+            </View>
+          ))}
+          <View style={{ backgroundColor: '#F7FAFC', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: '#e0e0e0', flexDirection: 'row', alignItems: 'center', position: 'relative', marginTop: 8 }}>
+            <Text style={{ fontSize: 15, color: '#1976D2', flex: 1 }}>Lägg till deltagare</Text>
+            <TouchableOpacity
+              onPress={() => { setParticipantEditIndex(null); setParticipantForm({ name: '', company: '', role: '', phone: '' }); setParticipantModalVisible(true); }}
+              style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
+              accessibilityLabel="Lägg till deltagare"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="add-circle-outline" size={24} color="#1976D2" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Checklista med sektioner, ja/nej, statusikon och anteckning */}
+        <View style={{ paddingHorizontal: 16 }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Checklista</Text>
+          {checklist.map((item, idx) => (
+            <View key={idx} style={{ marginBottom: 16, backgroundColor: '#F5F7FB', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
+              <TouchableOpacity onPress={() => toggleItem(idx)} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 16 }}>{item.label}</Text>
+                {item.status === 'ok' && <Ionicons name="checkmark-circle" size={22} color="#388E3C" style={{ marginRight: 8 }} />}
+                {item.status === 'deviation' && <Ionicons name="alert-circle" size={22} color="#FFA000" style={{ marginRight: 8 }} />}
+                <Ionicons name={expandedChecklist.includes(idx) ? 'chevron-down' : 'chevron-forward'} size={22} color="#888" style={{ marginLeft: 8 }} />
+              </TouchableOpacity>
+              {expandedChecklist.includes(idx) && (
+                <View style={{ marginTop: 8 }}>
+                  {item.questions.map((q, qIdx) => (
+                    <View key={qIdx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 14, color: '#444', flex: 1 }}>{q}</Text>
+                      <TouchableOpacity
+                        onPress={() => setAnswer(idx, qIdx, 'Ja')}
+                        style={{ backgroundColor: item.answers[qIdx] === 'Ja' ? '#388E3C' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16, marginRight: 6 }}
+                      >
+                        <Text style={{ color: item.answers[qIdx] === 'Ja' ? '#fff' : '#388E3C', fontWeight: 'bold', fontSize: 14 }}>Ja</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setAnswer(idx, qIdx, 'Nej')}
+                        style={{ backgroundColor: item.answers[qIdx] === 'Nej' ? '#D32F2F' : '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 16 }}
+                      >
+                        <Text style={{ color: item.answers[qIdx] === 'Nej' ? '#fff' : '#D32F2F', fontWeight: 'bold', fontSize: 14 }}>Nej</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {/* Note input for deviations */}
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Anteckningar</Text>
+                    <TextInput
+                      style={{ backgroundColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFF3E0' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') ? '#FFA726' : '#e0e0e0', padding: 10, fontSize: 14, minHeight: 40 }}
+                      placeholder="Skriv anteckningar här..."
+                      placeholderTextColor="#888"
+                      value={item.note}
+                      onChangeText={text => setItemNote(idx, text)}
+                      multiline
+                    />
+                    {item.answers.some(a => a === 'Nej') && (!item.note || item.note.trim() === '') && (
+                      <Text style={{ color: '#FFA726', fontSize: 13, marginTop: 4 }}>
+                        Anteckning krävs vid avvikelse!
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+
+        {/* Allmän anteckning längst ner */}
+        <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+          <TextInput
+            style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
+            value={generalNote}
+            onChangeText={setGeneralNote}
+            placeholder="Allmän anteckning..."
+            multiline
+          />
+        </View>
+
+        {/* Signatur */}
+        <View style={{ padding: 16, marginTop: 16 }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Signatur</Text>
+          <TextInput
+            style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' }}
+            value={signatureName}
+            onChangeText={setSignatureName}
+            placeholder="Namn på signatur..."
+          />
+        </View>
+
+        {/* Spara-knapp */}
+        <View style={{ padding: 16 }}>
+          <TouchableOpacity style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 14, alignItems: 'center' }} onPress={() => alert('Sparad! (demo)')}>
+            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+        {/* Modal för väderlek */}
+        {weatherModalVisible && (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 10, width: '80%' }}>
+              <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10, textAlign: 'center' }}>Välj väderlek</Text>
+              {WEATHER_OPTIONS.map((opt, idx) => (
+                <TouchableOpacity key={idx} onPress={() => { setSelectedWeather(opt); setWeatherModalVisible(false); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
+                  <Ionicons name={opt.icon} size={24} color={opt.color} style={{ marginRight: 10 }} />
+                  <Text style={{ fontSize: 16 }}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+              <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 18 }}>
+                <TouchableOpacity onPress={() => setWeatherModalVisible(false)} style={{ marginRight: 18 }}>
+                  <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setSelectedWeather(null); setWeatherModalVisible(false); }}>
+                  <Text style={{ color: '#D32F2F', fontSize: 16 }}>Nollställ</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Modal för deltagare */}
+        {participantModalVisible && (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
+            <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 340, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 120 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222' }}>{participantEditIndex === null ? 'Lägg till deltagare' : 'Redigera deltagare'}</Text>
+                <TouchableOpacity onPress={() => setParticipantModalVisible(false)} style={{ padding: 4 }}>
+                  <Ionicons name="close" size={24} color="#222" />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
+                value={participantForm.name}
+                onChangeText={text => setParticipantForm({ ...participantForm, name: text })}
+                placeholder="Namn"
+                placeholderTextColor="#888"
+              />
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
+                value={participantForm.company}
+                onChangeText={text => setParticipantForm({ ...participantForm, company: text })}
+                placeholder="Företag"
+                placeholderTextColor="#888"
+              />
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
+                value={participantForm.phone}
+                onChangeText={text => {
+                  // Format as xxx xxx xx xx
+                  let digits = text.replace(/\D/g, '').slice(0, 10);
+                  let formatted = '';
+                  if (digits.length > 0) formatted += digits.slice(0, 3);
+                  if (digits.length > 3) formatted += ' ' + digits.slice(3, 6);
+                  if (digits.length > 6) formatted += ' ' + digits.slice(6, 8);
+                  if (digits.length > 8) formatted += ' ' + digits.slice(8, 10);
+                  setParticipantForm({ ...participantForm, phone: formatted });
+                }}
+                placeholder="Mobilnummer"
+                placeholderTextColor="#888"
+                keyboardType="numeric"
+                maxLength={13}
+              />
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, color: '#222' }}
+                value={participantForm.role}
+                onChangeText={text => setParticipantForm({ ...participantForm, role: text })}
+                placeholder="Roll (t.ex. Montör, Arbetsledare)"
+                placeholderTextColor="#888"
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
+                <TouchableOpacity onPress={handleSaveParticipant} style={{ marginRight: 18 }}>
+                  <Text style={{ color: '#1976D2', fontSize: 16, textAlign: 'center' }}>Spara</Text>
+                </TouchableOpacity>
+                {participantEditIndex !== null && (
+                  <TouchableOpacity onPress={() => handleDeleteParticipant(participantEditIndex)}>
+                    <Ionicons name="trash" size={22} color="#D32F2F" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     );
   }
+
 
