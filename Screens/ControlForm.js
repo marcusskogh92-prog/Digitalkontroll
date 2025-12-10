@@ -1,5 +1,4 @@
-
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
@@ -53,6 +52,12 @@ export default function ControlForm({ date, participants = [] }) {
       'Är täckningen tillräcklig?'
     ], answers: [null, null, null], note: '', status: null },
   ]);
+
+  // Input refs for participant modal
+  const nameInputRef = React.useRef();
+  const companyInputRef = React.useRef();
+  const phoneInputRef = React.useRef();
+  const roleInputRef = React.useRef();
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   const [generalNote, setGeneralNote] = useState('');
   const [signatureName, setSignatureName] = useState('');
@@ -146,7 +151,29 @@ export default function ControlForm({ date, participants = [] }) {
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 9999 }}>
           <View style={{ backgroundColor: '#fff', padding: 24, borderRadius: 16, width: 320, borderWidth: 2, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 12, marginTop: 240 }}>
             <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 12 }}>Ändra datum</Text>
-              {/* ...existing code... */}
+            <TextInput
+              style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff', textAlign: 'center' }}
+              value={dateInput}
+              onChangeText={text => {
+                // Remove non-digits except '-'
+                let digits = text.replace(/[^\d-]/g, '');
+                // Auto-insert '-' after year and month
+                if (digits.length > 4 && digits[4] !== '-') digits = digits.slice(0,4) + '-' + digits.slice(4);
+                if (digits.length > 7 && digits[7] !== '-') digits = digits.slice(0,7) + '-' + digits.slice(7);
+                // Limit to 10 chars
+                digits = digits.slice(0, 10);
+                setDateInput(digits);
+                // Auto-save if valid
+                if (/^\d{4}-\d{2}-\d{2}$/.test(digits) && digits <= todayStr) {
+                  setDateValue(digits);
+                  setShowDateModal(false);
+                }
+              }}
+              placeholder="ÅÅÅÅ-MM-DD"
+              placeholderTextColor="#888"
+              keyboardType="numeric"
+              maxLength={10}
+            />
             {(() => {
               // Validate date format and future date
               let warning = '';
@@ -239,6 +266,9 @@ export default function ControlForm({ date, participants = [] }) {
               </View>
             ))}
         </View>
+
+        {/* Horisontell linje mellan deltagare och checklista */}
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginHorizontal: 16, marginBottom: 16 }} />
 
         {/* Checklista med sektioner, ja/nej, statusikon och anteckning */}
         <View style={{ paddingHorizontal: 16 }}>
@@ -356,12 +386,16 @@ export default function ControlForm({ date, participants = [] }) {
                   <Ionicons name="close" size={24} color="#222" />
                 </TouchableOpacity>
               </View>
+              {/* Input refs for focus navigation */}
               <TextInput
                 style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
                 value={participantForm.name}
                 onChangeText={text => setParticipantForm({ ...participantForm, name: text })}
                 placeholder="Namn"
                 placeholderTextColor="#888"
+                returnKeyType="next"
+                onSubmitEditing={() => companyInputRef.current && companyInputRef.current.focus()}
+                ref={nameInputRef}
               />
               <TextInput
                 style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
@@ -369,6 +403,9 @@ export default function ControlForm({ date, participants = [] }) {
                 onChangeText={text => setParticipantForm({ ...participantForm, company: text })}
                 placeholder="Företag"
                 placeholderTextColor="#888"
+                returnKeyType="next"
+                onSubmitEditing={() => phoneInputRef.current && phoneInputRef.current.focus()}
+                ref={companyInputRef}
               />
               <TextInput
                 style={{ borderWidth: 1, borderColor: '#888', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, backgroundColor: '#fff' }}
@@ -387,6 +424,9 @@ export default function ControlForm({ date, participants = [] }) {
                 placeholderTextColor="#888"
                 keyboardType="numeric"
                 maxLength={13}
+                returnKeyType="next"
+                onSubmitEditing={() => roleInputRef.current && roleInputRef.current.focus()}
+                ref={phoneInputRef}
               />
               <TextInput
                 style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16, color: '#222' }}
@@ -394,6 +434,9 @@ export default function ControlForm({ date, participants = [] }) {
                 onChangeText={text => setParticipantForm({ ...participantForm, role: text })}
                 placeholder="Roll (t.ex. Montör, Arbetsledare)"
                 placeholderTextColor="#888"
+                returnKeyType="done"
+                onSubmitEditing={handleSaveParticipant}
+                ref={roleInputRef}
               />
               <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 0 }}>
                 <TouchableOpacity onPress={handleSaveParticipant} style={{ marginRight: 18 }}>
