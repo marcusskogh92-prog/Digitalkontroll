@@ -1,31 +1,16 @@
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
 
+const LABELS = {
+  title: 'Egenkontroll',
+  saveButton: 'Spara',
+  saveDraftButton: 'Spara och slutför senare',
+};
 
-function getWeekAndYear(dateInput) {
-  const d = dateInput ? new Date(dateInput) : new Date();
-  d.setHours(0, 0, 0, 0);
-  // Thursday in current week decides the year.
-  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-  const week1 = new Date(d.getFullYear(), 0, 4);
-  // Calculate full weeks to nearest Thursday
-  const weekNo = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-  return { week: weekNo, year: d.getFullYear() };
-}
-
-
-
-export default function SkyddsrondScreen({ date, participants = [] }) {
+export default function EgenkontrollScreen({ date, participants = [] }) {
   const route = useRoute();
   const project = route.params?.project;
-  const { week, year } = getWeekAndYear(date);
-  const LABELS = {
-    title: `Skyddsrond ${year} V.${week < 10 ? '0' + week : week}`,
-    saveButton: 'Spara',
-    saveDraftButton: 'Spara och slutför senare',
-  };
 
   const handleSave = async (data) => {
     try {
@@ -55,7 +40,7 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
   return (
     <BaseControlForm
       date={date}
-      controlType="Skyddsrond"
+      controlType="Egenkontroll"
       labels={LABELS}
       participants={participants}
       project={project}

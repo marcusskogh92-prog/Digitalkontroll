@@ -261,7 +261,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               onChangeText={setSearchText}
               placeholder="Skriv projektnummer..."
               style={{
-                borderWidth: 2,
+                borderWidth: 1,
                 borderColor: '#222',
                 borderRadius: 16,
                 padding: 10,
@@ -332,15 +332,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
       <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.85)' }}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 48, height: 48, backgroundColor: '#eee', borderRadius: 24, marginRight: 12, overflow: 'hidden' }} />
-            <View>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
-              <Text style={{ fontSize: 14, color: '#666' }}>Välkommen till Digitalkontroll</Text>
-            </View>
+          <View>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
+            <Text style={{ fontSize: 14, color: '#666' }}>Välkommen tillbaka</Text>
           </View>
           <TouchableOpacity
-            style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1.5, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minWidth: 60, minHeight: 28 }}
+            style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minWidth: 60, minHeight: 28 }}
             onPress={async () => {
               setLoggingOut(true);
               await auth.signOut();
@@ -365,7 +362,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               style={{
                 backgroundColor: '#fff',
                 borderRadius: 16,
-                borderWidth: 2,
+                borderWidth: 1,
                 borderColor: '#222',
                 paddingVertical: 14,
                 paddingHorizontal: 32,
@@ -473,7 +470,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           onChangeText={setSearchText}
                           placeholder="Sök projektnamn eller nummer..."
                           style={{
-                            borderWidth: 2,
+                            borderWidth: 1,
                             borderColor: '#222',
                             borderRadius: 16,
                             padding: 10,
@@ -507,22 +504,31 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                         style={{ padding: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
                                         onPress={() => {
                                           setSelectProjectModal({ visible: false, type: null });
-                                          if (selectProjectModal.type === 'Skyddsrond') {
-                                            navigation.navigate('SkyddsrondScreen', {
-                                              project: proj
-                                            });
-                                          } else if (['Arbetsberedning','Mottagningskontroll','Egenkontroll','Fuktmätning','Riskbedömning'].includes(selectProjectModal.type)) {
-                                            navigation.navigate('ControlForm', {
-                                              project: proj,
-                                              initial: { type: selectProjectModal.type },
-                                              performedBy: null,
-                                              companyId: proj?.companyId || null,
-                                            });
-                                          } else {
-                                            navigation.navigate('ControlForm', {
-                                              project: proj,
-                                              controlType: selectProjectModal.type
-                                            });
+                                          // Route each control type to its dedicated screen
+                                          switch (selectProjectModal.type) {
+                                            case 'Arbetsberedning':
+                                              navigation.navigate('ArbetsberedningScreen', { project: proj });
+                                              break;
+                                            case 'Riskbedömning':
+                                              navigation.navigate('RiskbedömningScreen', { project: proj });
+                                              break;
+                                            case 'Fuktmätning':
+                                              navigation.navigate('FuktmätningScreen', { project: proj });
+                                              break;
+                                            case 'Egenkontroll':
+                                              navigation.navigate('EgenkontrollScreen', { project: proj });
+                                              break;
+                                            case 'Mottagningskontroll':
+                                              navigation.navigate('MottagningskontrollScreen', { project: proj });
+                                              break;
+                                            case 'Skyddsrond':
+                                              navigation.navigate('SkyddsrondScreen', { project: proj });
+                                              break;
+                                            default:
+                                              navigation.navigate('ControlForm', {
+                                                project: proj,
+                                                controlType: selectProjectModal.type
+                                              });
                                           }
                                         }}
                                       >
@@ -866,7 +872,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <Text style={{ fontSize: 26, fontWeight: '600', color: '#263238', letterSpacing: 0.2, textAlign: 'center' }}>Projekt</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 16, borderWidth: 2, borderColor: '#222', paddingHorizontal: 10, paddingVertical: 6, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4, elevation: 2, minHeight: 32, marginLeft: 16 }}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#222', paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4, elevation: 2, minHeight: 36, marginLeft: 16 }}
               onPress={() => setSearchModalVisible(true)}
               activeOpacity={0.85}
             >

@@ -62,14 +62,12 @@ export default function ProjectDetails({ route, navigation }) {
           React.useEffect(() => {
     navigation.setOptions({
       headerTitle: () => (
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Image
-            source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
-            style={{ width: 120, height: 32, resizeMode: 'contain', marginRight: 10 }}
-          />
-          <Text style={{ fontSize: 18, fontWeight: '700' }}>Hem</Text>
-        </View>
+        <Image
+          source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
+          style={{ width: 150, height: 80, resizeMode: 'contain' }}
+        />
       ),
+      headerBackTitle: 'Hem',
     });
   }, [navigation]);
     // State för att låsa upp skapad-datum
@@ -437,19 +435,18 @@ export default function ProjectDetails({ route, navigation }) {
           </View>
         </View>
       </Modal>
-      {/* Knappar för skapa kontroll och skriv ut */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      {/* Knapprad med horisontella linjer */}
+      <View style={{ marginBottom: 12 }}>
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 10, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
           <TouchableOpacity
             style={{
               backgroundColor: '#f5f5f5',
               borderRadius: 10,
-              borderWidth: 2,
-              borderColor: '#222',
               flexDirection: 'row',
               alignItems: 'center',
               paddingVertical: 6,
-              paddingHorizontal: 12,
+              paddingHorizontal: 18,
               shadowColor: '#222',
               shadowOffset: { width: 0, height: 2 },
               shadowOpacity: 0.08,
@@ -472,8 +469,6 @@ export default function ProjectDetails({ route, navigation }) {
             style={{
               backgroundColor: '#f5f5f5',
               borderRadius: 10,
-              borderWidth: 2,
-              borderColor: '#222',
               flexDirection: 'row',
               alignItems: 'center',
               paddingVertical: 6,
@@ -499,8 +494,6 @@ export default function ProjectDetails({ route, navigation }) {
             style={{
               backgroundColor: '#f5f5f5',
               borderRadius: 10,
-              borderWidth: 2,
-              borderColor: '#D32F2F',
               flexDirection: 'row',
               alignItems: 'center',
               paddingVertical: 6,
@@ -529,6 +522,7 @@ export default function ProjectDetails({ route, navigation }) {
             <Ionicons name="trash-outline" size={20} color="#D32F2F" />
           </TouchableOpacity>
         </View>
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 10, width: '110%', marginLeft: '-5%' }} />
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
@@ -558,17 +552,31 @@ export default function ProjectDetails({ route, navigation }) {
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
                 onPress={() => {
                   setShowControlTypeModal(false);
-                  if (['Mottagningskontroll','Arbetsberedning','Egenkontroll','Fuktmätning','Riskbedömning'].includes(type)) {
-                    navigation.navigate('ControlForm', {
-                      project,
-                      initial: { type },
-                      performedBy: null,
-                      companyId: project?.companyId || null,
-                    });
-                  } else if (type === 'Skyddsrond') {
-                    navigation.navigate('SkyddsrondScreen', {
-                      project
-                    });
+                  // Route each control type to its dedicated screen
+                  switch (type) {
+                    case 'Arbetsberedning':
+                      navigation.navigate('ArbetsberedningScreen', { project });
+                      break;
+                    case 'Riskbedömning':
+                      navigation.navigate('RiskbedömningScreen', { project });
+                      break;
+                    case 'Fuktmätning':
+                      navigation.navigate('FuktmätningScreen', { project });
+                      break;
+                    case 'Egenkontroll':
+                      navigation.navigate('EgenkontrollScreen', { project });
+                      break;
+                    case 'Mottagningskontroll':
+                      navigation.navigate('MottagningskontrollScreen', { project });
+                      break;
+                    case 'Skyddsrond':
+                      navigation.navigate('SkyddsrondScreen', { project });
+                      break;
+                    default:
+                      navigation.navigate('ControlForm', {
+                        project,
+                        controlType: type
+                      });
                   }
                 }}
               >
