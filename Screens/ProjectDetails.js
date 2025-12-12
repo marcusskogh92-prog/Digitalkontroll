@@ -6,18 +6,20 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-    Image,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { fetchProjectControls } from '../components/fetchProjectControls';
+import Svg, { Circle, Polygon, Text as SvgText } from 'react-native-svg';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#fff' },
@@ -28,8 +30,8 @@ const styles = StyleSheet.create({
   groupTitle: { fontSize: 16, fontWeight: '700', marginLeft: 8, color: '#263238' },
   groupBadge: { backgroundColor: '#1976D2', borderRadius: 12, paddingHorizontal: 8, marginLeft: 8 },
   groupBadgeText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  controlCard: { backgroundColor: '#fff', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: '#e0e0e0' },
-  controlType: { fontSize: 15, color: '#222' },
+  controlCard: { backgroundColor: '#fff', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 54, flexDirection: 'row', alignItems: 'center' },
+  controlType: { fontSize: 15, color: '#222', flex: 1 },
   form: { backgroundColor: '#fff', borderRadius: 12, padding: 16, margin: 12 },
   selectedType: { fontWeight: '700', fontSize: 16, marginBottom: 8 },
   infoText: { fontSize: 14, color: '#555', marginBottom: 8 },
@@ -132,11 +134,31 @@ export default function ProjectDetails({ route, navigation }) {
   ].sort();
   const [controls, setControls] = useState([]);
 
-  // Ladda kontroller för projektet
+  // Ladda både utkast (pågående) och slutförda kontroller för projektet
   const loadControls = useCallback(async () => {
     if (!project?.id) return;
-    const arr = await fetchProjectControls(project.id);
-    setControls(arr);
+    let allControls = [];
+    // Hämta utkast (pågående)
+    try {
+      const draftsRaw = await AsyncStorage.getItem('draft_controls');
+      if (draftsRaw) {
+        const drafts = JSON.parse(draftsRaw);
+        drafts.filter(d => d.project?.id === project.id).forEach(draft => {
+          allControls.push({ ...draft, isDraft: true });
+        });
+      }
+    } catch {}
+    // Hämta slutförda
+    try {
+      const completedRaw = await AsyncStorage.getItem('completed_controls');
+      if (completedRaw) {
+        const completed = JSON.parse(completedRaw);
+        completed.filter(c => c.project?.id === project.id).forEach(ctrl => {
+          allControls.push({ ...ctrl, isDraft: false });
+        });
+      }
+    } catch {}
+    setControls(allControls);
   }, [project?.id]);
 
   // Ladda kontroller när sidan visas (fokus)
@@ -144,7 +166,6 @@ export default function ProjectDetails({ route, navigation }) {
     const unsubscribe = navigation.addListener('focus', () => {
       loadControls();
     });
-    // Ladda direkt vid mount också
     loadControls();
     return unsubscribe;
   }, [navigation, loadControls]);
@@ -692,22 +713,97 @@ export default function ProjectDetails({ route, navigation }) {
                     items
                       .slice()
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                      .map((item) => (
-                        <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <TouchableOpacity
-                            style={[styles.controlCard, { flex: 1 }]}
-                            onPress={() => navigation.navigate('ControlDetails', { control: item, project })}
-                            onLongPress={() => handleControlLongPress(item)}
-                            delayLongPress={600}
-                          >
-                            <Text style={styles.controlType}>
-                              {item.type === 'Skyddsrond'
-                                ? `${item.description ? item.description + ' ' : ''}${item.date}`
-                                : `${item.byggdel ? item.byggdel + ' ' : ''}${item.description} ${item.date}`}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      ))
+                      .map((item, idx) => {
+                        // Format: Skyddsrond yyyy-mm-dd V.xx
+                        let label = '';
+                        if (item.type === 'Skyddsrond') {
+                          // Format: Skyddsrond yyyy-mm-dd
+                          let dateStr = '';
+                          let week = '';
+                          if (item.date && item.date.length >= 10) {
+                            const d = new Date(item.date);
+                            if (!isNaN(d)) {
+                              // yyyy-mm-dd
+                              dateStr = d.toISOString().slice(0, 10);
+                              // Veckonummer
+                              d.setHours(0, 0, 0, 0);
+                              d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+                              const week1 = new Date(d.getFullYear(), 0, 4);
+                              week = 'V.' + (1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7));
+                            }
+                          }
+                          if (!dateStr) dateStr = '(okänt datum)';
+                          label = `Skyddsrond ${dateStr} ${week}`.trim();
+                        } else {
+                          label = `${item.type}${item.date ? ' ' + item.date : ''}`;
+                        }
+                        return (
+                          <View key={`${item.id || 'noid'}-${item.date || 'nodate'}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <TouchableOpacity
+                              style={[
+                                styles.controlCard,
+                                item.isDraft
+                                  ? { backgroundColor: '#fff', borderColor: '#222' }
+                                  : { backgroundColor: '#fff', borderColor: '#e0e0e0' }
+                              ]}
+                              onPress={() =>
+                                item.isDraft
+                                  ? navigation.navigate('ControlForm', { initialValues: item, project })
+                                  : navigation.navigate('ControlDetails', { control: item, project })
+                              }
+                              onLongPress={item.isDraft ? undefined : () => handleControlLongPress(item)}
+                              delayLongPress={item.isDraft ? undefined : 600}
+                            >
+                              {item.isDraft ? (
+                                <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
+                                  <Polygon points="12,2 22,20 2,20" fill="#FFD600" stroke="#111" strokeWidth="1" />
+                                  <SvgText
+                                    x="12"
+                                    y="14"
+                                    fontSize="13"
+                                    fontWeight="bold"
+                                    fill="#111"
+                                    textAnchor="middle"
+                                    alignmentBaseline="middle"
+                                  >
+                                    !
+                                  </SvgText>
+                                </Svg>
+                              ) : (
+                                <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
+                                  <Circle cx={12} cy={12} r={10} fill="#43A047" stroke="#222" strokeWidth={1} />
+                                  <SvgText
+                                    x="12"
+                                    y="13.5"
+                                    fontSize="16"
+                                    fontWeight="bold"
+                                    fill="#fff"
+                                    textAnchor="middle"
+                                    alignmentBaseline="middle"
+                                  >
+                                    ✓
+                                  </SvgText>
+                                </Svg>
+                              )}
+                              <View style={{ flexDirection: 'column', flex: 1 }}>
+                                <Text
+                                  style={[
+                                    styles.controlType,
+                                    { color: '#222', fontWeight: 'bold' }
+                                  ]}
+                                >
+                                  {label}
+                                </Text>
+                                {item.date && (
+                                  <Text style={{ color: '#555', fontSize: 13, marginTop: 1 }}>
+                                    {new Date(item.date).toLocaleDateString('sv-SE')}
+                                  </Text>
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })
                   ) : null}
                 </View>
               );
@@ -1044,8 +1140,8 @@ export default function ProjectDetails({ route, navigation }) {
                     items
                       .slice()
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                      .map((item) => (
-                        <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      .map((item, idx) => (
+                        <View key={`${item.id}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <TouchableOpacity
                             style={[styles.controlCard, { flex: 1 }]}
                             onPress={() => navigation.navigate('ControlDetails', { control: item, project })}

@@ -393,7 +393,7 @@ export default function BaseControlForm({
               </View>
               <View style={{ flexDirection: 'row', marginTop: 18, alignItems: 'center', justifyContent: 'center' }}>
                 {photoModal.uris.map((uri, idx) => (
-                  <View key={uri + idx} style={{ width: 10, height: 10, borderRadius: 5, margin: 4, backgroundColor: idx === photoModal.index ? '#fff' : '#888' }} />
+                  <View key={`photo-dot-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`} style={{ width: 10, height: 10, borderRadius: 5, margin: 4, backgroundColor: idx === photoModal.index ? '#fff' : '#888' }} />
                 ))}
               </View>
               {/* Action buttons under image */}
@@ -559,16 +559,30 @@ export default function BaseControlForm({
               <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 2, marginTop: 4 }}>Deltagare:</Text>
               {localParticipants && localParticipants.length > 0 ? (
                 localParticipants.map((p, idx) => {
-                  // If p is a string, show as name only. If object, show all fields.
+                  // Use a robust key: if object, try id, else hash the stringified object, else fallback to uuid
+                  let key;
+                  if (typeof p === 'object' && p !== null) {
+                    if (p.id) {
+                      key = `participant-${p.id}`;
+                    } else {
+                      try {
+                        key = 'participant-' + btoa(unescape(encodeURIComponent(JSON.stringify(p)))) + '-' + idx;
+                      } catch {
+                        key = 'participant-' + idx + '-' + uuidv4();
+                      }
+                    }
+                  } else {
+                    key = `${p}-${idx}`;
+                  }
                   if (typeof p === 'string') {
                     return (
-                      <View key={idx} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
                         <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>{p}</Text>
                       </View>
                     );
                   } else if (typeof p === 'object' && p !== null) {
                     return (
-                      <View key={idx} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
                           <Text style={{ fontSize: 16, color: '#222', fontWeight: '500', marginRight: 8 }}>{p.name || ''}</Text>
                           {p.company ? <Text style={{ fontSize: 16, color: '#555', fontWeight: '400' }}>{p.company}</Text> : null}
@@ -760,7 +774,7 @@ export default function BaseControlForm({
             // Show green check if all filled, regardless of status
             const showGreenCheck = allFilled;
             return (
-              <View key={section.label} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                <View key={section.id ? `section-${section.id}` : btoa(unescape(encodeURIComponent(section.label))) + '-' + sectionIdx} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: sectionHeaderBg }}
                   onPress={() => {
@@ -822,7 +836,7 @@ export default function BaseControlForm({
                       // Set background to red if status is not set
                       const rowBackgroundColor = status ? '#fff' : '#FFD6D6';
                       return (
-                        <View key={point} style={{ marginBottom: 14, backgroundColor: rowBackgroundColor, borderRadius: 6, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
+                        <View key={typeof point === 'object' && point !== null && point.id ? `point-${point.id}` : btoa(unescape(encodeURIComponent(point))) + '-' + pointIdx} style={{ marginBottom: 14, backgroundColor: rowBackgroundColor, borderRadius: 6, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
                           <Text style={{ fontSize: 15, color: '#222', fontWeight: '500', marginBottom: 6 }}>{point}</Text>
                           {/* Status selector (OK, Avvikelse, Ej aktuell) */}
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
@@ -922,7 +936,7 @@ export default function BaseControlForm({
                                   <View style={{ flexDirection: 'row', marginLeft: 10 }}>
                                     {photoArr.map((uri, idx) => (
                                       <TouchableOpacity
-                                        key={uri + idx}
+                                        key={`photo-thumb-${sectionIdx}-${pointIdx}-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`}
                                         onPress={() => setPhotoModal({ visible: true, uris: photoArr, index: idx })}
                                         activeOpacity={0.8}
                                       >

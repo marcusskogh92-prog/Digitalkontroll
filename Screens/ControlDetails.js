@@ -1,3 +1,4 @@
+
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const PRIMARY = '#263238';
@@ -12,7 +13,11 @@ export default function ControlDetails({ route }) {
     );
   }
 
-  const { type, date, description, participants = [], checklist = [], status, savedAt, attachments = [] } = control;
+  let { type, date, description, participants, checklist, status, savedAt, attachments } = control;
+  // Ensure arrays for robust rendering
+  participants = Array.isArray(participants) ? participants : [];
+  checklist = Array.isArray(checklist) ? checklist : [];
+  attachments = Array.isArray(attachments) ? attachments : [];
 
   return (
     <ScrollView style={styles.container}>
