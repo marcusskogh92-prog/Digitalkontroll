@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
 import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Polygon, Svg, Text as SvgText } from 'react-native-svg';
 import NativeSignatureModal from './NativeSignatureModal';
 
 export default function BaseControlForm({
@@ -408,10 +409,12 @@ export default function BaseControlForm({
             const anyMissing = section.points.some((_, idx) => !sectionStatuses[idx]);
             const sectionHeaderBg = anyMissing ? '#FFE5E5' : '#e9ecef';
             const sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
-            // Icon logic: only show if all points are filled in
+            // Ikonlogik: visa fotoikon om något foto finns, varning om någon avvikelse
             const allFilled = section.points.every((_, idx) => !!sectionStatuses[idx]);
             const hasOk = sectionStatuses.some(s => s === 'ok');
             const hasAvvikelse = sectionStatuses.some(s => s === 'avvikelse');
+            const photos = checklist[sectionIdx]?.photos || [];
+            const hasPhoto = photos.some(uri => !!uri);
             return (
               <View key={section.label} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
@@ -427,12 +430,30 @@ export default function BaseControlForm({
                 >
                   <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={20} color={'#1976D2'} style={{ marginRight: 8 }} />
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText, flex: 1 }}>{section.label}</Text>
-                  {/* Only show icons if all points are filled in */}
-                  {allFilled && hasOk && (
-                    <Ionicons name="checkmark-circle" size={22} color="#43A047" style={{ marginLeft: 8 }} />
+                  {/* Visa fotoikon och varning även om inte alla är ifyllda */}
+                  {hasPhoto && (
+                    <Ionicons name="camera" size={22} color="#1976D2" style={{ marginLeft: 8 }} />
                   )}
-                  {allFilled && hasAvvikelse && (
-                    <Ionicons name="warning" size={22} color="#FFD600" style={{ marginLeft: 8 }} />
+                  {hasAvvikelse && (
+                    <View style={{ marginLeft: 8 }}>
+                      <Svg width={22} height={22} viewBox="0 0 24 24">
+                        <Polygon points="12,2 22,20 2,20" fill="#FFD600" stroke="#111" strokeWidth="1" />
+                        <SvgText
+                          x="12"
+                          y="14"
+                          fontSize="13"
+                          fontWeight="bold"
+                          fill="#111"
+                          textAnchor="middle"
+                          alignmentBaseline="middle"
+                        >
+                          !
+                        </SvgText>
+                      </Svg>
+                    </View>
+                  )}
+                  {allFilled && hasOk && !hasPhoto && !hasAvvikelse && (
+                    <Ionicons name="checkmark-circle" size={22} color="#43A047" style={{ marginLeft: 8 }} />
                   )}
                 </TouchableOpacity>
                 {expanded && (
@@ -488,8 +509,31 @@ export default function BaseControlForm({
                               }}
                               onPress={() => setStatus('avvikelse')}
                             >
-                              <Ionicons name="warning" size={22} color={status === 'avvikelse' ? '#FFD600' : '#bbb'} style={{ marginRight: 4 }} />
-                              <Text style={{ color: status === 'avvikelse' ? '#FFD600' : '#bbb', fontWeight: 'bold' }}>Avvikelse</Text>
+                              <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 4 }}>
+                                <Polygon points="12,2 22,20 2,20" fill={status === 'avvikelse' ? '#FFD600' : '#bbb'} stroke="#111" strokeWidth="1" />
+                                <SvgText
+                                  x="12"
+                                  y="14"
+                                  fontSize="13"
+                                  fontWeight="bold"
+                                  fill="#111"
+                                  textAnchor="middle"
+                                  alignmentBaseline="middle"
+                                >
+                                  !
+                                </SvgText>
+                              </Svg>
+                              <Text style={{
+                                color: status === 'avvikelse' ? '#111' : '#bbb',
+                                fontWeight: 'bold',
+                                backgroundColor: status === 'avvikelse' ? '#FFD600' : 'transparent',
+                                borderWidth: status === 'avvikelse' ? 1 : 0,
+                                borderColor: status === 'avvikelse' ? '#111' : 'transparent',
+                                borderRadius: 4,
+                                paddingHorizontal: 4,
+                                paddingVertical: 1,
+                                overflow: 'hidden',
+                              }}>Avvikelse</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               style={{

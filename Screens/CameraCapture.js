@@ -2,7 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Camera, CameraView } from 'expo-camera';
 import { useEffect, useState } from 'react';
-import { Alert, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const PRIMARY = '#263238';
 
@@ -14,6 +14,17 @@ export default function CameraCapture() {
   const [cameraRef, setCameraRef] = useState(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [orientation, setOrientation] = useState('portrait');
+
+  useEffect(() => {
+    const handleOrientation = () => {
+      const { width, height } = Dimensions.get('window');
+      setOrientation(width > height ? 'landscape' : 'portrait');
+    };
+    Dimensions.addEventListener('change', handleOrientation);
+    handleOrientation();
+    return () => Dimensions.removeEventListener('change', handleOrientation);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -105,26 +116,85 @@ export default function CameraCapture() {
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <CameraView style={{ flex: 1 }} ref={setCameraRef} />
-      <View style={styles.bottomBar}>
-        <TouchableOpacity style={styles.secondaryAction} onPress={() => navigation.goBack()}>
-          <MaterialIcons name="close" size={20} color={PRIMARY} />
-          <Text style={styles.secondaryActionText}>Avbryt</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity style={styles.primaryAction} onPress={handleCapture} disabled={isCapturing}>
-          <MaterialIcons name="photo-camera" size={20} color="#fff" />
-          <Text style={styles.primaryActionText}>{isCapturing ? 'Tar foto...' : 'Ta foto'}</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Avbryt-knapp i övre vänstra hörnet */}
+      <TouchableOpacity style={styles.cancelButton} onPress={() => navigation.goBack()}>
+        <MaterialIcons name="close" size={28} color={PRIMARY} />
+      </TouchableOpacity>
+      {/* Stor foto-knapp: mitten nedtill (porträtt) eller mitten till höger (landskap) */}
+      {orientation === 'portrait' ? (
+        <View style={styles.cameraButtonBarPortrait} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.cameraButton}
+            onPress={handleCapture}
+            disabled={isCapturing}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="photo-camera" size={44} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.cameraButtonBarLandscape} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.cameraButton}
+            onPress={handleCapture}
+            disabled={isCapturing}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="photo-camera" size={44} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.3)', flexDirection: 'row', alignItems: 'center' },
-  primaryAction: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: PRIMARY, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10 },
-  primaryActionText: { color: '#fff', fontWeight: '700' },
-  secondaryAction: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 2, borderColor: PRIMARY, backgroundColor: '#F5F8FA', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10 },
-  secondaryActionText: { color: PRIMARY, fontWeight: '700' }
+  // ...existing code...
+  cancelButton: {
+    position: 'absolute',
+    top: 36,
+    left: 20,
+    zIndex: 10,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 24,
+    padding: 6,
+    elevation: 2,
+  },
+  cameraButtonBarPortrait: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+    pointerEvents: 'box-none',
+  },
+  cameraButtonBarLandscape: {
+    position: 'absolute',
+    right: 36,
+    top: '50%',
+    transform: [{ translateY: 0 }],
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+    pointerEvents: 'box-none',
+  },
+  cameraButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 4,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  // ...existing code...
 });
