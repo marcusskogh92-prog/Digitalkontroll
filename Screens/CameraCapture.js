@@ -1,7 +1,8 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Camera, CameraView } from 'expo-camera';
-import { useEffect, useState } from 'react';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const PRIMARY = '#263238';
@@ -15,16 +16,48 @@ export default function CameraCapture() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [orientation, setOrientation] = useState('portrait');
+  const [pictureSize, setPictureSize] = useState(null);
+  const cameraViewRef = useRef(null);
+  // Ingen separat aspect state behövs, vi styr via orientation
 
   useEffect(() => {
     const handleOrientation = () => {
       const { width, height } = Dimensions.get('window');
       setOrientation(width > height ? 'landscape' : 'portrait');
     };
-    Dimensions.addEventListener('change', handleOrientation);
+    const subscription = Dimensions.addEventListener('change', handleOrientation);
     handleOrientation();
-    return () => Dimensions.removeEventListener('change', handleOrientation);
+    return () => {
+      if (subscription && typeof subscription.remove === 'function') {
+        subscription.remove();
+      } else if (typeof subscription === 'function') {
+        // For older RN versions
+        subscription();
+      }
+    };
   }, []);
+
+  // Hämta tillgängliga 4:3-storlekar och välj en (t.ex. största)
+  useEffect(() => {
+    (async () => {
+      if (cameraViewRef.current) {
+        try {
+          const sizes = await cameraViewRef.current.getAvailablePictureSizesAsync('4:3');
+          if (sizes && sizes.length > 0) {
+            // Välj största 4:3-storlek
+            const sorted = sizes.sort((a, b) => {
+              const [aw, ah] = a.split('x').map(Number);
+              const [bw, bh] = b.split('x').map(Number);
+              return bw * bh - aw * ah;
+            });
+            setPictureSize(sorted[0]);
+          }
+        } catch (e) {
+          // fallback: ingen pictureSize
+        }
+      }
+    })();
+  }, [cameraViewRef.current]);
 
   useEffect(() => {
     (async () => {
@@ -53,8 +86,41 @@ export default function CameraCapture() {
     try {
       if (!cameraRef || isCapturing) return;
       setIsCapturing(true);
-      const photo = await cameraRef.takePictureAsync({ quality: 0.8 });
-      setPhotoPreview(photo);
+      // Använd pictureSize om satt
+      const options = { quality: 0.8 };
+      if (pictureSize) options.pictureSize = pictureSize;
+      const photo = await cameraRef.takePictureAsync(options);
+
+      let finalPhoto = photo;
+      // Cropping logic for portrait mode to ensure 4:3
+      if (orientation === 'portrait' && photo && photo.width && photo.height) {
+        // Only crop if not already 4:3
+        const targetRatio = 4 / 3;
+        const actualRatio = photo.height / photo.width;
+        if (Math.abs(actualRatio - targetRatio) > 0.01) {
+          // Crop to 4:3 (height = width * 4/3)
+          const cropWidth = photo.width;
+          const cropHeight = Math.round(photo.width * 4 / 3);
+          if (cropHeight <= photo.height) {
+            const cropOriginY = Math.round((photo.height - cropHeight) / 2);
+            const manipResult = await ImageManipulator.manipulateAsync(
+              photo.uri,
+              [{ crop: { originX: 0, originY: cropOriginY, width: cropWidth, height: cropHeight } }],
+              { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            finalPhoto = { ...manipResult, _orientation: orientation };
+          } else {
+            // fallback: don't crop if image is too small
+            finalPhoto = { ...photo, _orientation: orientation };
+          }
+        } else {
+          finalPhoto = { ...photo, _orientation: orientation };
+        }
+      } else {
+        finalPhoto = { ...photo, _orientation: orientation };
+      }
+
+      setPhotoPreview(finalPhoto);
     } catch (e) {
       Alert.alert('Fel vid fotografering', String(e?.message || e));
     } finally {
@@ -81,32 +147,53 @@ export default function CameraCapture() {
   }
 
   if (photoPreview) {
+    // Visa preview med rätt aspect ratio
+    const isPortrait = photoPreview._orientation === 'portrait';
+    const aspectRatio = isPortrait ? 4 / 3 : 3 / 4;
     return (
       <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-        <Image source={{ uri: photoPreview.uri }} style={{ width: '90%', height: '70%', borderRadius: 12 }} resizeMode="contain" />
-        <View style={{ flexDirection: 'row', marginTop: 24 }}>
+        <Image
+          source={{ uri: photoPreview.uri }}
+          style={{
+            width: isPortrait ? '92%' : undefined,
+            height: isPortrait ? undefined : '68%',
+            aspectRatio,
+            borderRadius: 16,
+            marginTop: 24,
+            marginBottom: 12,
+            maxWidth: 420,
+            maxHeight: 420,
+            resizeMode: 'contain',
+            backgroundColor: '#111',
+          }}
+        />
+        <View style={styles.previewButtonBar}>
           <TouchableOpacity
-            style={[styles.primaryAction, { marginRight: 16, backgroundColor: '#fff', borderColor: PRIMARY, borderWidth: 2 }]}
+            style={[styles.previewButton, styles.previewButtonRetake]}
             onPress={() => setPhotoPreview(null)}
+            activeOpacity={0.8}
           >
-            <MaterialIcons name="refresh" size={20} color={PRIMARY} />
-            <Text style={[styles.primaryActionText, { color: PRIMARY }]}>Ta om</Text>
+            <MaterialIcons name="refresh" size={32} color={PRIMARY} style={{ marginBottom: 2 }} />
+            <Text style={styles.previewButtonTextRetake}>Ta om</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.primaryAction}
+            style={[styles.previewButton, styles.previewButtonSave]}
             onPress={() => {
-              navigation.navigate('SkyddsrondScreen', {
+              // Always pass savedChecklist back and use replace to avoid stacking
+              navigation.replace('SkyddsrondScreen', {
                 cameraResult: {
                   uri: photoPreview.uri,
                   sectionIdx,
                   pointIdx
                 },
-                project
+                project,
+                savedChecklist: route.params?.savedChecklist
               });
             }}
+            activeOpacity={0.8}
           >
-            <MaterialIcons name="check" size={20} color="#fff" />
-            <Text style={styles.primaryActionText}>Spara</Text>
+            <MaterialIcons name="check-circle" size={32} color="#fff" style={{ marginBottom: 2 }} />
+            <Text style={styles.previewButtonTextSave}>Spara</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -115,7 +202,15 @@ export default function CameraCapture() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      <CameraView style={{ flex: 1 }} ref={setCameraRef} />
+      <CameraView
+        style={{ flex: 1 }}
+        ref={ref => {
+          setCameraRef(ref);
+          cameraViewRef.current = ref;
+        }}
+        ratio={orientation === 'portrait' ? '4:3' : '3:4'}
+        pictureSize={pictureSize}
+      />
       {/* Avbryt-knapp i övre vänstra hörnet */}
       <TouchableOpacity style={styles.cancelButton} onPress={() => navigation.goBack()}>
         <MaterialIcons name="close" size={28} color={PRIMARY} />
@@ -150,6 +245,53 @@ export default function CameraCapture() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  previewButtonBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 8,
+    gap: 32,
+  },
+  previewButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 32,
+    minWidth: 110,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    marginHorizontal: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+  },
+  previewButtonRetake: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: PRIMARY,
+  },
+  previewButtonSave: {
+    backgroundColor: PRIMARY,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  previewButtonTextRetake: {
+    color: PRIMARY,
+    fontWeight: 'bold',
+    fontSize: 18,
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  previewButtonTextSave: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
   // ...existing code...
   cancelButton: {
     position: 'absolute',
