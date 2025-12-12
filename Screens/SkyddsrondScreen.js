@@ -9,7 +9,9 @@ const SKYDDSROND_CHECKLIST = [
     points: [
       'Är gångvägar och arbetsytor fria från hinder?',
       'Är material och verktyg rätt placerade?',
-      'Är städning tillfredsställande?'
+      'Är städning tillfredsställande?',
+      'KMA tavla finns på plats?',
+      'Arbetsmiljöplan är signerad av beställare?'
     ]
   },
   {
@@ -17,7 +19,9 @@ const SKYDDSROND_CHECKLIST = [
     points: [
       'Finns skyddsräcken där det behövs?',
       'Är ställningar och stegar i gott skick?',
-      'Är öppningar och hål skyddade?'
+      'Är öppningar och hål skyddade?',
+      'Övertagning av ställning har signerats och finns på plats',
+      'Sparkskydd finns monterade'
     ]
   },
   {
@@ -39,21 +43,24 @@ const SKYDDSROND_CHECKLIST = [
     points: [
       'Är provisorisk el korrekt dragen?',
       'Är kablar hela och rätt placerade?',
-      'Är arbetsbelysning tillräcklig?'
+      'Är arbetsbelysning tillräcklig?',
+      'Ledlister och elkablar sitter upphängda i den mån det går?'
     ]
   },
   {
     label: 'Kemi och farliga ämnen',
     points: [
       'Förvaras kemikalier och farliga ämnen säkert?',
-      'Är märkning och skyddsutrustning på plats?'
+      'Är märkning och skyddsutrustning på plats?',
+      'Kemikaliepärm finns på plats?'
     ]
   },
   {
     label: 'Brandskydd',
     points: [
       'Finns brandsläckare och brandfilt?',
-      'Är utrymningsvägar fria?',
+      'Är brandsläckare besiktigade och godkända?',
+      'Är utrymningsvägar fria och skyltade?',
       'Brandfarliga arbeten hanteras korrekt?'
     ]
   },
@@ -82,7 +89,8 @@ const SKYDDSROND_CHECKLIST = [
     label: 'Första hjälpen och olycksberedskap',
     points: [
       'Finns förbandslåda och rutiner?',
-      'Är kontaktuppgifter synliga?'
+      'Behöver förbandslådor fyllas på med material?',
+      'Nödsituation och skyddsorganisation finns anslaget?'
     ]
   },
   {
@@ -96,6 +104,7 @@ const SKYDDSROND_CHECKLIST = [
     label: 'Miljö',
     points: [
       'Hanteras avfall och spill korrekt?',
+      'Avfallscontainer är skyltade med fraktioner?',
       'Förebyggs utsläpp?'
     ]
   }

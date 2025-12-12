@@ -389,19 +389,32 @@ export default function BaseControlForm({
             const anyMissing = section.points.some((_, idx) => !sectionStatuses[idx]);
             const sectionHeaderBg = anyMissing ? '#FFE5E5' : '#e9ecef';
             const sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
+            // Icon logic: only show if all points are filled in
+            const allFilled = section.points.every((_, idx) => !!sectionStatuses[idx]);
+            const hasOk = sectionStatuses.some(s => s === 'ok');
+            const hasAvvikelse = sectionStatuses.some(s => s === 'avvikelse');
             return (
               <View key={section.label} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: sectionHeaderBg }}
                   onPress={() => {
-                    setExpandedChecklist(expanded
-                      ? expandedChecklist.filter(i => i !== sectionIdx)
-                      : [...expandedChecklist, sectionIdx]);
+                    if (expanded) {
+                      setExpandedChecklist([]);
+                    } else {
+                      setExpandedChecklist([sectionIdx]);
+                    }
                   }}
                   activeOpacity={0.7}
                 >
                   <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={20} color={'#1976D2'} style={{ marginRight: 8 }} />
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText }}>{section.label}</Text>
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText, flex: 1 }}>{section.label}</Text>
+                  {/* Only show icons if all points are filled in */}
+                  {allFilled && hasOk && (
+                    <Ionicons name="checkmark-circle" size={22} color="#43A047" style={{ marginLeft: 8 }} />
+                  )}
+                  {allFilled && hasAvvikelse && (
+                    <Ionicons name="warning" size={22} color="#FFD600" style={{ marginLeft: 8 }} />
+                  )}
                 </TouchableOpacity>
                 {expanded && (
                   <View style={{ padding: 10, paddingTop: 0 }}>
@@ -497,6 +510,40 @@ export default function BaseControlForm({
           })}
           {/* Divider under checklist */}
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 8 }} />
+
+          {/* Summary under checklist */}
+          {(() => {
+            // Count sections
+            const numSections = checklistConfig.length;
+            // Count all points
+            let totalPoints = 0;
+            let approvedPoints = 0;
+            let deviationPoints = 0;
+            checklistConfig.forEach((section, sectionIdx) => {
+              totalPoints += section.points.length;
+              const statuses = checklist[sectionIdx]?.statuses || [];
+              section.points.forEach((_, pointIdx) => {
+                if (statuses[pointIdx] === 'ok') approvedPoints++;
+                if (statuses[pointIdx] === 'avvikelse') deviationPoints++;
+              });
+            });
+            return (
+              <View style={{ marginTop: 16, marginBottom: 8, padding: 16, backgroundColor: '#f5f5f5', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginBottom: 4 }}>
+                  Sammanställning
+                </Text>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>
+                  Gått igenom: {numSections} områden
+                </Text>
+                <Text style={{ fontSize: 15, color: '#43A047', marginBottom: 2 }}>
+                  Godkända kontrollpunkter: {approvedPoints} av {totalPoints}
+                </Text>
+                <Text style={{ fontSize: 15, color: deviationPoints > 0 ? '#FFD600' : '#222' }}>
+                  Avvikelser: {deviationPoints}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
       )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
