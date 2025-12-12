@@ -18,8 +18,10 @@ export default function HomeScreen({ route, navigation }) {
           children: main.children.map(sub => ({
             ...sub,
             children: sub.children ? sub.children.map(child => {
-              if (child.type === 'project' && child.id === updatedProject.id) {
-                return { ...child, ...updatedProject };
+              // Match on originalId if present, otherwise fallback to id
+              if (child.type === 'project' && (child.id === updatedProject.originalId || child.id === updatedProject.id)) {
+                const { originalId, ...rest } = updatedProject;
+                return { ...child, ...rest };
               }
               return child;
             }) : []

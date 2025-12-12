@@ -15,6 +15,7 @@ export default function BaseControlForm({
   onSave,
   onSaveDraft,
   initialValues = {},
+  hideWeather = false,
 }) {
   const nameRef = useRef();
   const companyRef = useRef();
@@ -197,7 +198,7 @@ export default function BaseControlForm({
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
             <View>
-              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 2 }}>Deltagare:</Text>
+              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 2, marginTop: 4 }}>Deltagare:</Text>
               {localParticipants && localParticipants.length > 0 ? (
                 localParticipants.map((p, idx) => {
                   // If p is a string, show as name only. If object, show all fields.
@@ -359,33 +360,145 @@ export default function BaseControlForm({
           </View>
         )}
         </View>
-      {/* Divider under participants, before weather (removed duplicate) */}
-      {/* Weather row */}
-      <Text style={{ fontSize: 15, color: '#333', marginBottom: 2 }}>
-        Väder: {selectedWeather ? selectedWeather : '–'}
-      </Text>
-      {/* Weather Selection */}
-      <View style={{ paddingHorizontal: 16, marginBottom: 12, marginTop: 8 }}>
-        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Välj väder</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {weatherOptions.map((option, idx) => (
-            <TouchableOpacity
-              key={option}
-              onPress={() => setSelectedWeather(option)}
-              style={{
-                backgroundColor: selectedWeather === option ? '#1976D2' : '#E0E0E0',
-                borderRadius: 16,
-                paddingVertical: 8,
-                paddingHorizontal: 16,
-                marginRight: 8,
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ color: selectedWeather === option ? '#fff' : '#333' }}>{option}</Text>
-            </TouchableOpacity>
-          ))}
+        {/* Divider under participants, before weather (removed duplicate) */}
+
+        {/* Omfattning / beskrivning för Skyddsrond */}
+        {controlType === 'Skyddsrond' && (
+          <View style={{ marginTop: 8, marginBottom: 12, paddingHorizontal: 16 }}>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 4, fontWeight: 'bold' }}>Omfattning / beskrivning</Text>
+            <TextInput
+              style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
+              value={deliveryDesc}
+              onChangeText={setDeliveryDesc}
+              placeholder="Ex: Hus A, yttertak, ställning, endast inomhus eller utomhus..."
+              placeholderTextColor="#bbb"
+              multiline
+            />
+            {/* Divider under Omfattning */}
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 12, marginBottom: 0 }} />
+          </View>
+        )}
+      {/* Checklist rendering for Skyddsrond och andra kontroller */}
+      {Array.isArray(checklistConfig) && checklistConfig.length > 0 && (
+        <View style={{ marginTop: 8, marginBottom: 16, paddingHorizontal: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 10, marginLeft: 2 }}>Kontrollpunkter</Text>
+          {checklistConfig.map((section, sectionIdx) => {
+            const expanded = expandedChecklist.includes(sectionIdx);
+            // Check if any point in this section is not filled in
+            const sectionStatuses = checklist[sectionIdx]?.statuses || [];
+            const anyMissing = section.points.some((_, idx) => !sectionStatuses[idx]);
+            const sectionHeaderBg = anyMissing ? '#FFE5E5' : '#e9ecef';
+            const sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
+            return (
+              <View key={section.label} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: sectionHeaderBg }}
+                  onPress={() => {
+                    setExpandedChecklist(expanded
+                      ? expandedChecklist.filter(i => i !== sectionIdx)
+                      : [...expandedChecklist, sectionIdx]);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={20} color={'#1976D2'} style={{ marginRight: 8 }} />
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText }}>{section.label}</Text>
+                </TouchableOpacity>
+                {expanded && (
+                  <View style={{ padding: 10, paddingTop: 0 }}>
+                    {section.points.map((point, pointIdx) => {
+                      // Find or initialize status for this point
+                      const status = (checklist[sectionIdx]?.statuses && checklist[sectionIdx].statuses[pointIdx]) || null;
+                      const setStatus = (newStatus) => {
+                        setChecklist(prev => {
+                          const updated = prev.map((s, sIdx) => {
+                            if (sIdx !== sectionIdx) return s;
+                            // Ensure statuses array exists and is correct length
+                            const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                            statuses[pointIdx] = newStatus;
+                            return { ...s, statuses };
+                          });
+                          return updated;
+                        });
+                      };
+                      // Set background to red if status is not set
+                      const rowBackgroundColor = status ? '#fff' : '#FFD6D6';
+                      return (
+                        <View key={point} style={{ marginBottom: 14, backgroundColor: rowBackgroundColor, borderRadius: 6, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
+                          <Text style={{ fontSize: 15, color: '#222', fontWeight: '500', marginBottom: 6 }}>{point}</Text>
+                          {/* Status selector (OK, Avvikelse, Ej aktuell) */}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                marginRight: 16,
+                                opacity: status === 'ok' ? 1 : 0.7,
+                                backgroundColor: status === 'ok' ? '#fff' : '#FFD6D6',
+                                borderRadius: 6,
+                                paddingVertical: 4,
+                                paddingHorizontal: 8,
+                              }}
+                              onPress={() => setStatus('ok')}
+                            >
+                              <Ionicons name="checkmark-circle" size={22} color={status === 'ok' ? '#43A047' : '#bbb'} style={{ marginRight: 4 }} />
+                              <Text style={{ color: status === 'ok' ? '#43A047' : '#bbb', fontWeight: 'bold' }}>OK</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                marginRight: 16,
+                                opacity: status === 'avvikelse' ? 1 : 0.7,
+                                backgroundColor: status === 'avvikelse' ? '#fff' : '#FFD6D6',
+                                borderRadius: 6,
+                                paddingVertical: 4,
+                                paddingHorizontal: 8,
+                              }}
+                              onPress={() => setStatus('avvikelse')}
+                            >
+                              <Ionicons name="warning" size={22} color={status === 'avvikelse' ? '#FFD600' : '#bbb'} style={{ marginRight: 4 }} />
+                              <Text style={{ color: status === 'avvikelse' ? '#FFD600' : '#bbb', fontWeight: 'bold' }}>Avvikelse</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                opacity: status === 'ejaktuell' ? 1 : 0.7,
+                                backgroundColor: status === 'ejaktuell' ? '#fff' : '#FFD6D6',
+                                borderRadius: 6,
+                                paddingVertical: 4,
+                                paddingHorizontal: 8,
+                              }}
+                              onPress={() => setStatus('ejaktuell')}
+                            >
+                              <Ionicons name="ellipse-outline" size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
+                              <Text style={{ color: status === 'ejaktuell' ? '#000' : '#bbb', fontWeight: 'bold' }}>Ej aktuell</Text>
+                            </TouchableOpacity>
+                          </View>
+                          {/* Note field */}
+                          <TextInput
+                            style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 6, padding: 8, fontSize: 14, backgroundColor: '#fafafa', marginBottom: 6 }}
+                            placeholder="Anteckning (valfritt)"
+                            placeholderTextColor="#bbb"
+                            multiline
+                          />
+                          {/* Photo upload button (functionality to be added) */}
+                          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                            <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
+                            <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+          {/* Divider under checklist */}
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 8 }} />
         </View>
-      </View>
+      )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
       {/* ...existing code... */}
       <TouchableOpacity onPress={handleSave} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 14, alignItems: 'center', margin: 16, borderWidth: 1, borderColor: '#bbb' }}>

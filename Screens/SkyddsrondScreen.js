@@ -2,6 +2,104 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
+// Skyddsrond checklist config: sections with control points
+const SKYDDSROND_CHECKLIST = [
+  {
+    label: 'Allmän ordning och reda',
+    points: [
+      'Är gångvägar och arbetsytor fria från hinder?',
+      'Är material och verktyg rätt placerade?',
+      'Är städning tillfredsställande?'
+    ]
+  },
+  {
+    label: 'Fallrisker och ställningar',
+    points: [
+      'Finns skyddsräcken där det behövs?',
+      'Är ställningar och stegar i gott skick?',
+      'Är öppningar och hål skyddade?'
+    ]
+  },
+  {
+    label: 'Personlig skyddsutrustning',
+    points: [
+      'Används hjälm, skyddsskor och väst?',
+      'Finns behov av hörselskydd, ögonskydd eller handskar?'
+    ]
+  },
+  {
+    label: 'Maskiner och verktyg',
+    points: [
+      'Är maskiner och verktyg hela och rätt använda?',
+      'Finns skydd på maskiner där det krävs?'
+    ]
+  },
+  {
+    label: 'El och belysning',
+    points: [
+      'Är provisorisk el korrekt dragen?',
+      'Är kablar hela och rätt placerade?',
+      'Är arbetsbelysning tillräcklig?'
+    ]
+  },
+  {
+    label: 'Kemi och farliga ämnen',
+    points: [
+      'Förvaras kemikalier och farliga ämnen säkert?',
+      'Är märkning och skyddsutrustning på plats?'
+    ]
+  },
+  {
+    label: 'Brandskydd',
+    points: [
+      'Finns brandsläckare och brandfilt?',
+      'Är utrymningsvägar fria?',
+      'Brandfarliga arbeten hanteras korrekt?'
+    ]
+  },
+  {
+    label: 'Lyft och transporter',
+    points: [
+      'Används rätt lyftanordningar?',
+      'Är kranar och truckar besiktigade?'
+    ]
+  },
+  {
+    label: 'Arbete på höjd',
+    points: [
+      'Används fallskydd där det behövs?',
+      'Är liftar och ställningar säkra?'
+    ]
+  },
+  {
+    label: 'Arbetsmiljö och trivsel',
+    points: [
+      'Finns tillgång till toalett och pausutrymme?',
+      'Är buller och vibrationer hanterade?'
+    ]
+  },
+  {
+    label: 'Första hjälpen och olycksberedskap',
+    points: [
+      'Finns förbandslåda och rutiner?',
+      'Är kontaktuppgifter synliga?'
+    ]
+  },
+  {
+    label: 'Skyltning och avspärrningar',
+    points: [
+      'Finns nödvändiga varningsskyltar?',
+      'Är riskområden avspärrade?'
+    ]
+  },
+  {
+    label: 'Miljö',
+    points: [
+      'Hanteras avfall och spill korrekt?',
+      'Förebyggs utsläpp?'
+    ]
+  }
+];
 
 
 function getWeekAndYear(dateInput) {
@@ -60,6 +158,8 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       participants={participants}
       project={project}
       onSave={handleSave}
+      hideWeather
+      checklistConfig={SKYDDSROND_CHECKLIST}
     />
   );
 }

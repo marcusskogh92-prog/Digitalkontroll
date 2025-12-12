@@ -149,6 +149,8 @@ export default function ProjectDetails({ route, navigation }) {
     return unsubscribe;
   }, [navigation, loadControls]);
   const [editableProject, setEditableProject] = useState(project);
+    // Store original id for update
+    const [originalProjectId] = useState(project.id);
   const [showControlPicker, setShowControlPicker] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
@@ -278,6 +280,30 @@ export default function ProjectDetails({ route, navigation }) {
             </TouchableOpacity>
             <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 18, color: '#222', textAlign: 'center', letterSpacing: 0.5 }}>Ändra projektinfo</Text>
             <ScrollView style={{ maxHeight: 340, paddingHorizontal: 2 }} showsVerticalScrollIndicator={false}>
+                            {/* Projektnummer */}
+                            <View style={{ marginBottom: 14 }}>
+                              <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Projektnummer</Text>
+                              <TextInput
+                                style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
+                                value={editableProject?.id || ''}
+                                onChangeText={v => setEditableProject(p => ({ ...p, id: v }))}
+                                placeholder="Ange projektnummer"
+                                placeholderTextColor="#bbb"
+                                autoCapitalize="none"
+                              />
+                            </View>
+                            {/* Projektnamn */}
+                            <View style={{ marginBottom: 14 }}>
+                              <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Projektnamn</Text>
+                              <TextInput
+                                style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
+                                value={editableProject?.name || ''}
+                                onChangeText={v => setEditableProject(p => ({ ...p, name: v }))}
+                                placeholder="Ange projektnamn"
+                                placeholderTextColor="#bbb"
+                                autoCapitalize="words"
+                              />
+                            </View>
               <View style={{ marginBottom: 14 }}>
                 <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Skapad</Text>
                 <TouchableOpacity
@@ -424,7 +450,7 @@ export default function ProjectDetails({ route, navigation }) {
                   navigation.setParams({ project: editableProject });
                 }
                 if (typeof route?.params?.updateProject === 'function') {
-                  route.params.updateProject(editableProject);
+                  route.params.updateProject({ ...editableProject, originalId: originalProjectId });
                 }
                 setEditingInfo(false);
               }}
