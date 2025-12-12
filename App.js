@@ -8,6 +8,7 @@ import { Image, Text, View } from 'react-native';
 
 // Importera skärmar
 import ArbetsberedningScreen from './Screens/ArbetsberedningScreen';
+import CameraCapture from './Screens/CameraCapture';
 import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
 import EgenkontrollScreen from './Screens/EgenkontrollScreen';
@@ -114,6 +115,7 @@ export default function App() {
           ),
           headerBackTitleVisible: false,
         }} />
+        <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

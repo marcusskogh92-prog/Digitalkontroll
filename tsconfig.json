@@ -16,5 +16,9 @@
     "node_modules",
     "**/node_modules/**"
   ],
+  "typeAcquisition": {
+    "enable": true,
+    "exclude": ["node_modules"]
+  },
   "extends": "expo/tsconfig.base"
 }

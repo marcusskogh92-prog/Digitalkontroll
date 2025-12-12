@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRef, useState } from 'react';
-// Refs for input focus (must be inside the component, not in render)
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useEffect, useRef, useState } from 'react';
+import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import NativeSignatureModal from './NativeSignatureModal';
 
 export default function BaseControlForm({
@@ -21,6 +21,8 @@ export default function BaseControlForm({
   const companyRef = useRef();
   const roleRef = useRef();
   const phoneRef = useRef();
+  const navigation = useNavigation();
+  const route = useRoute();
   // Common state
   const [dateValue, setDateValue] = useState(date || '');
   const [showDateModal, setShowDateModal] = useState(false);
@@ -33,6 +35,23 @@ export default function BaseControlForm({
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
   const [checklist, setChecklist] = useState(checklistConfig);
+  // Hantera foto för checklist-punkt
+  useEffect(() => {
+    if (route.params && route.params.cameraResult) {
+      const { uri, sectionIdx, pointIdx } = route.params.cameraResult;
+      if (uri && sectionIdx !== undefined && pointIdx !== undefined) {
+        setChecklist(prev => prev.map((section, sIdx) => {
+          if (sIdx !== sectionIdx) return section;
+          const photos = Array.isArray(section.photos) ? [...section.photos] : Array(section.points.length).fill(null);
+          photos[pointIdx] = uri;
+          return { ...section, photos };
+        }));
+        setExpandedChecklist([sectionIdx]);
+        // Rensa parametern så det inte triggar igen
+        navigation.setParams({ cameraResult: undefined });
+      }
+    }
+  }, [route.params]);
   const [deliveryDesc, setDeliveryDesc] = useState(initialValues.deliveryDesc || '');
   const [generalNote, setGeneralNote] = useState(initialValues.generalNote || '');
   const [expandedChecklist, setExpandedChecklist] = useState([]);
@@ -495,11 +514,33 @@ export default function BaseControlForm({
                             placeholderTextColor="#bbb"
                             multiline
                           />
-                          {/* Photo upload button (functionality to be added) */}
-                          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                            <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
-                            <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
-                          </TouchableOpacity>
+                          {/* Photo upload button */}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center' }}
+                              onPress={() => {
+                                navigation.navigate('CameraCapture', {
+                                  sectionIdx,
+                                  pointIdx,
+                                  project
+                                });
+                              }}
+                            >
+                              <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
+                              <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
+                            </TouchableOpacity>
+                            {/* Visa thumbnail om foto finns */}
+                            {(() => {
+                              const photos = checklist[sectionIdx]?.photos || [];
+                              const photoUri = photos[pointIdx];
+                              if (photoUri) {
+                                return (
+                                  <Image source={{ uri: photoUri }} style={{ width: 40, height: 40, borderRadius: 6, marginLeft: 10, borderWidth: 1, borderColor: '#bbb' }} />
+                                );
+                              }
+                              return null;
+                            })()}
+                          </View>
                         </View>
                       );
                     })}
