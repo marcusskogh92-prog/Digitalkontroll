@@ -45,6 +45,7 @@ const LABELS = {
 export default function ControlForm({ date, participants = [] }) {
   const route = useRoute();
   const project = route.params?.project;
+  const initialValues = route.params?.initialValues;
   return (
     <BaseControlForm
       date={date}
@@ -54,6 +55,7 @@ export default function ControlForm({ date, participants = [] }) {
       controlType="Mottagningskontroll"
       project={project}
       labels={LABELS}
+      initialValues={initialValues}
     />
   );
 }

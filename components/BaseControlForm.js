@@ -1,10 +1,15 @@
 
+
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { useEffect, useRef, useState } from 'react';
-// ...existing code...
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import 'react-native-get-random-values';
 import Svg, { Polygon, Text as SvgText } from 'react-native-svg';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { v4 as uuidv4 } from 'uuid';
 import NativeSignatureModal from './NativeSignatureModal';
 
 export default function BaseControlForm({
@@ -20,6 +25,26 @@ export default function BaseControlForm({
   initialValues = {},
   hideWeather = false,
 }) {
+  // Add state for draftId and selectedWeather
+  const [draftId] = useState(initialValues.id || undefined);
+  const [selectedWeather, setSelectedWeather] = useState(initialValues.weather || (weatherOptions.length > 0 ? weatherOptions[0] : ''));
+  // Modal for confirm on back
+  const [showBackConfirm, setShowBackConfirm] = useState(false);
+  const blockedNavEvent = useRef(null);
+
+  // Intercept back navigation (hardware and header)
+  useEffect(() => {
+    const beforeRemoveListener = (e) => {
+      if (!isDirty) return;
+      e.preventDefault();
+      blockedNavEvent.current = e;
+      setShowBackConfirm(true);
+    };
+    navigation.addListener('beforeRemove', beforeRemoveListener);
+    return () => {
+      navigation.removeListener('beforeRemove', beforeRemoveListener);
+    };
+  }, [isDirty, navigation]);
   // Local participants state (initialize from participants prop)
   const [localParticipants, setLocalParticipants] = useState(participants);
   const [participantName, setParticipantName] = useState('');
@@ -84,6 +109,57 @@ export default function BaseControlForm({
     }
     return [];
   });
+
+  // Track initial state for dirty checking
+  const initialChecklist = useMemo(() => {
+    if (Array.isArray(checklistConfig)) {
+      return checklistConfig.map(section => ({
+        label: section.label,
+        points: Array.isArray(section.points) ? [...section.points] : [],
+        statuses: Array(section.points.length).fill(null),
+        photos: Array(section.points.length).fill([]),
+      }));
+    }
+    return [];
+  }, [checklistConfig]);
+
+  const initialParticipants = useMemo(() => participants, [participants]);
+  const initialDate = useMemo(() => date || initialValues.date || '', [date, initialValues.date]);
+  const initialDeliveryDesc = useMemo(() => initialValues.deliveryDesc || '', [initialValues.deliveryDesc]);
+  const initialGeneralNote = useMemo(() => initialValues.generalNote || '', [initialValues.generalNote]);
+
+  // Helper to compare arrays/objects shallowly
+  function shallowEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!shallowEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    if (typeof a === 'object' && typeof b === 'object') {
+      const aKeys = Object.keys(a);
+      const bKeys = Object.keys(b);
+      if (aKeys.length !== bKeys.length) return false;
+      for (let key of aKeys) {
+        if (!shallowEqual(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    return a === b;
+  }
+
+  // Dirty state: true if any field differs from initial
+  const isDirty = useMemo(() => {
+    if (!shallowEqual(localParticipants, initialParticipants)) return true;
+    if (!shallowEqual(checklist, initialChecklist)) return true;
+    if (dateValue !== initialDate) return true;
+    if (deliveryDesc !== initialDeliveryDesc) return true;
+    if (generalNote !== initialGeneralNote) return true;
+    return false;
+  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote]);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const windowWidth = Dimensions.get('window').width;
   const startX = useRef(0);
@@ -136,8 +212,41 @@ export default function BaseControlForm({
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   const [signatureForIndex, setSignatureForIndex] = useState(null);
 
-  // Example save handlers (should be replaced with real logic)
-  const handleSave = () => {
+  // Spara utkast till AsyncStorage (flera per projekt/kontrolltyp)
+  const saveDraftControl = async () => {
+    try {
+      const draft = {
+        id: draftId || uuidv4(),
+        date: dateValue,
+        project,
+        weather: selectedWeather,
+        participants: localParticipants,
+        checklist,
+        deliveryDesc,
+        generalNote,
+        type: controlType,
+        savedAt: new Date().toISOString(),
+      };
+      let arr = [];
+      const existing = await AsyncStorage.getItem('draft_controls');
+      if (existing) arr = JSON.parse(existing);
+      // Ersätt om samma projekt+typ redan finns, annars lägg till
+      const idx = arr.findIndex(
+        c => c.project?.id === project?.id && c.type === controlType && c.id === draft.id
+      );
+      if (idx !== -1) {
+        arr[idx] = draft;
+      } else {
+        arr.push(draft);
+      }
+      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
+    } catch (e) {
+      alert('Kunde inte spara utkast: ' + e.message);
+    }
+  };
+
+  // Spara slutförd kontroll och ta bort ev. utkast
+  const handleSave = async () => {
     if (onSave) onSave({
       date: dateValue,
       project,
@@ -148,8 +257,22 @@ export default function BaseControlForm({
       generalNote,
       type: controlType,
     });
+    // Ta bort ev. utkast för detta projekt+typ
+    try {
+      const existing = await AsyncStorage.getItem('draft_controls');
+      if (existing) {
+        let arr = JSON.parse(existing);
+        arr = arr.filter(
+          c => !(c.project?.id === project?.id && c.type === controlType)
+        );
+        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
+      }
+    } catch {}
   };
-  const handleSaveDraft = () => {
+
+  // Spara utkast
+  const handleSaveDraft = async () => {
+    await saveDraftControl();
     if (onSaveDraft) onSaveDraft({
       date: dateValue,
       project,
@@ -165,6 +288,67 @@ export default function BaseControlForm({
   // Render
   return (
     <>
+      {/* Modal för bekräftelse vid tillbaka om formuläret är ändrat */}
+      <Modal
+        visible={showBackConfirm}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowBackConfirm(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center' }}>Vill du avsluta kontrollen?</Text>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 20, textAlign: 'center' }}>Du har osparade ändringar. Välj om du vill spara och slutföra senare, eller avsluta utan att spara.</Text>
+            <View style={{ flexDirection: 'column', width: '100%' }}>
+              <TouchableOpacity
+                style={{ backgroundColor: '#FFA726', borderRadius: 8, padding: 12, alignItems: 'center', marginBottom: 12 }}
+                onPress={async () => {
+                  await saveDraftControl();
+                  if (onSaveDraft) onSaveDraft({
+                    date: dateValue,
+                    project,
+                    weather: selectedWeather,
+                    participants: localParticipants,
+                    checklist,
+                    deliveryDesc,
+                    generalNote,
+                    type: controlType,
+                  });
+                  setShowBackConfirm(false);
+                  if (blockedNavEvent.current) {
+                    blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
+                    blockedNavEvent.current = null;
+                  } else {
+                    navigation.goBack();
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara och slutför senare</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, alignItems: 'center', marginBottom: 12 }}
+                onPress={() => {
+                  setShowBackConfirm(false);
+                  if (blockedNavEvent.current) {
+                    blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
+                    blockedNavEvent.current = null;
+                  } else {
+                    navigation.goBack();
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Avsluta utan att spara</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: '#bbb', borderRadius: 8, padding: 12, alignItems: 'center' }}
+                onPress={() => setShowBackConfirm(false)}
+              >
+                <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16 }}>Avbryt</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       {/* Modal för bildgranskning med swipe */}
       <Modal
         visible={photoModal.visible}
@@ -799,11 +983,11 @@ export default function BaseControlForm({
       )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
       {/* ...existing code... */}
-      <TouchableOpacity onPress={handleSave} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 14, alignItems: 'center', margin: 16, borderWidth: 1, borderColor: '#bbb' }}>
-        <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16 }}>{labels.saveButton || 'Spara'}</Text>
+      <TouchableOpacity onPress={handleSave} style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 14, alignItems: 'center', margin: 16 }}>
+        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{labels.saveButton || 'Spara'}</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={handleSaveDraft} style={{ backgroundColor: '#FFA726', borderRadius: 8, padding: 14, alignItems: 'center', marginHorizontal: 16, marginBottom: 20 }}>
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{labels.saveDraftButton || 'Spara och slutför senare'}</Text>
+        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{labels.saveDraftButton || 'Slutför senare'}</Text>
       </TouchableOpacity>
       {/* Signature Modal Example */}
       <NativeSignatureModal

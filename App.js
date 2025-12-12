@@ -113,7 +113,8 @@ export default function App() {
               <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#222' }}>Skyddsrond</Text>
             </View>
           ),
-          headerBackTitleVisible: false,
+          headerBackTitle: 'Tillbaka',
+          headerBackTitleVisible: true,
         }} />
         <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
       </Stack.Navigator>
