@@ -1,9 +1,13 @@
 
 
 
+
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
+
+// import BottomSheet from '@gorhom/bottom-sheet';
 import { Dimensions, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import 'react-native-get-random-values';
@@ -25,89 +29,71 @@ export default function BaseControlForm({
   initialValues = {},
   hideWeather = false,
 }) {
-  // Add state for draftId and selectedWeather
-  const [draftId] = useState(initialValues.id || undefined);
-  const [selectedWeather, setSelectedWeather] = useState(initialValues.weather || (weatherOptions.length > 0 ? weatherOptions[0] : ''));
-  // Modal for confirm on back
-  const [showBackConfirm, setShowBackConfirm] = useState(false);
-  const blockedNavEvent = useRef(null);
-
-  // Intercept back navigation (hardware and header)
-  useEffect(() => {
-    const beforeRemoveListener = (e) => {
-      if (!isDirty) return;
-      e.preventDefault();
-      blockedNavEvent.current = e;
-      setShowBackConfirm(true);
-    };
-    navigation.addListener('beforeRemove', beforeRemoveListener);
-    return () => {
-      navigation.removeListener('beforeRemove', beforeRemoveListener);
-    };
-  }, [isDirty, navigation]);
-  // Local participants state (initialize from participants prop)
-  const [localParticipants, setLocalParticipants] = useState(participants);
+  // State för deltagar-modalens fält (måste ligga här!)
   const [participantName, setParticipantName] = useState('');
   const [participantCompany, setParticipantCompany] = useState('');
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
+  // Refs för TextInput-fokus i deltagar-modal (måste ligga här!)
   const nameRef = useRef();
   const companyRef = useRef();
   const roleRef = useRef();
   const phoneRef = useRef();
-  // Helper to remove a photo from a checklist point
-  const handleDeletePhoto = () => {
-    const { uris, index } = photoModal;
-    if (!uris || uris.length === 0) return;
-    // Find which section/point this photo array belongs to
-    let found = null;
-    checklist.forEach((section, sectionIdx) => {
-      if (found) return;
-      section.photos.forEach((arr, pointIdx) => {
-        if (arr === uris) {
-          found = { sectionIdx, pointIdx };
-        }
-      });
-    });
-    if (found) {
-      setChecklist(prev => prev.map((section, sIdx) => {
-        if (sIdx !== found.sectionIdx) return section;
-        const photos = section.photos.map((arr, pIdx) => {
-          if (pIdx !== found.pointIdx) return arr;
-          // Remove the image at index
-          return arr.filter((_, i) => i !== index);
-        });
-        return { ...section, photos };
-      }));
-      // If only one image, close modal. Otherwise, show next/prev image.
-      if (uris.length === 1) {
-        setPhotoModal({ visible: false, uris: [], index: 0 });
-      } else {
-        const newUris = uris.filter((_, i) => i !== index);
-        const newIndex = index >= newUris.length ? newUris.length - 1 : index;
-        setPhotoModal({ visible: true, uris: newUris, index: newIndex });
-      }
-    }
-  };
+  // Add state for draftId and selectedWeather
+  // const bottomSheetRef = useReactRef(null);
+  // The misplaced Modal and logic block above was removed because it must be inside a component or function, not at the top level.
+  // If you want to use this Modal, move it inside your component's return statement or a function.
   const route = useRoute();
   const navigation = useNavigation();
+  const [showBackConfirm, setShowBackConfirm] = useState(false);
+  // Ref to store blocked navigation event
+  const blockedNavEvent = useRef(null);
+
+  // Add beforeRemove event to block navigation if dirty
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!isDirty) return; // Allow navigation if not dirty
+      // Prevent default behavior of leaving the screen
+      e.preventDefault();
+      blockedNavEvent.current = e;
+      setShowBackConfirm(true);
+    });
+    return unsubscribe;
+  }, [navigation, isDirty]);
   const [photoModal, setPhotoModal] = useState({ visible: false, uris: [], index: 0 });
   // Only initialize checklist ONCE, never re-initialize from checklistConfig after mount
   // Checklist state: restore from route.params if present, else initialize
   const [checklist, setChecklist] = useState(() => {
     // Always prefer params.savedChecklist if present, else checklistConfig
+    let raw = [];
     if (route.params && route.params.savedChecklist) {
-      return route.params.savedChecklist;
-    }
-    if (Array.isArray(checklistConfig)) {
-      return checklistConfig.map(section => ({
+      raw = route.params.savedChecklist;
+    } else if (Array.isArray(checklistConfig)) {
+      raw = checklistConfig.map(section => ({
         label: section.label,
         points: Array.isArray(section.points) ? [...section.points] : [],
-        statuses: Array(section.points.length).fill(null),
-        photos: Array(section.points.length).fill([]),
+        statuses: Array(Array.isArray(section.points) ? section.points.length : 0).fill(null),
+        photos: Array(Array.isArray(section.points) ? section.points.length : 0).fill([]),
       }));
     }
-    return [];
+    // Robustify: ensure every section has valid points, statuses, photos arrays
+    return (raw || []).map(section => {
+      const points = Array.isArray(section.points) ? section.points : [];
+      const statuses = Array.isArray(section.statuses) && Array.isArray(points) && section.statuses.length === points.length
+        ? section.statuses
+        : Array(Array.isArray(points) ? points.length : 0).fill(null);
+      let photos = Array.isArray(section.photos) && Array.isArray(points) && section.photos.length === points.length
+        ? section.photos
+        : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
+      // Ensure every photos[i] is an array
+      photos = photos.map(arr => Array.isArray(arr) ? arr : (arr ? [arr] : []));
+      return {
+        label: section.label,
+        points,
+        statuses,
+        photos,
+      };
+    });
   });
 
   // Track initial state for dirty checking
@@ -151,6 +137,8 @@ export default function BaseControlForm({
     return a === b;
   }
 
+  // Local participants state (initialize from participants prop)
+  const [localParticipants, setLocalParticipants] = useState(participants);
   // Dirty state: true if any field differs from initial
   const isDirty = useMemo(() => {
     if (!shallowEqual(localParticipants, initialParticipants)) return true;
@@ -193,10 +181,15 @@ export default function BaseControlForm({
       if (uri && sectionIdx !== undefined && pointIdx !== undefined) {
         setChecklist(prev => prev.map((section, sIdx) => {
           if (sIdx !== sectionIdx) return section;
-          let photos = Array.isArray(section.photos) ? [...section.photos] : Array(section.points.length).fill(null).map(() => []);
+          // Defensiv: säkerställ points och photos alltid är arrays av rätt längd
+          const points = Array.isArray(section.points) ? section.points : [];
+          let photos = Array.isArray(section.photos) && section.photos.length === points.length
+            ? [...section.photos]
+            : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
+          // Se till att photos[pointIdx] är en array
           if (!Array.isArray(photos[pointIdx])) photos[pointIdx] = photos[pointIdx] ? [photos[pointIdx]] : [];
           photos[pointIdx] = [...photos[pointIdx], uri];
-          return { ...section, photos };
+          return { ...section, photos, points };
         }));
         setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
         // Also update savedChecklist in params so it persists if navigating again
@@ -288,6 +281,7 @@ export default function BaseControlForm({
   // Render
   return (
     <>
+      {/* ...ingen testknapp/modal... */}
       {/* Modal för bekräftelse vid tillbaka om formuläret är ändrat */}
       <Modal
         visible={showBackConfirm}
@@ -296,12 +290,21 @@ export default function BaseControlForm({
         onRequestClose={() => setShowBackConfirm(false)}
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center' }}>Vill du avsluta kontrollen?</Text>
-            <Text style={{ fontSize: 15, color: '#222', marginBottom: 20, textAlign: 'center' }}>Du har osparade ändringar. Välj om du vill spara och slutföra senare, eller avsluta utan att spara.</Text>
-            <View style={{ flexDirection: 'column', width: '100%' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, width: 320, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, position: 'relative' }}>
+            {/* Close (X) icon in top right */}
+            <TouchableOpacity
+              onPress={() => setShowBackConfirm(false)}
+              style={{ position: 'absolute', top: 12, right: 12, zIndex: 10, padding: 6 }}
+              accessibilityLabel="Stäng"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="close" size={26} color="#888" />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center', marginTop: 4 }}>Vill du avsluta kontrollen?</Text>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 28, textAlign: 'center' }}>Du har osparade ändringar. Välj om du vill spara utkast eller radera ändringarna.</Text>
+            <View style={{ flexDirection: 'row', width: '100%', justifyContent: 'space-between' }}>
               <TouchableOpacity
-                style={{ backgroundColor: '#FFA726', borderRadius: 8, padding: 12, alignItems: 'center', marginBottom: 12 }}
+                style={{ flex: 1, borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent' }}
                 onPress={async () => {
                   await saveDraftControl();
                   if (onSaveDraft) onSaveDraft({
@@ -323,10 +326,10 @@ export default function BaseControlForm({
                   }
                 }}
               >
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Spara och slutför senare</Text>
+                <Text style={{ color: '#1976D2', fontWeight: 'normal', fontSize: 16 }}>Spara utkast</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, alignItems: 'center', marginBottom: 12 }}
+                style={{ flex: 1, borderWidth: 1, borderColor: '#D32F2F', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent' }}
                 onPress={() => {
                   setShowBackConfirm(false);
                   if (blockedNavEvent.current) {
@@ -337,13 +340,7 @@ export default function BaseControlForm({
                   }
                 }}
               >
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Avsluta utan att spara</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ backgroundColor: '#bbb', borderRadius: 8, padding: 12, alignItems: 'center' }}
-                onPress={() => setShowBackConfirm(false)}
-              >
-                <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 16 }}>Avbryt</Text>
+                <Text style={{ color: '#D32F2F', fontWeight: 'normal', fontSize: 16 }}>Radera</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -606,10 +603,10 @@ export default function BaseControlForm({
         {/* Divider under participants, before weather */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
                 {/* Add Participant Modal */}
+        {/* Modal för Lägg till deltagare */}
         {showAddParticipantModal && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 200 }}>
-            <View style={{ height: 200 }} />
-            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 300, minHeight: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 200 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 300, minHeight: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, marginTop: 140 }}>
               {/* Close (X) icon in top right */}
                 <TouchableOpacity 
                   onPress={() => setShowAddParticipantModal(false)} 
@@ -635,6 +632,7 @@ export default function BaseControlForm({
                 value={participantCompany}
                 onChangeText={setParticipantCompany}
                 style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
+                placeholderTextColor="#888"
                 placeholder="Företag"
                 autoCapitalize="words"
                 autoCorrect={false}
@@ -968,13 +966,17 @@ export default function BaseControlForm({
             let totalPoints = 0;
             let approvedPoints = 0;
             let deviationPoints = 0;
+            let completedSections = 0;
             checklistConfig.forEach((section, sectionIdx) => {
               totalPoints += section.points.length;
               const statuses = checklist[sectionIdx]?.statuses || [];
+              let allFilled = true;
               section.points.forEach((_, pointIdx) => {
                 if (statuses[pointIdx] === 'ok') approvedPoints++;
                 if (statuses[pointIdx] === 'avvikelse') deviationPoints++;
+                if (!statuses[pointIdx]) allFilled = false;
               });
+              if (section.points.length > 0 && allFilled) completedSections++;
             });
             return (
               <View style={{ marginTop: 16, marginBottom: 8, padding: 16, backgroundColor: '#f5f5f5', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
@@ -982,7 +984,7 @@ export default function BaseControlForm({
                   Sammanställning
                 </Text>
                 <Text style={{ fontSize: 15, color: '#222', marginBottom: 2 }}>
-                  Gått igenom: {numSections} områden
+                  Gått igenom: {completedSections} av {numSections} områden
                 </Text>
                 <Text style={{ fontSize: 15, color: '#43A047', marginBottom: 2 }}>
                   Godkända kontrollpunkter: {approvedPoints} av {totalPoints}
@@ -997,12 +999,37 @@ export default function BaseControlForm({
       )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
       {/* ...existing code... */}
-      <TouchableOpacity onPress={handleSave} style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 14, alignItems: 'center', margin: 16 }}>
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{labels.saveButton || 'Spara'}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={handleSaveDraft} style={{ backgroundColor: '#FFA726', borderRadius: 8, padding: 14, alignItems: 'center', marginHorizontal: 16, marginBottom: 20 }}>
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{labels.saveDraftButton || 'Slutför senare'}</Text>
-      </TouchableOpacity>
+      <View style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        paddingHorizontal: 16,
+        marginTop: 16,
+        marginBottom: 32,
+        backgroundColor: '#fafafa',
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        borderRadius: 12,
+        paddingVertical: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 4,
+        elevation: 2,
+      }}>
+        <TouchableOpacity
+          onPress={handleSave}
+          style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
+        >
+          <Text style={{ color: '#1976D2', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleSaveDraft}
+          style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
+        >
+          <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
+        </TouchableOpacity>
+      </View>
       {/* Signature Modal Example */}
       <NativeSignatureModal
         visible={signatureForIndex !== null}
