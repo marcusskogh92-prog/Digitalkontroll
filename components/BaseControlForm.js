@@ -166,14 +166,16 @@ export default function BaseControlForm({
   // Handle cameraResult photo adding logic in a useEffect
     // Save checklist state to route.params before navigating to CameraCapture
     const handleNavigateToCamera = (sectionIdx, pointIdx, project) => {
-      // Always pass the current checklist state to CameraCapture
-      navigation.navigate('CameraCapture', {
-        sectionIdx,
-        pointIdx,
-        project,
-        savedChecklist: checklist
-      });
-    };
+        // Always pass the current checklist state to CameraCapture
+        // include returnScreen so CameraCapture can navigate back to the correct form
+        navigation.navigate('CameraCapture', {
+          sectionIdx,
+          pointIdx,
+          project,
+          savedChecklist: checklist,
+          returnScreen: route.name || null,
+        });
+      };
   useEffect(() => {
     const cameraResult = route.params?.cameraResult;
     if (cameraResult) {
@@ -416,7 +418,7 @@ export default function BaseControlForm({
           )}
         </View>
       </Modal>
-      <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
+      <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ flex: 1 }}>
         {/* Project Info and meta */}
         <View style={{ padding: 16, paddingBottom: 0 }}>
@@ -847,6 +849,8 @@ export default function BaseControlForm({
                                 paddingHorizontal: 8,
                               }}
                               onPress={() => setStatus('ok')}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityRole="button"
                             >
                               <Ionicons name="checkmark-circle" size={22} color={status === 'ok' ? '#43A047' : '#bbb'} style={{ marginRight: 4 }} />
                               <Text style={{ color: status === 'ok' ? '#43A047' : '#bbb', fontWeight: 'bold' }}>OK</Text>
@@ -863,6 +867,8 @@ export default function BaseControlForm({
                                 paddingHorizontal: 8,
                               }}
                               onPress={() => setStatus('avvikelse')}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityRole="button"
                             >
                               <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 4 }}>
                                 <Polygon points="12,2 22,20 2,20" fill={status === 'avvikelse' ? '#FFD600' : '#bbb'} stroke="#111" strokeWidth="1" />
@@ -901,6 +907,8 @@ export default function BaseControlForm({
                                 paddingHorizontal: 8,
                               }}
                               onPress={() => setStatus('ejaktuell')}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityRole="button"
                             >
                               <Ionicons name="ellipse-outline" size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
                               <Text style={{ color: status === 'ejaktuell' ? '#000' : '#bbb', fontWeight: 'bold' }}>Ej aktuell</Text>
@@ -918,6 +926,8 @@ export default function BaseControlForm({
                             <TouchableOpacity
                               style={{ flexDirection: 'row', alignItems: 'center' }}
                               onPress={() => handleNavigateToCamera(sectionIdx, pointIdx, project)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              accessibilityRole="button"
                             >
                               <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
                               <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>

@@ -179,8 +179,9 @@ export default function CameraCapture() {
           <TouchableOpacity
             style={[styles.previewButton, styles.previewButtonSave]}
             onPress={() => {
-              // Always pass savedChecklist back and use replace to avoid stacking
-              navigation.replace('SkyddsrondScreen', {
+              // Return to the originating screen (passed in returnScreen) or fallback to SkyddsrondScreen
+              const target = route.params?.returnScreen || 'SkyddsrondScreen';
+              navigation.replace(target, {
                 cameraResult: {
                   uri: photoPreview.uri,
                   sectionIdx,
