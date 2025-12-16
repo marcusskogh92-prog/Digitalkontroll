@@ -18,6 +18,7 @@ export default function FuktmätningScreen({ date, participants = [] }) {
         ...data,
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
+        id: data.id || require('uuid').v4(),
       };
       const existing = await AsyncStorage.getItem('completed_controls');
       let arr = [];

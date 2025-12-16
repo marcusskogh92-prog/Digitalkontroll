@@ -14,21 +14,21 @@ const WEATHER_OPTIONS = [
 ];
 
 const CHECKLIST_CONFIG = [
-  { label: '1 - Leverans', questions: [
+  { label: '1 - Leverans', points: [
     'Är leveransen komplett?',
     'Är leveransen i rätt tid?',
     'Är leveransen i rätt mängd?'
-  ], answers: [null, null, null], note: '', status: null },
-  { label: '2 - Kvalitet', questions: [
+  ] },
+  { label: '2 - Kvalitet', points: [
     'Är kvaliteten godkänd?',
     'Finns synliga skador?',
     'Är produkten rätt för ändamålet?'
-  ], answers: [null, null, null], note: '', status: null },
-  { label: '3 - Dokumentation', questions: [
+  ] },
+  { label: '3 - Dokumentation', points: [
     'Finns nödvändig dokumentation?',
     'Är dokumentationen korrekt?',
     'Är dokumentationen komplett?'
-  ], answers: [null, null, null], note: '', status: null },
+  ] }
 ];
 
 // Removed duplicate ControlForm declaration

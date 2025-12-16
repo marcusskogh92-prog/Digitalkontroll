@@ -13,8 +13,17 @@ export default function ControlDetails({ route }) {
     );
   }
 
-  let { type, date, description, participants, checklist, status, savedAt, attachments } = control;
-  // Ensure arrays for robust rendering
+  let {
+    type,
+    date,
+    description,
+    participants = [],
+    checklist = [],
+    status,
+    savedAt,
+    attachments = []
+  } = control;
+  // Ensure arrays for robust rendering (extra safety)
   participants = Array.isArray(participants) ? participants : [];
   checklist = Array.isArray(checklist) ? checklist : [];
   attachments = Array.isArray(attachments) ? attachments : [];

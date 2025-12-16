@@ -3,19 +3,18 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Image,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import Svg, { Circle, Polygon, Text as SvgText } from 'react-native-svg';
 
@@ -98,7 +97,35 @@ export default function ProjectDetails({ route, navigation }) {
             setExportingPdf(false);
           }
         };
-      const [notice, setNotice] = useState({ visible: false, text: '' });
+      // PDF export-funktion
+      const handleExportPdf = async () => {
+        if (!controls || controls.length === 0) return;
+        setExportingPdf(true);
+        try {
+          try { Haptics.selectionAsync(); } catch {}
+          let logoForPrint = companyLogoUri || null;
+          if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
+            try {
+              const fileName = 'company-logo.export.png';
+              const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
+              const dl = await FileSystem.downloadAsync(logoForPrint, dest);
+              if (dl?.uri) logoForPrint = dl.uri;
+            } catch {}
+          }
+          // Bygg HTML för export (alla eller filtrerat)
+          const html = buildSummaryHtml(exportFilter, logoForPrint);
+          await Print.printToFileAsync({ html });
+          setNotice({ visible: true, text: 'PDF exporterad!' });
+          setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
+        } catch (e) {
+          console.error('[PDF] Export error:', e);
+          setNotice({ visible: true, text: 'Kunde inte exportera PDF' });
+          setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
+        } finally {
+          setExportingPdf(false);
+        }
+      };
+    const [notice, setNotice] = useState({ visible: false, text: '' });
     const scrollRef = useRef(null);
   // Destructure navigation params
   const { project, companyId, initialCreator, selectedAction } = route.params || {};
@@ -186,6 +213,7 @@ export default function ProjectDetails({ route, navigation }) {
   const [selectedControl, setSelectedControl] = useState(null);
   const [showControlOptions, setShowControlOptions] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ visible: false, control: null });
   const undoTimerRef = useRef(null);
   // ...existing code...
 
@@ -197,10 +225,34 @@ export default function ProjectDetails({ route, navigation }) {
 
   // Handler for deleting selected control
   const handleDeleteSelectedControl = async () => {
-    if (!selectedControl) return;
-    await onDeletePress(selectedControl.id);
+    if (!deleteConfirm.control) return;
+    await actuallyDeleteControl(deleteConfirm.control);
+    setDeleteConfirm({ visible: false, control: null });
     setShowControlOptions(false);
     setSelectedControl(null);
+    loadControls && loadControls();
+  };
+
+  // Delete logic for a control (draft or completed)
+  const actuallyDeleteControl = async (control) => {
+    if (!control) return;
+    if (control.isDraft) {
+      // Remove from draft_controls
+      const draftsRaw = await AsyncStorage.getItem('draft_controls');
+      let drafts = draftsRaw ? JSON.parse(draftsRaw) : [];
+      drafts = drafts.filter(
+        c => c.id !== control.id
+      );
+      await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
+    } else {
+      // Remove from completed_controls
+      const completedRaw = await AsyncStorage.getItem('completed_controls');
+      let completed = completedRaw ? JSON.parse(completedRaw) : [];
+      completed = completed.filter(
+        c => c.id !== control.id
+      );
+      await AsyncStorage.setItem('completed_controls', JSON.stringify(completed));
+    }
   };
 
   // Huvud-UI return
@@ -746,11 +798,34 @@ export default function ProjectDetails({ route, navigation }) {
                                   ? { backgroundColor: '#fff', borderColor: '#222' }
                                   : { backgroundColor: '#fff', borderColor: '#e0e0e0' }
                               ]}
-                              onPress={() =>
-                                item.isDraft
-                                  ? navigation.navigate('ControlForm', { initialValues: item, project })
-                                  : navigation.navigate('ControlDetails', { control: item, project })
-                              }
+                              onPress={() => {
+                                if (item.isDraft) {
+                                  switch (item.type) {
+                                    case 'Arbetsberedning':
+                                      navigation.navigate('ArbetsberedningScreen', { initialValues: item, project });
+                                      break;
+                                    case 'Riskbedömning':
+                                      navigation.navigate('RiskbedömningScreen', { initialValues: item, project });
+                                      break;
+                                    case 'Fuktmätning':
+                                      navigation.navigate('FuktmätningScreen', { initialValues: item, project });
+                                      break;
+                                    case 'Egenkontroll':
+                                      navigation.navigate('EgenkontrollScreen', { initialValues: item, project });
+                                      break;
+                                    case 'Mottagningskontroll':
+                                      navigation.navigate('MottagningskontrollScreen', { initialValues: item, project });
+                                      break;
+                                    case 'Skyddsrond':
+                                      navigation.navigate('SkyddsrondScreen', { initialValues: item, project });
+                                      break;
+                                    default:
+                                      navigation.navigate('ControlForm', { initialValues: item, project });
+                                  }
+                                } else {
+                                  navigation.navigate('ControlDetails', { control: item, project });
+                                }
+                              }}
                               onLongPress={item.isDraft ? undefined : () => handleControlLongPress(item)}
                               delayLongPress={item.isDraft ? undefined : 600}
                             >
@@ -800,6 +875,70 @@ export default function ProjectDetails({ route, navigation }) {
                                   </Text>
                                 )}
                               </View>
+                              {/* Skriv ut-ikon (endast för slutförda) */}
+                              {!item.isDraft && (
+                                <TouchableOpacity
+                                  style={{ marginLeft: 8, padding: 6 }}
+                                  onPress={async (e) => {
+                                    e.stopPropagation && e.stopPropagation();
+                                    try {
+                                      setExportingPdf(true);
+                                      // Bygg HTML för EN kontroll
+                                      const html = buildSummaryHtml('En', companyLogoUri, [item]);
+                                      await Print.printAsync({ html });
+                                    } catch (err) {
+                                      setNotice({ visible: true, text: 'Kunde inte skriva ut PDF' });
+                                    } finally {
+                                      setExportingPdf(false);
+                                    }
+                                  }}
+                                  accessibilityLabel="Skriv ut denna kontroll som PDF"
+                                >
+                                  <Ionicons name="print-outline" size={22} color="#1976D2" />
+                                </TouchableOpacity>
+                              )}
+                              {/* Papperskorg-ikon med bekräftelsemodal (både för utkast och slutförda) */}
+                              <TouchableOpacity
+                                style={{ marginLeft: 8, padding: 6 }}
+                                onPress={(e) => {
+                                  e.stopPropagation && e.stopPropagation();
+                                  setDeleteConfirm({ visible: true, control: item });
+                                }}
+                                accessibilityLabel={item.isDraft ? "Radera pågående kontroll" : "Radera denna kontroll"}
+                              >
+                                <Ionicons name="trash-outline" size={22} color="#D32F2F" />
+                              </TouchableOpacity>
+
+                              {/* Modal för raderingsbekräftelse (läggs i JSX utanför listan) */}
+                              {/* Bekräftelsemodal för radering av kontroll */}
+                              <Modal
+                                visible={deleteConfirm.visible}
+                                transparent
+                                animationType="fade"
+                                onRequestClose={() => setDeleteConfirm({ visible: false, control: null })}
+                              >
+                                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+                                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, minWidth: 260, maxWidth: 340, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
+                                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#D32F2F', textAlign: 'center' }}>
+                                      Vill du verkligen radera denna kontroll?
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                                      <TouchableOpacity
+                                        style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center' }}
+                                        onPress={handleDeleteSelectedControl}
+                                      >
+                                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Radera</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, flex: 1, marginLeft: 8, alignItems: 'center' }}
+                                        onPress={() => setDeleteConfirm({ visible: false, control: null })}
+                                      >
+                                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                  </View>
+                                </View>
+                              </Modal>
                             </TouchableOpacity>
                           </View>
                         );
@@ -974,364 +1113,7 @@ export default function ProjectDetails({ route, navigation }) {
       </Modal>
     </ScrollView>
   );
-  };
+}
 
-  const handleExportPdf = async () => {
-    if (!controls || controls.length === 0) return;
-    setExportingPdf(true);
-    try {
-      try { Haptics.selectionAsync(); } catch {}
-      // On web: open the browser print dialog instead of generating a file
-      if (Platform.OS === 'web') {
-        await Print.printAsync({ html: buildSummaryHtml(exportFilter, companyLogoUri) });
-        setNotice({ visible: true, text: 'Öppnade utskriftsdialog i webbläsaren' });
-        setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
-        return;
-      }
-
-      // Native: try to use a local file for remote logos to avoid HTML image issues
-      let logoForPrint = companyLogoUri || null;
-      if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
-        try {
-          const fileName = 'company-logo.pdfheader.png';
-          const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-          const dl = await FileSystem.downloadAsync(logoForPrint, dest);
-          if (dl?.uri) logoForPrint = dl.uri;
-        } catch {}
-      }
-
-      const html = buildSummaryHtml(exportFilter, logoForPrint);
-      const { uri } = await Print.printToFileAsync({ html });
-      // Prepare pretty destination path
-      const datePart = new Date().toISOString().replace(/[:T]/g, '-').slice(0,19);
-      const fileName = `utforda-kontroller-${(project.id || '').toString().replace(/[^a-z0-9-_]/gi,'_')}-${datePart}.pdf`;
-      const destUri = (FileSystem.documentDirectory || FileSystem.cacheDirectory) + fileName;
-      let finalUri = uri;
-      try {
-        await FileSystem.copyAsync({ from: uri, to: destUri });
-        finalUri = destUri;
-      } catch (copyErr) {
-        console.warn('[PDF] Copy failed, will try sharing tmp uri:', copyErr?.message);
-      }
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        try {
-          await Sharing.shareAsync(finalUri, { UTI: 'com.adobe.pdf', mimeType: 'application/pdf', dialogTitle: 'Dela PDF' });
-        } catch (shareErr) {
-          console.warn('[PDF] shareAsync failed on file://, trying content:// if Android');
-          if (Platform.OS === 'android') {
-            try {
-              const contentUri = await FileSystem.getContentUriAsync(finalUri);
-              await Sharing.shareAsync(contentUri, { UTI: 'application/pdf', mimeType: 'application/pdf', dialogTitle: 'Dela PDF' });
-            } catch (contentErr) {
-              console.error('[PDF] shareAsync content:// failed:', contentErr);
-              // As a last resort, just show where the file is saved
-              setNotice({ visible: true, text: `PDF sparad: ${finalUri}` });
-              setTimeout(() => setNotice({ visible: false, text: '' }), 6000);
-              return;
-            }
-          } else {
-            // iOS: show saved path if share fails
-            setNotice({ visible: true, text: `PDF sparad: ${finalUri}` });
-            setTimeout(() => setNotice({ visible: false, text: '' }), 6000);
-            return;
-          }
-        }
-      } else {
-        // Sharing not available – tell the user where it was saved
-        setNotice({ visible: true, text: `PDF sparad: ${finalUri}` });
-        setTimeout(() => setNotice({ visible: false, text: '' }), 6000);
-        return;
-      }
-      // If sharing succeeded, optionally also inform about the saved copy
-      setNotice({ visible: true, text: `PDF sparad: ${finalUri}` });
-      setTimeout(() => setNotice({ visible: false, text: '' }), 6000);
-    } catch (e) {
-      console.error('[PDF] Export error:', e);
-      setNotice({ visible: true, text: 'Kunde inte skapa PDF' });
-      setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
-    } finally {
-      setExportingPdf(false);
-  };
-
-  const handlePreviewPdf = async () => {
-    if (!controls || controls.length === 0) return;
-    setExportingPdf(true);
-    try {
-      try { Haptics.selectionAsync(); } catch {}
-      // Try to use a local file path for the logo for better reliability
-      let logoForPrint = companyLogoUri || null;
-      if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
-        try {
-          const fileName = 'company-logo.preview.png';
-          const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-          const dl = await FileSystem.downloadAsync(logoForPrint, dest);
-          if (dl?.uri) logoForPrint = dl.uri;
-        } catch {}
-      }
-      await Print.printAsync({ html: buildSummaryHtml(exportFilter, logoForPrint) });
-    } catch (e) {
-      console.error('[PDF] Preview error:', e);
-      setNotice({ visible: true, text: 'Kunde inte förhandsvisa PDF' });
-      setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
-    } finally {
-      setExportingPdf(false);
-    }
-  };
-
-  const scrollRef = useRef(null);
-
-  return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.container}
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: 240 }}
-    >
-      {/* Titel, info, redigera projektinfo, kontroller, modals, formulär, etc. */}
-      {/* ...existing code... */}
-    </ScrollView>
-  );
-
-
-      {/* Kontroller */}
-      {/* Knappar för skapa kontroll och PDF, med popup för kontrolltyp */}
-      {}
-
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
-        <Text style={[styles.subtitle, { lineHeight: 32 }]}>Utförda kontroller:</Text>
-      </View>
-
-      {controls.length === 0 ? (
-        <Text style={[styles.noControls, { color: '#D32F2F' }]}>Inga kontroller utförda än</Text>
-      ) : (
-        <View>
-          {(() => {
-            const grouped = controlTypes
-              .map((t) => ({ type: t, items: controls.filter(c => (c.type || '') === t) }))
-              .filter(g => g.items.length > 0);
-
-            const toggleType = (t) => {
-              try { Haptics.selectionAsync(); } catch {}
-              setExpandedByType((prev) => ({ ...prev, [t]: !(prev[t] ?? false) }));
-            };
-
-            const pluralLabels = {
-              Arbetsberedning: 'Arbetsberedningar',
-              Egenkontroll: 'Egenkontroller',
-              Fuktmätning: 'Fuktmätningar',
-              Skyddsrond: 'Skyddsronder',
-              Riskbedömning: 'Riskbedömningar',
-            };
-
-            return grouped.map(({ type: t, items }) => {
-              const expanded = expandedByType[t] ?? false;
-              return (
-                <View key={t} style={styles.groupContainer}>
-                  <TouchableOpacity style={styles.groupHeader} onPress={() => toggleType(t)}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                      <MaterialIcons name={expanded ? 'expand-less' : 'expand-more'} size={22} color="#263238" />
-                      <Text style={styles.groupTitle}>{pluralLabels[t] || t}</Text>
-                    </View>
-                    <View style={styles.groupBadge}><Text style={styles.groupBadgeText}>{items.length}</Text></View>
-                  </TouchableOpacity>
-                  {expanded ? (
-                    items
-                      .slice()
-                      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                      .map((item, idx) => (
-                        <View key={`${item.id}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <TouchableOpacity
-                            style={[styles.controlCard, { flex: 1 }]}
-                            onPress={() => navigation.navigate('ControlDetails', { control: item, project })}
-                            onLongPress={() => handleControlLongPress(item)}
-                            delayLongPress={600}
-                          >
-                            <Text style={styles.controlType}>
-                              {item.type === 'Skyddsrond'
-                                ? `${item.description ? item.description + ' ' : ''}${item.date}`
-                                : `${item.byggdel ? item.byggdel + ' ' : ''}${item.description} ${item.date}`}
-                            </Text>
-                          </TouchableOpacity>
-                          {/* Ta bort-knapp borttagen, endast long-press popup gäller */}
-                        </View>
-                      ))
-                  ) : null}
-                </View>
-              );
-            });
-                {/* Modal for edit/delete control (long-press) */}
-          })()}
-        </View>
-      )}
-
-
-      {/* Välj kontrolltyp */}
-      {}
-
-      {/* Formulär */}
-      {showForm && (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
-          style={styles.form}
-        >
-          <Text style={styles.selectedType}>Vald kontroll: {newControl.type}</Text>
-
-          {/* Visa dagens datum och möjlighet att välja eget */}
-          <Text style={styles.infoText}>Dagens datum: {newControl.date}</Text>
-          <TouchableOpacity onPress={() => setNewControl({ ...newControl, date: '' })}>
-            <Text style={styles.linkText}>Välj eget datum</Text>
-          </TouchableOpacity>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Datum (ÅÅÅÅ-MM-DD)"
-            placeholderTextColor="#888"
-            value={newControl.date}
-            onChangeText={(text) => setNewControl({ ...newControl, date: text })}
-            onFocus={() => {
-              setTimeout(() => {
-                if (scrollRef.current && typeof scrollRef.current.scrollToEnd === 'function') {
-                  try { scrollRef.current.scrollToEnd({ animated: true }); } catch {}
-                }
-              }, 50);
-            }}
-            />
-          <TextInput
-            style={styles.input}
-            placeholder={newControl.type === 'Skyddsrond' ? 'Skyddsrond omfattar' : 'Beskrivning'}
-            placeholderTextColor="#888"
-            value={newControl.description}
-            onChangeText={(text) => setNewControl({ ...newControl, description: text })}
-            onFocus={() => {
-              // Scroll to bottom to reveal the input above the keyboard
-              setTimeout(() => {
-                if (scrollRef.current && typeof scrollRef.current.scrollToEnd === 'function') {
-                  try { scrollRef.current.scrollToEnd({ animated: true }); } catch {}
-                }
-              }, 50);
-            }}
-          />
-          <TouchableOpacity style={styles.saveButton} onPress={handleAddControl}>
-            <Text style={styles.saveButtonText}>Skapa kontroll</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.cancelButton} onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowForm(false); }}>
-            <Text style={styles.cancelText}>Avbryt</Text>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      )}
-
-      {undoState.visible ? (
-        <View style={styles.undoBar}>
-          <Text style={styles.undoText}>Kontroll borttagen</Text>
-          <TouchableOpacity onPress={handleUndo}>
-            <Text style={styles.undoButtonText}>Ångra</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      {notice.visible ? (
-        <View style={styles.noticeBar}>
-          <Text style={styles.noticeText}>{notice.text}</Text>
-        </View>
-      ) : null}
-
-      <Modal visible={showSummary} transparent animationType="fade" onRequestClose={() => setShowSummary(false)}>
-        <TouchableOpacity style={styles.centerOverlay} activeOpacity={1} onPress={() => setShowSummary(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80}>
-            <View style={styles.summaryCard}>
-              {/* Stäng (X) knapp uppe till höger */}
-              <TouchableOpacity
-                style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
-                onPress={() => { try { Haptics.selectionAsync(); } catch {}; setShowSummary(false); }}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={26} color="#222" />
-              </TouchableOpacity>
-              <Text style={styles.modalText}>Skriv ut</Text>
-              {/* Export filter selector */}
-              {(() => {
-                const byType = controls.reduce((acc, c) => {
-                  const t = c.type || 'Okänd';
-                  (acc[t] = acc[t] || []).push(c);
-                  return acc;
-                }, {});
-                const types = Object.keys(byType).sort((a, b) => a.localeCompare(b));
-                if (types.length === 0) return null;
-                const labels = {
-                  Arbetsberedning: 'Arbetsberedningar',
-                  Egenkontroll: 'Egenkontroller',
-                  Fuktmätning: 'Fuktmätningar',
-                  Skyddsrond: 'Skyddsronder',
-                  Riskbedömning: 'Riskbedömningar',
-                };
-                return (
-                  <View style={styles.filterRow}>
-                    {['Alla', ...types].map((t) => (
-                      <TouchableOpacity
-                        key={t}
-                        onPress={() => { try { Haptics.selectionAsync(); } catch {}; setExportFilter(t); }}
-                        style={[styles.filterChip, exportFilter === t && styles.filterChipSelected]}
-                      >
-                        <Text style={[styles.filterChipText, exportFilter === t && styles.filterChipTextSelected]}>
-                          {t === 'Alla' ? 'Alla' : (labels[t] || t)}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                );
-              })()}
-
-              <ScrollView style={{ maxHeight: 380 }}>
-                {(() => {
-                })()}
-              </ScrollView>
-              <View style={{ marginTop: 10 }}>
-                <TouchableOpacity
-                  style={[
-                    {
-                      backgroundColor: '#fff',
-                      borderRadius: 8,
-                      borderWidth: 2,
-                      borderColor: '#222',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      height: 44,
-                      marginBottom: 8,
-                      opacity: exportingPdf || controls.length === 0 ? 0.7 : 1,
-                    },
-                  ]}
-                  onPress={handlePreviewPdf}
-                  disabled={exportingPdf || controls.length === 0}
-                >
-                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>Förhandsvisa PDF</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    {
-                      backgroundColor: '#fff',
-                      borderRadius: 8,
-                      borderWidth: 2,
-                      borderColor: '#222',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      height: 44,
-                      marginBottom: 8,
-                      opacity: exportingPdf || controls.length === 0 ? 0.7 : 1,
-                    },
-                  ]}
-                  onPress={handleExportPdf}
-                  disabled={exportingPdf || controls.length === 0}
-                >
-                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 14, letterSpacing: 0.2 }}>{exportingPdf ? 'Genererar…' : 'Exportera PDF'}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </TouchableOpacity>
-      </Modal>
-    }
 
 

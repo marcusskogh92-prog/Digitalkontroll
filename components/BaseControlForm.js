@@ -8,13 +8,12 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Dimensions, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, Modal, PanResponder, ScrollView, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Platform } from 'react-native';
 
 import 'react-native-get-random-values';
-import Svg, { Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, { Path, Polygon, Text as SvgText } from 'react-native-svg';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { v4 as uuidv4 } from 'uuid';
-import NativeSignatureModal from './NativeSignatureModal';
 
 export default function BaseControlForm({
   project,
@@ -34,12 +33,19 @@ export default function BaseControlForm({
   const [participantCompany, setParticipantCompany] = useState('');
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
+  const [editParticipantIndex, setEditParticipantIndex] = useState(null);
   // Refs för TextInput-fokus i deltagar-modal (måste ligga här!)
   const nameRef = useRef();
   const companyRef = useRef();
   const roleRef = useRef();
   const phoneRef = useRef();
   // Add state for draftId and selectedWeather
+  const [draftId, setDraftId] = useState(initialValues.id || null);
+  const [selectedWeather, setSelectedWeather] = useState(initialValues.weather || null);
+  const [materialDesc, setMaterialDesc] = useState(initialValues.materialDesc || '');
+  const [qualityDesc, setQualityDesc] = useState(initialValues.qualityDesc || '');
+  const [coverageDesc, setCoverageDesc] = useState(initialValues.coverageDesc || '');
+  const [mottagningsSignatures, setMottagningsSignatures] = useState(initialValues.mottagningsSignatures || []);
   // const bottomSheetRef = useReactRef(null);
   // The misplaced Modal and logic block above was removed because it must be inside a component or function, not at the top level.
   // If you want to use this Modal, move it inside your component's return statement or a function.
@@ -48,26 +54,97 @@ export default function BaseControlForm({
   const [showBackConfirm, setShowBackConfirm] = useState(false);
   // Ref to store blocked navigation event
   const blockedNavEvent = useRef(null);
+  // Keep a ref copy of isDirty so the beforeRemove listener can be attached once
+  const isDirtyRef = useRef(false);
 
-  // Add beforeRemove event to block navigation if dirty
+  // Add beforeRemove event once to block navigation if dirty (use ref inside)
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-      if (!isDirty) return; // Allow navigation if not dirty
-      // Prevent default behavior of leaving the screen
+      if (!isDirtyRef.current) return; // Allow navigation if not dirty
       e.preventDefault();
       blockedNavEvent.current = e;
       setShowBackConfirm(true);
     });
     return unsubscribe;
-  }, [navigation, isDirty]);
+  }, [navigation]);
   const [photoModal, setPhotoModal] = useState({ visible: false, uris: [], index: 0 });
+  const handleDeletePhoto = () => {
+    const { uris, index } = photoModal || {};
+    if (!uris || uris.length === 0) {
+      setPhotoModal({ visible: false, uris: [], index: 0 });
+      return;
+    }
+    const uri = uris[index];
+    if (!uri) {
+      setPhotoModal({ visible: false, uris: [], index: 0 });
+      return;
+    }
+    const prev = checklistRef.current || [];
+    let found = false;
+    const newChecklist = prev.map(section => {
+      const photos = Array.isArray(section.photos) ? section.photos.map(arr => Array.isArray(arr) ? [...arr] : (arr ? [arr] : [])) : [];
+      const newPhotos = photos.map(arr => {
+        if (Array.isArray(arr) && arr.includes(uri)) {
+          found = true;
+          return arr.filter(u => u !== uri);
+        }
+        return arr;
+      });
+      return { ...section, photos: newPhotos };
+    });
+    if (found) {
+      setChecklist(newChecklist);
+      checklistRef.current = newChecklist;
+      const newUris = uris.filter((u, i) => i !== index);
+      const newIndex = Math.max(0, index - 1);
+      setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
+      try {
+        const remoteSaved = route.params?.savedChecklist;
+        if (!shallowEqual(remoteSaved, newChecklist)) {
+          navigation.setParams({ savedChecklist: newChecklist });
+        }
+      } catch (e) {}
+    } else {
+      setPhotoModal({ visible: false, uris: [], index: 0 });
+    }
+  };
   // Only initialize checklist ONCE, never re-initialize from checklistConfig after mount
   // Checklist state: restore from route.params if present, else initialize
+  // Predefined sections for Mottagningskontroll (option B - pre-filled rows)
+  const mottagningsTemplate = [
+    {
+      label: 'Leverans',
+      points: [
+        'Kontrollera att levererat material överensstämmer med följesedel',
+        'Kontrollera antal och att inga kollin saknas eller är skadade',
+        'Kontrollera märkning och produktinformation på kollin',
+      ],
+    },
+    {
+      label: 'Kvalitet och skick',
+      points: [
+        'Inspektera ytskador (bulor, sprickor, fuktfläckar)',
+        'Kontrollera att dimensioner och toleranser stämmer',
+        'Kontrollera att rätt materialleverans lämnats (typ/spec)',
+      ],
+    },
+    {
+      label: 'Täckning och väderskydd',
+      points: [
+        'Kontrollera att material är täckt vid risk för nederbörd',
+        'Säkerställ att vindskydd eller presenningar är korrekt fästa',
+        'Kontrollera att täckning inte skadar materialet (kondens, gnidning)',
+      ],
+    },
+  ];
   const [checklist, setChecklist] = useState(() => {
     // Always prefer params.savedChecklist if present, else checklistConfig
     let raw = [];
     if (route.params && route.params.savedChecklist) {
       raw = route.params.savedChecklist;
+    } else if (controlType === 'Mottagningskontroll' && (!Array.isArray(checklistConfig) || checklistConfig.length === 0)) {
+      // Use predefined Mottagningskontroll sections when no checklistConfig is provided
+      raw = mottagningsTemplate.map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [] }));
     } else if (Array.isArray(checklistConfig)) {
       raw = checklistConfig.map(section => ({
         label: section.label,
@@ -96,6 +173,10 @@ export default function BaseControlForm({
     });
   });
 
+  // Keep a ref of checklist to avoid stale closures when updating params
+  const checklistRef = useRef(checklist);
+  useEffect(() => { checklistRef.current = checklist; }, [checklist]);
+
   // Track initial state for dirty checking
   const initialChecklist = useMemo(() => {
     if (Array.isArray(checklistConfig)) {
@@ -113,9 +194,14 @@ export default function BaseControlForm({
   const initialDate = useMemo(() => date || initialValues.date || '', [date, initialValues.date]);
   const initialDeliveryDesc = useMemo(() => initialValues.deliveryDesc || '', [initialValues.deliveryDesc]);
   const initialGeneralNote = useMemo(() => initialValues.generalNote || '', [initialValues.generalNote]);
+  const initialMaterialDesc = useMemo(() => initialValues.materialDesc || '', [initialValues.materialDesc]);
+  const initialQualityDesc = useMemo(() => initialValues.qualityDesc || '', [initialValues.qualityDesc]);
+  const initialCoverageDesc = useMemo(() => initialValues.coverageDesc || '', [initialValues.coverageDesc]);
+  const initialMottagningsSignatures = useMemo(() => initialValues.mottagningsSignatures || [], [initialValues.mottagningsSignatures]);
 
   // Helper to compare arrays/objects shallowly
   function shallowEqual(a, b) {
+
     if (a === b) return true;
     if (!a || !b) return false;
     if (Array.isArray(a) && Array.isArray(b)) {
@@ -137,6 +223,26 @@ export default function BaseControlForm({
     return a === b;
   }
 
+    // Convert an array of points to a smooth SVG path using Catmull-Rom -> cubic Bezier
+    function pointsToPath(points) {
+      if (!Array.isArray(points) || points.length === 0) return '';
+      if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+      const p = points.map(pt => ({ x: Number(pt.x), y: Number(pt.y) }));
+      let d = `M ${p[0].x} ${p[0].y}`;
+      for (let i = 0; i < p.length - 1; i++) {
+        const p0 = i > 0 ? p[i - 1] : p[i];
+        const p1 = p[i];
+        const p2 = p[i + 1];
+        const p3 = i + 2 < p.length ? p[i + 2] : p2;
+        const b1x = p1.x + (p2.x - p0.x) / 6;
+        const b1y = p1.y + (p2.y - p0.y) / 6;
+        const b2x = p2.x - (p3.x - p1.x) / 6;
+        const b2y = p2.y - (p3.y - p1.y) / 6;
+        d += ` C ${b1x} ${b1y}, ${b2x} ${b2y}, ${p2.x} ${p2.y}`;
+      }
+      return d;
+    }
+
   // Local participants state (initialize from participants prop)
   const [localParticipants, setLocalParticipants] = useState(participants);
   // Dirty state: true if any field differs from initial
@@ -146,9 +252,27 @@ export default function BaseControlForm({
     if (dateValue !== initialDate) return true;
     if (deliveryDesc !== initialDeliveryDesc) return true;
     if (generalNote !== initialGeneralNote) return true;
+    if (materialDesc !== initialMaterialDesc) return true;
+    if (qualityDesc !== initialQualityDesc) return true;
+    if (coverageDesc !== initialCoverageDesc) return true;
+    if (!shallowEqual(mottagningsSignatures, initialMottagningsSignatures)) return true;
     return false;
-  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote]);
+  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, materialDesc, qualityDesc, coverageDesc, mottagningsSignatures, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote, initialMaterialDesc, initialQualityDesc, initialCoverageDesc, initialMottagningsSignatures]);
+  // Keep isDirtyRef in sync with latest computed isDirty
+  useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
+  const [showAddSignerModal, setShowAddSignerModal] = useState(false);
+  const [signerName, setSignerName] = useState('');
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState(() => Array.isArray(checklistConfig) ? checklistConfig.map(() => true) : []);
+
+  useEffect(() => {
+    // When checklistConfig changes, reset selected categories to all true (guarded)
+    const newSel = Array.isArray(checklistConfig) ? checklistConfig.map(() => true) : [];
+    if (!shallowEqual(newSel, selectedCategories)) {
+      setSelectedCategories(newSel);
+    }
+  }, [checklistConfig, selectedCategories]);
   const windowWidth = Dimensions.get('window').width;
   const startX = useRef(0);
   const handleTouchStart = (e) => {
@@ -176,28 +300,43 @@ export default function BaseControlForm({
           returnScreen: route.name || null,
         });
       };
+  // Guarded camera result handling to avoid re-processing and param cycles
+  const cameraHandledRef = useRef(false);
   useEffect(() => {
     const cameraResult = route.params?.cameraResult;
-    if (cameraResult) {
+    if (cameraResult && !cameraHandledRef.current) {
+      cameraHandledRef.current = true;
       const { uri, sectionIdx, pointIdx } = cameraResult;
       if (uri && sectionIdx !== undefined && pointIdx !== undefined) {
-        setChecklist(prev => prev.map((section, sIdx) => {
+        // Build new checklist from current ref to avoid stale closures
+        const prev = checklistRef.current || [];
+        const newChecklist = prev.map((section, sIdx) => {
           if (sIdx !== sectionIdx) return section;
-          // Defensiv: säkerställ points och photos alltid är arrays av rätt längd
           const points = Array.isArray(section.points) ? section.points : [];
           let photos = Array.isArray(section.photos) && section.photos.length === points.length
             ? [...section.photos]
             : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
-          // Se till att photos[pointIdx] är en array
           if (!Array.isArray(photos[pointIdx])) photos[pointIdx] = photos[pointIdx] ? [photos[pointIdx]] : [];
           photos[pointIdx] = [...photos[pointIdx], uri];
           return { ...section, photos, points };
-        }));
+        });
+        // Apply and sync ref
+        setChecklist(newChecklist);
+        checklistRef.current = newChecklist;
         setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
-        // Also update savedChecklist in params so it persists if navigating again
-        navigation.setParams({ cameraResult: undefined, savedChecklist: checklist });
+        // Update params only if savedChecklist differs to avoid cycles
+        try {
+          const remoteSaved = route.params?.savedChecklist;
+          if (!shallowEqual(remoteSaved, newChecklist)) {
+            navigation.setParams({ cameraResult: undefined, savedChecklist: newChecklist });
+          } else {
+            navigation.setParams({ cameraResult: undefined });
+          }
+        } catch (e) {}
       }
     }
+    // Reset cameraHandledRef when cameraResult becomes undefined so future captures work
+    if (!route.params?.cameraResult) cameraHandledRef.current = false;
   }, [route.params?.cameraResult]);
   const [dateValue, setDateValue] = useState(date || initialValues.date || '');
   const [showDateModal, setShowDateModal] = useState(false);
@@ -206,6 +345,45 @@ export default function BaseControlForm({
   const [generalNote, setGeneralNote] = useState(initialValues.generalNote || '');
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   const [signatureForIndex, setSignatureForIndex] = useState(null);
+  const [sigStrokes, setSigStrokes] = useState([]);
+  const [sigCurrent, setSigCurrent] = useState([]);
+  const sigCurrentRef = useRef([]);
+  const sigStrokesRef = useRef([]);
+  const sigCanvasSize = Math.min(Dimensions.get('window').width * 0.9, 760);
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (e) => {
+      const { locationX, locationY } = e.nativeEvent;
+      const next = [{ x: locationX, y: locationY }];
+      sigCurrentRef.current = next;
+      setSigCurrent(next);
+    },
+    onPanResponderMove: (e) => {
+      const { locationX, locationY } = e.nativeEvent;
+      const next = [...sigCurrentRef.current, { x: locationX, y: locationY }];
+      sigCurrentRef.current = next;
+      setSigCurrent(next);
+    },
+    onPanResponderRelease: () => {
+      try {
+        const curr = (sigCurrentRef.current && sigCurrentRef.current.length) ? [...(Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []), sigCurrentRef.current] : (Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []);
+        sigStrokesRef.current = curr;
+        setSigStrokes(curr);
+      } catch (e) {}
+      sigCurrentRef.current = [];
+      setSigCurrent([]);
+    },
+    onPanResponderTerminate: () => {
+      try {
+        const curr = (sigCurrentRef.current && sigCurrentRef.current.length) ? [...(Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []), sigCurrentRef.current] : (Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []);
+        sigStrokesRef.current = curr;
+        setSigStrokes(curr);
+      } catch (e) {}
+      sigCurrentRef.current = [];
+      setSigCurrent([]);
+    }
+  })).current;
 
   // Spara utkast till AsyncStorage (flera per projekt/kontrolltyp)
   const saveDraftControl = async () => {
@@ -216,6 +394,10 @@ export default function BaseControlForm({
         project,
         weather: selectedWeather,
         participants: localParticipants,
+        materialDesc,
+        qualityDesc,
+        coverageDesc,
+        mottagningsSignatures,
         checklist,
         deliveryDesc,
         generalNote,
@@ -247,6 +429,10 @@ export default function BaseControlForm({
       project,
       weather: selectedWeather,
       participants: localParticipants,
+      materialDesc,
+      qualityDesc,
+      coverageDesc,
+      mottagningsSignatures,
       checklist,
       deliveryDesc,
       generalNote,
@@ -263,6 +449,12 @@ export default function BaseControlForm({
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
     } catch {}
+    // Navigate back after successful save
+    try {
+      if (navigation && navigation.canGoBack && navigation.canGoBack()) {
+        navigation.goBack();
+      }
+    } catch (e) {}
   };
 
   // Spara utkast
@@ -273,6 +465,10 @@ export default function BaseControlForm({
       project,
       weather: selectedWeather,
       participants: localParticipants,
+      materialDesc,
+      qualityDesc,
+      coverageDesc,
+      mottagningsSignatures,
       checklist,
       deliveryDesc,
       generalNote,
@@ -309,16 +505,20 @@ export default function BaseControlForm({
                 style={{ flex: 1, borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent' }}
                 onPress={async () => {
                   await saveDraftControl();
-                  if (onSaveDraft) onSaveDraft({
-                    date: dateValue,
-                    project,
-                    weather: selectedWeather,
-                    participants: localParticipants,
-                    checklist,
-                    deliveryDesc,
-                    generalNote,
-                    type: controlType,
-                  });
+                      if (onSaveDraft) onSaveDraft({
+                        date: dateValue,
+                        project,
+                        weather: selectedWeather,
+                        participants: localParticipants,
+                        materialDesc,
+                        qualityDesc,
+                        coverageDesc,
+                        mottagningsSignatures,
+                        checklist,
+                        deliveryDesc,
+                        generalNote,
+                        type: controlType,
+                      });
                   setShowBackConfirm(false);
                   if (blockedNavEvent.current) {
                     blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
@@ -552,9 +752,9 @@ export default function BaseControlForm({
         )}
         {/* Participants row */}
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2, justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
             <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 2, marginTop: 4 }}>Deltagare:</Text>
               {localParticipants && localParticipants.length > 0 ? (
                 localParticipants.map((p, idx) => {
@@ -575,20 +775,51 @@ export default function BaseControlForm({
                   }
                   if (typeof p === 'string') {
                     return (
-                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                         <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>{p}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <TouchableOpacity onPress={() => { setParticipantName(p || ''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(idx); setShowAddParticipantModal(true); }} style={{ marginRight: 12 }} accessibilityLabel="Redigera deltagare">
+                            <Ionicons name="create-outline" size={20} color="#1976D2" />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => { const nameToDelete = p; setLocalParticipants(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== idx) : [])); setMottagningsSignatures(prev => (Array.isArray(prev) ? prev.filter(s => s.name !== nameToDelete) : [])); }} accessibilityLabel="Ta bort deltagare">
+                            <Ionicons name="trash-outline" size={20} color="#D32F2F" />
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     );
                   } else if (typeof p === 'object' && p !== null) {
                     return (
-                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 8, marginBottom: 6, minWidth: 180 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '500', marginRight: 8 }}>{p.name || ''}</Text>
-                          {p.company ? <Text style={{ fontSize: 16, color: '#555', fontWeight: '400' }}>{p.company}</Text> : null}
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          {p.role ? <Text style={{ fontSize: 13, color: '#888', marginRight: 12 }}>{p.role}</Text> : null}
-                          {p.phone ? <Text style={{ fontSize: 13, color: '#888' }}>{p.phone}</Text> : null}
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, width: '100%' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flex: 1, paddingRight: 12, minWidth: 0 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                              <Text numberOfLines={2} ellipsizeMode="tail" style={{ fontSize: 16, color: '#222', fontWeight: '500', marginRight: 8, flexShrink: 1 }}>{p.name || ''}</Text>
+                              {p.company ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 16, color: '#555', fontWeight: '400', flexShrink: 1 }}>{p.company}</Text> : null}
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              {p.role ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 13, color: '#888', marginRight: 12, flexShrink: 1 }}>{p.role}</Text> : null}
+                              {p.phone ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 13, color: '#888', flexShrink: 1 }}>{p.phone}</Text> : null}
+                            </View>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <TouchableOpacity onPress={() => {
+                              setParticipantName(p.name || '');
+                              setParticipantCompany(p.company || '');
+                              setParticipantRole(p.role || '');
+                              setParticipantPhone(p.phone || '');
+                              setEditParticipantIndex(idx);
+                              setShowAddParticipantModal(true);
+                            }} style={{ marginRight: 12 }} accessibilityLabel="Redigera deltagare">
+                              <Ionicons name="create-outline" size={20} color="#1976D2" />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => {
+                              const nameToDelete = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${idx+1}`);
+                              setLocalParticipants(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== idx) : []));
+                              setMottagningsSignatures(prev => (Array.isArray(prev) ? prev.filter(s => s.name !== nameToDelete) : []));
+                            }} accessibilityLabel="Ta bort deltagare">
+                              <Ionicons name="trash-outline" size={20} color="#D32F2F" />
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
                     );
@@ -598,12 +829,58 @@ export default function BaseControlForm({
               ) : null}
             </View>
           </View>
-          <TouchableOpacity onPress={() => setShowAddParticipantModal(true)} style={{ padding: 4 }} accessibilityLabel="Lägg till deltagare">
+          <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4 }} accessibilityLabel="Lägg till deltagare">
             <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
           </TouchableOpacity>
         </View>
+        {/* Horizontal divider between participants and material description */}
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
+        {/* Material description for Mottagningskontroll */}
+        {controlType === 'Mottagningskontroll' && (
+          <View style={{ marginTop: 8, marginBottom: 10, paddingHorizontal: 16 }}>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 6, fontWeight: '600' }}>Beskriv leverans</Text>
+            <TextInput
+              value={materialDesc}
+              onChangeText={setMaterialDesc}
+              placeholder="Ex: Gipsskivor, isolering, fönster..."
+              placeholderTextColor="#888"
+              style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
+            />
+            {/* Väderlek */}
+            {!hideWeather && Array.isArray(weatherOptions) && weatherOptions.length > 0 && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontSize: 15, color: '#222', marginBottom: 8, fontWeight: '600' }}>Väderlek</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {weatherOptions.map((w) => (
+                    <TouchableOpacity
+                      key={`weather-${w}`}
+                      onPress={() => setSelectedWeather(w)}
+                      style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: selectedWeather === w ? '#1976D2' : '#e0e0e0', marginRight: 8, marginBottom: 8, backgroundColor: selectedWeather === w ? '#E8F0FF' : '#fff' }}
+                    >
+                      <Text style={{ color: selectedWeather === w ? '#1976D2' : '#444' }}>{w}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+            {/* The per-section textareas for Leverans/Kvalitet/Täckning were removed as requested. */}
+          </View>
+        )}
         {/* Divider under participants, before weather */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
+                {/* Button to choose categories for Arbetsberedning */}
+        {controlType === 'Arbetsberedning' && Array.isArray(checklistConfig) && (
+          <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+            <TouchableOpacity
+              onPress={() => setShowCategoryModal(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
+              accessibilityRole="button"
+            >
+              <Ionicons name="options-outline" size={22} color="#1976D2" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#1976D2', fontWeight: '600', fontSize: 16 }}>Välj kategorier att gå igenom</Text>
+            </TouchableOpacity>
+          </View>
+        )}
                 {/* Add Participant Modal */}
         {/* Modal för Lägg till deltagare */}
         {showAddParticipantModal && (
@@ -611,7 +888,7 @@ export default function BaseControlForm({
             <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 300, minHeight: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, marginTop: 140 }}>
               {/* Close (X) icon in top right */}
                 <TouchableOpacity 
-                  onPress={() => setShowAddParticipantModal(false)} 
+                  onPress={() => { setShowAddParticipantModal(false); setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); }} 
                   style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 4 }} 
                   accessibilityLabel="Stäng"
                   hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
@@ -624,6 +901,7 @@ export default function BaseControlForm({
                 onChangeText={setParticipantName}
                 style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
                 placeholder="Namn"
+                placeholderTextColor="#888"
                 autoCapitalize="words"
                 autoCorrect={false}
                 returnKeyType="next"
@@ -675,22 +953,25 @@ export default function BaseControlForm({
                 maxLength={13}
                 returnKeyType="done"
                 onSubmitEditing={() => {
-                  if (participantName.trim()) {
-                    setLocalParticipants([
-                      ...localParticipants,
-                      {
-                        name: participantName.trim(),
-                        company: participantCompany.trim(),
-                        role: participantRole.trim(),
-                        phone: participantPhone.trim(),
-                      },
-                    ]);
-                    setShowAddParticipantModal(false);
-                    setParticipantName('');
-                    setParticipantCompany('');
-                    setParticipantRole('');
-                    setParticipantPhone('');
+                  // Save or update participant
+                  if (!participantName.trim()) return;
+                  const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
+                  if (editParticipantIndex !== null && editParticipantIndex >= 0) {
+                    setLocalParticipants(prev => {
+                      const a = Array.isArray(prev) ? [...prev] : [];
+                      a[editParticipantIndex] = newP;
+                      return a;
+                    });
+                  } else {
+                    setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
                   }
+                        setShowAddParticipantModal(false);
+                        setParticipantName('');
+                        setParticipantCompany('');
+                        setParticipantRole('');
+                        setParticipantPhone('');
+                        setEditParticipantIndex(null);
+                  setEditParticipantIndex(null);
                 }}
                 ref={phoneRef}
               />
@@ -698,27 +979,28 @@ export default function BaseControlForm({
                 <TouchableOpacity
                   style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
                   onPress={() => {
-                    // Add participant to list
-                    if (participantName.trim()) {
-                      setLocalParticipants([
-                        ...localParticipants,
-                        {
-                          name: participantName.trim(),
-                          company: participantCompany.trim(),
-                          role: participantRole.trim(),
-                          phone: participantPhone.trim(),
-                        },
-                      ]);
-                      setShowAddParticipantModal(false);
-                      setParticipantName('');
-                      setParticipantCompany('');
-                      setParticipantRole('');
-                      setParticipantPhone('');
+                    if (!participantName.trim()) return;
+                    const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
+                    if (editParticipantIndex !== null && editParticipantIndex >= 0) {
+                      setLocalParticipants(prev => {
+                        const a = Array.isArray(prev) ? [...prev] : [];
+                        a[editParticipantIndex] = newP;
+                        return a;
+                      });
+                    } else {
+                      setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
                     }
+                    setShowAddParticipantModal(false);
+                    setParticipantName('');
+                    setParticipantCompany('');
+                    setParticipantRole('');
+                    setParticipantPhone('');
+                    setEditParticipantIndex(null);
+                    setEditParticipantIndex(null);
                   }}
                   disabled={!participantName.trim()}
                 >
-                  <Text style={{ color: '#1976D2', fontWeight: '400', fontSize: 16, opacity: participantName.trim() ? 1 : 0.4 }}>Spara</Text>
+                  <Text style={{ color: '#1976D2', fontWeight: '400', fontSize: 16, opacity: participantName.trim() ? 1 : 0.4 }}>{editParticipantIndex !== null ? 'Spara' : 'Spara'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
@@ -755,11 +1037,54 @@ export default function BaseControlForm({
             <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 12, marginBottom: 0 }} />
           </View>
         )}
+        {/* Category selection modal for Arbetsberedning */}
+        {showCategoryModal && (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 300 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 320, maxHeight: '70%', alignItems: 'stretch', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 8, marginTop: 120 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222' }}>Välj kategorier</Text>
+              <ScrollView style={{ marginBottom: 12 }}>
+                {Array.isArray(checklistConfig) && checklistConfig.map((sec, idx) => (
+                  <TouchableOpacity
+                    key={`cat-${idx}`}
+                    onPress={() => setSelectedCategories(prev => { const s = [...prev]; s[idx] = !s[idx]; return s; })}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name={selectedCategories[idx] ? 'checkbox' : 'square-outline'} size={20} color={selectedCategories[idx] ? '#1976D2' : '#666'} style={{ marginRight: 10 }} />
+                    <Text style={{ fontSize: 15, color: '#222' }}>{sec.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity onPress={() => setShowCategoryModal(false)} style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginRight: 8 }}>
+                  <Text style={{ color: '#777' }}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    // Apply selected categories to checklist state
+                    const newChecklist = (Array.isArray(checklistConfig) ? checklistConfig : [])
+                      .map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [], statuses: Array.isArray(section.points) ? Array(section.points.length).fill(null) : [], photos: Array.isArray(section.points) ? Array(section.points.length).fill([]) : [] }))
+                      .filter((_, i) => selectedCategories[i]);
+                    // Only update state if checklist actually changes
+                    if (!shallowEqual(newChecklist, checklist)) {
+                      setChecklist(newChecklist);
+                    }
+                    setExpandedChecklist([]);
+                    setShowCategoryModal(false);
+                  }}
+                  style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
+                >
+                  <Text style={{ color: '#1976D2', fontWeight: '600' }}>Bekräfta</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
       {/* Checklist rendering for Skyddsrond och andra kontroller */}
-      {Array.isArray(checklistConfig) && checklistConfig.length > 0 && (
+      {Array.isArray(checklist) && checklist.length > 0 && (
         <View style={{ marginTop: 8, marginBottom: 16, paddingHorizontal: 16 }}>
           <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 10, marginLeft: 2 }}>Kontrollpunkter</Text>
-          {checklistConfig.map((section, sectionIdx) => {
+          {checklist.map((section, sectionIdx) => {
             const expanded = expandedChecklist.includes(sectionIdx);
             // Check if any point in this section is not filled in
             const sectionStatuses = checklist[sectionIdx]?.statuses || [];
@@ -910,7 +1235,7 @@ export default function BaseControlForm({
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               accessibilityRole="button"
                             >
-                              <Ionicons name="ellipse-outline" size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
+                              <Ionicons name={status === 'ejaktuell' ? 'ellipse' : 'ellipse-outline'} size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
                               <Text style={{ color: status === 'ejaktuell' ? '#000' : '#bbb', fontWeight: 'bold' }}>Ej aktuell</Text>
                             </TouchableOpacity>
                           </View>
@@ -968,22 +1293,22 @@ export default function BaseControlForm({
           {/* Summary under checklist */}
           {(() => {
             // Count sections
-            const numSections = checklistConfig.length;
+            const numSections = checklist.length;
             // Count all points
             let totalPoints = 0;
             let approvedPoints = 0;
             let deviationPoints = 0;
             let completedSections = 0;
-            checklistConfig.forEach((section, sectionIdx) => {
-              totalPoints += section.points.length;
+            checklist.forEach((section, sectionIdx) => {
+              totalPoints += (section.points || []).length;
               const statuses = checklist[sectionIdx]?.statuses || [];
               let allFilled = true;
-              section.points.forEach((_, pointIdx) => {
+              (section.points || []).forEach((_, pointIdx) => {
                 if (statuses[pointIdx] === 'ok') approvedPoints++;
                 if (statuses[pointIdx] === 'avvikelse') deviationPoints++;
                 if (!statuses[pointIdx]) allFilled = false;
               });
-              if (section.points.length > 0 && allFilled) completedSections++;
+              if ((section.points || []).length > 0 && allFilled) completedSections++;
             });
             return (
               <View style={{ marginTop: 16, marginBottom: 8, padding: 16, backgroundColor: '#f5f5f5', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
@@ -1005,7 +1330,110 @@ export default function BaseControlForm({
         </View>
       )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
-      {/* ...existing code... */}
+      {/* Signature section moved here (after Sammanställning) */}
+      {controlType === 'Mottagningskontroll' && (
+        <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <Text style={{ fontSize: 15, color: '#222', fontWeight: '600', marginBottom: 8 }}>Signaturer</Text>
+            <TouchableOpacity onPress={() => setShowAddSignerModal(true)} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ color: '#1976D2' }}>Lägg till signerare</Text>
+            </TouchableOpacity>
+          </View>
+          {localParticipants && localParticipants.length > 0 ? (
+            localParticipants.map((p, pIdx) => {
+              const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${pIdx+1}`);
+              const existing = (mottagningsSignatures || []).find(s => s.name === name);
+              return (
+                <View key={`sig-${pIdx}-${name}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ fontSize: 15, color: '#222' }}>{name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {existing ? (
+                      <>
+                        {existing.strokes ? (
+                          <Svg width={120} height={48} viewBox={`0 0 ${sigCanvasSize} ${sigCanvasSize / 2}`} style={{ marginRight: 8 }}>
+                            {existing.strokes.map((stroke, si) => (
+                              <Path
+                                key={`ps-${si}`}
+                                d={pointsToPath(stroke)}
+                                fill="none"
+                                stroke="#000"
+                                strokeWidth={2}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            ))}
+                          </Svg>
+                        ) : (
+                          <Image source={{ uri: existing.uri }} style={{ width: 120, height: 48, borderRadius: 6, marginRight: 8, borderWidth: 1, borderColor: '#e0e0e0' }} />
+                        )}
+                        <TouchableOpacity onPress={() => { const v = existing.strokes || []; setSignatureForIndex(pIdx); setSigStrokes(v); try { sigStrokesRef.current = v; } catch (e) {} }} style={{ paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 }}>
+                          <Text style={{ color: '#1976D2' }}>Byt</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setMottagningsSignatures(prev => prev.filter(s => s.name !== name))} style={{ paddingHorizontal: 10, paddingVertical: 6 }}>
+                          <Text style={{ color: '#D32F2F' }}>Ta bort</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <TouchableOpacity onPress={() => { setSignatureForIndex(pIdx); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (e) {} }} style={{ paddingHorizontal: 6, paddingVertical: 2 }} accessibilityLabel="Lägg till signatur">
+                        <Ionicons name="add-circle-outline" size={24} color="#1976D2" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 15, color: '#222' }}>Signatur</Text>
+              <TouchableOpacity onPress={() => { setSignatureForIndex('mottagnings'); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (e) {} }} style={{ paddingVertical: 4, paddingHorizontal: 6 }} accessibilityLabel="Lägg till signatur">
+                <Ionicons name="add-circle-outline" size={28} color="#1976D2" />
+              </TouchableOpacity>
+            </View>
+          )}
+          {showAddSignerModal && (
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 400 }}>
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 100}
+                style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}
+              >
+                <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 12, padding: 16 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Lägg till signerare</Text>
+                  <TextInput
+                    value={signerName}
+                    onChangeText={setSignerName}
+                    placeholder="Namn"
+                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, marginBottom: 12 }}
+                    returnKeyType="done"
+                    onSubmitEditing={() => {
+                      if (signerName.trim()) {
+                        setLocalParticipants(prev => [...prev, { name: signerName.trim(), signerOnly: true }]);
+                      }
+                      setShowAddSignerModal(false);
+                      setSignerName('');
+                    }}
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                    <TouchableOpacity onPress={() => { setShowAddSignerModal(false); setSignerName(''); }} style={{ marginRight: 12 }}>
+                      <Text style={{ color: '#777' }}>Avbryt</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => {
+                      if (signerName.trim()) {
+                        setLocalParticipants(prev => [...prev, { name: signerName.trim(), signerOnly: true }]);
+                      }
+                      setShowAddSignerModal(false);
+                      setSignerName('');
+                    }}>
+                      <Text style={{ color: '#1976D2' }}>Lägg till</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </KeyboardAvoidingView>
+            </View>
+          )}
+        </View>
+      )}
       <View style={{
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1037,12 +1465,57 @@ export default function BaseControlForm({
           <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
         </TouchableOpacity>
       </View>
-      {/* Signature Modal Example */}
-      <NativeSignatureModal
-        visible={signatureForIndex !== null}
-        onOK={() => setSignatureForIndex(null)}
-        onCancel={() => setSignatureForIndex(null)}
-      />
+      {/* Signature Modal (JS fallback) */}
+      <Modal visible={signatureForIndex !== null} transparent animationType="fade" onRequestClose={() => setSignatureForIndex(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ width: sigCanvasSize + 32, backgroundColor: '#fff', borderRadius: 12, padding: 12, alignItems: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Signera med fingret</Text>
+            <View style={{ width: sigCanvasSize, height: sigCanvasSize / 2, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, overflow: 'hidden' }} {...panResponder.panHandlers}>
+              <Svg width={sigCanvasSize} height={sigCanvasSize / 2}>
+                {sigStrokes.map((stroke, si) => (
+                  <Path key={`s-${si}`} d={pointsToPath(stroke)} fill="none" stroke="#000" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                ))}
+                {sigCurrent && sigCurrent.length > 0 && (
+                  <Path d={pointsToPath(sigCurrent)} fill="none" stroke="#000" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                )}
+              </Svg>
+            </View>
+            <View style={{ flexDirection: 'row', marginTop: 12, width: '100%', justifyContent: 'space-between' }}>
+              <TouchableOpacity onPress={() => { const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (e) {} setSigCurrent([]); }} style={{ padding: 10 }}>
+                <Text style={{ color: '#D32F2F' }}>Rensa</Text>
+              </TouchableOpacity>
+              <View style={{ flexDirection: 'row' }}>
+                <TouchableOpacity onPress={() => setSignatureForIndex(null)} style={{ padding: 10, marginRight: 8 }}>
+                  <Text style={{ color: '#777' }}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => {
+                  try {
+                    const strokesToSave = Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : sigStrokes;
+                    // Save signature strokes for participant or generic
+                    if (signatureForIndex === 'mottagnings') {
+                      setMottagningsSignatures(prev => [...(prev || []), { name: 'Signerad', strokes: strokesToSave }]);
+                    } else if (typeof signatureForIndex === 'number') {
+                      const p = localParticipants[signatureForIndex];
+                      const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${signatureForIndex+1}`);
+                      setMottagningsSignatures(prev => {
+                        const others = (prev || []).filter(s => s.name !== name);
+                        return [...others, { name, strokes: strokesToSave }];
+                      });
+                    }
+                  } catch (e) {}
+                  const v = [];
+                  setSigStrokes(v);
+                  try { sigStrokesRef.current = v; } catch (e) {}
+                  setSigCurrent([]);
+                  setSignatureForIndex(null);
+                }} style={{ padding: 10 }}>
+                  <Text style={{ color: '#1976D2', fontWeight: '600' }}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   </ScrollView>
     </>
