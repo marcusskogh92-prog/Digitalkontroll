@@ -775,14 +775,11 @@ export default function BaseControlForm({
                 <View key={section.id ? `section-${section.id}` : btoa(unescape(encodeURIComponent(section.label))) + '-' + sectionIdx} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: sectionHeaderBg }}
-                  onPress={() => {
-                    if (expanded) {
-                      setExpandedChecklist([]);
-                    } else {
-                      setExpandedChecklist([sectionIdx]);
-                    }
-                  }}
+                  onPress={() => setExpandedChecklist(prev => prev.includes(sectionIdx) ? [] : [sectionIdx])}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Visa eller dölj ${section.label}`}
                 >
                   <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={20} color={'#1976D2'} style={{ marginRight: 8 }} />
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText, flex: 1 }}>{section.label}</Text>
