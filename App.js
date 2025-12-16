@@ -2,7 +2,7 @@ import { Inter_400Regular, Inter_600SemiBold, Inter_700Bold, useFonts } from '@e
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { Image, Text, View } from 'react-native';
+import { Image, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // AppLoading borttagen, ersätts med View och Text
 
@@ -119,7 +119,7 @@ export default function App() {
             headerBackTitleVisible: true,
           }} />
           <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
-          <Stack.Screen name="MottagningskontrollScreen" component={MottagningskontrollScreen} options={{
+          <Stack.Screen name="MottagningskontrollScreen" component={MottagningskontrollScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="checkbox-outline" size={28} color="#7B1FA2" style={{ marginRight: 10 }} />
@@ -127,7 +127,12 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 12 }} accessibilityLabel="Tillbaka">
+                <Ionicons name="chevron-back" size={26} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
         </Stack.Navigator>
       </NavigationContainer>
     </GestureHandlerRootView>

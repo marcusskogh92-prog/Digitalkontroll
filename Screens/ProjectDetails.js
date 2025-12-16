@@ -434,8 +434,6 @@ export default function ProjectDetails({ route, navigation }) {
                   </Modal>
                 )}
               </View>
-                // State för att låsa upp skapad-datum
-                const [canEditCreated, setCanEditCreated] = useState(false);
               <View style={{ marginBottom: 14 }}>
                 <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Ansvarig</Text>
                 <TextInput
@@ -766,6 +764,9 @@ export default function ProjectDetails({ route, navigation }) {
                       .slice()
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
                       .map((item, idx) => {
+                        // Ensure subtitle and parsedDate are defined in this scope
+                        let subtitle = null;
+                        let parsedDate = '';
                         // Format: Skyddsrond yyyy-mm-dd V.xx
                         let label = '';
                         if (item.type === 'Skyddsrond') {
@@ -786,6 +787,28 @@ export default function ProjectDetails({ route, navigation }) {
                           }
                           if (!dateStr) dateStr = '(okänt datum)';
                           label = `Skyddsrond ${dateStr} ${week}`.trim();
+                        } else if (item.type === 'Mottagningskontroll') {
+                          // Prefer explicit date fields, fall back to savedAt or createdAt
+                          const tryParse = (v) => {
+                            if (!v) return null;
+                            try {
+                              const d = new Date(v);
+                              if (!isNaN(d)) return d.toLocaleDateString('sv-SE');
+                            } catch (e) {}
+                            return null;
+                          };
+                          parsedDate = tryParse(item.date) || tryParse(item.dateValue) || tryParse(item.savedAt) || tryParse(item.createdAt) || tryParse(item.created) || '';
+                          if (!parsedDate && item.date) parsedDate = item.date;
+                          const dateLabel = parsedDate || '(okänt datum)';
+                          if (item.materialDesc && String(item.materialDesc).trim()) {
+                            label = `${dateLabel} — ${String(item.materialDesc).trim()}`;
+                          } else {
+                            label = dateLabel;
+                          }
+                          // compute subtitle to render beneath the label
+                          if (!(item.materialDesc && String(item.materialDesc).trim())) {
+                            subtitle = parsedDate ? parsedDate : (item.date ? new Date(item.date).toLocaleDateString('sv-SE') : null);
+                          }
                         } else {
                           label = `${item.type}${item.date ? ' ' + item.date : ''}`;
                         }
@@ -869,11 +892,9 @@ export default function ProjectDetails({ route, navigation }) {
                                 >
                                   {label}
                                 </Text>
-                                {item.date && (
-                                  <Text style={{ color: '#555', fontSize: 13, marginTop: 1 }}>
-                                    {new Date(item.date).toLocaleDateString('sv-SE')}
-                                  </Text>
-                                )}
+                                {subtitle ? (
+                                  <Text style={{ color: '#555', fontSize: 13, marginTop: 4 }}>{subtitle}</Text>
+                                ) : null}
                               </View>
                               {/* Skriv ut-ikon (endast för slutförda) */}
                               {!item.isDraft && (

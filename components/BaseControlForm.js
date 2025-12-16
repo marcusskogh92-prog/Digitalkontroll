@@ -8,11 +8,10 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Dimensions, Image, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
+import { Dimensions, Image, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View, useColorScheme } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
-import { useColorScheme } from 'react-native';
 import 'react-native-get-random-values';
 import Svg, { Path, Polygon, Text as SvgText } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
@@ -33,6 +32,7 @@ export default function BaseControlForm({
 }) {
   // State för deltagar-modalens fält (måste ligga här!)
   const [participantName, setParticipantName] = useState('');
+  const [participantCompany, setParticipantCompany] = useState('');
   // expandedChecklist is declared above (moved earlier)
   const [sectionMenuIndex, setSectionMenuIndex] = useState(null);
   const [participantRole, setParticipantRole] = useState('');
@@ -334,6 +334,7 @@ export default function BaseControlForm({
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const [showAddSignerModal, setShowAddSignerModal] = useState(false);
   const [signerName, setSignerName] = useState('');
+  const [showWeatherModal, setShowWeatherModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState(() => Array.isArray(checklistConfig) ? checklistConfig.map(() => true) : []);
 
@@ -411,7 +412,10 @@ export default function BaseControlForm({
         };
         const assets = extractAssets(res);
         if (assets && assets.length > 0) {
-          const photos = assets.map(a => ({ uri: a.uri || a.uriString || a.localUri || a.base64 ? (a.uri || a.uriString || a.localUri) : null, comment: '' })).filter(p => p.uri);
+          const photos = assets.map(a => {
+            const uri = a?.uri || a?.uriString || a?.localUri || (a?.base64 ? `data:image/jpeg;base64,${a.base64}` : null);
+            return uri ? { uri, comment: '' } : null;
+          }).filter(Boolean);
           if (photos.length > 0) {
             const prev = mottagningsPhotosRef.current || [];
             const next = [...prev, ...photos];
@@ -438,8 +442,10 @@ export default function BaseControlForm({
         try {
           // Normalize returned items if they are strings
           const norm = normalizePhotos(returnedMottagningsPhotos);
-          setMottagningsPhotos(norm);
-          mottagningsPhotosRef.current = norm;
+          const prev = mottagningsPhotosRef.current || [];
+          const next = [...prev, ...norm];
+          setMottagningsPhotos(next);
+          mottagningsPhotosRef.current = next;
           try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
         } catch (e) {}
       } else if (uri) {
@@ -508,9 +514,18 @@ export default function BaseControlForm({
     },
     onPanResponderMove: (e) => {
       const { locationX, locationY } = e.nativeEvent;
-      const next = [...sigCurrentRef.current, { x: locationX, y: locationY }];
-      sigCurrentRef.current = next;
-      setSigCurrent(next);
+      try {
+        const last = sigCurrentRef.current && sigCurrentRef.current.length ? sigCurrentRef.current[sigCurrentRef.current.length - 1] : null;
+        const dx = last ? Math.abs(locationX - last.x) : Infinity;
+        const dy = last ? Math.abs(locationY - last.y) : Infinity;
+        // Only add a new point if movement exceeds threshold (reduces noise)
+        const THRESH = 2; // pixels
+        if (!last || dx >= THRESH || dy >= THRESH) {
+          const next = [...sigCurrentRef.current, { x: locationX, y: locationY }];
+          sigCurrentRef.current = next;
+          setSigCurrent(next);
+        }
+      } catch (err) {}
     },
     onPanResponderRelease: () => {
       try {
@@ -698,8 +713,8 @@ export default function BaseControlForm({
                 <Text style={{ color: '#D32F2F', fontWeight: 'normal', fontSize: 16 }}>Radera</Text>
               </TouchableOpacity>
             </View>
+            </View>
           </View>
-        </View>
       </Modal>
       {/* Modal för bildgranskning med swipe */}
       <Modal
@@ -708,9 +723,10 @@ export default function BaseControlForm({
         animationType="fade"
         onRequestClose={() => setPhotoModal({ ...photoModal, visible: false })}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
-          {photoModal.uris.length > 0 && (
-            <View style={{ width: windowWidth, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+                {photoModal.uris.length > 0 && (
+                  <View style={{ width: windowWidth, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
               <View style={{
                 width: Math.min(windowWidth * 0.92, 420),
                 height: Math.min(windowWidth * 0.92, 420),
@@ -798,6 +814,7 @@ export default function BaseControlForm({
             </View>
           )}
         </View>
+      </KeyboardAvoidingView>
       </Modal>
       <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ flex: 1 }}>
@@ -840,7 +857,7 @@ export default function BaseControlForm({
           </TouchableOpacity>
         </View>
         {/* Soft horizontal divider under date */}
-        <View style={{ height: 1, backgroundColor: '#f0f0f0', width: '100%', marginBottom: 12, marginTop: 0 }} />
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
         {/* Date edit modal */}
         {showDateModal && (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
@@ -931,91 +948,139 @@ export default function BaseControlForm({
           {/* Divider under participants (should only be in main flow, not modal) */}
           </View>
         )}
-        {/* Participants row */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2, justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
-            <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 2, marginTop: 4 }}>Deltagare:</Text>
-              {localParticipants && localParticipants.length > 0 ? (
-                localParticipants.map((p, idx) => {
-                  // Use a robust key: if object, try id, else hash the stringified object, else fallback to uuid
-                  let key;
-                  if (typeof p === 'object' && p !== null) {
-                    if (p.id) {
-                      key = `participant-${p.id}`;
-                    } else {
-                      try {
-                        key = 'participant-' + btoa(unescape(encodeURIComponent(JSON.stringify(p)))) + '-' + idx;
-                      } catch {
-                        key = 'participant-' + idx + '-' + uuidv4();
-                      }
-                    }
-                  } else {
-                    key = `${p}-${idx}`;
-                  }
-                  if (typeof p === 'string') {
+        {/* Participants (own row) and Weather (separate row below) */}
+        <View style={{ flexDirection: 'column', marginBottom: 2 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
+              <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingVertical: 6 }} contentContainerStyle={{ alignItems: 'center' }}>
+                  {(Array.isArray(localParticipants) ? localParticipants : []).map((p, idx) => {
+                    const name = (typeof p === 'string') ? p : (p && p.name) ? p.name : `Deltagare ${idx+1}`;
+                    const key = (typeof p === 'object' && p && p.id) ? `participant-${p.id}` : `participant-${idx}-${name}`;
                     return (
-                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>{p}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <TouchableOpacity onPress={() => { setParticipantName(p || ''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(idx); setShowAddParticipantModal(true); }} style={{ marginRight: 12 }} accessibilityLabel="Redigera deltagare">
-                            <Ionicons name="create-outline" size={20} color="#1976D2" />
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => { const nameToDelete = p; setLocalParticipants(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== idx) : [])); setMottagningsSignatures(prev => (Array.isArray(prev) ? prev.filter(s => s.name !== nameToDelete) : [])); }} accessibilityLabel="Ta bort deltagare">
-                            <Ionicons name="trash-outline" size={20} color="#D32F2F" />
-                          </TouchableOpacity>
-                        </View>
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, marginRight: 8, flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 14, color: '#222', marginRight: 8 }}>{name}</Text>
+                        <TouchableOpacity onPress={() => { setParticipantName(typeof p === 'string' ? p : (p.name || '')); setParticipantCompany(typeof p === 'object' && p ? (p.company || '') : ''); setParticipantRole(typeof p === 'object' && p ? (p.role || '') : ''); setParticipantPhone(typeof p === 'object' && p ? (p.phone || '') : ''); setEditParticipantIndex(idx); setShowAddParticipantModal(true); }} style={{ marginRight: 6 }}>
+                          <Ionicons name="create-outline" size={18} color="#1976D2" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { const nameToDelete = name; setLocalParticipants(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== idx) : [])); setMottagningsSignatures(prev => (Array.isArray(prev) ? prev.filter(s => s.name !== nameToDelete) : [])); }}>
+                          <Ionicons name="trash-outline" size={18} color="#D32F2F" />
+                        </TouchableOpacity>
                       </View>
                     );
-                  } else if (typeof p === 'object' && p !== null) {
-                    return (
-                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8, width: '100%' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <View style={{ flex: 1, paddingRight: 12, minWidth: 0 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                              <Text numberOfLines={2} ellipsizeMode="tail" style={{ fontSize: 16, color: '#222', fontWeight: '500', marginRight: 8, flexShrink: 1 }}>{p.name || ''}</Text>
-                              {p.company ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 16, color: '#555', fontWeight: '400', flexShrink: 1 }}>{p.company}</Text> : null}
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              {p.role ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 13, color: '#888', marginRight: 12, flexShrink: 1 }}>{p.role}</Text> : null}
-                              {p.phone ? <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 13, color: '#888', flexShrink: 1 }}>{p.phone}</Text> : null}
-                            </View>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <TouchableOpacity onPress={() => {
-                              setParticipantName(p.name || '');
-                              setParticipantCompany(p.company || '');
-                              setParticipantRole(p.role || '');
-                              setParticipantPhone(p.phone || '');
-                              setEditParticipantIndex(idx);
-                              setShowAddParticipantModal(true);
-                            }} style={{ marginRight: 12 }} accessibilityLabel="Redigera deltagare">
-                              <Ionicons name="create-outline" size={20} color="#1976D2" />
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => {
-                              const nameToDelete = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${idx+1}`);
-                              setLocalParticipants(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== idx) : []));
-                              setMottagningsSignatures(prev => (Array.isArray(prev) ? prev.filter(s => s.name !== nameToDelete) : []));
-                            }} accessibilityLabel="Ta bort deltagare">
-                              <Ionicons name="trash-outline" size={20} color="#D32F2F" />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-                    );
-                  }
-                  return null;
-                })
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till deltagare">
+              <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Divider between participants and weather */}
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 8 }} />
+
+          {/* Weather row (separate) */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {/* Fixed weather icon on the left, same blue as other icons */}
+              <Ionicons name="sunny" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginRight: 8 }}>Väderlek:</Text>
+              {selectedWeather ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginRight: 8 }}>
+                  <Ionicons
+                    name={(() => {
+                      const defaultWeatherOptions = [
+                        { key: 'Soligt', icon: 'sunny' },
+                        { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                        { key: 'Molnigt', icon: 'cloudy' },
+                        { key: 'Regn', icon: 'rainy' },
+                        { key: 'Snö', icon: 'snow' },
+                        { key: 'Åska', icon: 'thunderstorm' },
+                      ];
+                      const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                        ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                        : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                      const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                      return (meta && meta.icon) ? meta.icon : 'sunny';
+                    })()}
+                    size={14}
+                    color={(() => {
+                      const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
+                      const defaultWeatherOptions = [
+                        { key: 'Soligt', icon: 'sunny' },
+                        { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                        { key: 'Molnigt', icon: 'cloudy' },
+                        { key: 'Regn', icon: 'rainy' },
+                        { key: 'Snö', icon: 'snow' },
+                        { key: 'Åska', icon: 'thunderstorm' },
+                      ];
+                      const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                        ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                        : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                      const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                      const icon = meta && meta.icon ? meta.icon : 'sunny';
+                      return cmap[icon] || '#1976D2';
+                    })()}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={{ color: '#222', marginRight: 8 }}>{selectedWeather}</Text>
+                  <TouchableOpacity onPress={() => setSelectedWeather(null)}>
+                    <Ionicons name="close-circle" size={18} color="#D32F2F" />
+                  </TouchableOpacity>
+                </View>
               ) : null}
             </View>
+            <TouchableOpacity onPress={() => setShowWeatherModal(true)} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till väder">
+              <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4 }} accessibilityLabel="Lägg till deltagare">
-            <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
-          </TouchableOpacity>
         </View>
         {/* Horizontal divider between participants and material description */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
+        {/* Weather selection modal triggered from participants area */}
+        <Modal visible={showWeatherModal} transparent animationType="fade" onRequestClose={() => setShowWeatherModal(false)}>
+          <TouchableOpacity activeOpacity={1} onPress={() => setShowWeatherModal(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
+              <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }}>Välj väder</Text>
+              </View>
+              <View style={{ padding: 16, flexDirection: 'row', flexWrap: 'wrap' }}>
+                {(() => {
+                  const defaultWeatherOptions = [
+                    { key: 'Soligt', icon: 'sunny' },
+                    { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                    { key: 'Molnigt', icon: 'cloudy' },
+                    { key: 'Regn', icon: 'rainy' },
+                    { key: 'Snö', icon: 'snow' },
+                    { key: 'Åska', icon: 'thunderstorm' },
+                  ];
+                  const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                    ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                    : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                  return localWeather.map(w => {
+                    const label = w.key || w;
+                    const iconName = w.icon || null;
+                    const isSelected = selectedWeather === label;
+                    return (
+                        <TouchableOpacity key={`wm-${label}`} onPress={() => { setSelectedWeather(label); setShowWeatherModal(false); }} style={{ width: '48%', padding: 12, margin: '1%', backgroundColor: isSelected ? '#E8F0FF' : '#fff', borderRadius: 8, borderWidth: 1, borderColor: isSelected ? '#1976D2' : '#e0e0e0', alignItems: 'center' }}>
+                          {iconName ? <Ionicons name={iconName} size={22} color={(() => { const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' }; return isSelected ? '#1976D2' : (iconName && cmap[iconName] ? cmap[iconName] : '#444'); })()} style={{ marginBottom: 6 }} /> : null}
+                          <Text style={{ color: isSelected ? '#1976D2' : '#444' }}>{label}</Text>
+                        </TouchableOpacity>
+                      );
+                  });
+                })()}
+              </View>
+              <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => setShowWeatherModal(false)} style={{ paddingVertical: 10 }}>
+                  <Text style={{ color: '#1976D2' }}>Stäng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
         {/* Material description for Mottagningskontroll */}
         {controlType === 'Mottagningskontroll' && (
           <View style={{ marginTop: 8, marginBottom: 10, paddingHorizontal: 16 }}>
@@ -1027,23 +1092,7 @@ export default function BaseControlForm({
               placeholderTextColor="#888"
               style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
             />
-            {/* Väderlek */}
-            {!hideWeather && Array.isArray(weatherOptions) && weatherOptions.length > 0 && (
-              <View style={{ marginTop: 12 }}>
-                <Text style={{ fontSize: 15, color: '#222', marginBottom: 8, fontWeight: '600' }}>Väderlek</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {weatherOptions.map((w) => (
-                    <TouchableOpacity
-                      key={`weather-${w}`}
-                      onPress={() => setSelectedWeather(w)}
-                      style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: selectedWeather === w ? '#1976D2' : '#e0e0e0', marginRight: 8, marginBottom: 8, backgroundColor: selectedWeather === w ? '#E8F0FF' : '#fff' }}
-                    >
-                      <Text style={{ color: selectedWeather === w ? '#1976D2' : '#444' }}>{w}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
+            {/* Väderlek handled under participants (plus-button to add) */}
             {/* The per-section textareas for Leverans/Kvalitet/Täckning were removed as requested. */}
           </View>
         )}
@@ -1432,7 +1481,7 @@ export default function BaseControlForm({
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                               accessibilityRole="button"
                             >
-                              <Ionicons name={status === 'ejaktuell' ? 'ellipse' : 'ellipse-outline'} size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
+                              <Ionicons name="close" size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
                               <Text style={{ color: status === 'ejaktuell' ? '#000' : '#bbb', fontWeight: 'bold' }}>Ej aktuell</Text>
                             </TouchableOpacity>
                           </View>
@@ -1706,19 +1755,25 @@ export default function BaseControlForm({
           onPress={handleSave}
           style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
         >
-          <Text style={{ color: '#1976D2', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="checkmark-circle" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#1976D2', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleSaveDraft}
           style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
         >
-          <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="save-outline" size={18} color="#D32F2F" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
+          </View>
         </TouchableOpacity>
       </View>
       {/* Signature Modal (JS fallback) */}
-      <Modal visible={signatureForIndex !== null} transparent animationType="fade" onRequestClose={() => setSignatureForIndex(null)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ width: sigCanvasSize + 32, backgroundColor: '#fff', borderRadius: 12, padding: 12, alignItems: 'center' }}>
+      <Modal visible={signatureForIndex !== null} transparent animationType="slide" onRequestClose={() => setSignatureForIndex(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 12 }}>
+          <View style={{ width: '100%', maxWidth: sigCanvasSize + 32, backgroundColor: '#fff', borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 12, alignItems: 'center' }}>
             <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Signera med fingret</Text>
             <View style={{ width: sigCanvasSize, height: sigCanvasSize / 2, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, overflow: 'hidden' }} {...panResponder.panHandlers}>
               <Svg width={sigCanvasSize} height={sigCanvasSize / 2}>
