@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Dimensions, Image, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View, useColorScheme } from 'react-native';
+import { Alert, Dimensions, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View, useColorScheme } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
@@ -72,6 +72,28 @@ export default function BaseControlForm({
     setSectionMenuIndex(null);
   };
   const phoneRef = useRef();
+  const [missingFields, setMissingFields] = useState([]);
+  const scrollRef = useRef(null);
+  const [signerKeyboardShift, setSignerKeyboardShift] = useState(0);
+
+  useEffect(() => {
+    const onShow = (e) => {
+      try {
+        const h = e && e.endCoordinates ? e.endCoordinates.height : 0;
+        const shift = Math.max(0, h - 80);
+        setSignerKeyboardShift(shift);
+      } catch (err) {
+        setSignerKeyboardShift(0);
+      }
+    };
+    const onHide = () => setSignerKeyboardShift(0);
+    const showSub = Keyboard.addListener('keyboardDidShow', onShow);
+    const hideSub = Keyboard.addListener('keyboardDidHide', onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   // Add state for draftId and selectedWeather
   const [draftId, setDraftId] = useState(initialValues.id || null);
   const [selectedWeather, setSelectedWeather] = useState(initialValues.weather || null);
@@ -107,6 +129,33 @@ export default function BaseControlForm({
   // Keep a ref copy of isDirty so the beforeRemove listener can be attached once
   const isDirtyRef = useRef(false);
 
+  const handleAttemptFinish = () => {
+    // Special validation rules for Mottagningskontroll
+    if (controlType !== 'Mottagningskontroll') {
+      handleSave();
+      return;
+    }
+    const missing = [];
+    // Date is optional for Mottagningskontroll; do not mark as missing
+    if (!Array.isArray(localParticipants) || localParticipants.length === 0) missing.push('Deltagare');
+    if (!materialDesc || !materialDesc.trim()) missing.push('Beskriv leverans');
+    if (Array.isArray(checklist) && checklist.length > 0) {
+      const anyMissing = checklist.some(sec => !(Array.isArray(sec.statuses) && sec.statuses.every(s => !!s)));
+      if (anyMissing) missing.push('Kontrollpunkter');
+    }
+    if (!Array.isArray(mottagningsSignatures) || mottagningsSignatures.length === 0) missing.push('Signaturer');
+    if (missing.length === 0) {
+      handleSave();
+    } else {
+      setMissingFields(missing);
+      Alert.alert('Saknas', 'Följande saknas: ' + missing.join(', '));
+      if (scrollRef && scrollRef.current && scrollRef.current.scrollTo) {
+        scrollRef.current.scrollTo({ y: 0, animated: true });
+      }
+      setTimeout(() => setMissingFields([]), 5000);
+    }
+  };
+
   // Add beforeRemove event once to block navigation if dirty (use ref inside)
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
@@ -130,34 +179,7 @@ export default function BaseControlForm({
       setPhotoModal({ visible: false, uris: [], index: 0 });
       return;
     }
-    // First try to delete from centralized mottagningsPhotos (if present)
-    try {
-      const mp = mottagningsPhotos || [];
-      const foundIndex = mp.findIndex(p => p && p.uri === uri);
-      if (foundIndex !== -1) {
-        const newMp = mp.filter(p => p && p.uri !== uri);
-        setMottagningsPhotos(newMp);
-        mottagningsPhotosRef.current = newMp;
-        const newUris = uris.filter((u, i) => i !== index);
-        const newIndex = Math.max(0, index - 1);
-        setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
-        return;
-      }
-    } catch (e) {}
-    // Otherwise fall back to deleting from checklist photos
-    const prev = checklistRef.current || [];
-    let found = false;
-    const newChecklist = prev.map(section => {
-      const photos = Array.isArray(section.photos) ? section.photos.map(arr => Array.isArray(arr) ? [...arr] : (arr ? [arr] : [])) : [];
-      const newPhotos = photos.map(arr => {
-        if (Array.isArray(arr) && arr.includes(uri)) {
-          found = true;
-          return arr.filter(u => u !== uri);
-        }
-        return arr;
-      });
-      return { ...section, photos: newPhotos };
-    });
+    // Modal UI removed from this logic block; UI elements must be rendered in the component return() instead.
     if (found) {
       setChecklist(newChecklist);
       checklistRef.current = newChecklist;
@@ -615,7 +637,10 @@ export default function BaseControlForm({
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
     } catch {}
-    // Navigate back after successful save
+    // Clear dirty flag so beforeRemove won't intercept navigation, then show confirmation and go back
+    try {
+      isDirtyRef.current = false;
+    } catch (e) {}
     try {
       if (navigation && navigation.canGoBack && navigation.canGoBack()) {
         navigation.goBack();
@@ -645,6 +670,21 @@ export default function BaseControlForm({
   };
 
   // Render
+  // Determine whether the control may be completed (enabled "Slutför").
+  // For Mottagningskontroll we require: date, >=1 participant, material description,
+  // all checklist points completed (if present) and at least one signature. Photos and weather are optional.
+  const canFinish = (() => {
+    if (controlType !== 'Mottagningskontroll') return true;
+    const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
+    const hasMaterial = typeof materialDesc === 'string' && materialDesc.trim().length > 0;
+    const checklistComplete = (() => {
+      if (!Array.isArray(checklist) || checklist.length === 0) return true;
+      return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
+    })();
+    const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
+    return hasParticipants && hasMaterial && checklistComplete && hasSignature;
+  })();
+
   return (
     <>
       {/* ...ingen testknapp/modal... */}
@@ -816,7 +856,7 @@ export default function BaseControlForm({
         </View>
       </KeyboardAvoidingView>
       </Modal>
-      <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ flex: 1 }}>
         {/* Project Info and meta */}
         <View style={{ padding: 16, paddingBottom: 0 }}>
@@ -861,7 +901,7 @@ export default function BaseControlForm({
         {/* Date edit modal */}
         {showDateModal && (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
-            <View style={{ height: 500 }} />
+            <View style={{ height: 120 }} />
             <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 280, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
               {/* Close (X) icon in top right */}
               <TouchableOpacity 
@@ -954,7 +994,7 @@ export default function BaseControlForm({
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
               <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
+                <Text style={{ fontSize: 18, color: (missingFields && missingFields.includes('Deltagare')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingVertical: 6 }} contentContainerStyle={{ alignItems: 'center' }}>
                   {(Array.isArray(localParticipants) ? localParticipants : []).map((p, idx) => {
                     const name = (typeof p === 'string') ? p : (p && p.name) ? p.name : `Deltagare ${idx+1}`;
@@ -987,51 +1027,56 @@ export default function BaseControlForm({
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               {/* Fixed weather icon on the left, same blue as other icons */}
               <Ionicons name="sunny" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600', marginRight: 8 }}>Väderlek:</Text>
-              {selectedWeather ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginRight: 8 }}>
-                  <Ionicons
-                    name={(() => {
-                      const defaultWeatherOptions = [
-                        { key: 'Soligt', icon: 'sunny' },
-                        { key: 'Delvis molnigt', icon: 'partly-sunny' },
-                        { key: 'Molnigt', icon: 'cloudy' },
-                        { key: 'Regn', icon: 'rainy' },
-                        { key: 'Snö', icon: 'snow' },
-                        { key: 'Åska', icon: 'thunderstorm' },
-                      ];
-                      const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
-                        ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
-                        : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
-                      const meta = localWeather.find(w => (w.key || w) === selectedWeather);
-                      return (meta && meta.icon) ? meta.icon : 'sunny';
-                    })()}
-                    size={14}
-                    color={(() => {
-                      const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
-                      const defaultWeatherOptions = [
-                        { key: 'Soligt', icon: 'sunny' },
-                        { key: 'Delvis molnigt', icon: 'partly-sunny' },
-                        { key: 'Molnigt', icon: 'cloudy' },
-                        { key: 'Regn', icon: 'rainy' },
-                        { key: 'Snö', icon: 'snow' },
-                        { key: 'Åska', icon: 'thunderstorm' },
-                      ];
-                      const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
-                        ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
-                        : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
-                      const meta = localWeather.find(w => (w.key || w) === selectedWeather);
-                      const icon = meta && meta.icon ? meta.icon : 'sunny';
-                      return cmap[icon] || '#1976D2';
-                    })()}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={{ color: '#222', marginRight: 8 }}>{selectedWeather}</Text>
-                  <TouchableOpacity onPress={() => setSelectedWeather(null)}>
-                    <Ionicons name="close-circle" size={18} color="#D32F2F" />
-                  </TouchableOpacity>
-                </View>
-              ) : null}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+                <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Väderlek</Text>
+                {!selectedWeather && (
+                  <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
+                )}
+                {selectedWeather && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 10 }}>
+                    <Ionicons
+                      name={(() => {
+                        const defaultWeatherOptions = [
+                          { key: 'Soligt', icon: 'sunny' },
+                          { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                          { key: 'Molnigt', icon: 'cloudy' },
+                          { key: 'Regn', icon: 'rainy' },
+                          { key: 'Snö', icon: 'snow' },
+                          { key: 'Åska', icon: 'thunderstorm' },
+                        ];
+                        const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                          ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                          : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                        const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                        return (meta && meta.icon) ? meta.icon : 'sunny';
+                      })()}
+                      size={14}
+                      color={(() => {
+                        const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
+                        const defaultWeatherOptions = [
+                          { key: 'Soligt', icon: 'sunny' },
+                          { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                          { key: 'Molnigt', icon: 'cloudy' },
+                          { key: 'Regn', icon: 'rainy' },
+                          { key: 'Snö', icon: 'snow' },
+                          { key: 'Åska', icon: 'thunderstorm' },
+                        ];
+                        const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                          ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                          : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                        const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                        const icon = meta && meta.icon ? meta.icon : 'sunny';
+                        return cmap[icon] || '#1976D2';
+                      })()}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={{ color: '#222', marginRight: 8 }}>{selectedWeather}</Text>
+                    <TouchableOpacity onPress={() => setSelectedWeather(null)}>
+                      <Ionicons name="close-circle" size={18} color="#D32F2F" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             </View>
             <TouchableOpacity onPress={() => setShowWeatherModal(true)} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till väder">
               <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
@@ -1084,7 +1129,7 @@ export default function BaseControlForm({
         {/* Material description for Mottagningskontroll */}
         {controlType === 'Mottagningskontroll' && (
           <View style={{ marginTop: 8, marginBottom: 10, paddingHorizontal: 16 }}>
-            <Text style={{ fontSize: 15, color: '#222', marginBottom: 6, fontWeight: '600' }}>Beskriv leverans</Text>
+            <Text style={{ fontSize: 15, color: (missingFields && missingFields.includes('Beskriv leverans')) ? '#D32F2F' : '#222', marginBottom: 6, fontWeight: '600' }}>Beskriv leverans</Text>
             <TextInput
               value={materialDesc}
               onChangeText={setMaterialDesc}
@@ -1111,144 +1156,138 @@ export default function BaseControlForm({
             </TouchableOpacity>
           </View>
         )}
-                {/* Add Participant Modal */}
+        {/* Add Participant Modal */}
         {/* Modal för Lägg till deltagare */}
-        {showAddParticipantModal && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 200 }}>
-            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 300, minHeight: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6, marginTop: 140 }}>
-              {/* Close (X) icon in top right */}
-                <TouchableOpacity 
-                  onPress={() => { setShowAddParticipantModal(false); setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); }} 
-                  style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 4 }} 
-                  accessibilityLabel="Stäng"
-                  hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-                >
-                  <Ionicons name="close" size={24} color="#888" />
-                </TouchableOpacity>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222' }}>Lägg till deltagare</Text>
-              <TextInput
-                value={participantName}
-                onChangeText={setParticipantName}
-                style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
-                placeholder="Namn"
-                placeholderTextColor="#888"
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => companyRef && companyRef.current && companyRef.current.focus()}
-                ref={nameRef}
-              />
-              <TextInput
-                value={participantCompany}
-                onChangeText={setParticipantCompany}
-                style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
-                placeholderTextColor="#888"
-                placeholder="Företag"
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => roleRef && roleRef.current && roleRef.current.focus()}
-                ref={companyRef}
-              />
-              <TextInput
-                value={participantRole}
-                onChangeText={setParticipantRole}
-                style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
-                placeholderTextColor="#888"
-                placeholder="Roll"
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => phoneRef && phoneRef.current && phoneRef.current.focus()}
-                ref={roleRef}
-              />
-              <TextInput
-                value={participantPhone}
-                onChangeText={text => {
-                  // Only allow numbers, auto-insert spaces: xxx xxx xx xx
-                  let cleaned = text.replace(/[^0-9]/g, '');
-                  if (cleaned.length > 10) cleaned = cleaned.slice(0, 10);
-                  let formatted = cleaned;
-                  if (cleaned.length > 3) formatted = cleaned.slice(0, 3) + ' ' + cleaned.slice(3);
-                  if (cleaned.length > 6) formatted = formatted.slice(0, 7) + ' ' + formatted.slice(7);
-                  if (cleaned.length > 8) formatted = formatted.slice(0, 10) + ' ' + formatted.slice(10);
-                  setParticipantPhone(formatted);
-                }}
-                style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 16 }}
-                placeholderTextColor="#888"
-                placeholder="Mobilnummer"
-                keyboardType="numeric"
-                autoCapitalize="none"
-                autoCorrect={false}
-                maxLength={13}
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  // Save or update participant
-                  if (!participantName.trim()) return;
-                  const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
-                  if (editParticipantIndex !== null && editParticipantIndex >= 0) {
-                    setLocalParticipants(prev => {
-                      const a = Array.isArray(prev) ? [...prev] : [];
-                      a[editParticipantIndex] = newP;
-                      return a;
-                    });
-                  } else {
-                    setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
-                  }
+        <Modal visible={showAddParticipantModal} transparent animationType="fade" onRequestClose={() => setShowAddParticipantModal(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'position' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 80}
+              style={{ flex: 1 }}
+            >
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-start', alignItems: 'center', paddingTop: 40 }}>
+                <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 12, padding: 16, marginTop: 0, transform: [{ translateY: -signerKeyboardShift }] }}>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>{editParticipantIndex !== null ? 'Redigera deltagare' : 'Lägg till deltagare'}</Text>
+                  <TextInput
+                    value={participantName}
+                    onChangeText={setParticipantName}
+                    placeholder="Namn"
+                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, marginBottom: 10 }}
+                    returnKeyType="next"
+                    onSubmitEditing={() => companyRef && companyRef.current && companyRef.current.focus()}
+                    ref={nameRef}
+                  />
+                  <TextInput
+                    value={participantCompany}
+                    onChangeText={setParticipantCompany}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
+                    placeholderTextColor="#888"
+                    placeholder="Företag"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => roleRef && roleRef.current && roleRef.current.focus()}
+                    ref={companyRef}
+                  />
+                  <TextInput
+                    value={participantRole}
+                    onChangeText={setParticipantRole}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
+                    placeholderTextColor="#888"
+                    placeholder="Roll"
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => phoneRef && phoneRef.current && phoneRef.current.focus()}
+                    ref={roleRef}
+                  />
+                  <TextInput
+                    value={participantPhone}
+                    onChangeText={text => {
+                      // Only allow numbers, auto-insert spaces: xxx xxx xx xx
+                      let cleaned = text.replace(/[^0-9]/g, '');
+                      if (cleaned.length > 10) cleaned = cleaned.slice(0, 10);
+                      let formatted = cleaned;
+                      if (cleaned.length > 3) formatted = cleaned.slice(0, 3) + ' ' + cleaned.slice(3);
+                      if (cleaned.length > 6) formatted = formatted.slice(0, 7) + ' ' + formatted.slice(7);
+                      if (cleaned.length > 8) formatted = formatted.slice(0, 10) + ' ' + formatted.slice(10);
+                      setParticipantPhone(formatted);
+                    }}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 16 }}
+                    placeholderTextColor="#888"
+                    placeholder="Mobilnummer"
+                    keyboardType="numeric"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={13}
+                    returnKeyType="done"
+                    onSubmitEditing={() => {
+                      // Save or update participant
+                      if (!participantName.trim()) return;
+                      const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
+                      if (editParticipantIndex !== null && editParticipantIndex >= 0) {
+                        setLocalParticipants(prev => {
+                          const a = Array.isArray(prev) ? [...prev] : [];
+                          a[editParticipantIndex] = newP;
+                          return a;
+                        });
+                      } else {
+                        setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
+                      }
+                      setShowAddParticipantModal(false);
+                      setParticipantName('');
+                      setParticipantCompany('');
+                      setParticipantRole('');
+                      setParticipantPhone('');
+                      setEditParticipantIndex(null);
+                    }}
+                    ref={phoneRef}
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
+                      onPress={() => {
+                        if (!participantName.trim()) return;
+                        const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
+                        if (editParticipantIndex !== null && editParticipantIndex >= 0) {
+                          setLocalParticipants(prev => {
+                            const a = Array.isArray(prev) ? [...prev] : [];
+                            a[editParticipantIndex] = newP;
+                            return a;
+                          });
+                        } else {
+                          setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
+                        }
                         setShowAddParticipantModal(false);
                         setParticipantName('');
                         setParticipantCompany('');
                         setParticipantRole('');
                         setParticipantPhone('');
                         setEditParticipantIndex(null);
-                  setEditParticipantIndex(null);
-                }}
-                ref={phoneRef}
-              />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
-                <TouchableOpacity
-                  style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
-                  onPress={() => {
-                    if (!participantName.trim()) return;
-                    const newP = { name: participantName.trim(), company: participantCompany.trim(), role: participantRole.trim(), phone: participantPhone.trim() };
-                    if (editParticipantIndex !== null && editParticipantIndex >= 0) {
-                      setLocalParticipants(prev => {
-                        const a = Array.isArray(prev) ? [...prev] : [];
-                        a[editParticipantIndex] = newP;
-                        return a;
-                      });
-                    } else {
-                      setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), newP]));
-                    }
-                    setShowAddParticipantModal(false);
-                    setParticipantName('');
-                    setParticipantCompany('');
-                    setParticipantRole('');
-                    setParticipantPhone('');
-                    setEditParticipantIndex(null);
-                    setEditParticipantIndex(null);
-                  }}
-                  disabled={!participantName.trim()}
-                >
-                  <Text style={{ color: '#1976D2', fontWeight: '400', fontSize: 16, opacity: participantName.trim() ? 1 : 0.4 }}>{editParticipantIndex !== null ? 'Spara' : 'Spara'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
-                  onPress={() => {
-                    setShowAddParticipantModal(false);
-                    setParticipantName('');
-                    setParticipantCompany('');
-                    setParticipantRole('');
-                    setParticipantPhone('');
-                  }}
-                >
-                  <Text style={{ color: '#D32F2F', fontWeight: '400', fontSize: 16 }}>Avbryt</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+                      }}
+                      disabled={!participantName.trim()}
+                    >
+                      <Text style={{ color: '#1976D2', fontWeight: '400', fontSize: 16, opacity: participantName.trim() ? 1 : 0.4 }}>{editParticipantIndex !== null ? 'Spara' : 'Spara'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 0 }}
+                      onPress={() => {
+                        setShowAddParticipantModal(false);
+                        setParticipantName('');
+                        setParticipantCompany('');
+                        setParticipantRole('');
+                        setParticipantPhone('');
+                        setEditParticipantIndex(null);
+                      }}
+                    >
+                      <Text style={{ color: '#D32F2F', fontWeight: '400', fontSize: 16 }}>Avbryt</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            </KeyboardAvoidingView>
           </View>
-        )}
-        </View>
+        </Modal>
         {/* Divider under participants, before weather (removed duplicate) */}
 
         {/* Omfattning / beskrivning för Skyddsrond */}
@@ -1313,7 +1352,7 @@ export default function BaseControlForm({
       {/* Checklist rendering for Skyddsrond och andra kontroller */}
       {Array.isArray(checklist) && checklist.length > 0 && (
         <View style={{ marginTop: 8, marginBottom: 16, paddingHorizontal: 16 }}>
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 10, marginLeft: 2 }}>Kontrollpunkter</Text>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: (missingFields && missingFields.includes('Kontrollpunkter')) ? '#D32F2F' : '#222', marginBottom: 10, marginLeft: 2 }}>Kontrollpunkter</Text>
           {checklist.map((section, sectionIdx) => {
             const expanded = expandedChecklist.includes(sectionIdx);
             // Check if any point in this section is not filled in
@@ -1582,7 +1621,12 @@ export default function BaseControlForm({
           {controlType === 'Mottagningskontroll' && (
             <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
-              <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }}>Foton</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }}>Foton</Text>
+                {(!Array.isArray(mottagningsPhotos) || mottagningsPhotos.length === 0) && (
+                  <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
+                )}
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', marginTop: 8 }}>
                 <TouchableOpacity onPress={() => setShowPhotoChoice(true)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#000', backgroundColor: 'transparent' }}>
                   <Ionicons name="camera" size={20} color="#000" style={{ marginRight: 8 }} />
@@ -1610,7 +1654,7 @@ export default function BaseControlForm({
         <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <Text style={{ fontSize: 15, color: '#222', fontWeight: '600', marginBottom: 8 }}>Signaturer</Text>
+            <Text style={{ fontSize: 15, color: (missingFields && missingFields.includes('Signaturer')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 8 }}>Signaturer</Text>
             <TouchableOpacity onPress={() => setShowAddSignerModal(true)} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
               <Text style={{ color: '#1976D2' }}>Lägg till signerare</Text>
             </TouchableOpacity>
@@ -1666,47 +1710,7 @@ export default function BaseControlForm({
               </TouchableOpacity>
             </View>
           )}
-          {showAddSignerModal && (
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 400 }}>
-              <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 100}
-                style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}
-              >
-                <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 12, padding: 16 }}>
-                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Lägg till signerare</Text>
-                  <TextInput
-                    value={signerName}
-                    onChangeText={setSignerName}
-                    placeholder="Namn"
-                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, marginBottom: 12 }}
-                    returnKeyType="done"
-                    onSubmitEditing={() => {
-                      if (signerName.trim()) {
-                        setLocalParticipants(prev => [...prev, { name: signerName.trim(), signerOnly: true }]);
-                      }
-                      setShowAddSignerModal(false);
-                      setSignerName('');
-                    }}
-                  />
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-                    <TouchableOpacity onPress={() => { setShowAddSignerModal(false); setSignerName(''); }} style={{ marginRight: 12 }}>
-                      <Text style={{ color: '#777' }}>Avbryt</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => {
-                      if (signerName.trim()) {
-                        setLocalParticipants(prev => [...prev, { name: signerName.trim(), signerOnly: true }]);
-                      }
-                      setShowAddSignerModal(false);
-                      setSignerName('');
-                    }}>
-                      <Text style={{ color: '#1976D2' }}>Lägg till</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </KeyboardAvoidingView>
-            </View>
-          )}
+          
           <Modal visible={showPhotoChoice} transparent animationType="fade" onRequestClose={() => setShowPhotoChoice(false)}>
             <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
               <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
@@ -1752,12 +1756,12 @@ export default function BaseControlForm({
         elevation: 2,
       }}>
         <TouchableOpacity
-          onPress={handleSave}
-          style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
+          onPress={handleAttemptFinish}
+          style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0, opacity: canFinish ? 1 : 0.5 }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="checkmark-circle" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-            <Text style={{ color: '#1976D2', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
+            <Ionicons name="checkmark-circle" size={18} color={canFinish ? '#1976D2' : '#AAA'} style={{ marginRight: 8 }} />
+            <Text style={{ color: canFinish ? '#1976D2' : '#AAA', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
           </View>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1822,7 +1826,8 @@ export default function BaseControlForm({
         </View>
       </Modal>
     </View>
+  </View>
   </ScrollView>
-    </>
+  </>
   );
 }
