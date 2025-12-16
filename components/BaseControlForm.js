@@ -8,12 +8,15 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Dimensions, Image, Modal, PanResponder, ScrollView, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Platform } from 'react-native';
+import { Dimensions, Image, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from 'react-native';
 
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as ImagePicker from 'expo-image-picker';
+import { useColorScheme } from 'react-native';
 import 'react-native-get-random-values';
 import Svg, { Path, Polygon, Text as SvgText } from 'react-native-svg';
-import Ionicons from 'react-native-vector-icons/Ionicons';
 import { v4 as uuidv4 } from 'uuid';
+import { Colors } from '../constants/theme';
 
 export default function BaseControlForm({
   project,
@@ -30,7 +33,8 @@ export default function BaseControlForm({
 }) {
   // State för deltagar-modalens fält (måste ligga här!)
   const [participantName, setParticipantName] = useState('');
-  const [participantCompany, setParticipantCompany] = useState('');
+  // expandedChecklist is declared above (moved earlier)
+  const [sectionMenuIndex, setSectionMenuIndex] = useState(null);
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
   const [editParticipantIndex, setEditParticipantIndex] = useState(null);
@@ -38,6 +42,35 @@ export default function BaseControlForm({
   const nameRef = useRef();
   const companyRef = useRef();
   const roleRef = useRef();
+
+  // Enable LayoutAnimation on Android
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  // Keep all sections closed by default; user will open manually (accordion behavior)
+
+  const markAllOk = (sectionIdx) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setChecklist(prev => prev.map((s, idx) => {
+      if (idx !== sectionIdx) return s;
+      const statuses = Array((s.points || []).length).fill('ok');
+      return { ...s, statuses };
+    }));
+    setSectionMenuIndex(null);
+  };
+
+  const clearAllPhotos = (sectionIdx) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setChecklist(prev => prev.map((s, idx) => {
+      if (idx !== sectionIdx) return s;
+      const photos = Array((s.points || []).length).fill([]);
+      return { ...s, photos };
+    }));
+    setSectionMenuIndex(null);
+  };
   const phoneRef = useRef();
   // Add state for draftId and selectedWeather
   const [draftId, setDraftId] = useState(initialValues.id || null);
@@ -46,6 +79,23 @@ export default function BaseControlForm({
   const [qualityDesc, setQualityDesc] = useState(initialValues.qualityDesc || '');
   const [coverageDesc, setCoverageDesc] = useState(initialValues.coverageDesc || '');
   const [mottagningsSignatures, setMottagningsSignatures] = useState(initialValues.mottagningsSignatures || []);
+  // Normalize mottagningsPhotos to array of objects { uri, comment }
+  const normalizePhotos = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(p => {
+      if (!p) return null;
+      if (typeof p === 'string') return { uri: p, comment: '' };
+      if (typeof p === 'object' && p.uri) return { uri: p.uri, comment: p.comment || '' };
+      return null;
+    }).filter(Boolean);
+  };
+  const [mottagningsPhotos, setMottagningsPhotos] = useState(() => normalizePhotos(initialValues.mottagningsPhotos || []));
+  const [showPhotoChoice, setShowPhotoChoice] = useState(false);
+  const _theme = useColorScheme() || 'light';
+  const tintColor = (Colors && Colors[_theme] && Colors[_theme].tint) ? Colors[_theme].tint : '#1976D2';
+  // Ensure visibility: if tintColor is pure white (dark theme), use a contrasting fallback
+  const visibleTint = (tintColor === '#fff' || tintColor === '#ffffff') ? '#0a7ea4' : tintColor;
+  const onTintColor = (tintColor === '#fff' || tintColor === '#ffffff') ? '#000' : '#fff';
   // const bottomSheetRef = useReactRef(null);
   // The misplaced Modal and logic block above was removed because it must be inside a component or function, not at the top level.
   // If you want to use this Modal, move it inside your component's return statement or a function.
@@ -74,11 +124,27 @@ export default function BaseControlForm({
       setPhotoModal({ visible: false, uris: [], index: 0 });
       return;
     }
-    const uri = uris[index];
+    const photoObj = uris[index];
+    const uri = photoObj ? photoObj.uri : null;
     if (!uri) {
       setPhotoModal({ visible: false, uris: [], index: 0 });
       return;
     }
+    // First try to delete from centralized mottagningsPhotos (if present)
+    try {
+      const mp = mottagningsPhotos || [];
+      const foundIndex = mp.findIndex(p => p && p.uri === uri);
+      if (foundIndex !== -1) {
+        const newMp = mp.filter(p => p && p.uri !== uri);
+        setMottagningsPhotos(newMp);
+        mottagningsPhotosRef.current = newMp;
+        const newUris = uris.filter((u, i) => i !== index);
+        const newIndex = Math.max(0, index - 1);
+        setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
+        return;
+      }
+    } catch (e) {}
+    // Otherwise fall back to deleting from checklist photos
     const prev = checklistRef.current || [];
     let found = false;
     const newChecklist = prev.map(section => {
@@ -108,6 +174,9 @@ export default function BaseControlForm({
       setPhotoModal({ visible: false, uris: [], index: 0 });
     }
   };
+  // Ref to avoid stale closures for mottagningsPhotos
+  const mottagningsPhotosRef = useRef(mottagningsPhotos);
+  useEffect(() => { mottagningsPhotosRef.current = mottagningsPhotos; }, [mottagningsPhotos]);
   // Only initialize checklist ONCE, never re-initialize from checklistConfig after mount
   // Checklist state: restore from route.params if present, else initialize
   // Predefined sections for Mottagningskontroll (option B - pre-filled rows)
@@ -198,6 +267,7 @@ export default function BaseControlForm({
   const initialQualityDesc = useMemo(() => initialValues.qualityDesc || '', [initialValues.qualityDesc]);
   const initialCoverageDesc = useMemo(() => initialValues.coverageDesc || '', [initialValues.coverageDesc]);
   const initialMottagningsSignatures = useMemo(() => initialValues.mottagningsSignatures || [], [initialValues.mottagningsSignatures]);
+  const initialMottagningsPhotos = useMemo(() => initialValues.mottagningsPhotos || [], [initialValues.mottagningsPhotos]);
 
   // Helper to compare arrays/objects shallowly
   function shallowEqual(a, b) {
@@ -256,8 +326,9 @@ export default function BaseControlForm({
     if (qualityDesc !== initialQualityDesc) return true;
     if (coverageDesc !== initialCoverageDesc) return true;
     if (!shallowEqual(mottagningsSignatures, initialMottagningsSignatures)) return true;
+    if (!shallowEqual(mottagningsPhotos, initialMottagningsPhotos)) return true;
     return false;
-  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, materialDesc, qualityDesc, coverageDesc, mottagningsSignatures, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote, initialMaterialDesc, initialQualityDesc, initialCoverageDesc, initialMottagningsSignatures]);
+  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, materialDesc, qualityDesc, coverageDesc, mottagningsSignatures, mottagningsPhotos, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote, initialMaterialDesc, initialQualityDesc, initialCoverageDesc, initialMottagningsSignatures, initialMottagningsPhotos]);
   // Keep isDirtyRef in sync with latest computed isDirty
   useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
@@ -298,41 +369,117 @@ export default function BaseControlForm({
           project,
           savedChecklist: checklist,
           returnScreen: route.name || null,
+          autoSave: controlType === 'Mottagningskontroll',
+          mottagningsPhotos: mottagningsPhotosRef.current || [],
         });
       };
+
+    const handlePickFromLibrary = async () => {
+      try {
+        setShowPhotoChoice(false);
+        // Try to get current permission first, then request if needed
+        let perm = null;
+        try {
+          if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
+            perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+          }
+        } catch (e) {}
+        if (!perm || !(perm.granted === true || perm.status === 'granted')) {
+          try {
+            perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          } catch (e) {
+            // fall through
+          }
+        }
+        const ok = (perm && (perm.granted === true || perm.status === 'granted'));
+        if (!ok) {
+          alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
+          return;
+        }
+        // Allow multiple selection where supported and keep quality
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsMultipleSelection: true });
+        console.log('[BaseControlForm] imagePicker result:', res);
+        // Handle new API shapes: res.canceled + res.assets OR res.selectedAssets
+        const extractAssets = (r) => {
+          if (!r) return [];
+          if (Array.isArray(r.assets) && r.assets.length) return r.assets;
+          if (Array.isArray(r.selectedAssets) && r.selectedAssets.length) return r.selectedAssets;
+          // legacy
+          if (r.uri) return [{ uri: r.uri }];
+          if (r.cancelled === false && r.uri) return [{ uri: r.uri }];
+          return [];
+        };
+        const assets = extractAssets(res);
+        if (assets && assets.length > 0) {
+          const photos = assets.map(a => ({ uri: a.uri || a.uriString || a.localUri || a.base64 ? (a.uri || a.uriString || a.localUri) : null, comment: '' })).filter(p => p.uri);
+          if (photos.length > 0) {
+            const prev = mottagningsPhotosRef.current || [];
+            const next = [...prev, ...photos];
+            setMottagningsPhotos(next);
+            mottagningsPhotosRef.current = next;
+          }
+        } else {
+          // User cancelled or no assets
+          // No-op
+        }
+      } catch (e) {
+        console.warn('Image pick error', e);
+        alert('Kunde inte välja bild: ' + (e?.message || e));
+      }
+    };
   // Guarded camera result handling to avoid re-processing and param cycles
   const cameraHandledRef = useRef(false);
   useEffect(() => {
     const cameraResult = route.params?.cameraResult;
     if (cameraResult && !cameraHandledRef.current) {
       cameraHandledRef.current = true;
-      const { uri, sectionIdx, pointIdx } = cameraResult;
-      if (uri && sectionIdx !== undefined && pointIdx !== undefined) {
-        // Build new checklist from current ref to avoid stale closures
-        const prev = checklistRef.current || [];
-        const newChecklist = prev.map((section, sIdx) => {
-          if (sIdx !== sectionIdx) return section;
-          const points = Array.isArray(section.points) ? section.points : [];
-          let photos = Array.isArray(section.photos) && section.photos.length === points.length
-            ? [...section.photos]
-            : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
-          if (!Array.isArray(photos[pointIdx])) photos[pointIdx] = photos[pointIdx] ? [photos[pointIdx]] : [];
-          photos[pointIdx] = [...photos[pointIdx], uri];
-          return { ...section, photos, points };
-        });
-        // Apply and sync ref
-        setChecklist(newChecklist);
-        checklistRef.current = newChecklist;
-        setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
-        // Update params only if savedChecklist differs to avoid cycles
+      const { uri, sectionIdx, pointIdx, returnedMottagningsPhotos } = cameraResult;
+      if (returnedMottagningsPhotos && Array.isArray(returnedMottagningsPhotos)) {
         try {
-          const remoteSaved = route.params?.savedChecklist;
-          if (!shallowEqual(remoteSaved, newChecklist)) {
-            navigation.setParams({ cameraResult: undefined, savedChecklist: newChecklist });
-          } else {
-            navigation.setParams({ cameraResult: undefined });
-          }
+          // Normalize returned items if they are strings
+          const norm = normalizePhotos(returnedMottagningsPhotos);
+          setMottagningsPhotos(norm);
+          mottagningsPhotosRef.current = norm;
+          try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
         } catch (e) {}
+      } else if (uri) {
+        if (controlType === 'Mottagningskontroll') {
+          try {
+            const prevMp = mottagningsPhotosRef.current || [];
+            const newItem = { uri, comment: '' };
+            const newMp = [...prevMp, newItem];
+            setMottagningsPhotos(newMp);
+            mottagningsPhotosRef.current = newMp;
+            // Clear cameraResult param to avoid re-processing
+            try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+          } catch (e) {}
+        } else if (sectionIdx !== undefined && pointIdx !== undefined) {
+          // Build new checklist from current ref to avoid stale closures
+          const prev = checklistRef.current || [];
+          const newChecklist = prev.map((section, sIdx) => {
+            if (sIdx !== sectionIdx) return section;
+            const points = Array.isArray(section.points) ? section.points : [];
+            let photos = Array.isArray(section.photos) && section.photos.length === points.length
+              ? [...section.photos]
+              : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
+            if (!Array.isArray(photos[pointIdx])) photos[pointIdx] = photos[pointIdx] ? [photos[pointIdx]] : [];
+            photos[pointIdx] = [...photos[pointIdx], uri];
+            return { ...section, photos, points };
+          });
+          // Apply and sync ref
+          setChecklist(newChecklist);
+          checklistRef.current = newChecklist;
+          setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
+          // Update params only if savedChecklist differs to avoid cycles
+          try {
+            const remoteSaved = route.params?.savedChecklist;
+            if (!shallowEqual(remoteSaved, newChecklist)) {
+              navigation.setParams({ cameraResult: undefined, savedChecklist: newChecklist });
+            } else {
+              navigation.setParams({ cameraResult: undefined });
+            }
+          } catch (e) {}
+        }
       }
     }
     // Reset cameraHandledRef when cameraResult becomes undefined so future captures work
@@ -398,7 +545,9 @@ export default function BaseControlForm({
         qualityDesc,
         coverageDesc,
         mottagningsSignatures,
+        mottagningsPhotos,
         checklist,
+        expandedChecklist,
         deliveryDesc,
         generalNote,
         type: controlType,
@@ -433,7 +582,9 @@ export default function BaseControlForm({
       qualityDesc,
       coverageDesc,
       mottagningsSignatures,
+      mottagningsPhotos,
       checklist,
+      expandedChecklist,
       deliveryDesc,
       generalNote,
       type: controlType,
@@ -469,7 +620,9 @@ export default function BaseControlForm({
       qualityDesc,
       coverageDesc,
       mottagningsSignatures,
+      mottagningsPhotos,
       checklist,
+      expandedChecklist,
       deliveryDesc,
       generalNote,
       type: controlType,
@@ -571,7 +724,7 @@ export default function BaseControlForm({
               }}>
                 {/* Försök visa rätt aspect ratio */}
                 <Image
-                  source={{ uri: photoModal.uris[photoModal.index] }}
+                  source={{ uri: (photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].uri) ? photoModal.uris[photoModal.index].uri : photoModal.uris[photoModal.index] }}
                   style={(() => {
                     // Om vi i framtiden spar orientation i uri-objektet, kan vi använda det här
                     // Just nu: defaulta till 4:3 (stående)
@@ -590,10 +743,38 @@ export default function BaseControlForm({
                   onTouchEnd={(e) => handleTouchEnd(e, photoModal.uris, photoModal.index)}
                 />
               </View>
-              <View style={{ flexDirection: 'row', marginTop: 18, alignItems: 'center', justifyContent: 'center' }}>
-                {photoModal.uris.map((uri, idx) => (
-                  <View key={`photo-dot-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`} style={{ width: 10, height: 10, borderRadius: 5, margin: 4, backgroundColor: idx === photoModal.index ? '#fff' : '#888' }} />
-                ))}
+              <View style={{ flexDirection: 'column', marginTop: 18, alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
+                  {photoModal.uris.map((p, idx) => (
+                    <View key={`photo-dot-${idx}-${p && p.uri ? p.uri.substring(p.uri.length-8) : idx}`} style={{ width: 8, height: 8, borderRadius: 4, margin: 4, backgroundColor: idx === photoModal.index ? '#fff' : '#888' }} />
+                  ))}
+                </View>
+                {/* Comment input for current photo */}
+                <View style={{ width: '92%', marginTop: 12 }}>
+                  <Text style={{ color: '#fff', marginBottom: 6 }}>Kommentar</Text>
+                  <TextInput
+                    value={(photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].comment) ? photoModal.uris[photoModal.index].comment : ''}
+                    onChangeText={(text) => {
+                      try {
+                        const newUris = (photoModal.uris || []).map((p, i) => i === photoModal.index ? ({ uri: (p && p.uri) ? p.uri : p, comment: text }) : (p && p.uri ? { uri: p.uri, comment: p.comment || '' } : p));
+                        setPhotoModal({ ...photoModal, uris: newUris });
+                        // Persist to mottagningsPhotos if central
+                        const current = photoModal.uris[photoModal.index];
+                        const currentUri = current && current.uri ? current.uri : current;
+                        const mp = mottagningsPhotosRef.current || [];
+                        const idxFound = mp.findIndex(x => x && x.uri === currentUri);
+                        if (idxFound !== -1) {
+                          const mpNew = mp.map((x, xi) => xi === idxFound ? ({ uri: x.uri, comment: text }) : x);
+                          setMottagningsPhotos(mpNew);
+                          mottagningsPhotosRef.current = mpNew;
+                        }
+                      } catch (e) {}
+                    }}
+                    placeholder="Lägg till kommentar till bilden..."
+                    placeholderTextColor="#ddd"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff' }}
+                  />
+                </View>
               </View>
               {/* Action buttons under image */}
               <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 32 }}>
@@ -1102,42 +1283,58 @@ export default function BaseControlForm({
                 <View key={section.id ? `section-${section.id}` : btoa(unescape(encodeURIComponent(section.label))) + '-' + sectionIdx} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: sectionHeaderBg }}
-                  onPress={() => setExpandedChecklist(prev => prev.includes(sectionIdx) ? [] : [sectionIdx])}
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    setExpandedChecklist(prev => prev.includes(sectionIdx) ? [] : [sectionIdx]);
+                  }}
                   activeOpacity={0.7}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   accessibilityRole="button"
                   accessibilityLabel={`Visa eller dölj ${section.label}`}
                 >
                   <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={20} color={'#1976D2'} style={{ marginRight: 8 }} />
-                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText, flex: 1 }}>{section.label}</Text>
-                  {/* Visa fotoikon om något foto finns */}
+                  <View style={{ flex: 1, flexDirection: 'column' }}>
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText }}>{section.label}</Text>
+                    {(() => {
+                      const deviationCount = (sectionStatuses || []).filter(s => s === 'avvikelse').length;
+                      const okCount = (sectionStatuses || []).filter(s => s === 'ok').length;
+                      const total = (section.points || []).length || 0;
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                          <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginRight: 8 }}>
+                            <Text style={{ fontSize: 12, color: '#43A047', fontWeight: '600' }}>{`${okCount}/${total} godkända`}</Text>
+                          </View>
+                          {deviationCount > 0 && (
+                            <View style={{ backgroundColor: '#FFF8E1', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+                              <Text style={{ fontSize: 12, color: '#F57C00', fontWeight: '600' }}>{`${deviationCount}/${total} avvikelse`}</Text>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                  {/* Camera / check icons */}
                   {hasPhoto && (
-                    <Ionicons name="camera" size={22} color="#1976D2" style={{ marginLeft: 8 }} />
+                    <Ionicons name="camera" size={20} color="#1976D2" style={{ marginLeft: 8 }} />
                   )}
-                  {/* Visa varning om någon avvikelse finns */}
-                  {hasAvvikelse && (
-                    <View style={{ marginLeft: 8 }}>
-                      <Svg width={22} height={22} viewBox="0 0 24 24">
-                        <Polygon points="12,2 22,20 2,20" fill="#FFD600" stroke="#111" strokeWidth="1" />
-                        <SvgText
-                          x="12"
-                          y="14"
-                          fontSize="13"
-                          fontWeight="bold"
-                          fill="#111"
-                          textAnchor="middle"
-                          alignmentBaseline="middle"
-                        >
-                          !
-                        </SvgText>
-                      </Svg>
-                    </View>
-                  )}
-                  {/* Visa grön check om alla är ifyllda och ingen avvikelse */}
-                  {showGreenCheck && (
-                    <Ionicons name="checkmark-circle" size={22} color="#43A047" style={{ marginLeft: 8 }} />
-                  )}
+                  {/* Section menu button */}
+                  <TouchableOpacity onPress={(e) => { e.stopPropagation && e.stopPropagation(); setSectionMenuIndex(prev => prev === sectionIdx ? null : sectionIdx); }} style={{ marginLeft: 10, padding: 6 }} accessibilityLabel={`Sektion meny ${section.label}`}>
+                    <Ionicons name="ellipsis-vertical" size={18} color="#666" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
+                {sectionMenuIndex === sectionIdx && (
+                  <View style={{ paddingHorizontal: 14, paddingBottom: 8, backgroundColor: '#fff' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                      <TouchableOpacity onPress={() => markAllOk(sectionIdx)} style={{ marginRight: 12 }}>
+                        <Text style={{ color: '#1976D2' }}>Markera alla OK</Text>
+                      </TouchableOpacity>
+                          {/* Removed "Radera alla foton" as requested */}
+                      <TouchableOpacity onPress={() => setSectionMenuIndex(null)}>
+                        <Text style={{ color: '#777' }}>Stäng</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
                 {expanded && (
                   <View style={{ padding: 10, paddingTop: 0 }}>
                     {section.points.map((point, pointIdx) => {
@@ -1246,39 +1443,41 @@ export default function BaseControlForm({
                             placeholderTextColor="#bbb"
                             multiline
                           />
-                          {/* Photo upload button */}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                            <TouchableOpacity
-                              style={{ flexDirection: 'row', alignItems: 'center' }}
-                              onPress={() => handleNavigateToCamera(sectionIdx, pointIdx, project)}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityRole="button"
-                            >
-                              <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
-                              <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
-                            </TouchableOpacity>
-                            {/* Visa miniatyrer om bilder finns */}
-                            {(() => {
-                              const photos = checklist[sectionIdx]?.photos || [];
-                              const photoArr = Array.isArray(photos[pointIdx]) ? photos[pointIdx] : (photos[pointIdx] ? [photos[pointIdx]] : []);
-                              if (photoArr && photoArr.length > 0) {
-                                return (
-                                  <View style={{ flexDirection: 'row', marginLeft: 10 }}>
-                                    {photoArr.map((uri, idx) => (
-                                      <TouchableOpacity
-                                        key={`photo-thumb-${sectionIdx}-${pointIdx}-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`}
-                                        onPress={() => setPhotoModal({ visible: true, uris: photoArr, index: idx })}
-                                        activeOpacity={0.8}
-                                      >
-                                        <Image source={{ uri }} style={{ width: 44, height: 44, borderRadius: 8, borderWidth: 1, borderColor: '#bbb', marginRight: 6, backgroundColor: '#eee', resizeMode: 'cover' }} />
-                                      </TouchableOpacity>
-                                    ))}
-                                  </View>
-                                );
-                              }
-                              return null;
-                            })()}
-                          </View>
+                          {/* Photo upload button + thumbnails (hidden per-point for Mottagningskontroll) */}
+                          {controlType !== 'Mottagningskontroll' && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                              <TouchableOpacity
+                                style={{ flexDirection: 'row', alignItems: 'center' }}
+                                onPress={() => handleNavigateToCamera(sectionIdx, pointIdx, project)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityRole="button"
+                              >
+                                <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
+                                <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
+                              </TouchableOpacity>
+                              {/* Visa miniatyrer om bilder finns */}
+                              {(() => {
+                                const photos = checklist[sectionIdx]?.photos || [];
+                                const photoArr = Array.isArray(photos[pointIdx]) ? photos[pointIdx] : (photos[pointIdx] ? [photos[pointIdx]] : []);
+                                if (photoArr && photoArr.length > 0) {
+                                  return (
+                                    <View style={{ flexDirection: 'row', marginLeft: 10 }}>
+                                      {photoArr.map((uri, idx) => (
+                                        <TouchableOpacity
+                                          key={`photo-thumb-${sectionIdx}-${pointIdx}-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`}
+                                          onPress={() => setPhotoModal({ visible: true, uris: photoArr, index: idx })}
+                                          activeOpacity={0.8}
+                                        >
+                                          <Image source={{ uri }} style={{ width: 44, height: 44, borderRadius: 8, borderWidth: 1, borderColor: '#bbb', marginRight: 6, backgroundColor: '#eee', resizeMode: 'cover' }} />
+                                        </TouchableOpacity>
+                                      ))}
+                                    </View>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </View>
+                          )}
                         </View>
                       );
                     })}
@@ -1330,7 +1529,34 @@ export default function BaseControlForm({
         </View>
       )}
       {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
-      {/* Signature section moved here (after Sammanställning) */}
+          {/* Centralized photos (for Mottagningskontroll) */}
+          {controlType === 'Mottagningskontroll' && (
+            <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+              <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
+              <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }}>Foton</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', marginTop: 8 }}>
+                <TouchableOpacity onPress={() => setShowPhotoChoice(true)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#000', backgroundColor: 'transparent' }}>
+                  <Ionicons name="camera" size={20} color="#000" style={{ marginRight: 8 }} />
+                  <Text style={{ color: '#000', fontWeight: '600' }}>Lägg till foto</Text>
+                </TouchableOpacity>
+              </View>
+              {Array.isArray(mottagningsPhotos) && mottagningsPhotos.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                  {mottagningsPhotos.map((uri, idx) => (
+                    <TouchableOpacity key={`m-photo-${idx}-${(uri && uri.uri) ? uri.uri.substring(uri.uri.length-8) : idx}`} onPress={() => setPhotoModal({ visible: true, uris: mottagningsPhotos, index: idx })} activeOpacity={0.85} style={{ marginRight: 8 }}>
+                      <Image source={{ uri: uri && uri.uri ? uri.uri : uri }} style={{ width: 84, height: 84, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#eee' }} />
+                      {uri && uri.comment ? (
+                        <View style={{ position: 'absolute', left: 6, right: 6, bottom: 6, backgroundColor: 'rgba(0,0,0,0.45)', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6 }}>
+                          <Text numberOfLines={1} style={{ color: '#fff', fontSize: 12 }}>{uri.comment}</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
+          {/* Signature section moved here (after Sammanställning) */}
       {controlType === 'Mottagningskontroll' && (
         <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
@@ -1432,6 +1658,30 @@ export default function BaseControlForm({
               </KeyboardAvoidingView>
             </View>
           )}
+          <Modal visible={showPhotoChoice} transparent animationType="fade" onRequestClose={() => setShowPhotoChoice(false)}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+              <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
+                    <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                      <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }}>Bifoga bild</Text>
+                    </View>
+                    <View style={{ padding: 16 }}>
+                      <TouchableOpacity onPress={() => { setShowPhotoChoice(false); handleNavigateToCamera(null, null, project); }} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="camera" size={20} color="#000" style={{ marginRight: 10 }} />
+                        <Text style={{ color: '#1976D2', fontSize: 16 }}>Ta foto</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => { setShowPhotoChoice(false); handlePickFromLibrary(); }} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="images" size={20} color="#000" style={{ marginRight: 10 }} />
+                        <Text style={{ color: '#1976D2', fontSize: 16 }}>Välj från bibliotek</Text>
+                      </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+                    <TouchableOpacity onPress={() => setShowPhotoChoice(false)} style={{ padding: 8 }}>
+                      <Text style={{ color: '#777' }}>Avbryt</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Modal>
         </View>
       )}
       <View style={{

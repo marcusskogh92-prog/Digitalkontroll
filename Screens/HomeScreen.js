@@ -79,11 +79,123 @@ export default function HomeScreen({ route, navigation }) {
         resetProjectFields();
       }}
     >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
-        <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-          {/* ...existing content for new project modal... */}
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={() => {
+          setNewProjectModal({ visible: false, parentSubId: null });
+          resetProjectFields();
+        }}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
+      >
+        <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 20, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+            onPress={() => {
+              setNewProjectModal({ visible: false, parentSubId: null });
+              resetProjectFields();
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="close" size={26} color="#222" />
+          </TouchableOpacity>
+
+          <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center', marginTop: 6 }}>Skapa nytt projekt</Text>
+
+          <TextInput
+            value={newProjectNumber}
+            onChangeText={setNewProjectNumber}
+            placeholder="Projektnummer..."
+            style={{
+              borderWidth: 1,
+              borderColor: newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber) ? '#D32F2F' : '#e0e0e0',
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 16,
+              marginBottom: 10,
+              backgroundColor: '#fafafa',
+              color: !isProjectNumberUnique(newProjectNumber) && newProjectNumber.trim() !== '' ? '#D32F2F' : '#222'
+            }}
+            autoFocus
+            keyboardType="default"
+          />
+          {newProjectNumber.trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 6 }}>
+              <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>Projektnummer används redan.</Text>
+            </View>
+          )}
+
+          <TextInput
+            value={newProjectName}
+            onChangeText={setNewProjectName}
+            placeholder="Projektnamn..."
+            placeholderTextColor="#888"
+            style={{
+              borderWidth: 1,
+              borderColor: newProjectName.trim() === '' ? '#D32F2F' : '#e0e0e0',
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 16,
+              marginBottom: 12,
+              backgroundColor: '#fafafa',
+              color: '#222'
+            }}
+            keyboardType="default"
+          />
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1976D2',
+                borderRadius: 8,
+                paddingVertical: 12,
+                alignItems: 'center',
+                flex: 1,
+                marginRight: 8,
+                opacity: (newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)) ? 0.5 : 1
+              }}
+              disabled={newProjectName.trim() === '' || newProjectNumber.trim() === '' || !isProjectNumberUnique(newProjectNumber)}
+              onPress={() => {
+                // Insert new project into selected subfolder
+                setHierarchy(prev => prev.map(main => ({
+                  ...main,
+                  children: main.children.map(sub =>
+                    sub.id === newProjectModal.parentSubId
+                      ? {
+                          ...sub,
+                          children: [
+                            ...(sub.children || []),
+                            {
+                              id: newProjectNumber.trim(),
+                              name: newProjectName.trim(),
+                              type: 'project',
+                              status: 'ongoing',
+                              createdAt: new Date().toISOString()
+                            }
+                          ]
+                        }
+                      : sub
+                  )
+                })));
+                setNewProjectModal({ visible: false, parentSubId: null });
+                resetProjectFields();
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Skapa</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
+              onPress={() => {
+                setNewProjectModal({ visible: false, parentSubId: null });
+                resetProjectFields();
+              }}
+            >
+              <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </TouchableOpacity>
     </Modal>
   );
     // Ref for main folder long press timers
@@ -189,8 +301,11 @@ export default function HomeScreen({ route, navigation }) {
     (async () => {
       try {
         const saved = await AsyncStorage.getItem('hierarchy');
+        console.log('[HomeScreen] loaded hierarchy from AsyncStorage:', saved ? (saved.length > 200 ? saved.substring(0,200) + '... (truncated)' : saved) : null);
         if (saved) {
           setHierarchy(JSON.parse(saved));
+        } else {
+          console.log('[HomeScreen] no saved hierarchy found in AsyncStorage');
         }
       } catch (e) {
         // ignore

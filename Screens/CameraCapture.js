@@ -1,9 +1,10 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { Camera, CameraView } from 'expo-camera';
+import * as CameraModule from 'expo-camera';
+import { Camera } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const PRIMARY = '#263238';
 
@@ -15,10 +16,78 @@ export default function CameraCapture() {
   const [cameraRef, setCameraRef] = useState(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoComment, setPhotoComment] = useState('');
   const [orientation, setOrientation] = useState('portrait');
   const [pictureSize, setPictureSize] = useState(null);
   const cameraViewRef = useRef(null);
-  // Ingen separat aspect state behövs, vi styr via orientation
+  const scrollRef = useRef(null);
+  // Resolve Camera component robustly across Expo versions / bundlers
+  // We will pick the first entry that is actually a renderable component (function/class)
+  let CameraComponent = null;
+  try {
+    // Prefer CameraView if available (some builds expose CameraView as the host component)
+    if (CameraModule && CameraModule.CameraView) CameraComponent = CameraModule.CameraView;
+    else if (typeof Camera === 'function') CameraComponent = Camera;
+    else if (CameraModule) {
+      if (typeof CameraModule.Camera === 'function') CameraComponent = CameraModule.Camera;
+      else if (typeof CameraModule.default === 'function') CameraComponent = CameraModule.default;
+      else if (CameraModule.Camera) CameraComponent = CameraModule.Camera; // fallback even if object
+      else CameraComponent = null;
+    }
+  } catch (e) {
+    CameraComponent = null;
+  }
+  // Log resolved shape to help debug incorrect module shapes at runtime
+  try { console.log('[CameraCapture] Resolved CameraComponent type:', typeof CameraComponent, 'keys:', CameraModule && Object.keys(CameraModule || {})); } catch (e) {}
+  try { if (CameraComponent && typeof CameraComponent === 'object') console.warn('[CameraCapture] CameraComponent resolved to object — attempting to use CameraView fallback if available'); } catch (e) {}
+  const resolvedInfo = (() => {
+    try {
+      return { type: typeof CameraComponent, keys: CameraModule ? Object.keys(CameraModule || {}) : [] };
+    } catch (e) {
+      return { type: typeof CameraComponent, keys: [] };
+    }
+  })();
+
+  // Exposed permission check so UI can retry if needed
+  const checkCameraPermission = async () => {
+    try {
+      let perm = null;
+      const tryFns = [
+        'getCameraPermissionsAsync',
+        'requestCameraPermissionsAsync',
+        'getPermissionsAsync',
+        'requestPermissionsAsync'
+      ];
+      for (const fn of tryFns) {
+        try {
+          if (CameraModule && typeof CameraModule[fn] === 'function') {
+            perm = await CameraModule[fn]();
+            if (perm) break;
+          }
+          if (CameraModule && CameraModule.Camera && typeof CameraModule.Camera[fn] === 'function') {
+            perm = await CameraModule.Camera[fn]();
+            if (perm) break;
+          }
+        } catch (e) {}
+      }
+      console.log('[CameraCapture] camera permission result:', perm);
+      if (!perm) {
+        console.warn('[CameraCapture] No camera permission API available on this platform');
+        setHasPermission(false);
+        Alert.alert('Kamerabehörighet', 'Kan inte kontrollera kamerabehörighet på denna plattform.');
+        return;
+      }
+      const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
+      setHasPermission(status === 'granted');
+      if (status !== 'granted') {
+        Alert.alert('Kamerabehörighet krävs', 'Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet om du vill ta foto.', [{ text: 'OK', onPress: () => {} }]);
+      }
+    } catch (err) {
+      console.error('[CameraCapture] permission check error', err);
+      Alert.alert('Fel vid kontroll av kamerabehörighet', String(err?.message || err));
+      setHasPermission(false);
+    }
+  };
 
   useEffect(() => {
     const handleOrientation = () => {
@@ -31,20 +100,18 @@ export default function CameraCapture() {
       if (subscription && typeof subscription.remove === 'function') {
         subscription.remove();
       } else if (typeof subscription === 'function') {
-        // For older RN versions
         subscription();
       }
     };
   }, []);
 
-  // Hämta tillgängliga 4:3-storlekar och välj en (t.ex. största)
   useEffect(() => {
     (async () => {
       if (cameraViewRef.current) {
         try {
-          const sizes = await cameraViewRef.current.getAvailablePictureSizesAsync('4:3');
+          const desiredRatio = orientation === 'portrait' ? '3:4' : '4:3';
+          const sizes = await cameraViewRef.current.getAvailablePictureSizesAsync(desiredRatio);
           if (sizes && sizes.length > 0) {
-            // Välj största 4:3-storlek
             const sorted = sizes.sort((a, b) => {
               const [aw, ah] = a.split('x').map(Number);
               const [bw, bh] = b.split('x').map(Number);
@@ -53,52 +120,30 @@ export default function CameraCapture() {
             setPictureSize(sorted[0]);
           }
         } catch (e) {
-          // fallback: ingen pictureSize
+          // ignore
         }
       }
     })();
-  }, [cameraViewRef.current]);
+  }, [cameraViewRef.current, orientation]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { status, canAskAgain, granted, expires } = await Camera.requestCameraPermissionsAsync();
-        console.log('[CameraCapture] Camera permission status:', status, { granted, canAskAgain, expires });
-        setHasPermission(status === 'granted');
-        if (status !== 'granted') {
-          Alert.alert(
-            'Kamerabehörighet krävs',
-            'Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet om du vill ta foto.',
-            [
-              { text: 'OK', onPress: () => {} }
-            ]
-          );
-        }
-      } catch (err) {
-        console.error('[CameraCapture] Fel vid kontroll av kamerabehörighet:', err);
-        Alert.alert('Fel vid kontroll av kamerabehörighet', String(err?.message || err));
-        setHasPermission(false);
-      }
-    })();
+    // call the permission check that is declared below
+    if (typeof checkCameraPermission === 'function') checkCameraPermission();
   }, []);
 
   const handleCapture = async () => {
     try {
       if (!cameraRef || isCapturing) return;
       setIsCapturing(true);
-      // Använd pictureSize om satt
       const options = { quality: 0.8 };
       if (pictureSize) options.pictureSize = pictureSize;
       const photo = await cameraRef.takePictureAsync(options);
 
       let finalPhoto = photo;
-      // Cropping logic for portrait mode to ensure 4:3
       if (orientation === 'portrait' && photo && photo.width && photo.height) {
-        // Only crop if not already 4:3
         const targetRatio = 4 / 3;
         const actualRatio = photo.height / photo.width;
         if (Math.abs(actualRatio - targetRatio) > 0.01) {
-          // Crop to 4:3 (height = width * 4/3)
           const cropWidth = photo.width;
           const cropHeight = Math.round(photo.width * 4 / 3);
           if (cropHeight <= photo.height) {
@@ -110,7 +155,6 @@ export default function CameraCapture() {
             );
             finalPhoto = { ...manipResult, _orientation: orientation };
           } else {
-            // fallback: don't crop if image is too small
             finalPhoto = { ...photo, _orientation: orientation };
           }
         } else {
@@ -121,12 +165,17 @@ export default function CameraCapture() {
       }
 
       setPhotoPreview(finalPhoto);
+      setPhotoComment('');
     } catch (e) {
       Alert.alert('Fel vid fotografering', String(e?.message || e));
     } finally {
       setIsCapturing(false);
     }
   };
+
+  useEffect(() => {
+    // placeholder for autoSave behavior
+  }, [route.params?.autoSave]);
 
   if (hasPermission === null) {
     return <View style={styles.container}><Text style={{ color: '#666' }}>Begär behörighet... (se logg för detaljer)</Text></View>;
@@ -138,21 +187,27 @@ export default function CameraCapture() {
         <Text style={{ color: '#666', marginBottom: 12, textAlign: 'center' }}>
           Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet, starta om appen och försök igen.
         </Text>
-        <TouchableOpacity style={styles.secondaryAction} onPress={() => navigation.goBack()}>
-          <MaterialIcons name="arrow-back" size={18} color={PRIMARY} />
-          <Text style={styles.secondaryActionText}>Tillbaka</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <TouchableOpacity style={styles.secondaryAction} onPress={() => navigation.goBack()}>
+            <MaterialIcons name="arrow-back" size={18} color={PRIMARY} />
+            <Text style={styles.secondaryActionText}>Tillbaka</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.secondaryAction, { marginLeft: 12 }]} onPress={() => checkCameraPermission()}>
+            <MaterialIcons name="autorenew" size={18} color={PRIMARY} />
+            <Text style={styles.secondaryActionText}>Be om behörighet</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
 
   if (photoPreview) {
-    // Visa preview med rätt aspect ratio
     const isPortrait = photoPreview._orientation === 'portrait';
-    const aspectRatio = isPortrait ? 4 / 3 : 3 / 4;
+    const aspectRatio = isPortrait ? 3 / 4 : 4 / 3;
     return (
-      <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-        <Image
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#000' }} behavior={Platform.OS === 'ios' ? 'padding' : 'position'} keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 120}>
+        <ScrollView ref={scrollRef} contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-start', alignItems: 'center', paddingTop: 24 }} keyboardShouldPersistTaps="handled">
+          <Image
           source={{ uri: photoPreview.uri }}
           style={{
             width: isPortrait ? '92%' : undefined,
@@ -167,25 +222,44 @@ export default function CameraCapture() {
             backgroundColor: '#111',
           }}
         />
+          <View style={{ width: '92%', marginTop: 12 }}>
+          <Text style={{ color: '#fff', marginBottom: 6 }}>Kommentar</Text>
+          <TextInput
+            value={photoComment}
+            onChangeText={(t) => setPhotoComment(t)}
+            placeholder="Lägg till kommentar till bilden..."
+            placeholderTextColor="#ddd"
+            multiline
+            numberOfLines={3}
+            blurOnSubmit={true}
+            onFocus={() => {
+              // Delay to allow keyboard to open then scroll the input into view
+              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch (e) {} }, 120);
+            }}
+            returnKeyType="done"
+            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch (e) {} }}
+            style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff', minHeight: 48 }}
+          />
+        </View>
         <View style={styles.previewButtonBar}>
           <TouchableOpacity
             style={[styles.previewButton, styles.previewButtonRetake]}
-            onPress={() => setPhotoPreview(null)}
+            onPress={() => { setPhotoPreview(null); setPhotoComment(''); }}
             activeOpacity={0.8}
           >
-            <MaterialIcons name="refresh" size={32} color={PRIMARY} style={{ marginBottom: 2 }} />
+            <MaterialIcons name="refresh" size={22} color={PRIMARY} style={{ marginBottom: 2 }} />
             <Text style={styles.previewButtonTextRetake}>Ta om</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.previewButton, styles.previewButtonSave]}
             onPress={() => {
-              // Return to the originating screen (passed in returnScreen) or fallback to SkyddsrondScreen
               const target = route.params?.returnScreen || 'SkyddsrondScreen';
-              navigation.replace(target, {
+              navigation.navigate(target, {
                 cameraResult: {
                   uri: photoPreview.uri,
                   sectionIdx,
-                  pointIdx
+                  pointIdx,
+                  returnedMottagningsPhotos: (route.params?.mottagningsPhotos || []).concat({ uri: photoPreview.uri, comment: photoComment || '' }),
                 },
                 project,
                 savedChecklist: route.params?.savedChecklist
@@ -193,25 +267,38 @@ export default function CameraCapture() {
             }}
             activeOpacity={0.8}
           >
-            <MaterialIcons name="check-circle" size={32} color="#fff" style={{ marginBottom: 2 }} />
+            <MaterialIcons name="check-circle" size={22} color="#fff" style={{ marginBottom: 2 }} />
             <Text style={styles.previewButtonTextSave}>Spara</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      <CameraView
+      {(CameraComponent) ? (
+      <CameraComponent
         style={{ flex: 1 }}
         ref={ref => {
           setCameraRef(ref);
           cameraViewRef.current = ref;
         }}
-        ratio={orientation === 'portrait' ? '4:3' : '3:4'}
+        ratio={orientation === 'portrait' ? '3:4' : '4:3'}
         pictureSize={pictureSize}
       />
+      ) : (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: '#fff', marginBottom: 12 }}>Kunde inte ladda kamerakomponent.</Text>
+          <Text style={{ color: '#fff', marginBottom: 6, fontSize: 12, opacity: 0.9 }}>
+            {'Debug: ' + resolvedInfo.type + (Array.isArray(resolvedInfo.keys) && resolvedInfo.keys.length ? ' (' + resolvedInfo.keys.join(', ') + ')' : '')}
+          </Text>
+          <TouchableOpacity onPress={() => checkCameraPermission()} style={{ padding: 10, backgroundColor: '#fff', borderRadius: 8 }}>
+            <Text style={{ color: PRIMARY }}>Försök igen</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {/* Avbryt-knapp i övre vänstra hörnet */}
       <TouchableOpacity style={styles.cancelButton} onPress={() => navigation.goBack()}>
         <MaterialIcons name="close" size={28} color={PRIMARY} />
@@ -248,26 +335,26 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 16 },
   previewButtonBar: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 24,
-    marginBottom: 8,
-    gap: 32,
+    marginTop: 12,
+    marginBottom: 18,
+    paddingHorizontal: 18,
   },
   previewButton: {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 32,
-    minWidth: 110,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    marginHorizontal: 8,
-    elevation: 4,
+    borderRadius: 20,
+    minWidth: 86,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginHorizontal: 6,
+    elevation: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
   },
   previewButtonRetake: {
     backgroundColor: '#fff',
@@ -281,17 +368,17 @@ const styles = StyleSheet.create({
   },
   previewButtonTextRetake: {
     color: PRIMARY,
-    fontWeight: 'bold',
-    fontSize: 18,
-    marginTop: 2,
-    letterSpacing: 0.5,
+    fontWeight: '700',
+    fontSize: 14,
+    marginTop: 4,
+    letterSpacing: 0.2,
   },
   previewButtonTextSave: {
     color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 18,
-    marginTop: 2,
-    letterSpacing: 0.5,
+    fontWeight: '700',
+    fontSize: 14,
+    marginTop: 4,
+    letterSpacing: 0.2,
   },
   // ...existing code...
   cancelButton: {
@@ -339,5 +426,17 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  // ...existing code...
+  secondaryAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: 'transparent'
+  },
+  secondaryActionText: {
+    color: PRIMARY,
+    marginLeft: 8,
+    fontSize: 14,
+  },
 });
