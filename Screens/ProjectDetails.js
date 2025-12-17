@@ -3,6 +3,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
+import { buildControlPdfHtml } from '../components/pdfExport';
 import React, { useCallback, useRef, useState } from 'react';
 import {
     Image,
@@ -916,27 +917,37 @@ export default function ProjectDetails({ route, navigation }) {
                                       setExportingPdf(true);
                                       // Bygg HTML för EN kontroll
                                       try {
-                                        const html = buildSummaryHtml('En', companyLogoUri, [item]);
+                                        console.log('[PDF] using buildSummaryHtml?', typeof buildSummaryHtml);
+                                        let html;
+                                        if (typeof buildSummaryHtml === 'function') {
+                                          html = buildSummaryHtml('En', companyLogoUri, [item]);
+                                        } else {
+                                          console.warn('[PDF] buildSummaryHtml not found, falling back to buildControlPdfHtml');
+                                          html = buildControlPdfHtml({ control: item, project, company: { name: company?.name || '' } });
+                                        }
                                         await Print.printAsync({ html });
                                       } catch (err) {
-                                        console.warn('[PDF] single-item print failed with logo, retrying without logo', err);
+                                        console.warn('[PDF] single-item print failed, retrying without logo', err);
                                         try {
-                                          const html2 = buildSummaryHtml('En', null, [item]);
+                                          let html2;
+                                          if (typeof buildSummaryHtml === 'function') {
+                                            html2 = buildSummaryHtml('En', null, [item]);
+                                          } else {
+                                            html2 = buildControlPdfHtml({ control: item, project, company: { name: company?.name || '' } });
+                                          }
                                           await Print.printAsync({ html: html2 });
                                         } catch (err2) {
                                           console.error('[PDF] single-item print fallback failed', err2);
-                                          setNotice({ visible: true, text: 'Kunde inte skriva ut PDF' });
+                                          setNotice({ visible: true, text: 'Kunde inte skriva ut PDF — se konsolen för detaljer' });
                                         }
                                       }
-                                    } catch (err) {
-                                      setNotice({ visible: true, text: 'Kunde inte skriva ut PDF' });
                                     } finally {
                                       setExportingPdf(false);
                                     }
                                   }}
-                                  accessibilityLabel="Skriv ut denna kontroll som PDF"
+                                  accessibilityLabel="Exportera denna kontroll som PDF"
                                 >
-                                  <Ionicons name="print-outline" size={22} color="#1976D2" />
+                                  <Ionicons name="document-outline" size={22} color="#1976D2" />
                                 </TouchableOpacity>
                               )}
                               {/* Papperskorg-ikon med bekräftelsemodal (både för utkast och slutförda) */}
