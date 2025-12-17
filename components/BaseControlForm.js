@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Alert, Dimensions, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View, useColorScheme } from 'react-native';
+import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
@@ -123,7 +123,9 @@ export default function BaseControlForm({
   // If you want to use this Modal, move it inside your component's return statement or a function.
   const route = useRoute();
   const navigation = useNavigation();
+  try { console.log('[BaseControlForm] mounted route.key:', route && route.key); } catch (e) {}
   const [showBackConfirm, setShowBackConfirm] = useState(false);
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   // Ref to store blocked navigation event
   const blockedNavEvent = useRef(null);
   // Keep a ref copy of isDirty so the beforeRemove listener can be attached once
@@ -174,27 +176,71 @@ export default function BaseControlForm({
       return;
     }
     const photoObj = uris[index];
-    const uri = photoObj ? photoObj.uri : null;
+    const uri = photoObj ? (photoObj.uri || photoObj) : null;
     if (!uri) {
       setPhotoModal({ visible: false, uris: [], index: 0 });
       return;
     }
-    // Modal UI removed from this logic block; UI elements must be rendered in the component return() instead.
-    if (found) {
-      setChecklist(newChecklist);
-      checklistRef.current = newChecklist;
-      const newUris = uris.filter((u, i) => i !== index);
-      const newIndex = Math.max(0, index - 1);
-      setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
-      try {
-        const remoteSaved = route.params?.savedChecklist;
-        if (!shallowEqual(remoteSaved, newChecklist)) {
-          navigation.setParams({ savedChecklist: newChecklist });
-        }
-      } catch (e) {}
-    } else {
-      setPhotoModal({ visible: false, uris: [], index: 0 });
+
+    // 1) Try remove from mottagningsPhotos (central photos list)
+    try {
+      const mp = mottagningsPhotosRef.current || [];
+      const mpIdx = mp.findIndex(x => (x && x.uri) ? x.uri === uri : x === uri);
+      if (mpIdx !== -1) {
+        const newMp = [...mp];
+        newMp.splice(mpIdx, 1);
+        setMottagningsPhotos(newMp);
+        mottagningsPhotosRef.current = newMp;
+        const newUris = uris.filter((u, i) => i !== index);
+        const newIndex = Math.max(0, index - 1);
+        setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
+        return;
+      }
+    } catch (e) {
+      // ignore and try checklist removal
     }
+
+    // 2) Try remove from checklist photos (per-section/point)
+    try {
+      const prev = checklistRef.current || [];
+      let found = false;
+      const newChecklist = prev.map((section) => {
+        const points = Array.isArray(section.points) ? section.points : [];
+        // Normalize photos array to match points length
+        const photosArr = Array.isArray(section.photos) && section.photos.length === points.length
+          ? section.photos.map(a => Array.isArray(a) ? [...a] : (a ? [a] : []))
+          : Array(points.length).fill(null).map(() => []);
+        // Remove uri if present in any point
+        for (let p = 0; p < photosArr.length; p++) {
+          const arr = photosArr[p] || [];
+          const pos = arr.findIndex(item => (item && item.uri) ? item.uri === uri : item === uri);
+          if (pos !== -1) {
+            photosArr[p] = arr.filter((_, i) => i !== pos);
+            found = true;
+            break;
+          }
+        }
+        return { ...section, photos: photosArr, points };
+      });
+      if (found) {
+        setChecklist(newChecklist);
+        checklistRef.current = newChecklist;
+        // Expand the section containing the removed photo (if any)
+        const sectionIndex = newChecklist.findIndex(sec => Array.isArray(sec.photos) && sec.photos.some(arr => arr && arr.findIndex(item => (item && item.uri) ? item.uri === uri : item === uri) !== -1));
+        if (sectionIndex !== -1) setExpandedChecklist(prev => prev.includes(sectionIndex) ? prev : [sectionIndex]);
+        const newUris = uris.filter((u, i) => i !== index);
+        const newIndex = Math.max(0, index - 1);
+        setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
+        return;
+      }
+    } catch (e) {
+      // ignore and fallback to removing from modal only
+    }
+
+    // 3) Fallback: remove from modal list only
+    const newUris = uris.filter((u, i) => i !== index);
+    const newIndex = Math.max(0, index - 1);
+    setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
   };
   // Ref to avoid stale closures for mottagningsPhotos
   const mottagningsPhotosRef = useRef(mottagningsPhotos);
@@ -233,6 +279,8 @@ export default function BaseControlForm({
     let raw = [];
     if (route.params && route.params.savedChecklist) {
       raw = route.params.savedChecklist;
+    } else if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
+      raw = initialValues.checklist;
     } else if (controlType === 'Mottagningskontroll' && (!Array.isArray(checklistConfig) || checklistConfig.length === 0)) {
       // Use predefined Mottagningskontroll sections when no checklistConfig is provided
       raw = mottagningsTemplate.map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [] }));
@@ -281,7 +329,10 @@ export default function BaseControlForm({
     return [];
   }, [checklistConfig]);
 
-  const initialParticipants = useMemo(() => participants, [participants]);
+  const initialParticipants = useMemo(() => {
+    if (initialValues && Array.isArray(initialValues.participants) && initialValues.participants.length > 0) return initialValues.participants;
+    return Array.isArray(participants) ? participants : [];
+  }, [participants, initialValues]);
   const initialDate = useMemo(() => date || initialValues.date || '', [date, initialValues.date]);
   const initialDeliveryDesc = useMemo(() => initialValues.deliveryDesc || '', [initialValues.deliveryDesc]);
   const initialGeneralNote = useMemo(() => initialValues.generalNote || '', [initialValues.generalNote]);
@@ -336,7 +387,11 @@ export default function BaseControlForm({
     }
 
   // Local participants state (initialize from participants prop)
-  const [localParticipants, setLocalParticipants] = useState(participants);
+  // Prefer participants passed via initialValues when viewing a saved/completed control
+  const [localParticipants, setLocalParticipants] = useState(() => {
+    if (initialValues && Array.isArray(initialValues.participants) && initialValues.participants.length > 0) return initialValues.participants;
+    return Array.isArray(participants) ? participants : [];
+  });
   // Dirty state: true if any field differs from initial
   const isDirty = useMemo(() => {
     if (!shallowEqual(localParticipants, initialParticipants)) return true;
@@ -390,7 +445,10 @@ export default function BaseControlForm({
           sectionIdx,
           pointIdx,
           project,
-          savedChecklist: checklist,
+          // Provide the caller route key so CameraCapture can set params on return
+          returnKey: route.key || null,
+          // Provide the caller route name so CameraCapture can fallback to navigating back
+          // to the correct screen if key-based setParams doesn't reach it.
           returnScreen: route.name || null,
           autoSave: controlType === 'Mottagningskontroll',
           mottagningsPhotos: mottagningsPhotosRef.current || [],
@@ -399,6 +457,9 @@ export default function BaseControlForm({
 
     const handlePickFromLibrary = async () => {
       try {
+        console.log('[BaseControlForm] handlePickFromLibrary start');
+        // Ensure any open keyboard or modal is closed before launching native picker
+        try { Keyboard.dismiss(); } catch (e) {}
         setShowPhotoChoice(false);
         // Try to get current permission first, then request if needed
         let perm = null;
@@ -415,13 +476,42 @@ export default function BaseControlForm({
           }
         }
         const ok = (perm && (perm.granted === true || perm.status === 'granted'));
+        console.log('[BaseControlForm] media library permission:', ok, perm);
         if (!ok) {
           alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
           return;
         }
-        // Allow multiple selection where supported and keep quality
-        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsMultipleSelection: true });
-        console.log('[BaseControlForm] imagePicker result:', res);
+                // Build conservative picker options (avoid allowsMultipleSelection which may hang on some SDKs)
+                const mediaTypesOption = (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images) ? ImagePicker.MediaType.Images : undefined;
+                const pickerOptions = { quality: 0.8 };
+                if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
+                console.log('[BaseControlForm] launching image library with options', pickerOptions, 'launchFn:', typeof ImagePicker.launchImageLibraryAsync);
+                if (typeof ImagePicker.launchImageLibraryAsync !== 'function') {
+                  console.warn('[BaseControlForm] ImagePicker.launchImageLibraryAsync is not a function');
+                  alert('Image picker inte tillgänglig i denna miljö.');
+                  return;
+                }
+                // Wait for UI interactions/animations to finish and a short delay
+                await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 500)));
+                // Wrap launch in a timeout so we don't hang if native picker fails silently
+                const launchPromise = ImagePicker.launchImageLibraryAsync(pickerOptions);
+                let res;
+                try {
+                  res = await Promise.race([
+                    launchPromise,
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('picker_timeout')), 7000)),
+                  ]);
+                } catch (launchErr) {
+                  if (launchErr && launchErr.message === 'picker_timeout') {
+                    console.warn('[BaseControlForm] image picker timed out');
+                    alert('Bildväljaren svarade inte. Försök igen.');
+                    return;
+                  }
+                  console.warn('[BaseControlForm] launchImageLibraryAsync threw', launchErr);
+                  alert('Kunde inte öppna bildväljaren: ' + (launchErr?.message || launchErr));
+                  return;
+                }
+                console.log('[BaseControlForm] imagePicker result:', res);
         // Handle new API shapes: res.canceled + res.assets OR res.selectedAssets
         const extractAssets = (r) => {
           if (!r) return [];
@@ -453,36 +543,39 @@ export default function BaseControlForm({
         alert('Kunde inte välja bild: ' + (e?.message || e));
       }
     };
+
+    
   // Guarded camera result handling to avoid re-processing and param cycles
   const cameraHandledRef = useRef(false);
-  useEffect(() => {
-    const cameraResult = route.params?.cameraResult;
-    if (cameraResult && !cameraHandledRef.current) {
-      cameraHandledRef.current = true;
-      const { uri, sectionIdx, pointIdx, returnedMottagningsPhotos } = cameraResult;
-      if (returnedMottagningsPhotos && Array.isArray(returnedMottagningsPhotos)) {
+
+  const processCameraResult = (cameraResult) => {
+    if (!cameraResult || cameraHandledRef.current) return;
+    cameraHandledRef.current = true;
+    try { console.log('[BaseControlForm] processing cameraResult from state/params:', cameraResult); } catch (e) {}
+    const { uri, sectionIdx, pointIdx, returnedMottagningsPhotos } = cameraResult;
+    if (returnedMottagningsPhotos && Array.isArray(returnedMottagningsPhotos)) {
+      try {
+        const norm = normalizePhotos(returnedMottagningsPhotos);
+        const prev = mottagningsPhotosRef.current || [];
+        const next = [...prev, ...norm];
+        setMottagningsPhotos(next);
+        mottagningsPhotosRef.current = next;
+        try { console.log('[BaseControlForm] appended returnedMottagningsPhotos, total:', next.length, 'sample:', next[next.length - 1]); } catch (e) {}
+        try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+      } catch (e) {}
+    } else if (uri) {
+      if (controlType === 'Mottagningskontroll') {
         try {
-          // Normalize returned items if they are strings
-          const norm = normalizePhotos(returnedMottagningsPhotos);
-          const prev = mottagningsPhotosRef.current || [];
-          const next = [...prev, ...norm];
-          setMottagningsPhotos(next);
-          mottagningsPhotosRef.current = next;
+          const prevMp = mottagningsPhotosRef.current || [];
+          const newItem = { uri, comment: '' };
+          const newMp = [...prevMp, newItem];
+          setMottagningsPhotos(newMp);
+          mottagningsPhotosRef.current = newMp;
+          try { console.log('[BaseControlForm] appended uri to mottagningsPhotos, total:', newMp.length, 'item:', newItem); } catch (e) {}
           try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
         } catch (e) {}
-      } else if (uri) {
-        if (controlType === 'Mottagningskontroll') {
-          try {
-            const prevMp = mottagningsPhotosRef.current || [];
-            const newItem = { uri, comment: '' };
-            const newMp = [...prevMp, newItem];
-            setMottagningsPhotos(newMp);
-            mottagningsPhotosRef.current = newMp;
-            // Clear cameraResult param to avoid re-processing
-            try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
-          } catch (e) {}
-        } else if (sectionIdx !== undefined && pointIdx !== undefined) {
-          // Build new checklist from current ref to avoid stale closures
+      } else if (sectionIdx !== undefined && pointIdx !== undefined) {
+        try {
           const prev = checklistRef.current || [];
           const newChecklist = prev.map((section, sIdx) => {
             if (sIdx !== sectionIdx) return section;
@@ -494,26 +587,80 @@ export default function BaseControlForm({
             photos[pointIdx] = [...photos[pointIdx], uri];
             return { ...section, photos, points };
           });
-          // Apply and sync ref
           setChecklist(newChecklist);
           checklistRef.current = newChecklist;
           setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
-          // Update params only if savedChecklist differs to avoid cycles
-          try {
-            const remoteSaved = route.params?.savedChecklist;
-            if (!shallowEqual(remoteSaved, newChecklist)) {
-              navigation.setParams({ cameraResult: undefined, savedChecklist: newChecklist });
-            } else {
-              navigation.setParams({ cameraResult: undefined });
-            }
-          } catch (e) {}
-        }
+          try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+        } catch (e) {}
       }
     }
-    // Reset cameraHandledRef when cameraResult becomes undefined so future captures work
+  };
+
+  // Primary effect: react to explicit route.params changes (fast path)
+  useEffect(() => {
+    const cameraResult = route.params?.cameraResult;
+    try { console.log('[BaseControlForm] cameraResult param changed (effect):', cameraResult); } catch (e) {}
+    if (cameraResult) processCameraResult(cameraResult);
     if (!route.params?.cameraResult) cameraHandledRef.current = false;
   }, [route.params?.cameraResult]);
-  const [dateValue, setDateValue] = useState(date || initialValues.date || '');
+
+  // Secondary: on focus / navigation state, attempt to find cameraResult set via setParams-by-key
+  useEffect(() => {
+    const checkStateForCameraResult = () => {
+      try {
+        const state = navigation.getState && navigation.getState();
+        if (!state || !Array.isArray(state.routes)) return;
+        try { console.log('[BaseControlForm] nav state routes:', state.routes.map(r => ({ key: r.key, name: r.name, hasCameraResult: !!(r.params && r.params.cameraResult) }))); } catch (e) {}
+        const ourRoute = state.routes.find(r => r.key === route.key);
+        const cr = ourRoute && ourRoute.params && ourRoute.params.cameraResult;
+        if (cr) {
+          try { console.log('[BaseControlForm] found cameraResult on navigation state for our route:', cr); } catch (e) {}
+          processCameraResult(cr);
+        } else {
+          // Log which route appears previous to the current index for debugging
+          try {
+            const idx = typeof state.index === 'number' ? state.index : state.routes.findIndex(r => r.key === route.key);
+            const prev = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
+            try { console.log('[BaseControlForm] nav index:', idx, 'prevRoute:', prev && { key: prev.key, name: prev.name, hasCameraResult: !!(prev.params && prev.params.cameraResult) }); } catch (e) {}
+          } catch (e) {}
+        }
+      } catch (e) {}
+    };
+    const unsub = navigation.addListener('focus', () => { checkStateForCameraResult(); });
+    // also check immediately (in case params were set while backgrounded)
+    checkStateForCameraResult();
+    return unsub;
+  }, [navigation, route.key]);
+
+  // Drain any pending camera photos stored in AsyncStorage by CameraCapture as a fallback
+  useEffect(() => {
+    const drainPending = async () => {
+      try {
+        const raw = await AsyncStorage.getItem('pending_camera_photos');
+        if (!raw) return;
+        const arr = JSON.parse(raw || '[]') || [];
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        try { console.log('[BaseControlForm] draining pending camera photos from storage:', arr.length); } catch (e) {}
+        for (const cameraResult of arr) {
+          try { processCameraResult(cameraResult); } catch (e) {}
+        }
+        await AsyncStorage.removeItem('pending_camera_photos');
+      } catch (e) {}
+    };
+    const unsub2 = navigation.addListener('focus', () => { drainPending(); });
+    // run now as well
+    drainPending();
+    return unsub2;
+  }, [navigation, processCameraResult]);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [dateValue, setDateValue] = useState(date || initialValues.date || todayIso);
+  // Ensure dateValue is populated if props arrive asynchronously or after hot restart
+  useEffect(() => {
+    if (!dateValue || dateValue === '') {
+      const fallback = date || (initialValues && initialValues.date) || todayIso;
+      setDateValue(fallback);
+    }
+  }, [date, initialValues && initialValues.date]);
   const [showDateModal, setShowDateModal] = useState(false);
   const [tempDate, setTempDate] = useState('');
   const [deliveryDesc, setDeliveryDesc] = useState(initialValues.deliveryDesc || '');
@@ -642,9 +789,16 @@ export default function BaseControlForm({
       isDirtyRef.current = false;
     } catch (e) {}
     try {
-      if (navigation && navigation.canGoBack && navigation.canGoBack()) {
-        navigation.goBack();
-      }
+      // Show a short confirmation modal, then navigate back
+      setShowFinishConfirm(true);
+      setTimeout(() => {
+        try { setShowFinishConfirm(false); } catch (e) {}
+        try {
+          if (navigation && navigation.canGoBack && navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        } catch (e) {}
+      }, 1200);
     } catch (e) {}
   };
 
@@ -755,6 +909,15 @@ export default function BaseControlForm({
             </View>
             </View>
           </View>
+      </Modal>
+      {/* Confirmation after successful finish */}
+      <Modal visible={showFinishConfirm} transparent animationType="fade" onRequestClose={() => setShowFinishConfirm(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Ionicons name="checkmark-circle" size={44} color="#43A047" style={{ marginBottom: 8 }} />
+            <Text style={{ fontSize: 16, color: '#222', textAlign: 'center', fontWeight: '600' }}>Kontrollen är slutförd och sparad i projektet.</Text>
+          </View>
+        </View>
       </Modal>
       {/* Modal för bildgranskning med swipe */}
       <Modal
@@ -871,18 +1034,30 @@ export default function BaseControlForm({
         )}
         {/* Date row - long press to edit */}
         {/* Date row with icon, text, and edit button */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, justifyContent: 'space-between' }}>
+        {/* Created date row - show as 'Skapad' (date only) */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="calendar-outline" size={26} color="#1976D2" style={{ marginRight: 10 }} />
-            <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>
-              {(dateValue ? new Date(dateValue) : new Date()).toLocaleDateString('sv-SE')} • Vecka {(() => {
-                const d = dateValue ? new Date(dateValue) : new Date();
-                d.setHours(0, 0, 0, 0);
-                d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-                const week1 = new Date(d.getFullYear(), 0, 4);
-                return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+            <View>
+              <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>{`Skapad: ${(() => {
+                // Prefer the local `dateValue` (may be defaulted to today) so new forms show today's date
+                const src = (dateValue && dateValue !== '') ? dateValue : (initialValues && initialValues.date ? initialValues.date : '');
+                if (!src) return '-';
+                const d = new Date(src);
+                if (isNaN(d)) return src;
+                return d.toISOString().slice(0, 10);
+              })()}`}</Text>
+              {(() => {
+                const status = initialValues && initialValues.status ? initialValues.status : null;
+                const savedAt = initialValues && initialValues.savedAt ? initialValues.savedAt : null;
+                if (!status || !savedAt) return null;
+                const label = status === 'UTFÖRD' ? 'Slutförd' : (status === 'UTKAST' ? 'Sparad' : null);
+                if (!label) return null;
+                const d = new Date(savedAt);
+                const dateOnly = isNaN(d) ? savedAt : d.toISOString().slice(0, 10);
+                return <Text style={{ fontSize: 13, color: '#666', marginTop: 4 }}>{`${label}: ${dateOnly}`}</Text>;
               })()}
-            </Text>
+            </View>
           </View>
           <TouchableOpacity
             onPress={() => {
@@ -1161,18 +1336,27 @@ export default function BaseControlForm({
         <Modal visible={showAddParticipantModal} transparent animationType="fade" onRequestClose={() => setShowAddParticipantModal(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}>
             <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'position' : 'height'}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 80}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 20}
               style={{ flex: 1 }}
             >
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-start', alignItems: 'center', paddingTop: 40 }}>
-                <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 12, padding: 16, marginTop: 0, transform: [{ translateY: -signerKeyboardShift }] }}>
-                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>{editParticipantIndex !== null ? 'Redigera deltagare' : 'Lägg till deltagare'}</Text>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 140, paddingBottom: 24 }}>
+                <View style={{ width: '100%', maxWidth: 300, backgroundColor: '#fff', borderRadius: 12, padding: 16, marginTop: 0, marginVertical: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowAddParticipantModal(false)}
+                    style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, padding: 6 }}
+                    accessibilityLabel="Stäng"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close" size={22} color="#888" />
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>{editParticipantIndex !== null ? 'Redigera deltagare' : 'Lägg till deltagare'}</Text>
                   <TextInput
                     value={participantName}
                     onChangeText={setParticipantName}
                     placeholder="Namn"
-                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, marginBottom: 10 }}
+                    placeholderTextColor="#888"
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: '100%', marginBottom: 10 }}
                     returnKeyType="next"
                     onSubmitEditing={() => companyRef && companyRef.current && companyRef.current.focus()}
                     ref={nameRef}
@@ -1180,7 +1364,7 @@ export default function BaseControlForm({
                   <TextInput
                     value={participantCompany}
                     onChangeText={setParticipantCompany}
-                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: '100%', marginBottom: 10 }}
                     placeholderTextColor="#888"
                     placeholder="Företag"
                     autoCapitalize="words"
@@ -1192,7 +1376,7 @@ export default function BaseControlForm({
                   <TextInput
                     value={participantRole}
                     onChangeText={setParticipantRole}
-                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 10 }}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: '100%', marginBottom: 10 }}
                     placeholderTextColor="#888"
                     placeholder="Roll"
                     autoCapitalize="words"
@@ -1213,7 +1397,7 @@ export default function BaseControlForm({
                       if (cleaned.length > 8) formatted = formatted.slice(0, 10) + ' ' + formatted.slice(10);
                       setParticipantPhone(formatted);
                     }}
-                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: 220, marginBottom: 16 }}
+                    style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 8, fontSize: 16, color: '#222', backgroundColor: '#fafafa', width: '100%', marginBottom: 16 }}
                     placeholderTextColor="#888"
                     placeholder="Mobilnummer"
                     keyboardType="numeric"
@@ -1626,6 +1810,11 @@ export default function BaseControlForm({
                 {(!Array.isArray(mottagningsPhotos) || mottagningsPhotos.length === 0) && (
                   <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
                 )}
+                {/* Debug: show count of mottagningsPhotos */}
+                <View style={{ marginLeft: 10 }}>
+                  <Text style={{ fontSize: 12, color: '#1976D2' }}>{`Bilder: ${Array.isArray(mottagningsPhotos) ? mottagningsPhotos.length : 0}`}</Text>
+                  {/* Removed verbose file path display (Senast: file://...) per UX request */}
+                </View>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', marginTop: 8 }}>
                 <TouchableOpacity onPress={() => setShowPhotoChoice(true)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#000', backgroundColor: 'transparent' }}>
@@ -1722,7 +1911,7 @@ export default function BaseControlForm({
                         <Ionicons name="camera" size={20} color="#000" style={{ marginRight: 10 }} />
                         <Text style={{ color: '#1976D2', fontSize: 16 }}>Ta foto</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => { setShowPhotoChoice(false); handlePickFromLibrary(); }} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+                      <TouchableOpacity onPress={() => { setShowPhotoChoice(false); setTimeout(() => handlePickFromLibrary(), 200); }} style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
                         <Ionicons name="images" size={20} color="#000" style={{ marginRight: 10 }} />
                         <Text style={{ color: '#1976D2', fontSize: 16 }}>Välj från bibliotek</Text>
                       </TouchableOpacity>
@@ -1811,15 +2000,17 @@ export default function BaseControlForm({
                         return [...others, { name, strokes: strokesToSave }];
                       });
                     }
+                    // Reset local signature drawing state and close modal
+                    const v = [];
+                    setSigStrokes(v);
+                    try { sigStrokesRef.current = v; } catch (e) {}
+                    setSigCurrent([]);
+                    setSignatureForIndex(null);
                   } catch (e) {}
-                  const v = [];
-                  setSigStrokes(v);
-                  try { sigStrokesRef.current = v; } catch (e) {}
-                  setSigCurrent([]);
-                  setSignatureForIndex(null);
                 }} style={{ padding: 10 }}>
                   <Text style={{ color: '#1976D2', fontWeight: '600' }}>OK</Text>
                 </TouchableOpacity>
+                
               </View>
             </View>
           </View>
