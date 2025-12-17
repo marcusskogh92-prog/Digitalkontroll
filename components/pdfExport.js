@@ -17,20 +17,23 @@ export function buildControlPdfHtml({ control, project, company }) {
   const reference = control?.reference || '';
   const measurements = Array.isArray(control?.measurements) ? control.measurements : [];
 
+  const logoSrc = companyLogoUrl || 'assets/images/foretag_ab.png';
   const headerHtml = `
     <table style="width:100%; border-collapse:collapse;">
       <tr>
-        <td style="vertical-align:middle;">
-          ${companyLogoUrl ? `<img src="${companyLogoUrl}" style="height:40px;"/>` : ''}
-          <div style="font-weight:700; color:#263238;">${companyName}</div>
+        <td style="vertical-align:middle; width:40%;">
+          ${logoSrc ? `<img src="${logoSrc}" style="height:48px; display:block;"/>` : ''}
+          <div style="font-weight:700; color:#263238; margin-top:6px;">${companyName}</div>
         </td>
-        <td style="text-align:right;">
-          <div style="font-size:20px; font-weight:700; color:#263238;">${title}</div>
-          <div style="color:#666;">Datum: ${date}</div>
+        <td style="text-align:right; vertical-align:middle; width:60%;">
+          <div style="font-size:22px; font-weight:800; color:#263238;">${title}</div>
+          <div style="color:#666; margin-top:4px;">Datum: ${date}</div>
           <div style="color:#666;">Projekt: ${project?.id || ''} - ${project?.name || ''}</div>
         </td>
       </tr>
     </table>
+    <div style="height:8px"></div>
+    <div style="width:100%; height:2px; background:#000; margin:6px 0 16px 0;"></div>
   `;
 
   const fuktMetaHtml = `
@@ -80,7 +83,6 @@ export function buildControlPdfHtml({ control, project, company }) {
       </head>
       <body>
         ${headerHtml}
-        <hr style="border:none; border-top:1px solid #E3E6E8; margin:12px 0;"/>
         ${fuktMetaHtml}
         ${tableHtml}
       </body>
