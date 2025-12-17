@@ -88,7 +88,12 @@ export default function ProjectDetails({ route, navigation }) {
                 if (dl?.uri) logoForPrint = dl.uri;
               } catch {}
             }
-            await Print.printAsync({ html: buildSummaryHtml(exportFilter, logoForPrint) });
+            try {
+              await Print.printAsync({ html: buildSummaryHtml(exportFilter, logoForPrint) });
+            } catch (err) {
+              console.warn('[PDF] printAsync with logo failed, retrying without logo', err);
+              try { await Print.printAsync({ html: buildSummaryHtml(exportFilter, null) }); } catch (err2) { throw err2; }
+            }
           } catch (e) {
             console.error('[PDF] Preview error:', e);
             setNotice({ visible: true, text: 'Kunde inte förhandsvisa PDF' });
@@ -114,7 +119,12 @@ export default function ProjectDetails({ route, navigation }) {
           }
           // Bygg HTML för export (alla eller filtrerat)
           const html = buildSummaryHtml(exportFilter, logoForPrint);
-          await Print.printToFileAsync({ html });
+          try {
+            await Print.printToFileAsync({ html });
+          } catch (err) {
+            console.warn('[PDF] printToFileAsync with logo failed, retrying without logo', err);
+            try { await Print.printToFileAsync({ html: buildSummaryHtml(exportFilter, null) }); } catch (err2) { throw err2; }
+          }
           setNotice({ visible: true, text: 'PDF exporterad!' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
         } catch (e) {
@@ -905,8 +915,19 @@ export default function ProjectDetails({ route, navigation }) {
                                     try {
                                       setExportingPdf(true);
                                       // Bygg HTML för EN kontroll
-                                      const html = buildSummaryHtml('En', companyLogoUri, [item]);
-                                      await Print.printAsync({ html });
+                                      try {
+                                        const html = buildSummaryHtml('En', companyLogoUri, [item]);
+                                        await Print.printAsync({ html });
+                                      } catch (err) {
+                                        console.warn('[PDF] single-item print failed with logo, retrying without logo', err);
+                                        try {
+                                          const html2 = buildSummaryHtml('En', null, [item]);
+                                          await Print.printAsync({ html: html2 });
+                                        } catch (err2) {
+                                          console.error('[PDF] single-item print fallback failed', err2);
+                                          setNotice({ visible: true, text: 'Kunde inte skriva ut PDF' });
+                                        }
+                                      }
                                     } catch (err) {
                                       setNotice({ visible: true, text: 'Kunde inte skriva ut PDF' });
                                     } finally {
