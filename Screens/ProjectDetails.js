@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
-import { buildControlPdfHtml } from '../components/pdfExport';
 import React, { useCallback, useRef, useState } from 'react';
 import {
     Image,
@@ -18,8 +18,26 @@ import {
     View
 } from 'react-native';
 import Svg, { Circle, Polygon, Text as SvgText } from 'react-native-svg';
+import { buildPdfHtmlForControl } from '../components/pdfExport';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Utility: read a file URI as base64 if possible
+async function readUriAsBase64(uri) {
+  if (!uri) return null;
+  try {
+    // If already a data URI, strip prefix and return raw base64
+    if (typeof uri === 'string' && uri.startsWith('data:')) {
+      const parts = uri.split(',');
+      return parts[1] || null;
+    }
+    const b = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    return b;
+  } catch (e) {
+    console.warn('[PDF] readUriAsBase64 failed for', uri, e);
+    return null;
+  }
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#fff' },
@@ -89,11 +107,59 @@ export default function ProjectDetails({ route, navigation }) {
                 if (dl?.uri) logoForPrint = dl.uri;
               } catch {}
             }
+
+            // Convert logo to base64 (if possible) to avoid asset-loading issues
+            let logoBase64 = null;
             try {
-              await Print.printAsync({ html: buildSummaryHtml(exportFilter, logoForPrint) });
+              logoBase64 = await readUriAsBase64(logoForPrint);
+              if (!logoBase64) {
+                // Try bundled asset fallback
+                try {
+                  const a = Asset.fromModule(require('../assets/images/foretag_ab.png'));
+                  await Asset.loadAsync(a);
+                  const local = a.localUri || a.uri;
+                  if (local) {
+                    logoBase64 = await readUriAsBase64(local);
+                    if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
+                  }
+                } catch (e) {
+                  // ignore
+                }
+              } else {
+                logoForPrint = 'data:image/png;base64,' + logoBase64;
+              }
+            } catch (e) { console.warn('[PDF] logo base64 conversion failed', e); }
+
+            // Build HTML safely and log length to aid debugging blank PDFs
+            let html;
+            try {
+              if (typeof buildSummaryHtml === 'function') {
+                html = buildSummaryHtml(exportFilter, logoForPrint);
+              } else {
+                console.warn('[PDF] buildSummaryHtml not available, falling back to per-control builder');
+                const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                html = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
+              }
+            } catch (hErr) {
+              console.error('[PDF] error while building HTML for preview', hErr);
+              html = null;
+            }
+
+            console.log('[PDF] preview HTML length:', html ? String(html).length : 0);
+            if (!html || String(html).trim().length < 20) throw new Error('Empty or too-small HTML');
+
+            try {
+              await Print.printAsync({ html });
             } catch (err) {
-              console.warn('[PDF] printAsync with logo failed, retrying without logo', err);
-              try { await Print.printAsync({ html: buildSummaryHtml(exportFilter, null) }); } catch (err2) { throw err2; }
+              console.warn('[PDF] printAsync with logo/fallback failed, retrying without logo', err);
+              try {
+                let html2 = null;
+                if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
+                else html2 = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+                console.log('[PDF] retry HTML length:', html2 ? String(html2).length : 0);
+                if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry HTML');
+                await Print.printAsync({ html: html2 });
+              } catch (err2) { throw err2; }
             }
           } catch (e) {
             console.error('[PDF] Preview error:', e);
@@ -118,13 +184,51 @@ export default function ProjectDetails({ route, navigation }) {
               if (dl?.uri) logoForPrint = dl.uri;
             } catch {}
           }
-          // Bygg HTML för export (alla eller filtrerat)
-          const html = buildSummaryHtml(exportFilter, logoForPrint);
+          // Try to convert logo to base64 for embedding
+          let logoBase64 = null;
           try {
+            logoBase64 = await readUriAsBase64(logoForPrint);
+            if (!logoBase64) {
+              try {
+                const a = Asset.fromModule(require('../assets/images/foretag_ab.png'));
+                await Asset.loadAsync(a);
+                const local = a.localUri || a.uri;
+                if (local) {
+                  logoBase64 = await readUriAsBase64(local);
+                  if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
+                }
+              } catch (e) {}
+            } else {
+              logoForPrint = 'data:image/png;base64,' + logoBase64;
+            }
+          } catch (e) { console.warn('[PDF] logo base64 conversion failed', e); }
+
+          // Bygg HTML för export (alla eller filtrerat) — säkrare bygg och logg
+          let html;
+          try {
+            if (typeof buildSummaryHtml === 'function') html = buildSummaryHtml(exportFilter, logoForPrint);
+            else {
+              const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+              html = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
+            }
+          } catch (hErr) {
+            console.error('[PDF] error while building HTML for export', hErr);
+            html = null;
+          }
+          console.log('[PDF] export HTML length:', html ? String(html).length : 0);
+          try {
+            if (!html || String(html).trim().length < 20) throw new Error('Empty export HTML');
             await Print.printToFileAsync({ html });
           } catch (err) {
-            console.warn('[PDF] printToFileAsync with logo failed, retrying without logo', err);
-            try { await Print.printToFileAsync({ html: buildSummaryHtml(exportFilter, null) }); } catch (err2) { throw err2; }
+            console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
+            try {
+              let html2 = null;
+              if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
+              else html2 = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+              console.log('[PDF] retry export HTML length:', html2 ? String(html2).length : 0);
+              if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry export HTML');
+              await Print.printToFileAsync({ html: html2 });
+            } catch (err2) { throw err2; }
           }
           setNotice({ visible: true, text: 'PDF exporterad!' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
@@ -918,12 +1022,41 @@ export default function ProjectDetails({ route, navigation }) {
                                       // Bygg HTML för EN kontroll
                                       try {
                                         console.log('[PDF] using buildSummaryHtml?', typeof buildSummaryHtml);
+                                        // Prepare logo (try downloading + base64 embed)
+                                        let logoForPrint = companyLogoUri || null;
+                                        if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
+                                          try {
+                                            const fileName = 'company-logo.single.png';
+                                            const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
+                                            const dl = await FileSystem.downloadAsync(logoForPrint, dest);
+                                            if (dl?.uri) logoForPrint = dl.uri;
+                                          } catch (e) { console.warn('[PDF] download logo failed', e); }
+                                        }
+                                        let logoBase64 = null;
+                                        try {
+                                          logoBase64 = await readUriAsBase64(logoForPrint);
+                                          if (!logoBase64) {
+                                            try {
+                                              const a = Asset.fromModule(require('../assets/images/foretag_ab.png'));
+                                              await Asset.loadAsync(a);
+                                              const local = a.localUri || a.uri;
+                                              if (local) {
+                                                logoBase64 = await readUriAsBase64(local);
+                                                if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
+                                              }
+                                            } catch (e) { /* ignore */ }
+                                          } else {
+                                            logoForPrint = 'data:image/png;base64,' + logoBase64;
+                                          }
+                                        } catch (e) { console.warn('[PDF] logo base64 convert failed', e); }
+
                                         let html;
                                         if (typeof buildSummaryHtml === 'function') {
-                                          html = buildSummaryHtml('En', companyLogoUri, [item]);
-                                        } else {
-                                          console.warn('[PDF] buildSummaryHtml not found, falling back to buildControlPdfHtml');
-                                          html = buildControlPdfHtml({ control: item, project, company: { name: company?.name || '' } });
+                                          html = buildSummaryHtml('En', logoForPrint, [item]);
+                                          } else {
+                                          console.warn('[PDF] buildSummaryHtml not found, falling back to type-aware builder');
+                                          const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                                          html = buildPdfHtmlForControl({ control: item, project, company: companyObj });
                                         }
                                         await Print.printAsync({ html });
                                       } catch (err) {
@@ -933,7 +1066,7 @@ export default function ProjectDetails({ route, navigation }) {
                                           if (typeof buildSummaryHtml === 'function') {
                                             html2 = buildSummaryHtml('En', null, [item]);
                                           } else {
-                                            html2 = buildControlPdfHtml({ control: item, project, company: { name: company?.name || '' } });
+                                            html2 = buildPdfHtmlForControl({ control: item, project, company: { name: project?.client || project?.name || '' } });
                                           }
                                           await Print.printAsync({ html: html2 });
                                         } catch (err2) {
