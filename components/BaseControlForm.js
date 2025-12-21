@@ -11,9 +11,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as ImagePicker from 'expo-image-picker';
 import 'react-native-get-random-values';
-import Svg, { Path, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
 
@@ -34,6 +35,9 @@ export default function BaseControlForm({
   const [participantName, setParticipantName] = useState('');
   const [participantCompany, setParticipantCompany] = useState('');
   // expandedChecklist is declared above (moved earlier)
+  // State for adding custom checklist points
+  const [addPointModal, setAddPointModal] = useState({ visible: false, sectionIdx: null });
+  const [newPointText, setNewPointText] = useState('');
   const [sectionMenuIndex, setSectionMenuIndex] = useState(null);
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
@@ -280,22 +284,22 @@ export default function BaseControlForm({
     },
   ];
   const [checklist, setChecklist] = useState(() => {
-    // Always prefer params.savedChecklist if present, else checklistConfig
+    // Always prefer params.savedChecklist if present and non-empty, else checklistConfig
     let raw = [];
-    if (route.params && route.params.savedChecklist) {
+    if (route.params && Array.isArray(route.params.savedChecklist) && route.params.savedChecklist.length > 0) {
       raw = route.params.savedChecklist;
     } else if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
       raw = initialValues.checklist;
-    } else if (controlType === 'Mottagningskontroll' && (!Array.isArray(checklistConfig) || checklistConfig.length === 0)) {
-      // Use predefined Mottagningskontroll sections when no checklistConfig is provided
-      raw = mottagningsTemplate.map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [] }));
-    } else if (Array.isArray(checklistConfig)) {
+    } else if (Array.isArray(checklistConfig) && checklistConfig.length > 0) {
       raw = checklistConfig.map(section => ({
         label: section.label,
         points: Array.isArray(section.points) ? [...section.points] : [],
         statuses: Array(Array.isArray(section.points) ? section.points.length : 0).fill(null),
         photos: Array(Array.isArray(section.points) ? section.points.length : 0).fill([]),
       }));
+    } else if (controlType === 'Mottagningskontroll') {
+      // Use predefined Mottagningskontroll sections when no checklistConfig is provided
+      raw = mottagningsTemplate.map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [] }));
     }
     // Robustify: ensure every section has valid points, statuses, photos arrays
     return (raw || []).map(section => {
@@ -463,10 +467,8 @@ export default function BaseControlForm({
     const handlePickFromLibrary = async () => {
       try {
         console.log('[BaseControlForm] handlePickFromLibrary start');
-        // Ensure any open keyboard or modal is closed before launching native picker
         try { Keyboard.dismiss(); } catch (e) {}
         setShowPhotoChoice(false);
-        // Try to get current permission first, then request if needed
         let perm = null;
         try {
           if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
@@ -476,53 +478,36 @@ export default function BaseControlForm({
         if (!perm || !(perm.granted === true || perm.status === 'granted')) {
           try {
             perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          } catch (e) {
-            // fall through
-          }
+          } catch (e) {}
         }
         const ok = (perm && (perm.granted === true || perm.status === 'granted'));
-        console.log('[BaseControlForm] media library permission:', ok, perm);
         if (!ok) {
           alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
           return;
         }
-                // Build conservative picker options (avoid allowsMultipleSelection which may hang on some SDKs)
-                const mediaTypesOption = (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images) ? ImagePicker.MediaType.Images : undefined;
-                const pickerOptions = { quality: 0.8 };
-                if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
-                console.log('[BaseControlForm] launching image library with options', pickerOptions, 'launchFn:', typeof ImagePicker.launchImageLibraryAsync);
-                if (typeof ImagePicker.launchImageLibraryAsync !== 'function') {
-                  console.warn('[BaseControlForm] ImagePicker.launchImageLibraryAsync is not a function');
-                  alert('Image picker inte tillgänglig i denna miljö.');
-                  return;
-                }
-                // Wait for UI interactions/animations to finish and a short delay
-                await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 500)));
-                // Wrap launch in a timeout so we don't hang if native picker fails silently
-                const launchPromise = ImagePicker.launchImageLibraryAsync(pickerOptions);
-                let res;
-                try {
-                  res = await Promise.race([
-                    launchPromise,
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('picker_timeout')), 7000)),
-                  ]);
-                } catch (launchErr) {
-                  if (launchErr && launchErr.message === 'picker_timeout') {
-                    console.warn('[BaseControlForm] image picker timed out');
-                    alert('Bildväljaren svarade inte. Försök igen.');
-                    return;
-                  }
-                  console.warn('[BaseControlForm] launchImageLibraryAsync threw', launchErr);
-                  alert('Kunde inte öppna bildväljaren: ' + (launchErr?.message || launchErr));
-                  return;
-                }
-                console.log('[BaseControlForm] imagePicker result:', res);
-        // Handle new API shapes: res.canceled + res.assets OR res.selectedAssets
+        const mediaTypesOption = (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images) ? ImagePicker.MediaType.Images : undefined;
+        const pickerOptions = { quality: 0.8 };
+        if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
+        await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 500)));
+        const launchPromise = ImagePicker.launchImageLibraryAsync(pickerOptions);
+        let res;
+        try {
+          res = await Promise.race([
+            launchPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('picker_timeout')), 7000)),
+          ]);
+        } catch (launchErr) {
+          if (launchErr && launchErr.message === 'picker_timeout') {
+            alert('Bildväljaren svarade inte. Försök igen.');
+            return;
+          }
+          alert('Kunde inte öppna bildväljaren: ' + (launchErr?.message || launchErr));
+          return;
+        }
         const extractAssets = (r) => {
           if (!r) return [];
           if (Array.isArray(r.assets) && r.assets.length) return r.assets;
           if (Array.isArray(r.selectedAssets) && r.selectedAssets.length) return r.selectedAssets;
-          // legacy
           if (r.uri) return [{ uri: r.uri }];
           if (r.cancelled === false && r.uri) return [{ uri: r.uri }];
           return [];
@@ -534,20 +519,41 @@ export default function BaseControlForm({
             return uri ? { uri, comment: '' } : null;
           }).filter(Boolean);
           if (photos.length > 0) {
-            setMottagningsPhotos(prev => {
-              const prevArr = Array.isArray(prev) ? prev : (mottagningsPhotosRef.current || []);
-              const existing = new Set(prevArr.map(p => p && p.uri).filter(Boolean));
-              const toAdd = photos.filter(p => p && p.uri && !existing.has(p.uri));
-              if (!toAdd.length) return prevArr;
-              const next = [...prevArr, ...toAdd];
-              mottagningsPhotosRef.current = next;
-              return next;
-            });
+            // If a checklist photo modal is open, add to the correct checklist point
+            if (photoModal && typeof photoModal.sectionIdx === 'number' && typeof photoModal.pointIdx === 'number') {
+              setChecklist(prev => prev.map((section, sIdx) => {
+                if (sIdx !== photoModal.sectionIdx) return section;
+                const points = Array.isArray(section.points) ? section.points : [];
+                let photosArr = Array.isArray(section.photos) && section.photos.length === points.length
+                  ? [...section.photos]
+                  : Array(points.length).fill([]);
+                if (!Array.isArray(photosArr[photoModal.pointIdx])) photosArr[photoModal.pointIdx] = [];
+                // Avoid duplicates
+                const existingUris = new Set((photosArr[photoModal.pointIdx] || []).map(p => (p && p.uri) ? p.uri : p));
+                const toAdd = photos.filter(p => p && p.uri && !existingUris.has(p.uri));
+                photosArr[photoModal.pointIdx] = [...(photosArr[photoModal.pointIdx] || []), ...toAdd];
+                return { ...section, photos: photosArr };
+              }));
+              // Also update modal state to show new images
+              setPhotoModal(m => {
+                const newUris = [...(m.uris || []), ...photos.filter(p => p && p.uri && !(m.uris || []).some(u => (u && u.uri) ? u.uri === p.uri : u === p.uri))];
+                return { ...m, uris: newUris, index: newUris.length > 0 ? newUris.length - 1 : 0 };
+              });
+            } else {
+              // Otherwise, add to main mottagningsPhotos
+              setMottagningsPhotos(prev => {
+                const prevArr = Array.isArray(prev) ? prev : (mottagningsPhotosRef.current || []);
+                const existing = new Set(prevArr.map(p => p && p.uri).filter(Boolean));
+                const toAdd = photos.filter(p => p && p.uri && !existing.has(p.uri));
+                if (!toAdd.length) return prevArr;
+                const next = [...prevArr, ...toAdd];
+                mottagningsPhotosRef.current = next;
+                return next;
+              });
+            }
           }
-        } else {
-          // User cancelled or no assets
-          // No-op
         }
+        // User cancelled or no assets: No-op
       } catch (e) {
         console.warn('Image pick error', e);
         alert('Kunde inte välja bild: ' + (e?.message || e));
@@ -1074,22 +1080,43 @@ export default function BaseControlForm({
 
   // Render
   // Determine whether the control may be completed (enabled "Slutför").
-  // For Mottagningskontroll we require: date, >=1 participant, material description,
-  // all checklist points completed (if present) and at least one signature. Photos and weather are optional.
+  // For Riskbedömning: require date, >=1 participant, 'Beskriv arbetsmoment', all checklist points, and at least one signature.
+  // For Mottagningskontroll: require date, >=1 participant, material description, all checklist points, and at least one signature.
+  // For Skyddsrond: require date, >=1 participant, scope/description, all checklist points, and at least one signature.
   const canFinish = (() => {
-    if (controlType !== 'Mottagningskontroll' && controlType !== 'Skyddsrond') return true;
-    const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
-    // For Mottagningskontroll and Skyddsrond require a short description/omfattning
-    const hasMaterial = typeof materialDesc === 'string' && materialDesc.trim().length > 0;
-    const hasScope = typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0;
-    const checklistComplete = (() => {
-      if (!Array.isArray(checklist) || checklist.length === 0) return true;
-      return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
-    })();
-    const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
-    // For Skyddsrond also require scope/description
-    if (controlType === 'Skyddsrond') return hasParticipants && hasScope && checklistComplete && hasSignature;
-    return hasParticipants && hasMaterial && checklistComplete && hasSignature;
+    if (controlType === 'Riskbedömning') {
+      const hasDate = typeof dateValue === 'string' && dateValue.trim().length > 0;
+      const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
+      const hasScope = typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0;
+      const checklistComplete = (() => {
+        if (!Array.isArray(checklist) || checklist.length === 0) return false;
+        return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
+      })();
+      const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
+      return hasDate && hasParticipants && hasScope && checklistComplete && hasSignature;
+    }
+    if (controlType === 'Skyddsrond') {
+      const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
+      const hasScope = typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0;
+      const checklistComplete = (() => {
+        if (!Array.isArray(checklist) || checklist.length === 0) return true;
+        return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
+      })();
+      const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
+      return hasParticipants && hasScope && checklistComplete && hasSignature;
+    }
+    if (controlType === 'Mottagningskontroll') {
+      const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
+      const hasMaterial = typeof materialDesc === 'string' && materialDesc.trim().length > 0;
+      const checklistComplete = (() => {
+        if (!Array.isArray(checklist) || checklist.length === 0) return true;
+        return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
+      })();
+      const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
+      return hasParticipants && hasMaterial && checklistComplete && hasSignature;
+    }
+    // Default: allow finish
+    return true;
   })();
 
   return (
@@ -1190,51 +1217,61 @@ export default function BaseControlForm({
         animationType="fade"
         onRequestClose={() => setPhotoModal({ ...photoModal, visible: false })}
       >
-            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80}>
-              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
-                {photoModal.uris.length > 0 && (
-                  <View style={{ width: windowWidth, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-              <View style={{
-                width: Math.min(windowWidth * 0.92, 420),
-                height: Math.min(windowWidth * 0.92, 420),
-                maxWidth: 420,
-                maxHeight: 420,
-                borderRadius: 18,
-                backgroundColor: '#222',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden',
-              }}>
-                {/* Försök visa rätt aspect ratio */}
-                <Image
-                  source={{ uri: (photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].uri) ? photoModal.uris[photoModal.index].uri : photoModal.uris[photoModal.index] }}
-                  style={(() => {
-                    // Om vi i framtiden spar orientation i uri-objektet, kan vi använda det här
-                    // Just nu: defaulta till 4:3 (stående)
-                    // Om du vill spara orientation i checklist/photos, kan du använda det här
-                    // const orientation = ...
-                    // const aspectRatio = orientation === 'landscape' ? 3/4 : 4/3;
-                    // return { width: '100%', aspectRatio, resizeMode: 'contain' };
-                    return {
-                      width: '100%',
-                      aspectRatio: 4/3,
-                      resizeMode: 'contain',
-                      backgroundColor: '#111',
-                    };
-                  })()}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={(e) => handleTouchEnd(e, photoModal.uris, photoModal.index)}
-                />
-              </View>
-              <View style={{ flexDirection: 'column', marginTop: 18, alignItems: 'center', justifyContent: 'center', width: '100%' }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
-                  {photoModal.uris.map((p, idx) => (
-                    <View key={`photo-dot-${idx}-${p && p.uri ? p.uri.substring(p.uri.length-8) : idx}`} style={{ width: 8, height: 8, borderRadius: 4, margin: 4, backgroundColor: idx === photoModal.index ? '#fff' : '#888' }} />
-                  ))}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={80}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+            {/* Close (X) icon in top right */}
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 32, right: 24, zIndex: 10, padding: 8 }}
+              onPress={() => setPhotoModal({ ...photoModal, visible: false })}
+              accessibilityLabel="Stäng"
+            >
+              <Text style={{ fontSize: 28, color: '#fff', fontWeight: 'bold' }}>×</Text>
+            </TouchableOpacity>
+            {photoModal.uris.length > 0 && (
+              <View style={{ width: windowWidth, alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                {/* Modal header with title and close X */}
+                <View style={{ width: '100%', alignItems: 'center', justifyContent: 'center', marginBottom: 8, position: 'relative' }}>
+                  <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#222', marginTop: 8, marginBottom: 8 }}>Bilder för kontrollpunkt</Text>
+                  <TouchableOpacity
+                    style={{ position: 'absolute', top: 0, right: 18, zIndex: 10, padding: 8 }}
+                    onPress={() => setPhotoModal({ ...photoModal, visible: false })}
+                    accessibilityLabel="Stäng"
+                  >
+                    <Text style={{ fontSize: 28, color: '#222', fontWeight: 'bold' }}>×</Text>
+                  </TouchableOpacity>
                 </View>
-                {/* Comment input for current photo */}
-                <View style={{ width: '92%', marginTop: 12 }}>
-                  <Text style={{ color: '#fff', marginBottom: 6 }}>Kommentar</Text>
+                <View style={{
+                  width: Math.min(windowWidth * 0.92, 420),
+                  height: Math.min(windowWidth * 0.92, 420),
+                  maxWidth: 420,
+                  maxHeight: 420,
+                  borderRadius: 18,
+                  backgroundColor: '#222',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                }}>
+                  <Image
+                    source={{ uri: (photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].uri) ? photoModal.uris[photoModal.index].uri : photoModal.uris[photoModal.index] }}
+                    style={{ width: '100%', aspectRatio: 4/3, resizeMode: 'contain', backgroundColor: '#111' }}
+                    onTouchStart={handleTouchStart}
+                    onTouchEnd={(e) => handleTouchEnd(e, photoModal.uris, photoModal.index)}
+                  />
+                </View>
+                {/* Thumbnails row */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10, marginBottom: 8, maxHeight: 60 }}>
+                  {photoModal.uris.map((p, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      onPress={() => setPhotoModal(m => ({ ...m, index: i }))}
+                      style={{ borderWidth: i === photoModal.index ? 2 : 0, borderColor: '#1976D2', borderRadius: 6, marginHorizontal: 2 }}
+                    >
+                      <Image source={{ uri: p.uri || p }} style={{ width: 48, height: 48, borderRadius: 6 }} />
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {/* Comment input and delete button */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, width: 320 }}>
                   <TextInput
                     value={(photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].comment) ? photoModal.uris[photoModal.index].comment : ''}
                     onChangeText={(text) => {
@@ -1253,38 +1290,50 @@ export default function BaseControlForm({
                         }
                       } catch (e) {}
                     }}
-                    placeholder="Lägg till kommentar till bilden..."
+                    placeholder="Lägg till kommentar..."
                     placeholderTextColor="#ddd"
-                    style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff' }}
+                    style={{ flex: 1, backgroundColor: '#fff', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, fontSize: 15, marginRight: 8 }}
+                    multiline
+                    maxLength={120}
                   />
+                  <TouchableOpacity
+                    onPress={() => {
+                      setPhotoModal({ ...photoModal, visible: false });
+                      Alert.alert('Kommentar sparad');
+                    }}
+                    style={{ backgroundColor: '#1976D2', borderRadius: 24, padding: 10, marginRight: 8, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4, alignItems: 'center', justifyContent: 'center' }}
+                    accessibilityLabel="Spara kommentar"
+                  >
+                    <MaterialIcons name="save" size={28} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleDeletePhoto}
+                    style={{ backgroundColor: '#e53935', borderRadius: 24, padding: 10, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4 }}
+                    accessibilityLabel="Ta bort foto"
+                  >
+                    <MaterialIcons name="delete-forever" size={28} color="#fff" style={{}} />
+                  </TouchableOpacity>
+                </View>
+                {/* Action buttons row (tight layout) */}
+                <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', width: 320, marginBottom: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setPhotoModal({ ...photoModal, visible: false });
+                      setTimeout(() => handleNavigateToCamera(), 300);
+                    }}
+                    style={{ backgroundColor: '#1976D2', borderRadius: 6, paddingVertical: 8, paddingHorizontal: 12, marginHorizontal: 4 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>Ta nytt foto</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-              {/* Action buttons under image */}
-              <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 32 }}>
-                <TouchableOpacity
-                  onPress={handleDeletePhoto}
-                  accessibilityLabel="Ta bort bild"
-                  style={{ marginHorizontal: 32, alignItems: 'center' }}
-                >
-                  <Ionicons name="trash" size={40} color="#D32F2F" />
-                  <Text style={{ color: '#D32F2F', fontSize: 14, marginTop: 4 }}>Ta bort</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setPhotoModal({ ...photoModal, visible: false })}
-                  accessibilityLabel="Stäng"
-                  style={{ marginHorizontal: 32, alignItems: 'center' }}
-                >
-                  <Ionicons name="close-circle" size={40} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 14, marginTop: 4 }}>Stäng</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-        </View>
-      </KeyboardAvoidingView>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
       <ScrollView ref={scrollRef} style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
       <View style={{ flex: 1 }}>
+                {/* Förklaring av statusknappar för riskbedömning (legend row removed from top, now only in checklist section header) */}
         {/* Project Info and meta */}
         <View style={{ padding: 16, paddingBottom: 0 }}>
         {/* Project number and name */}
@@ -1434,12 +1483,12 @@ export default function BaseControlForm({
               <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 18, color: (missingFields && missingFields.includes('Deltagare')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingVertical: 6 }} contentContainerStyle={{ alignItems: 'center' }}>
+                <View style={{ paddingVertical: 6 }}>
                   {(Array.isArray(localParticipants) ? localParticipants : []).map((p, idx) => {
                     const name = (typeof p === 'string') ? p : (p && p.name) ? p.name : `Deltagare ${idx+1}`;
                     const key = (typeof p === 'object' && p && p.id) ? `participant-${p.id}` : `participant-${idx}-${name}`;
                     return (
-                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, marginRight: 8, flexDirection: 'row', alignItems: 'center' }}>
+                      <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
                         <Text style={{ fontSize: 14, color: '#222', marginRight: 8 }}>{name}</Text>
                         <TouchableOpacity onPress={() => { setParticipantName(typeof p === 'string' ? p : (p.name || '')); setParticipantCompany(typeof p === 'object' && p ? (p.company || '') : ''); setParticipantRole(typeof p === 'object' && p ? (p.role || '') : ''); setParticipantPhone(typeof p === 'object' && p ? (p.phone || '') : ''); setEditParticipantIndex(idx); setShowAddParticipantModal(true); }} style={{ marginRight: 6 }}>
                           <Ionicons name="create-outline" size={18} color="#1976D2" />
@@ -1450,7 +1499,7 @@ export default function BaseControlForm({
                       </View>
                     );
                   })}
-                </ScrollView>
+                </View>
               </View>
             </View>
             <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till deltagare">
@@ -1576,8 +1625,21 @@ export default function BaseControlForm({
               placeholderTextColor="#888"
               style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
             />
-            {/* Väderlek handled under participants (plus-button to add) */}
-            {/* The per-section textareas for Leverans/Kvalitet/Täckning were removed as requested. */}
+          </View>
+        )}
+
+        {/* Beskriv arbetsmoment endast för Riskbedömning */}
+        {controlType === 'Riskbedömning' && (
+          <View style={{ marginTop: 8, marginBottom: 10, paddingHorizontal: 16 }}>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 6, fontWeight: '600' }}>Beskriv arbetsmoment</Text>
+            <TextInput
+              value={deliveryDesc}
+              onChangeText={setDeliveryDesc}
+              placeholder="Vad ska göras? T.ex. Lossning av stålbalkar"
+              placeholderTextColor="#888"
+              style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
+              multiline
+            />
           </View>
         )}
         {/* Divider under participants, before weather */}
@@ -1866,19 +1928,36 @@ export default function BaseControlForm({
                     {(() => {
                       const deviationCount = (sectionStatuses || []).filter(s => s === 'avvikelse').length;
                       const okCount = (sectionStatuses || []).filter(s => s === 'ok').length;
+                      const notRelevantCount = (sectionStatuses || []).filter(s => s === 'ejaktuell').length;
                       const total = (section.points || []).length || 0;
-                      return (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-                          <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, marginRight: 8 }}>
-                            <Text style={{ fontSize: 12, color: '#43A047', fontWeight: '600' }}>{`${okCount}/${total} godkända`}</Text>
+                      const filledCount = okCount + deviationCount + notRelevantCount;
+                      if (filledCount === 0) {
+                        // Show legend only if nothing is filled
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                            <Ionicons name="checkmark-circle" size={18} color="#43A047" style={{ marginRight: 2 }} />
+                            <Text style={{ fontSize: 11, color: '#43A047', marginRight: 8 }}>Godkänd</Text>
+                            <Ionicons name="alert-circle" size={18} color="#D32F2F" style={{ marginRight: 2 }} />
+                            <Text style={{ fontSize: 11, color: '#D32F2F', marginRight: 8 }}>Avvikelse</Text>
+                            <Ionicons name="remove-circle" size={18} color="#607D8B" style={{ marginRight: 2 }} />
+                            <Text style={{ fontSize: 11, color: '#607D8B' }}>Ej aktuell</Text>
                           </View>
-                          {deviationCount > 0 && (
-                            <View style={{ backgroundColor: '#FFF8E1', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
-                              <Text style={{ fontSize: 12, color: '#F57C00', fontWeight: '600' }}>{`${deviationCount}/${total} avvikelse`}</Text>
+                        );
+                      } else {
+                        // Show only icon and count for each status
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                            <Ionicons name="checkmark-circle" size={18} color="#43A047" style={{ marginRight: 2 }} />
+                            <Text style={{ fontSize: 13, color: '#43A047', fontWeight: '600', marginRight: 12 }}>{okCount}</Text>
+                            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#D32F2F', alignItems: 'center', justifyContent: 'center', marginRight: 2 }}>
+                              <Ionicons name="alert" size={13} color="#fff" />
                             </View>
-                          )}
-                        </View>
-                      );
+                            <Text style={{ fontSize: 13, color: '#D32F2F', fontWeight: '600', marginRight: 12 }}>{deviationCount}</Text>
+                            <Ionicons name="remove-circle" size={18} color="#607D8B" style={{ marginRight: 2 }} />
+                            <Text style={{ fontSize: 13, color: '#607D8B', fontWeight: '600' }}>{notRelevantCount}</Text>
+                          </View>
+                        );
+                      }
                     })()}
                   </View>
                   {/* Camera / check icons */}
@@ -1906,149 +1985,273 @@ export default function BaseControlForm({
                 {expanded && (
                   <View style={{ padding: 10, paddingTop: 0 }}>
                     {section.points.map((point, pointIdx) => {
-                      // Find or initialize status for this point
-                      const status = (checklist[sectionIdx]?.statuses && checklist[sectionIdx].statuses[pointIdx]) || null;
-                      const setStatus = (newStatus) => {
-                        setChecklist(prev => {
-                          const updated = prev.map((s, sIdx) => {
-                            if (sIdx !== sectionIdx) return s;
-                            // Ensure statuses array exists and is correct length
-                            const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
-                            statuses[pointIdx] = newStatus;
-                            return { ...s, statuses };
-                          });
-                          return updated;
-                        });
-                      };
-                      // Set background to red if status is not set
-                      const rowBackgroundColor = status ? '#fff' : '#FFD6D6';
+                      const hasPhotos = Array.isArray(section.photos[pointIdx]) && section.photos[pointIdx].length > 0;
                       return (
-                        <View key={typeof point === 'object' && point !== null && point.id ? `point-${point.id}` : btoa(unescape(encodeURIComponent(point))) + '-' + pointIdx} style={{ marginBottom: 14, backgroundColor: rowBackgroundColor, borderRadius: 6, padding: 10, borderWidth: 1, borderColor: '#e0e0e0' }}>
-                          <Text style={{ fontSize: 15, color: '#222', fontWeight: '500', marginBottom: 6 }}>{point}</Text>
-                          {/* Status selector (OK, Avvikelse, Ej aktuell) */}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                marginRight: 16,
-                                opacity: status === 'ok' ? 1 : 0.7,
-                                backgroundColor: status === 'ok' ? '#fff' : '#FFD6D6',
-                                borderRadius: 6,
-                                paddingVertical: 4,
-                                paddingHorizontal: 8,
-                              }}
-                              onPress={() => setStatus('ok')}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityRole="button"
-                            >
-                              <Ionicons name="checkmark-circle" size={22} color={status === 'ok' ? '#43A047' : '#bbb'} style={{ marginRight: 4 }} />
-                              <Text style={{ color: status === 'ok' ? '#43A047' : '#bbb', fontWeight: 'bold' }}>OK</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                marginRight: 16,
-                                opacity: status === 'avvikelse' ? 1 : 0.7,
-                                backgroundColor: status === 'avvikelse' ? '#fff' : '#FFD6D6',
-                                borderRadius: 6,
-                                paddingVertical: 4,
-                                paddingHorizontal: 8,
-                              }}
-                              onPress={() => setStatus('avvikelse')}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityRole="button"
-                            >
-                              <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 4 }}>
-                                <Polygon points="12,2 22,20 2,20" fill={status === 'avvikelse' ? '#FFD600' : '#bbb'} stroke="#111" strokeWidth="1" />
-                                <SvgText
-                                  x="12"
-                                  y="14"
-                                  fontSize="13"
-                                  fontWeight="bold"
-                                  fill="#111"
-                                  textAnchor="middle"
-                                  alignmentBaseline="middle"
-                                >
-                                  !
-                                </SvgText>
-                              </Svg>
-                              <Text style={{
-                                color: status === 'avvikelse' ? '#111' : '#bbb',
-                                fontWeight: 'bold',
-                                backgroundColor: status === 'avvikelse' ? '#FFD600' : 'transparent',
-                                borderWidth: status === 'avvikelse' ? 1 : 0,
-                                borderColor: status === 'avvikelse' ? '#111' : 'transparent',
-                                borderRadius: 4,
-                                paddingHorizontal: 4,
-                                paddingVertical: 1,
-                                overflow: 'hidden',
-                              }}>Avvikelse</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                opacity: status === 'ejaktuell' ? 1 : 0.7,
-                                backgroundColor: status === 'ejaktuell' ? '#fff' : '#FFD6D6',
-                                borderRadius: 6,
-                                paddingVertical: 4,
-                                paddingHorizontal: 8,
-                              }}
-                              onPress={() => setStatus('ejaktuell')}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityRole="button"
-                            >
-                              <Ionicons name="close" size={22} color={status === 'ejaktuell' ? '#000' : '#bbb'} style={{ marginRight: 4 }} />
-                              <Text style={{ color: status === 'ejaktuell' ? '#000' : '#bbb', fontWeight: 'bold' }}>Ej aktuell</Text>
-                            </TouchableOpacity>
-                          </View>
-                          {/* Note field */}
-                          <TextInput
-                            style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 6, padding: 8, fontSize: 14, backgroundColor: '#fafafa', marginBottom: 6 }}
-                            placeholder="Anteckning (valfritt)"
-                            placeholderTextColor="#bbb"
-                            multiline
-                          />
-                          {/* Photo upload button + thumbnails (hidden per-point for Mottagningskontroll) */}
-                          {controlType !== 'Mottagningskontroll' && (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                              <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center' }}
-                                onPress={() => handleNavigateToCamera(sectionIdx, pointIdx, project)}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                accessibilityRole="button"
-                              >
-                                <Ionicons name="camera" size={20} color="#1976D2" style={{ marginRight: 6 }} />
-                                <Text style={{ color: '#1976D2', fontWeight: '500' }}>Lägg till foto</Text>
-                              </TouchableOpacity>
-                              {/* Visa miniatyrer om bilder finns */}
-                              {(() => {
-                                const photos = checklist[sectionIdx]?.photos || [];
-                                const photoArr = Array.isArray(photos[pointIdx]) ? photos[pointIdx] : (photos[pointIdx] ? [photos[pointIdx]] : []);
-                                if (photoArr && photoArr.length > 0) {
-                                  return (
-                                    <View style={{ flexDirection: 'row', marginLeft: 10 }}>
-                                      {photoArr.map((uri, idx) => (
-                                        <TouchableOpacity
-                                          key={`photo-thumb-${sectionIdx}-${pointIdx}-${idx}-${uri ? uri.substring(uri.length-8) : 'empty'}`}
-                                          onPress={() => setPhotoModal({ visible: true, uris: photoArr, index: idx })}
-                                          activeOpacity={0.8}
-                                        >
-                                          <Image source={{ uri }} style={{ width: 44, height: 44, borderRadius: 8, borderWidth: 1, borderColor: '#bbb', marginRight: 6, backgroundColor: '#eee', resizeMode: 'cover' }} />
-                                        </TouchableOpacity>
-                                      ))}
-                                    </View>
-                                  );
-                                }
-                                return null;
-                              })()}
+                        <View key={`point-${pointIdx}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                          {/* Status button (OK) */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setChecklist(prev => prev.map((s, sIdx) => {
+                                if (sIdx !== sectionIdx) return s;
+                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                statuses[pointIdx] = statuses[pointIdx] === 'ok' ? null : 'ok';
+                                return { ...s, statuses };
+                              }));
+                            }}
+                            style={{ marginRight: 10, padding: 6 }}
+                            accessibilityLabel={`Markera ${point} som OK`}
+                          >
+                            <Ionicons name={section.statuses[pointIdx] === 'ok' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ok' ? '#43A047' : '#bbb'} />
+                          </TouchableOpacity>
+                          {/* Status button (Avvikelse) */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setChecklist(prev => prev.map((s, sIdx) => {
+                                if (sIdx !== sectionIdx) return s;
+                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                statuses[pointIdx] = statuses[pointIdx] === 'avvikelse' ? null : 'avvikelse';
+                                return { ...s, statuses };
+                              }));
+                            }}
+                            style={{ marginRight: 10, padding: 6 }}
+                            accessibilityLabel={`Markera ${point} som avvikelse`}
+                          >
+                            <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: section.statuses[pointIdx] === 'avvikelse' ? '#D32F2F' : 'transparent' }}>
+                              {section.statuses[pointIdx] === 'avvikelse' ? (
+                                <Ionicons name="alert" size={18} color="#fff" />
+                              ) : (
+                                <Ionicons name="ellipse-outline" size={22} color="#bbb" />
+                              )}
                             </View>
-                          )}
+                          </TouchableOpacity>
+                          {/* Status button (Ej aktuell) */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setChecklist(prev => prev.map((s, sIdx) => {
+                                if (sIdx !== sectionIdx) return s;
+                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                statuses[pointIdx] = statuses[pointIdx] === 'ejaktuell' ? null : 'ejaktuell';
+                                return { ...s, statuses };
+                              }));
+                            }}
+                            style={{ marginRight: 10, padding: 6 }}
+                            accessibilityLabel={`Markera ${point} som ej aktuell`}
+                          >
+                            <Ionicons name={section.statuses[pointIdx] === 'ejaktuell' ? 'remove-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ejaktuell' ? '#607D8B' : '#bbb'} />
+                          </TouchableOpacity>
+                          {/* Kontrollpunkt text */}
+                          <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{point}</Text>
+                          {/* Photo button */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (hasPhotos) {
+                                setPhotoModal({
+                                  visible: true,
+                                  uris: section.photos[pointIdx].map(uri => (typeof uri === 'string' ? { uri, comment: '' } : uri)),
+                                  index: 0,
+                                  sectionIdx,
+                                  pointIdx,
+                                });
+                              } else {
+                                handleNavigateToCamera(sectionIdx, pointIdx, project);
+                              }
+                            }}
+                            style={{ marginLeft: 8, padding: 6 }}
+                            accessibilityLabel={hasPhotos ? `Visa och hantera bilder för ${point}` : `Lägg till foto för ${point}`}
+                          >
+                            <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={20} color={'#1976D2'} />
+                          </TouchableOpacity>
+                              {/* Modal for checklist point photos (gallery/add/take new) */}
+                              {photoModal.visible && typeof photoModal.sectionIdx === 'number' && typeof photoModal.pointIdx === 'number' && (
+                                <Modal
+                                  visible={photoModal.visible}
+                                  transparent
+                                  animationType="fade"
+                                  onRequestClose={() => setPhotoModal({ visible: false, uris: [], index: 0 })}
+                                >
+                                  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-start', alignItems: 'center' }}>
+                                    <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 18, width: '90%', maxWidth: 400, alignItems: 'center', position: 'relative', marginTop: 130 }}>
+                                      {/* Close (X) icon in top right */}
+                                      <TouchableOpacity
+                                        onPress={() => setPhotoModal({ visible: false, uris: [], index: 0 })}
+                                        style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 8 }}
+                                        accessibilityLabel="Stäng"
+                                      >
+                                        <Text style={{ fontSize: 28, color: '#222', fontWeight: 'bold' }}>×</Text>
+                                      </TouchableOpacity>
+                                      <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Bilder för kontrollpunkt</Text>
+                                      <ScrollView horizontal style={{ flexDirection: 'row', marginBottom: 12, maxHeight: 90 }} contentContainerStyle={{ alignItems: 'center' }}>
+                                        {photoModal.uris && photoModal.uris.length > 0 ? (
+                                          photoModal.uris.map((img, idx) => (
+                                            <TouchableOpacity key={`img-thumb-${idx}`} onPress={() => setPhotoModal({ ...photoModal, index: idx })} style={{ marginRight: 8 }}>
+                                              <Image source={{ uri: img.uri }} style={{ width: 64, height: 48, borderRadius: 6, borderWidth: photoModal.index === idx ? 2 : 1, borderColor: photoModal.index === idx ? '#1976D2' : '#ccc' }} />
+                                            </TouchableOpacity>
+                                          ))
+                                        ) : (
+                                          <Text style={{ color: '#888' }}>Inga bilder</Text>
+                                        )}
+                                      </ScrollView>
+                                      {/* Large preview of selected image */}
+                                      {photoModal.uris && photoModal.uris.length > 0 && (
+                                        <Image source={{ uri: photoModal.uris[photoModal.index]?.uri }} style={{ width: 220, height: 160, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#ccc' }} resizeMode="contain" />
+                                      )}
+                                      {/* Comment input and delete button */}
+                                      {photoModal.uris && photoModal.uris.length > 0 && (
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, width: 320 }}>
+                                          <TextInput
+                                            value={photoModal.uris[photoModal.index]?.comment || ''}
+                                            onChangeText={(text) => {
+                                              // Only update local modal state, save with button
+                                              const newUris = (photoModal.uris || []).map((p, i) => i === photoModal.index ? ({ uri: (p && p.uri) ? p.uri : p, comment: text }) : (p && p.uri ? { uri: p.uri, comment: p.comment || '' } : p));
+                                              setPhotoModal({ ...photoModal, uris: newUris });
+                                            }}
+                                            placeholder="Lägg till kommentar..."
+                                            placeholderTextColor="#888"
+                                            style={{ flex: 1, backgroundColor: '#f5f5f5', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, fontSize: 15, marginRight: 8 }}
+                                            multiline
+                                            maxLength={120}
+                                          />
+                                          <TouchableOpacity
+                                            onPress={() => {
+                                              // Save comment to checklist photos
+                                              try {
+                                                const sectionIdx = photoModal.sectionIdx;
+                                                const pointIdx = photoModal.pointIdx;
+                                                const comment = photoModal.uris[photoModal.index]?.comment || '';
+                                                setChecklist(prev => prev.map((section, sIdx) => {
+                                                  if (sIdx !== sectionIdx) return section;
+                                                  const points = Array.isArray(section.points) ? section.points : [];
+                                                  let photosArr = Array.isArray(section.photos) && section.photos.length === points.length
+                                                    ? [...section.photos]
+                                                    : Array(points.length).fill([]);
+                                                  if (!Array.isArray(photosArr[pointIdx])) photosArr[pointIdx] = [];
+                                                  photosArr[pointIdx] = (photosArr[pointIdx] || []).map((ph, pi) => {
+                                                    if (pi === photoModal.index) return { uri: (ph && ph.uri) ? ph.uri : ph, comment };
+                                                    return ph && ph.uri ? { uri: ph.uri, comment: ph.comment || '' } : ph;
+                                                  });
+                                                  return { ...section, photos: photosArr };
+                                                }));
+                                              } catch (e) {}
+                                            }}
+                                            style={{ backgroundColor: '#1976D2', borderRadius: 6, padding: 8, marginLeft: 4, marginRight: 4 }}
+                                            accessibilityLabel="Spara kommentar"
+                                          >
+                                            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>Spara</Text>
+                                          </TouchableOpacity>
+                                          <TouchableOpacity
+                                            onPress={() => {
+                                              // Delete current photo
+                                              const { uris, index } = photoModal;
+                                              if (!uris || uris.length === 0) {
+                                                setPhotoModal({ visible: false, uris: [], index: 0 });
+                                                return;
+                                              }
+                                              const newUris = uris.filter((u, i) => i !== index);
+                                              const newIndex = Math.max(0, index - 1);
+                                              setPhotoModal({ ...photoModal, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
+                                              // Remove from checklist photos
+                                              try {
+                                                const sectionIdx = photoModal.sectionIdx;
+                                                const pointIdx = photoModal.pointIdx;
+                                                setChecklist(prev => prev.map((section, sIdx) => {
+                                                  if (sIdx !== sectionIdx) return section;
+                                                  const points = Array.isArray(section.points) ? section.points : [];
+                                                  let photosArr = Array.isArray(section.photos) && section.photos.length === points.length
+                                                    ? [...section.photos]
+                                                    : Array(points.length).fill([]);
+                                                  if (!Array.isArray(photosArr[pointIdx])) photosArr[pointIdx] = [];
+                                                  photosArr[pointIdx] = (photosArr[pointIdx] || []).filter((ph, pi) => pi !== index);
+                                                  return { ...section, photos: photosArr };
+                                                }));
+                                              } catch (e) {}
+                                            }}
+                                            style={{ backgroundColor: '#e53935', borderRadius: 6, padding: 8, marginLeft: 4 }}
+                                            accessibilityLabel="Ta bort foto"
+                                          >
+                                            {/* Trash can icon instead of text */}
+                                            <MaterialIcons name="delete" size={22} color="#fff" />
+                                          </TouchableOpacity>
+                                        </View>
+                                      )}
+                                      {/* Action buttons row (tight layout) */}
+                                      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', width: 320, marginBottom: 8 }}>
+                                        <TouchableOpacity
+                                          onPress={() => {
+                                            setPhotoModal({ visible: false, uris: [], index: 0 });
+                                            handleNavigateToCamera(photoModal.sectionIdx, photoModal.pointIdx, project);
+                                          }}
+                                          style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginRight: 8, flexDirection: 'row', alignItems: 'center' }}
+                                        >
+                                          <MaterialIcons name="photo-camera" size={22} color="#fff" style={{ marginRight: 6 }} />
+                                          <Text style={{ color: '#fff', fontWeight: '600' }}>Lägg till foto</Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    </View>
+                                  </View>
+                                </Modal>
+                              )}
                         </View>
                       );
                     })}
+                    {/* Add custom checklist point button */}
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8 }}
+                      onPress={() => {
+                        setAddPointModal({ visible: true, sectionIdx });
+                        setNewPointText('');
+                      }}
+                      accessibilityLabel="Lägg till kontrollpunkt"
+                    >
+                      <Text style={{ fontSize: 20, color: '#1976D2', marginRight: 4 }}>+</Text>
+                      <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Lägg till kontrollpunkt</Text>
+                    </TouchableOpacity>
+                    {/* Modal for adding a new checklist point */}
+                    {addPointModal.visible && addPointModal.sectionIdx === sectionIdx && (
+                      <Modal
+                        visible={addPointModal.visible}
+                        transparent
+                        animationType="fade"
+                        onRequestClose={() => {
+                          setAddPointModal({ visible: false, sectionIdx: null });
+                          setNewPointText('');
+                        }}
+                      >
+                        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }}>
+                          <View style={{ backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '80%', elevation: 5 }}>
+                            <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>Ny kontrollpunkt</Text>
+                            <TextInput
+                              value={newPointText}
+                              onChangeText={setNewPointText}
+                              placeholder="Skriv rubrik på kontrollpunkt"
+                              style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8, fontSize: 16, backgroundColor: '#fafafa' }}
+                              autoFocus
+                            />
+                            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+                              <TouchableOpacity onPress={() => {
+                                setAddPointModal({ visible: false, sectionIdx: null });
+                                setNewPointText('');
+                              }} style={{ marginRight: 16 }}>
+                                <Text style={{ color: '#1976D2' }}>Avbryt</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity onPress={() => {
+                                if (!newPointText.trim()) return;
+                                setChecklist(prev => prev.map((s, sIdx) => {
+                                  if (sIdx !== sectionIdx) return s;
+                                  const points = [...s.points, newPointText.trim()];
+                                  const statuses = Array.isArray(s.statuses) ? [...s.statuses, null] : Array(points.length).fill(null);
+                                  const photos = Array.isArray(s.photos) ? [...s.photos, []] : Array(points.length).fill([]);
+                                  return { ...s, points, statuses, photos };
+                                }));
+                                setAddPointModal({ visible: false, sectionIdx: null });
+                                setNewPointText('');
+                              }}>
+                                <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Lägg till</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </View>
+                      </Modal>
+                    )}
                   </View>
                 )}
               </View>
@@ -2133,7 +2336,7 @@ export default function BaseControlForm({
               )}
             </View>
           )}
-      {(controlType === 'Mottagningskontroll' || controlType === 'Skyddsrond') && (
+      {(controlType === 'Mottagningskontroll' || controlType === 'Skyddsrond' || controlType === 'Riskbedömning') && (
         <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -2239,7 +2442,22 @@ export default function BaseControlForm({
         elevation: 2,
       }}>
         <TouchableOpacity
-          onPress={handleAttemptFinish}
+          onPress={() => {
+            if (!canFinish && controlType === 'Riskbedömning') {
+              // Build missing fields list
+              const missing = [];
+              if (!dateValue || dateValue.trim().length === 0) missing.push('Datum');
+              if (!Array.isArray(localParticipants) || localParticipants.length === 0) missing.push('Deltagare');
+              if (!deliveryDesc || deliveryDesc.trim().length === 0) missing.push('Beskriv arbetsmoment');
+              if (!Array.isArray(checklist) || checklist.length === 0 || !checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s))) missing.push('Alla kontrollpunkter');
+              if (!Array.isArray(mottagningsSignatures) || mottagningsSignatures.length === 0) missing.push('Signatur');
+              Alert.alert('Kan inte slutföra', 'Följande saknas: ' + missing.join(', '));
+              return;
+            }
+            if (canFinish) {
+              handleAttemptFinish();
+            }
+          }}
           style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0, opacity: canFinish ? 1 : 0.5 }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>

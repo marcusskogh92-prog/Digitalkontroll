@@ -113,7 +113,11 @@ function getWeekAndYear(dateInput) {
 export default function SkyddsrondScreen({ date, participants = [] }) {
   const route = useRoute();
   const project = route.params?.project;
-  const initialValues = route.params?.initialValues || {};
+  const initialValuesRaw = route.params?.initialValues || {};
+  const initialValues = {
+    ...initialValuesRaw,
+    mottagningsSignatures: initialValuesRaw.mottagningsSignatures || [],
+  };
   const { week, year } = getWeekAndYear(date);
   const LABELS = {
     title: `Skyddsrond ${year} V.${week < 10 ? '0' + week : week}`,

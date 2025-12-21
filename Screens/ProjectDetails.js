@@ -4,6 +4,7 @@ import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import React, { useCallback, useRef, useState } from 'react';
 import {
     Image,
@@ -17,7 +18,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import Svg, { Circle, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,6 +38,118 @@ async function readUriAsBase64(uri) {
     console.warn('[PDF] readUriAsBase64 failed for', uri, e);
     return null;
   }
+}
+
+// Try to convert an image URI (file:// or http(s)) to a data URI (base64). Returns original uri on failure.
+async function toDataUri(uri) {
+  if (!uri) return uri;
+  try {
+    if (typeof uri === 'string' && uri.startsWith('data:')) return uri;
+    // Try direct read (works for file:// and sometimes cached local URIs)
+    const b = await readUriAsBase64(uri);
+    if (b) return 'data:image/jpeg;base64,' + b;
+    // If http(s), try download to cache and read
+    if (/^https?:\/\//i.test(uri)) {
+      try {
+        const fileName = 'pdf-img-' + (Math.random().toString(36).slice(2, 9)) + '.jpg';
+        const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
+        const dl = await FileSystem.downloadAsync(uri, dest);
+        if (dl && dl.uri) {
+          const b2 = await readUriAsBase64(dl.uri);
+          if (b2) return 'data:image/jpeg;base64,' + b2;
+        }
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[PDF] toDataUri failed for', uri, e);
+  }
+  return uri;
+}
+
+// Embed images (photos/signatures/checklist photos) in a control object by converting URIs to data URIs where possible.
+async function embedImagesInControl(ctrl) {
+  if (!ctrl || typeof ctrl !== 'object') return ctrl;
+  const c = JSON.parse(JSON.stringify(ctrl));
+  try {
+    // Mottagnings photos / photos
+    const photoFields = ['mottagningsPhotos', 'photos'];
+    for (const field of photoFields) {
+      if (Array.isArray(c[field]) && c[field].length > 0) {
+        const mapped = await Promise.all(c[field].map(async (p) => {
+          try {
+            if (!p) return p;
+            if (typeof p === 'string') {
+              const d = await toDataUri(p);
+              return d || p;
+            }
+            // object with uri and comment
+            const src = p.uri || p;
+            const d = await toDataUri(src);
+            return Object.assign({}, p, { uri: d || src });
+          } catch (e) { return p; }
+        }));
+        c[field] = mapped;
+      }
+    }
+
+    // Signatures
+    if (Array.isArray(c.mottagningsSignatures) && c.mottagningsSignatures.length > 0) {
+      const sigs = await Promise.all(c.mottagningsSignatures.map(async (s) => {
+        try {
+          if (!s) return s;
+          if (s.uri) {
+            const d = await toDataUri(s.uri);
+            return Object.assign({}, s, { uri: d || s.uri });
+          }
+          return s;
+        } catch (e) { return s; }
+      }));
+      c.mottagningsSignatures = sigs;
+    }
+
+    // Checklist photos (sections -> photos arrays)
+    if (Array.isArray(c.checklist) && c.checklist.length > 0) {
+      for (let si = 0; si < c.checklist.length; si++) {
+        const sec = c.checklist[si];
+        if (!sec) continue;
+        if (Array.isArray(sec.photos) && sec.photos.length > 0) {
+          const newPhotos = await Promise.all(sec.photos.map(async (entry) => {
+            if (!entry) return entry;
+            // entry might be array of uris or single uri/object
+            if (Array.isArray(entry)) {
+              return await Promise.all(entry.map(async (it) => {
+                try {
+                  if (!it) return it;
+                  const src = it.uri || it;
+                  const d = await toDataUri(src);
+                  return (typeof it === 'string') ? (d || src) : Object.assign({}, it, { uri: d || src });
+                } catch (e) { return it; }
+              }));
+            }
+            try {
+              const src = entry.uri || entry;
+              const d = await toDataUri(src);
+              return (typeof entry === 'string') ? (d || src) : Object.assign({}, entry, { uri: d || src });
+            } catch (e) { return entry; }
+          }));
+          c.checklist[si].photos = newPhotos;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[PDF] embedImagesInControl failed', e);
+  }
+  return c;
+}
+
+function getWeekAndYear(dateInput) {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  if (isNaN(d)) return { week: '', year: '' };
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  const weekNo = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  return { week: weekNo, year: d.getFullYear() };
 }
 
 const styles = StyleSheet.create({
@@ -87,7 +200,7 @@ export default function ProjectDetails({ route, navigation }) {
           style={{ width: 150, height: 80, resizeMode: 'contain' }}
         />
       ),
-      headerBackTitle: 'Hem',
+      headerBackTitle: '',
     });
   }, [navigation]);
     // State för att låsa upp skapad-datum
@@ -138,7 +251,8 @@ export default function ProjectDetails({ route, navigation }) {
               } else {
                 console.warn('[PDF] buildSummaryHtml not available, falling back to per-control builder');
                 const companyObj = { name: project?.client || project?.name || '', logoBase64 };
-                html = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
+                const preparedControls = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
+                html = (preparedControls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
               }
             } catch (hErr) {
               console.error('[PDF] error while building HTML for preview', hErr);
@@ -149,16 +263,45 @@ export default function ProjectDetails({ route, navigation }) {
             if (!html || String(html).trim().length < 20) throw new Error('Empty or too-small HTML');
 
             try {
-              await Print.printAsync({ html });
+              const fileResult = await Print.printToFileAsync({ html });
+              const pdfUri = fileResult?.uri;
+              if (pdfUri) {
+                try {
+                  const avail = await Sharing.isAvailableAsync();
+                  if (avail) await Sharing.shareAsync(pdfUri, { dialogTitle: 'Spara PDF' });
+                  else setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri });
+                } catch (shareErr) {
+                  console.warn('[PDF] shareAsync failed, opening print dialog as fallback', shareErr);
+                  await Print.printAsync({ uri: pdfUri });
+                }
+              } else {
+                throw new Error('printToFileAsync returned no uri');
+              }
             } catch (err) {
-              console.warn('[PDF] printAsync with logo/fallback failed, retrying without logo', err);
+              console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', err);
               try {
                 let html2 = null;
                 if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
-                else html2 = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+                else {
+                  const preparedControls2 = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
+                  html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+                }
                 console.log('[PDF] retry HTML length:', html2 ? String(html2).length : 0);
                 if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry HTML');
-                await Print.printAsync({ html: html2 });
+                const fileResult2 = await Print.printToFileAsync({ html: html2 });
+                const pdfUri2 = fileResult2?.uri;
+                if (pdfUri2) {
+                  try {
+                    const avail2 = await Sharing.isAvailableAsync();
+                    if (avail2) await Sharing.shareAsync(pdfUri2, { dialogTitle: 'Spara PDF' });
+                    else setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri2 });
+                  } catch (shareErr2) {
+                    console.warn('[PDF] shareAsync failed (retry), falling back to print dialog', shareErr2);
+                    await Print.printAsync({ uri: pdfUri2 });
+                  }
+                } else {
+                  throw new Error('printToFileAsync retry returned no uri');
+                }
               } catch (err2) { throw err2; }
             }
           } catch (e) {
@@ -208,8 +351,9 @@ export default function ProjectDetails({ route, navigation }) {
           try {
             if (typeof buildSummaryHtml === 'function') html = buildSummaryHtml(exportFilter, logoForPrint);
             else {
-              const companyObj = { name: project?.client || project?.name || '', logoBase64 };
-              html = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
+                const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                const preparedControls = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
+              html = (preparedControls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
             }
           } catch (hErr) {
             console.error('[PDF] error while building HTML for export', hErr);
@@ -218,19 +362,48 @@ export default function ProjectDetails({ route, navigation }) {
           console.log('[PDF] export HTML length:', html ? String(html).length : 0);
           try {
             if (!html || String(html).trim().length < 20) throw new Error('Empty export HTML');
-            await Print.printToFileAsync({ html });
+            const fileResult = await Print.printToFileAsync({ html });
+            const pdfUri = fileResult?.uri;
+            if (pdfUri) {
+              try {
+                const avail = await Sharing.isAvailableAsync();
+                if (avail) await Sharing.shareAsync(pdfUri, { dialogTitle: 'Spara PDF' });
+                else setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri });
+              } catch (shareErr) {
+                console.warn('[PDF] shareAsync failed, falling back to open print dialog', shareErr);
+                await Print.printAsync({ uri: pdfUri });
+              }
+            } else {
+              throw new Error('printToFileAsync returned no uri');
+            }
           } catch (err) {
             console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
             try {
               let html2 = null;
               if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
-              else html2 = (controls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+              else {
+                const preparedControls2 = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
+                html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+              }
               console.log('[PDF] retry export HTML length:', html2 ? String(html2).length : 0);
               if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry export HTML');
-              await Print.printToFileAsync({ html: html2 });
+              const fileResult2 = await Print.printToFileAsync({ html: html2 });
+              const pdfUri2 = fileResult2?.uri;
+              if (pdfUri2) {
+                try {
+                  const avail2 = await Sharing.isAvailableAsync();
+                  if (avail2) await Sharing.shareAsync(pdfUri2, { dialogTitle: 'Spara PDF' });
+                  else setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri2 });
+                } catch (shareErr2) {
+                  console.warn('[PDF] shareAsync failed (retry), falling back to print dialog', shareErr2);
+                  await Print.printAsync({ uri: pdfUri2 });
+                }
+              } else {
+                throw new Error('printToFileAsync retry returned no uri');
+              }
             } catch (err2) { throw err2; }
           }
-          setNotice({ visible: true, text: 'PDF exporterad!' });
+          setNotice({ visible: true, text: 'PDF genererad' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
         } catch (e) {
           console.error('[PDF] Export error:', e);
@@ -275,6 +448,8 @@ export default function ProjectDetails({ route, navigation }) {
     'Skyddsrond'
   ].sort();
   const [controls, setControls] = useState([]);
+  // Sökfält för kontroller
+  const [searchText, setSearchText] = useState('');
 
   // Ladda både utkast (pågående) och slutförda kontroller för projektet
   const loadControls = useCallback(async () => {
@@ -300,6 +475,12 @@ export default function ProjectDetails({ route, navigation }) {
         });
       }
     } catch {}
+    // Sort controls by date (prefer date || savedAt || createdAt) descending
+    allControls.sort((a,b) => {
+      const ta = new Date(a.date || a.savedAt || a.createdAt || 0).getTime() || 0;
+      const tb = new Date(b.date || b.savedAt || b.createdAt || 0).getTime() || 0;
+      return tb - ta;
+    });
     setControls(allControls);
   }, [project?.id]);
 
@@ -378,8 +559,17 @@ export default function ProjectDetails({ route, navigation }) {
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: 240 }}
     >
-      {/* Rubrik för projektinfo */}
-      <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 18, color: '#333' }}>Projektinformation</Text>
+      {/* Rubrik för projektinfo (med redigera-knapp till höger) */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Projektinformation</Text>
+        <TouchableOpacity
+          onPress={() => setEditingInfo(true)}
+          accessibilityLabel="Ändra projektinfo"
+          style={{ padding: 6 }}
+        >
+          <Ionicons name="create-outline" size={22} color="#1976D2" />
+        </TouchableOpacity>
+      </View>
       {/* Projektinfo med logga, status, projektnummer, projektnamn */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
         {companyLogoUri ? (
@@ -401,14 +591,7 @@ export default function ProjectDetails({ route, navigation }) {
             }} />
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.id}</Text>
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#222' }}>{editableProject?.name}</Text>
-            <TouchableOpacity
-              style={{ position: 'absolute', top: -8, right: -8, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.01)' }}
-              onPress={() => setEditingInfo(true)}
-              accessibilityLabel="Ändra projektinfo"
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Ionicons name="create-outline" size={24} color="#888" />
-            </TouchableOpacity>
+            {/* edit button moved to header row */}
           </View>
           <View style={{ marginBottom: 2 }}>
             <View style={{ marginBottom: 2 }}>
@@ -841,13 +1024,34 @@ export default function ProjectDetails({ route, navigation }) {
         <Text style={[styles.subtitle, { lineHeight: 32 }]}>Utförda kontroller:</Text>
       </View>
 
+      {/* Sökfält för kontroller */}
+      <View style={{ marginBottom: 10 }}>
+        <TextInput
+          style={[styles.input, { marginBottom: 0 }]}
+          placeholder="Sök kontroller (t.ex. gips, arbetsmoment, leverans...)"
+          placeholderTextColor="#888"
+          value={searchText}
+          onChangeText={setSearchText}
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+      </View>
+
       {controls.length === 0 ? (
         <Text style={[styles.noControls, { color: '#D32F2F' }]}>Inga kontroller utförda än</Text>
       ) : (
         <View>
           {(() => {
+            // Filtrera kontroller baserat på söktext
+            const lowerSearch = (searchText || '').toLowerCase();
+            const filteredControls = !lowerSearch
+              ? controls
+              : controls.filter(c => {
+                  const fields = [c.deliveryDesc, c.materialDesc, c.generalNote, c.description, c.arbetsmoment];
+                  return fields.some(f => f && String(f).toLowerCase().includes(lowerSearch));
+                });
             const grouped = controlTypes
-              .map((t) => ({ type: t, items: controls.filter(c => (c.type || '') === t) }))
+              .map((t) => ({ type: t, items: filteredControls.filter(c => (c.type || '') === t) }))
               .filter(g => g.items.length > 0);
 
             const toggleType = (t) => {
@@ -879,31 +1083,27 @@ export default function ProjectDetails({ route, navigation }) {
                       .slice()
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
                       .map((item, idx) => {
-                        // Ensure subtitle and parsedDate are defined in this scope
+                        // ...existerande rendering av kontrollkortet...
                         let subtitle = null;
                         let parsedDate = '';
-                        // Format: Skyddsrond yyyy-mm-dd V.xx
                         let label = '';
-                        if (item.type === 'Skyddsrond') {
-                          // Format: Skyddsrond yyyy-mm-dd
+                        if (item.type === 'Skyddsrond' || item.type === 'Riskbedömning') {
                           let dateStr = '';
-                          let week = '';
                           if (item.date && item.date.length >= 10) {
                             const d = new Date(item.date);
-                            if (!isNaN(d)) {
-                              // yyyy-mm-dd
-                              dateStr = d.toISOString().slice(0, 10);
-                              // Veckonummer
-                              d.setHours(0, 0, 0, 0);
-                              d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-                              const week1 = new Date(d.getFullYear(), 0, 4);
-                              week = 'V.' + (1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7));
-                            }
+                            if (!isNaN(d)) dateStr = d.toISOString().slice(0, 10);
                           }
                           if (!dateStr) dateStr = '(okänt datum)';
-                          label = `Skyddsrond ${dateStr} ${week}`.trim();
+                          const wy = getWeekAndYear(item.date || item.savedAt || item.createdAt || dateStr);
+                          const weekStr = wy && wy.week ? (wy.week < 10 ? '0' + wy.week : String(wy.week)) : '';
+                          label = (weekStr ? `V.${weekStr} - ` : '') + dateStr;
+                          subtitle = (item.deliveryDesc && String(item.deliveryDesc).trim())
+                            ? String(item.deliveryDesc).trim()
+                            : (item.materialDesc && String(item.materialDesc).trim()) ? String(item.materialDesc).trim()
+                            : (item.generalNote && String(item.generalNote).trim()) ? String(item.generalNote).trim()
+                            : (item.description && String(item.description).trim()) ? String(item.description).trim()
+                            : null;
                         } else if (item.type === 'Mottagningskontroll') {
-                          // Prefer explicit date fields, fall back to savedAt or createdAt
                           const tryParse = (v) => {
                             if (!v) return null;
                             try {
@@ -915,20 +1115,25 @@ export default function ProjectDetails({ route, navigation }) {
                           parsedDate = tryParse(item.date) || tryParse(item.dateValue) || tryParse(item.savedAt) || tryParse(item.createdAt) || tryParse(item.created) || '';
                           if (!parsedDate && item.date) parsedDate = item.date;
                           const dateLabel = parsedDate || '(okänt datum)';
-                          if (item.materialDesc && String(item.materialDesc).trim()) {
-                            label = `${dateLabel} — ${String(item.materialDesc).trim()}`;
-                          } else {
-                            label = dateLabel;
-                          }
-                          // compute subtitle to render beneath the label
-                          if (!(item.materialDesc && String(item.materialDesc).trim())) {
-                            subtitle = parsedDate ? parsedDate : (item.date ? new Date(item.date).toLocaleDateString('sv-SE') : null);
-                          }
+                          const wy = getWeekAndYear(parsedDate || item.date || item.savedAt || item.createdAt);
+                          const weekStr = wy && wy.week ? (wy.week < 10 ? '0' + wy.week : String(wy.week)) : '';
+                          const header = weekStr ? `V.${weekStr} - ${dateLabel}` : dateLabel;
+                          label = header;
+                          subtitle = (item.deliveryDesc && String(item.deliveryDesc).trim())
+                            ? String(item.deliveryDesc).trim()
+                            : (item.materialDesc && String(item.materialDesc).trim()) ? String(item.materialDesc).trim()
+                            : (item.generalNote && String(item.generalNote).trim()) ? String(item.generalNote).trim()
+                            : (item.description && String(item.description).trim()) ? String(item.description).trim()
+                            : null;
                         } else {
                           label = `${item.type}${item.date ? ' ' + item.date : ''}`;
+                          if (item.deliveryDesc && String(item.deliveryDesc).trim()) {
+                            label = `${label} — ${String(item.deliveryDesc).trim()}`;
+                          }
                         }
                         return (
                           <View key={`${item.id || 'noid'}-${item.date || 'nodate'}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            {/* ...existerande kontrollkort JSX... */}
                             <TouchableOpacity
                               style={[
                                 styles.controlCard,
@@ -969,18 +1174,10 @@ export default function ProjectDetails({ route, navigation }) {
                             >
                               {item.isDraft ? (
                                 <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
-                                  <Polygon points="12,2 22,20 2,20" fill="#FFD600" stroke="#111" strokeWidth="1" />
-                                  <SvgText
-                                    x="12"
-                                    y="14"
-                                    fontSize="13"
-                                    fontWeight="bold"
-                                    fill="#111"
-                                    textAnchor="middle"
-                                    alignmentBaseline="middle"
-                                  >
-                                    !
-                                  </SvgText>
+                                  <Circle cx={12} cy={12} r={10} fill="#FFD600" stroke="#111" strokeWidth={1} />
+                                  <Line x1={12} y1={12} x2={12} y2={7} stroke="#111" strokeWidth={1.5} strokeLinecap="round" />
+                                  <Line x1={12} y1={12} x2={16} y2={13} stroke="#111" strokeWidth={1.5} strokeLinecap="round" />
+                                  <Circle cx={12} cy={12} r={1.2} fill="#111" />
                                 </Svg>
                               ) : (
                                 <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
@@ -1051,16 +1248,43 @@ export default function ProjectDetails({ route, navigation }) {
                                         } catch (e) { console.warn('[PDF] logo base64 convert failed', e); }
 
                                         let html;
+                                        // Embed images for this item before building HTML
+                                        const embeddedItem = await embedImagesInControl(item);
                                         if (typeof buildSummaryHtml === 'function') {
-                                          html = buildSummaryHtml('En', logoForPrint, [item]);
+                                          html = buildSummaryHtml('En', logoForPrint, [embeddedItem]);
                                           } else {
                                           console.warn('[PDF] buildSummaryHtml not found, falling back to type-aware builder');
                                           const companyObj = { name: project?.client || project?.name || '', logoBase64 };
-                                          html = buildPdfHtmlForControl({ control: item, project, company: companyObj });
+                                          html = buildPdfHtmlForControl({ control: embeddedItem, project, company: companyObj });
                                         }
-                                        await Print.printAsync({ html });
+                                        // Generate PDF file and present share/save dialog instead of directly printing
+                                        const fileResult = await Print.printToFileAsync({ html });
+                                        const pdfUri = fileResult?.uri;
+                                        if (pdfUri) {
+                                          try {
+                                            // On iOS/Android this opens native share/save UI (Save to Files, etc.)
+                                            if (Sharing && Sharing.isAvailableAsync) {
+                                              const avail = await Sharing.isAvailableAsync();
+                                              if (avail) {
+                                                await Sharing.shareAsync(pdfUri, { dialogTitle: 'Spara PDF' });
+                                              } else {
+                                                // Fallback: just log path and show notice
+                                                console.log('[PDF] PDF generated at', pdfUri);
+                                                setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri });
+                                              }
+                                            } else {
+                                              console.log('[PDF] PDF generated at', pdfUri);
+                                              setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri });
+                                            }
+                                          } catch (shareErr) {
+                                            console.warn('[PDF] shareAsync failed, opening print dialog as fallback', shareErr);
+                                            await Print.printAsync({ uri: pdfUri });
+                                          }
+                                        } else {
+                                          throw new Error('printToFileAsync returned no uri');
+                                        }
                                       } catch (err) {
-                                        console.warn('[PDF] single-item print failed, retrying without logo', err);
+                                        console.warn('[PDF] single-item PDF generation failed, retrying without logo', err);
                                         try {
                                           let html2;
                                           if (typeof buildSummaryHtml === 'function') {
@@ -1068,10 +1292,24 @@ export default function ProjectDetails({ route, navigation }) {
                                           } else {
                                             html2 = buildPdfHtmlForControl({ control: item, project, company: { name: project?.client || project?.name || '' } });
                                           }
-                                          await Print.printAsync({ html: html2 });
+                                          // Try generating file again without logo
+                                          const fileResult2 = await Print.printToFileAsync({ html: html2 });
+                                          const pdfUri2 = fileResult2?.uri;
+                                          if (pdfUri2) {
+                                            try {
+                                              const avail2 = await Sharing.isAvailableAsync();
+                                              if (avail2) await Sharing.shareAsync(pdfUri2, { dialogTitle: 'Spara PDF' });
+                                              else setNotice({ visible: true, text: 'PDF genererad: ' + pdfUri2 });
+                                            } catch (shareErr2) {
+                                              console.warn('[PDF] shareAsync failed (retry), falling back to print dialog', shareErr2);
+                                              await Print.printAsync({ uri: pdfUri2 });
+                                            }
+                                          } else {
+                                            throw new Error('printToFileAsync retry returned no uri');
+                                          }
                                         } catch (err2) {
                                           console.error('[PDF] single-item print fallback failed', err2);
-                                          setNotice({ visible: true, text: 'Kunde inte skriva ut PDF — se konsolen för detaljer' });
+                                          setNotice({ visible: true, text: 'Kunde inte generera eller dela PDF — se konsolen för detaljer' });
                                         }
                                       }
                                     } finally {
