@@ -1,6 +1,7 @@
 
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
 import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -16,6 +17,7 @@ const CONTROL_TYPE_ICONS = {
 const PRIMARY = '#263238';
 
 export default function ControlDetails({ route }) {
+  const navigation = useNavigation();
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const { control, project } = route.params || {};
@@ -84,43 +86,103 @@ export default function ControlDetails({ route }) {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-        <Ionicons name={icon} size={28} color={color} style={{ marginRight: 8 }} />
-        <Text style={styles.title}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, justifyContent: 'space-between' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Ionicons name={icon} size={28} color={color} style={{ marginRight: 8 }} />
+          <Text style={styles.title}>{label}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => {
+            // Determine which form screen to navigate to based on control type
+            let screen = null;
+            switch (type) {
+              case 'Riskbedömning': screen = 'RiskbedömningScreen'; break;
+              case 'Arbetsberedning': screen = 'ArbetsberedningScreen'; break;
+              case 'Egenkontroll': screen = 'EgenkontrollScreen'; break;
+              case 'Fuktmätning': screen = 'FuktmätningScreen'; break;
+              case 'Mottagningskontroll': screen = 'MottagningskontrollScreen'; break;
+              case 'Skyddsrond': screen = 'SkyddsrondScreen'; break;
+              default: screen = null;
+            }
+            if (screen) {
+              navigation.navigate(screen, { initialValues: control, project });
+            }
+          }}
+          style={{ padding: 6, marginLeft: 8 }}
+          accessibilityLabel="Redigera kontroll"
+        >
+          <Ionicons name="create-outline" size={22} color="#1976D2" />
+        </TouchableOpacity>
       </View>
-      <Text style={styles.subInfo}>Datum: {week ? `V.${week} ` : ''}{date || '-'}</Text>
+      <View style={styles.divider} />
+      {/* Datum-rubrik med ikon och undertexter */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+        <Ionicons name="calendar-outline" size={20} color="#1976D2" style={{ marginRight: 6 }} />
+        <Text style={styles.sectionTitle}>Datum</Text>
+      </View>
+      <Text style={styles.subInfo}>Skapad: {date ? new Date(date).toISOString().slice(0, 10) : '-'}</Text>
       <Text style={styles.subInfo}>Status: {statusText}</Text>
       {savedAt && <Text style={styles.subInfo}>Sparad senast: {new Date(savedAt).toISOString().slice(0, 10)}</Text>}
+      <View style={styles.divider} />
+      {/* Vecka visas ej som rubrik men kan läggas till om önskas */}
 
       {/* Deltagare */}
       {participants.length > 0 && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Deltagare</Text>
           {participants.map((p, i) => {
+            let name, company, role;
             if (typeof p === 'string') {
-              return <Text key={i} style={styles.bodyText}>{p}</Text>;
+              name = p;
+              company = '';
+              role = '';
             } else if (p && typeof p === 'object') {
-              return (
-                <Text key={i} style={styles.bodyText}>
-                  {p.name || ''}
-                  {p.company ? `, ${p.company}` : ''}
-                  {p.role ? `, ${p.role}` : ''}
-                </Text>
-              );
-            } else {
-              return null;
+              name = p.name || '';
+              company = p.company || '';
+              role = p.role || '';
             }
+            return (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                <Ionicons name="person-outline" size={18} color="#1976D2" style={{ marginRight: 6 }} />
+                <Text style={styles.bodyText}>
+                  {name}
+                  {company ? `, ${company}` : ''}
+                  {role ? `, ${role}` : ''}
+                </Text>
+              </View>
+            );
           })}
         </View>
       )}
+      {participants.length > 0 && <View style={styles.divider} />}
 
       {/* Väderlek */}
       {weather && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Väderlek</Text>
-          <Text style={styles.bodyText}>{weather}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {(() => {
+              // Match icon to weather string
+              const weatherIcons = {
+                'Soligt': 'sunny',
+                'Delvis molnigt': 'partly-sunny',
+                'Molnigt': 'cloudy',
+                'Regn': 'rainy',
+                'Snö': 'snow',
+                'Åska': 'thunderstorm',
+              };
+              const iconName = weatherIcons[weather];
+              if (iconName) {
+                const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
+                return <Ionicons name={iconName} size={22} color={cmap[iconName] || '#1976D2'} style={{ marginRight: 8 }} />;
+              }
+              return null;
+            })()}
+            <Text style={styles.bodyText}>{weather}</Text>
+          </View>
         </View>
       )}
+      {weather && <View style={styles.divider} />}
 
       {/* Beskrivning av moment */}
       {(deliveryDesc || description) && (
@@ -155,6 +217,7 @@ export default function ControlDetails({ route }) {
           ))}
         </View>
       )}
+      {checklistSections.length > 0 && <View style={styles.divider} />}
 
       {/* Åtgärder vidtagna (om finns) tas bort, endast en rad ska visas */}
 
@@ -163,10 +226,14 @@ export default function ControlDetails({ route }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Signaturer</Text>
           {mottagningsSignatures.map((s, i) => (
-            <Text key={i} style={styles.bodyText}>{s.name || 'Signerad'}</Text>
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+              <Ionicons name="pencil" size={18} color="#1976D2" style={{ marginRight: 6 }} />
+              <Text style={styles.bodyText}>{s.name || 'Signerad'}</Text>
+            </View>
           ))}
         </View>
       )}
+      {mottagningsSignatures.length > 0 && <View style={styles.divider} />}
 
       {/* Bifogade bilder */}
       {mottagningsPhotos.length > 0 && (
@@ -220,6 +287,12 @@ export default function ControlDetails({ route }) {
 }
 
 const styles = StyleSheet.create({
+  divider: {
+    height: 1,
+    backgroundColor: '#e0e0e0',
+    marginVertical: 16,
+    width: '100%',
+  },
   container: { flex: 1, backgroundColor: '#fff', padding: 16 },
   title: { fontSize: 22, fontWeight: 'bold', color: PRIMARY, marginBottom: 8 },
   subInfo: { fontSize: 14, color: '#666', marginBottom: 2 },

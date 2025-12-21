@@ -42,6 +42,8 @@ export default function BaseControlForm({
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
   const [editParticipantIndex, setEditParticipantIndex] = useState(null);
+  // State for cancel edit confirmation modal
+  const [showCancelEditConfirm, setShowCancelEditConfirm] = useState(false);
   // Refs för TextInput-fokus i deltagar-modal (måste ligga här!)
   const nameRef = useRef();
   const companyRef = useRef();
@@ -2462,18 +2464,61 @@ export default function BaseControlForm({
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="checkmark-circle" size={18} color={canFinish ? '#1976D2' : '#AAA'} style={{ marginRight: 8 }} />
-            <Text style={{ color: canFinish ? '#1976D2' : '#AAA', fontWeight: 'bold', fontSize: 16 }}>Slutför</Text>
+            <Text style={{ color: canFinish ? '#1976D2' : '#AAA', fontWeight: 'bold', fontSize: 16 }}>
+              {((initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed)) ? 'Spara' : 'Slutför')}
+            </Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleSaveDraft}
-          style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="save-outline" size={18} color="#D32F2F" style={{ marginRight: 8 }} />
-            <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
+        {((initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))) ? (
+          <TouchableOpacity
+            onPress={() => setShowCancelEditConfirm(true)}
+            style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="close-circle-outline" size={18} color="#D32F2F" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Avbryt</Text>
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={handleSaveDraft}
+            style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="save-outline" size={18} color="#D32F2F" style={{ marginRight: 8 }} />
+              <Text style={{ color: '#D32F2F', fontWeight: 'bold', fontSize: 16 }}>Spara utkast</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+      {/* Modal for cancel edit confirmation */}
+      <Modal visible={!!showCancelEditConfirm} transparent animationType="fade" onRequestClose={() => setShowCancelEditConfirm(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 24, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center' }}>Vill du verkligen avbryta ändringen?</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 12 }}>
+              <TouchableOpacity
+                onPress={() => setShowCancelEditConfirm(false)}
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginRight: 8 }}
+              >
+                <Text style={{ color: '#1976D2', fontWeight: '600' }}>Nej</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCancelEditConfirm(false);
+                  setShowBackConfirm(false); // Prevent double modal
+                  try { isDirtyRef.current = false; } catch (e) {}
+                  try { if (blockedNavEvent) blockedNavEvent.current = null; } catch (e) {}
+                  if (navigation && navigation.goBack) navigation.goBack();
+                }}
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
+              >
+                <Text style={{ color: '#D32F2F', fontWeight: '600' }}>Ja, avbryt</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </TouchableOpacity>
+        </View>
+      </Modal>
       </View>
       {/* Signature Modal (JS fallback) */}
       <Modal visible={signatureForIndex !== null} transparent animationType="slide" onRequestClose={() => setSignatureForIndex(null)}>

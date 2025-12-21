@@ -16,9 +16,17 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
 
   const handleSave = async (data) => {
     try {
-      const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: data.id || uuidv4() });
+      // Always create a new id for the edited control
+      const newId = uuidv4();
+      const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: newId });
       const completedRaw = await AsyncStorage.getItem('completed_controls');
-      const completedList = completedRaw ? JSON.parse(completedRaw) : [];
+      let completedList = completedRaw ? JSON.parse(completedRaw) : [];
+      // Remove old control with same id (if any), or by matching project+type+savedAt if id is missing
+      if (data.id) {
+        completedList = completedList.filter(c => c.id !== data.id);
+      } else if (data.savedAt) {
+        completedList = completedList.filter(c => !(c.project?.id === project?.id && c.type === 'Mottagningskontroll' && c.savedAt === data.savedAt));
+      }
       completedList.push(completed);
       await AsyncStorage.setItem('completed_controls', JSON.stringify(completedList));
       // Remove matching draft if exists
@@ -26,7 +34,7 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
         if (draftRaw) {
           let drafts = JSON.parse(draftRaw) || [];
-          drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Mottagningskontroll' && d.id === completed.id));
+          drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Mottagningskontroll' && (d.id === data.id || d.id === newId)));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
       } catch (e) {}
