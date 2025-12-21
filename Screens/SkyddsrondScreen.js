@@ -136,7 +136,13 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       const existing = await AsyncStorage.getItem('completed_controls');
       let arr = [];
       if (existing) arr = JSON.parse(existing);
-      arr.push(completed);
+      // Ersätt befintlig kontroll med samma id, annars lägg till
+      const idx = arr.findIndex(c => c.id === completed.id);
+      if (idx !== -1) {
+        arr[idx] = completed;
+      } else {
+        arr.push(completed);
+      }
       await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
       // Remove any matching drafts for this project+type
       try {
@@ -152,7 +158,7 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
       } catch (e) {}
-      alert('Kontrollen har sparats som utförd!');
+      // ...existing code...
     } catch (e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
     }
@@ -162,7 +168,7 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
     // Persistence is handled centrally in BaseControlForm.saveDraftControl().
     // This screen should not write to AsyncStorage to avoid overwriting richer
     // draft objects maintained by the form (which include photos, participants).
-    try { console.log('[SkyddsrondScreen] handleSaveDraft received draft id:', data && data.id); } catch (e) {}
+    // ...existing code...
   };
 
   const WEATHER_OPTIONS = [

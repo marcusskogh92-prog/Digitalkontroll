@@ -1,9 +1,14 @@
 
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
+import { Alert, TextInput } from 'react-native';
+// import { Ionicons } from '@expo/vector-icons';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import SignatureModal from '../components/SignatureModal';
 
 const CONTROL_TYPE_ICONS = {
   'Arbetsberedning': { icon: 'construct-outline', color: '#1976D2', label: 'Arbetsberedning' },
@@ -17,6 +22,9 @@ const CONTROL_TYPE_ICONS = {
 const PRIMARY = '#263238';
 
 export default function ControlDetails({ route }) {
+  // Modal state for åtgärd
+  const [actionModal, setActionModal] = useState({ visible: false, section: '', point: '', img: null, comment: '', signature: '', name: '' });
+  const [_, setForceUpdate] = useState(0); // för att tvinga omrendering
   const navigation = useNavigation();
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
@@ -64,10 +72,14 @@ export default function ControlDetails({ route }) {
   const statusText = status === 'UTFÖRD' || status === 'Slutförd' ? 'Slutförd' : 'Pågående';
 
   // Checklist points: group by section, show approved and deviation points with icons
+  // checklistSections ska alltid innehålla remediation-array
   const checklistSections = (checklist || []).map((section) => {
     if (!section || !Array.isArray(section.points)) return null;
     const approved = [];
     const deviation = [];
+    // Gör remediation till ett objekt per punkt
+    let remediation = section.remediation;
+    if (!remediation || typeof remediation !== 'object') remediation = {};
     (section.points || []).forEach((pt, idx) => {
       const status = section.statuses && section.statuses[idx];
       if (status === 'ok') approved.push(pt);
@@ -78,6 +90,7 @@ export default function ControlDetails({ route }) {
       label: section.label,
       approved,
       deviation,
+      remediation,
     };
   }).filter(Boolean);
 
@@ -203,22 +216,387 @@ export default function ControlDetails({ route }) {
               {idx > 0 && <View style={styles.divider} />}
               <Text style={{ fontWeight: '600', fontSize: 15, color: '#444', marginBottom: 2 }}>{section.label}</Text>
               {section.approved.map((pt, i) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2, flexWrap: 'wrap' }}>
                   <Ionicons name="checkmark-circle" size={18} color="#388E3C" style={{ marginRight: 6 }} />
-                  <Text style={styles.bodyText}>{pt}</Text>
+                  <Text style={[styles.bodyText, { flex: 1, flexWrap: 'wrap' }]}>{pt}</Text>
                 </View>
               ))}
-              {section.deviation.map((pt, i) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                  <Ionicons name="alert-circle" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
-                  <Text style={[styles.bodyText, { color: '#D32F2F' }]}>{pt}</Text>
-                </View>
-              ))}
+              {section.deviation.map((pt, i) => {
+                const remediationKey = pt.trim();
+                const remediation = section.remediation && section.remediation[remediationKey] ? section.remediation[remediationKey] : null;
+                const isHandled = !!remediation;
+                if (section.remediation) {
+                  console.log('DEBUG: Render remediation keys:', Object.keys(section.remediation), 'pt:', pt, 'trim:', remediationKey, 'found:', !!remediation);
+                }
+                return (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2, flexWrap: 'wrap' }}>
+                    <Ionicons name={isHandled ? "checkmark-circle" : "alert-circle"} size={18} color={isHandled ? "#388E3C" : "#D32F2F"} style={{ marginRight: 6 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.bodyText, { color: isHandled ? '#1976D2' : '#D32F2F', flexWrap: 'wrap' }]}>{pt}</Text>
+                      {isHandled && remediation && (
+                        <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                          Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           ))}
         </View>
       )}
-      {checklistSections.length > 0 && <View style={styles.divider} />}
+
+
+      {(() => {
+        // Gruppera avvikelser per sektion
+        const grouped = {};
+        checklistSections.forEach(section => {
+          if (section.deviation && section.deviation.length > 0) {
+            if (!grouped[section.label]) grouped[section.label] = [];
+            section.deviation.forEach((pt) => {
+              grouped[section.label].push({
+                pt,
+                remediation: section.remediation && section.remediation[pt] ? section.remediation[pt] : null
+              });
+            });
+          }
+        });
+        const sectionLabels = Object.keys(grouped);
+        if (sectionLabels.length === 0) return null;
+        // Visa åtgärdsknapp endast för Skyddsrond
+        const isSkyddsrond = type === 'Skyddsrond';
+        return (
+          <>
+            <View style={styles.divider} />
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Avvikelser/risker:</Text>
+              {sectionLabels.map((label, idx) => (
+                <View key={label} style={{ marginBottom: 4 }}>
+                  <Text style={{ fontWeight: '600', color: '#444', marginBottom: 2 }}>{label}:</Text>
+                  {grouped[label].map((item, i) => {
+                    const { pt, remediation } = item;
+                    const isHandled = !!remediation;
+                    return (
+                      <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2, flexWrap: 'wrap', marginLeft: 12 }}>
+                        <Ionicons name={isHandled ? "checkmark-circle" : "alert-circle"} size={18} color={isHandled ? "#388E3C" : "#D32F2F"} style={{ marginRight: 6, marginTop: 2 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.bodyText, { color: isHandled ? '#222' : '#D32F2F', flexWrap: 'wrap' }]}>{pt}</Text>
+                          {isHandled && remediation && (
+                            <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                              Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
+                            </Text>
+                          )}
+                        </View>
+                        {isSkyddsrond && (
+                          isHandled ? (
+                            <TouchableOpacity
+                              style={{ marginLeft: 8, backgroundColor: '#FFC107', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center' }}
+                              onPress={() => setActionModal({ visible: true, section: label, point: pt, img: remediation.img, comment: remediation.comment, signature: remediation.signature, name: remediation.name, date: remediation.date, infoMode: true })}
+                            >
+                              <Ionicons name="information-circle-outline" size={16} color="#222" style={{ marginRight: 4 }} />
+                              <Text style={{ color: '#222', fontSize: 13 }}>Info</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <TouchableOpacity
+                              style={{ marginLeft: 8, backgroundColor: '#1976D2', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                              onPress={() => setActionModal({ visible: true, section: label, point: pt, img: null, comment: '', signature: '', name: '', infoMode: false })}
+                            >
+                              <Text style={{ color: '#fff', fontSize: 13 }}>Åtgärda</Text>
+                            </TouchableOpacity>
+                          )
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+            </View>
+            <View style={styles.divider} />
+
+            {/* Modal för åtgärd */}
+            <Modal
+              visible={actionModal.visible}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setActionModal(a => ({ ...a, visible: false, /* INGEN SPARLOGIK HÄR */ }))}
+            >
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 22, width: 320, alignItems: 'center' }}>
+                  {/* X-stäng uppe till höger */}
+                  <TouchableOpacity
+                    style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+                    onPress={() => setActionModal(a => ({ ...a, visible: false, /* INGEN SPARLOGIK HÄR */ }))}
+                  >
+                    <Ionicons name="close" size={26} color="#222" />
+                  </TouchableOpacity>
+                  {actionModal.infoMode ? (
+                    <>
+                      <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 10 }}>Åtgärdsinfo</Text>
+                      <Text style={{ fontSize: 15, color: '#222', marginBottom: 8, textAlign: 'center' }}>{actionModal.section}: {actionModal.point}</Text>
+                      <Text style={{ fontSize: 14, color: '#555', marginBottom: 6 }}>Beskrivning:</Text>
+                      <Text style={{ fontSize: 15, color: '#222', marginBottom: 10 }}>{actionModal.comment}</Text>
+                      {actionModal.img && (
+                        <Image source={{ uri: actionModal.img }} style={{ width: 120, height: 90, borderRadius: 8, marginBottom: 10 }} />
+                      )}
+                      <Text style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>Namn:</Text>
+                      <Text style={{ fontSize: 15, color: '#222', marginBottom: 10 }}>{actionModal.name}</Text>
+                      <Text style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>Signatur:</Text>
+                      {actionModal.signature ? (
+                        <Image source={{ uri: actionModal.signature }} style={{ width: 80, height: 32, backgroundColor: '#fff', borderRadius: 4, marginBottom: 10 }} />
+                      ) : (
+                        <Text style={{ color: '#888', fontSize: 15, marginBottom: 10 }}>Ingen signatur</Text>
+                      )}
+                      <Text style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>Åtgärdat datum:</Text>
+                      <Text style={{ fontSize: 15, color: '#222', marginBottom: 10 }}>{actionModal.date ? actionModal.date.slice(0, 10) : '-'}</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 6 }}>Åtgärda brist</Text>
+                      <Text style={{ fontSize: 15, color: '#222', marginBottom: 4, textAlign: 'center' }}>{actionModal.section}: {actionModal.point}</Text>
+                      <View style={{ width: '100%', marginBottom: 10 }}>
+                        <Text style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>Datum:</Text>
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 8, backgroundColor: '#f3f3f3', marginBottom: 2 }}
+                          onLongPress={() => {
+                            Alert.prompt(
+                              'Ändra datum',
+                              'Skriv nytt datum (YYYY-MM-DD)',
+                              [
+                                {
+                                  text: 'Avbryt',
+                                  style: 'cancel',
+                                },
+                                {
+                                  text: 'OK',
+                                  onPress: (newDate) => {
+                                    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+                                      Alert.alert('Fel', 'Datumet måste vara på formatet YYYY-MM-DD');
+                                      return;
+                                    }
+                                    const today = new Date().toISOString().slice(0, 10);
+                                    if (newDate > today) {
+                                      Alert.alert('Fel', 'Du kan inte välja ett datum i framtiden.');
+                                      return;
+                                    }
+                                    setActionModal(a => ({ ...a, date: newDate }));
+                                  },
+                                },
+                              ],
+                              'plain-text',
+                              actionModal.date || new Date().toISOString().slice(0, 10)
+                            );
+                          }}
+                        >
+                          <Text style={{ fontSize: 15, color: '#888' }}>{actionModal.date || new Date().toISOString().slice(0, 10)}</Text>
+                        </TouchableOpacity>
+                        <Text style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>Håll inne för att ändra datum</Text>
+                      </View>
+                      <Text style={{ fontSize: 14, color: '#555', marginBottom: 6 }}>Beskriv åtgärd:</Text>
+                      <View style={{ width: '100%', marginBottom: 10 }}>
+                        <TextInput
+                          value={actionModal.comment}
+                          onChangeText={t => setActionModal(a => ({ ...a, comment: t }))}
+                          placeholder="Beskriv vad som åtgärdats..."
+                          style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 8, fontSize: 15, minHeight: 40, backgroundColor: '#fafbfc' }}
+                          multiline
+                          placeholderTextColor="#aaa"
+                        />
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                        <TouchableOpacity
+                          style={{ backgroundColor: '#1976D2', borderRadius: 50, padding: 10, marginRight: 10 }}
+                          onPress={async () => {
+                                                                                Alert.alert('DEBUG', `project.id: ${project?.id}\nproject: ${JSON.stringify(project)}\nAsyncStorage-key: project_${project?.id}`);
+                                                                                console.log('DEBUG: project.id', project?.id, 'project:', project, 'AsyncStorage-key:', `project_${project?.id}`);
+                                                      Alert.alert('DEBUG', 'Spara-knappen trycktes');
+                                                      console.log('DEBUG: Spara-knappen trycktes', actionModal, control, project);
+                            // Välj/tar foto
+                            const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+                            if (!result.canceled && result.assets && result.assets.length > 0) {
+                              setActionModal(a => ({ ...a, img: result.assets[0].uri }));
+                            }
+                          }}
+                        >
+                          <Ionicons name="camera" size={24} color="#fff" />
+                        </TouchableOpacity>
+                        {actionModal.img && (
+                          <Image source={{ uri: actionModal.img }} style={{ width: 60, height: 45, borderRadius: 8 }} />
+                        )}
+                      </View>
+                      <View style={{ width: '100%', marginBottom: 10 }}>
+                        <Text style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>Namn på åtgärdande person:</Text>
+                        <TextInput
+                          value={actionModal.name}
+                          onChangeText={t => setActionModal(a => ({ ...a, name: t }))}
+                          placeholder="Namn..."
+                          style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 8, fontSize: 15, backgroundColor: '#fafbfc' }}
+                          placeholderTextColor="#aaa"
+                        />
+                      </View>
+                      <View style={{ width: '100%', marginBottom: 10 }}>
+                        <Text style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>Signatur:</Text>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 8, backgroundColor: '#fafbfc', minHeight: 44 }}
+                          onPress={() => setActionModal(a => ({ ...a, showSignatureModal: true }))}
+                        >
+                          {actionModal.signature ? (
+                            <Image source={{ uri: actionModal.signature }} style={{ width: 80, height: 32, backgroundColor: '#fff', borderRadius: 4 }} />
+                          ) : (
+                            <>
+                              <Ionicons name="pencil" size={20} color="#1976D2" style={{ marginRight: 8 }} />
+                              <Text style={{ color: '#888', fontSize: 15 }}>Tryck för signatur</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                        <SignatureModal
+                          visible={!!actionModal.showSignatureModal}
+                          onOK={uri => setActionModal(a => ({ ...a, signature: uri, showSignatureModal: false }))}
+                          onCancel={() => setActionModal(a => ({ ...a, showSignatureModal: false }))}
+                        />
+                      </View>
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minHeight: 40,
+                          paddingVertical: 8,
+                          marginTop: 18,
+                          backgroundColor: (actionModal.comment && actionModal.name && actionModal.signature) ? '#1976D2' : '#e0e0e0',
+                          borderRadius: 8,
+                          shadowColor: '#1976D2',
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.10,
+                          shadowRadius: 4,
+                        }}
+                        onPress={async () => {
+                          if (!(actionModal.comment && actionModal.name && actionModal.signature)) {
+                            // Visa alert med saknade fält
+                            const missing = [];
+                            if (!actionModal.comment) missing.push('Beskriv åtgärd');
+                            if (!actionModal.name) missing.push('Namn');
+                            if (!actionModal.signature) missing.push('Signatur');
+                            Alert.alert('Saknas', 'Följande fält måste fyllas i: ' + missing.join(', '));
+                            return;
+                          }
+                          // Immutabel kopia av checklistan och kontrollen
+                          let newChecklist = Array.isArray(control.checklist) ? control.checklist.map(s => ({ ...s, remediation: { ...(s.remediation || {}) } })) : [];
+                          const sectionIdx = newChecklist.findIndex(s => s.label === actionModal.section);
+                          if (sectionIdx !== -1) {
+                            // Hitta exakt rätt punkttext (pt) i sektionen, trimma för säker matchning
+                                              const pt = (newChecklist[sectionIdx].points || []).find(p => p.trim() === actionModal.point.trim());
+                                              const remediationKey = (pt || actionModal.point).trim();
+                                              newChecklist[sectionIdx].remediation[remediationKey] = {
+                                                comment: actionModal.comment,
+                                                img: actionModal.img,
+                                                signature: actionModal.signature,
+                                                name: actionModal.name,
+                                                date: new Date().toISOString(),
+                                              };
+                          } else {
+                            Alert.alert('DEBUG', 'Kunde inte hitta sektionen: ' + actionModal.section);
+                            console.log('DEBUG: Sektion ej hittad', actionModal.section, newChecklist);
+                          }
+                          const updatedControl = { ...control, checklist: newChecklist };
+                          // Spara till AsyncStorage (uppdatera kontrollen i projektet)
+                          let saveSuccess = false;
+                          try {
+                            const projectKey = `project_${project.id}`;
+                            let raw = await AsyncStorage.getItem(projectKey);
+                            let proj = raw ? JSON.parse(raw) : null;
+                            if (!proj) {
+                              // Skapa projektet om det saknas
+                              proj = { ...project, controls: [] };
+                              await AsyncStorage.setItem(projectKey, JSON.stringify(proj));
+                              raw = await AsyncStorage.getItem(projectKey);
+                              proj = raw ? JSON.parse(raw) : null;
+                              Alert.alert('DEBUG', 'Projektet saknades och skapades!');
+                              console.log('DEBUG: Skapade nytt projekt i AsyncStorage', projectKey, proj);
+                            }
+                            if (proj && Array.isArray(proj.controls)) {
+                              let idx = proj.controls.findIndex(c => c.id === control.id);
+                              if (idx !== -1) {
+                                proj.controls[idx] = updatedControl;
+                              } else {
+                                // Lägg till kontrollen om den saknas
+                                proj.controls.push(updatedControl);
+                                Alert.alert('DEBUG', 'Kontrollen saknades och lades till!');
+                                console.log('DEBUG: Lade till kontroll i projekt', updatedControl);
+                              }
+                              await AsyncStorage.setItem(projectKey, JSON.stringify(proj));
+                              saveSuccess = true;
+                              Alert.alert('DEBUG', 'Sparat kontrollen!');
+                              console.log('DEBUG: Kontroll sparad', updatedControl);
+                            } else {
+                              Alert.alert('DEBUG', 'Projekt eller controls-array saknas även efter försök att skapa!');
+                              console.log('DEBUG: Projekt eller controls-array saknas', proj);
+                            }
+                          } catch (e) {
+                            saveSuccess = false;
+                            Alert.alert('DEBUG', 'Fel vid sparande: ' + e.message);
+                            console.log('DEBUG: Fel vid sparande', e);
+                          }
+                          // Uppdatera checklistSections så att UI reflekterar ändringen direkt
+                          if (Array.isArray(updatedControl.checklist)) {
+                            const updatedSections = updatedControl.checklist.map(s => ({
+                              ...s,
+                              remediation: s.remediation || {},
+                              approved: Array.isArray(s.approved) ? s.approved : [],
+                              deviation: Array.isArray(s.deviation) ? s.deviation : [],
+                            }));
+                            setChecklistSections(updatedSections);
+                          }
+                          setActionModal(a => ({ ...a, visible: false }));
+                          setForceUpdate(f => f + 1); // tvinga omrendering
+                          // Navigera alltid tillbaka till projektet
+                          if (saveSuccess) {
+                                // Uppdatera checklistSections så att UI reflekterar ändringen direkt
+                                if (Array.isArray(updatedControl.checklist)) {
+                                  const updatedSections = updatedControl.checklist.map(s => ({
+                                    ...s,
+                                    remediation: s.remediation || {},
+                                    approved: Array.isArray(s.approved) ? s.approved : [],
+                                    deviation: Array.isArray(s.deviation) ? s.deviation : [],
+                                  }));
+                                  setChecklistSections(updatedSections);
+                                }
+                                setActionModal(a => ({ ...a, visible: false }));
+                                setForceUpdate(f => f + 1); // tvinga omrendering
+                                // Navigera alltid tillbaka till projektet
+                                if (saveSuccess) {
+                                  Alert.alert('Åtgärd sparad', 'Din åtgärd har sparats.', [
+                                    { text: 'OK', onPress: () => navigation.navigate('ProjectDetails', { project }) }
+                                  ]);
+                                } else {
+                                  Alert.alert('Fel', 'Kunde inte spara åtgärden. Försök igen.');
+                                }
+                            Alert.alert('Åtgärd sparad', 'Din åtgärd har sparats.', [
+                              { text: 'OK', onPress: () => navigation.navigate('ProjectDetails', { project }) }
+                            ]);
+                          } else {
+                            Alert.alert('Fel', 'Kunde inte spara åtgärden. Försök igen.');
+                          }
+                        }}
+                      >
+                        <Ionicons name="save-outline" size={22} color={(actionModal.comment && actionModal.name && actionModal.signature) ? '#fff' : '#888'} style={{ marginRight: 8 }} />
+                        <Text style={{
+                          color: (actionModal.comment && actionModal.name && actionModal.signature) ? '#fff' : '#888',
+                          fontWeight: 'bold',
+                          fontSize: 17,
+                          letterSpacing: 0.5,
+                          textAlign: 'center',
+                        }}>Spara</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </View>
+            </Modal>
+          </>
+        );
+      })()}
 
       {/* Åtgärder vidtagna (om finns) tas bort, endast en rad ska visas */}
 

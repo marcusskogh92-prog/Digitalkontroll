@@ -16,8 +16,11 @@ export default function SignatureModal({ visible, onOK, onCancel }) {
               ref={signRef}
               onOK={onOK}
               onEmpty={() => {}}
+              penColor="#222"
+              minWidth={1}
+              maxWidth={2}
               webStyle={
-                `.m-signature-pad--footer {display: none;}`
+                `.m-signature-pad--footer {display: none;} .m-signature-pad--body {touch-action: none;} .m-signature-pad {background: #fff;} .m-signature-pad--body canvas {background: #fff;}`
               }
             />
           </View>

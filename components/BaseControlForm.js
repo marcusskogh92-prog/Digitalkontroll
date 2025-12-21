@@ -34,6 +34,8 @@ export default function BaseControlForm({
   // State för deltagar-modalens fält (måste ligga här!)
   const [participantName, setParticipantName] = useState('');
   const [participantCompany, setParticipantCompany] = useState('');
+  // State för åtgärd (remediation)
+  const [remediationModal, setRemediationModal] = useState({ visible: false, sectionIdx: null, pointIdx: null, comment: '', name: '', date: '', infoMode: false });
   // expandedChecklist is declared above (moved earlier)
   // State for adding custom checklist points
   const [addPointModal, setAddPointModal] = useState({ visible: false, sectionIdx: null });
@@ -129,7 +131,7 @@ export default function BaseControlForm({
   // If you want to use this Modal, move it inside your component's return statement or a function.
   const route = useRoute();
   const navigation = useNavigation();
-  try { console.log('[BaseControlForm] mounted route.key:', route && route.key); } catch (e) {}
+  // ...existing code...
   const [showBackConfirm, setShowBackConfirm] = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [showDraftSavedConfirm, setShowDraftSavedConfirm] = useState(false);
@@ -655,13 +657,13 @@ export default function BaseControlForm({
       lastSavedDraftRef.current = draftObj;
     }
     await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
-    try { console.log('[BaseControlForm] persistDraftObject saved id:', lastSavedDraftRef.current && lastSavedDraftRef.current.id, 'total:', arr.length); } catch (e) {}
+    // ...existing code...
     return arr;
   };
 
   const processCameraResult = (cameraResult) => {
     if (!cameraResult) return;
-    try { console.log('[BaseControlForm] processing cameraResult from state/params:', cameraResult); } catch (e) {}
+    // ...existing code...
     const { uri, sectionIdx, pointIdx, returnedMottagningsPhotos } = cameraResult;
     if (returnedMottagningsPhotos && Array.isArray(returnedMottagningsPhotos)) {
       try {
@@ -675,7 +677,7 @@ export default function BaseControlForm({
           if (sectionIdx !== undefined && pointIdx !== undefined) {
             const urisToAttach = toAdd.map(p => p.uri).filter(Boolean);
               if (urisToAttach.length > 0) {
-              try { console.log('[BaseControlForm] attaching returnedMottagningsPhotos to checklist point', sectionIdx, pointIdx, 'uris:', urisToAttach); } catch (e) {}
+              // ...existing code...
               const prevChecklist = checklistRef.current || [];
               const updated = prevChecklist.map((section, sIdx) => {
                 if (sIdx !== sectionIdx) return section;
@@ -715,7 +717,7 @@ export default function BaseControlForm({
                   };
                   try {
                     await persistDraftObject(draftObj);
-                    try { console.log('[BaseControlForm] persisted draft after attaching photos, id:', draftObj.id); } catch (e) {}
+                    // ...existing code...
                   } catch (e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (er) {} }
                 } catch (e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (er) {} }
               })();
@@ -731,7 +733,7 @@ export default function BaseControlForm({
           mottagningsPhotosRef.current = next;
           return next;
         });
-        try { console.log('[BaseControlForm] appended returnedMottagningsPhotos, added:', toAdd.length, 'uris:', toAdd.map(p=>p.uri)); } catch (e) {}
+        // ...existing code...
         try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
       } catch (e) {}
     } else if (uri) {
@@ -811,7 +813,7 @@ export default function BaseControlForm({
   // Primary effect: react to explicit route.params changes (fast path)
   useEffect(() => {
     const cameraResult = route.params?.cameraResult;
-    try { console.log('[BaseControlForm] cameraResult param changed (effect):', cameraResult); } catch (e) {}
+    // ...existing code...
     if (cameraResult) processCameraResult(cameraResult);
     if (!route.params?.cameraResult) cameraHandledRef.current = false;
   }, [route.params?.cameraResult]);
@@ -822,18 +824,18 @@ export default function BaseControlForm({
       try {
         const state = navigation.getState && navigation.getState();
         if (!state || !Array.isArray(state.routes)) return;
-        try { console.log('[BaseControlForm] nav state routes:', state.routes.map(r => ({ key: r.key, name: r.name, hasCameraResult: !!(r.params && r.params.cameraResult) }))); } catch (e) {}
+        // ...existing code...
         const ourRoute = state.routes.find(r => r.key === route.key);
         const cr = ourRoute && ourRoute.params && ourRoute.params.cameraResult;
         if (cr) {
-          try { console.log('[BaseControlForm] found cameraResult on navigation state for our route:', cr); } catch (e) {}
+          // ...existing code...
           processCameraResult(cr);
         } else {
           // Log which route appears previous to the current index for debugging
           try {
             const idx = typeof state.index === 'number' ? state.index : state.routes.findIndex(r => r.key === route.key);
             const prev = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
-            try { console.log('[BaseControlForm] nav index:', idx, 'prevRoute:', prev && { key: prev.key, name: prev.name, hasCameraResult: !!(prev.params && prev.params.cameraResult) }); } catch (e) {}
+            // ...existing code...
           } catch (e) {}
         }
       } catch (e) {}
@@ -852,7 +854,7 @@ export default function BaseControlForm({
         if (!raw) return;
         const arr = JSON.parse(raw || '[]') || [];
         if (!Array.isArray(arr) || arr.length === 0) return;
-        try { console.log('[BaseControlForm] draining pending camera photos from storage:', arr.length); } catch (e) {}
+        // ...existing code...
         for (const cameraResult of arr) {
           try { processCameraResult(cameraResult); } catch (e) {}
         }
@@ -952,7 +954,7 @@ export default function BaseControlForm({
         savingDraftRef.current = false;
         return lastSavedDraftRef.current;
       }
-      try { console.log('[BaseControlForm] saveDraftControl START, draftId:', draftId, 'project.id:', project && project.id, 'controlType:', controlType); } catch (e) {}
+      // ...existing code...
       draft = {
         id: draftId || uuidv4(),
         date: dateValue,
@@ -976,7 +978,7 @@ export default function BaseControlForm({
 
       // Persist draft using merge-upsert helper so we don't overwrite richer data
       try {
-        try { console.log('[BaseControlForm] existing draft_controls raw (upsert)'); } catch (e) {}
+        // ...existing code...
         await persistDraftObject(draft);
       } catch (e) {
         try { console.warn('[BaseControlForm] failed to persist draft_controls', e); } catch (er) {}
@@ -1057,7 +1059,7 @@ export default function BaseControlForm({
   // Spara utkast
   const handleSaveDraft = async () => {
     const draft = await saveDraftControl();
-    try { console.log('[BaseControlForm] handleSaveDraft got draft id:', draft && draft.id); } catch (e) {}
+    // ...existing code...
     if (onSaveDraft) await onSaveDraft(draft || {
       date: dateValue,
       project,
@@ -1136,6 +1138,63 @@ export default function BaseControlForm({
 
   return (
     <>
+      {/* Modal för åtgärd/åtgärdsinfo */}
+      <Modal visible={remediationModal.visible} transparent animationType="fade" onRequestClose={() => setRemediationModal({ ...remediationModal, visible: false })}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 20, width: 320, alignItems: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#222' }}>{remediationModal.infoMode ? 'Åtgärdsinfo' : 'Åtgärda avvikelse'}</Text>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 8 }}>Punkt: {remediationModal.sectionIdx !== null && remediationModal.pointIdx !== null ? checklist[remediationModal.sectionIdx].points[remediationModal.pointIdx] : ''}</Text>
+            <TextInput
+              value={remediationModal.comment}
+              onChangeText={text => setRemediationModal(m => ({ ...m, comment: text }))}
+              placeholder="Beskriv åtgärd"
+              placeholderTextColor="#888"
+              style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: remediationModal.infoMode ? '#f5f5f5' : '#fff', width: '100%', marginBottom: 10 }}
+              editable={!remediationModal.infoMode}
+              multiline
+            />
+            <TextInput
+              value={remediationModal.name}
+              onChangeText={text => setRemediationModal(m => ({ ...m, name: text }))}
+              placeholder="Namn på åtgärdande person"
+              placeholderTextColor="#888"
+              style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: remediationModal.infoMode ? '#f5f5f5' : '#fff', width: '100%', marginBottom: 10 }}
+              editable={!remediationModal.infoMode}
+            />
+            {/* Spara/avbryt/info-knappar */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 8 }}>
+              <TouchableOpacity onPress={() => setRemediationModal({ ...remediationModal, visible: false })} style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginRight: 8 }}>
+                <Text style={{ color: '#777' }}>Avbryt</Text>
+              </TouchableOpacity>
+              {!remediationModal.infoMode && (
+                <TouchableOpacity
+                  onPress={() => {
+                    // Spara åtgärd i checklistan
+                    const { sectionIdx, pointIdx, comment, name } = remediationModal;
+                    if (sectionIdx === null || pointIdx === null) return;
+                    setChecklist(prev => prev.map((s, sIdx) => {
+                      if (sIdx !== sectionIdx) return s;
+                      const remediation = { ...(s.remediation || {}) };
+                      const pt = s.points[pointIdx];
+                      remediation[pt] = {
+                        comment,
+                        name,
+                        date: new Date().toISOString(),
+                      };
+                      return { ...s, remediation };
+                    }));
+                    setRemediationModal({ ...remediationModal, visible: false });
+                  }}
+                  style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
+                >
+                  <Text style={{ color: '#1976D2', fontWeight: '600' }}>Spara</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ...ingen testknapp/modal... */}
       {/* Modal för bekräftelse vid tillbaka om formuläret är ändrat */}
       <Modal
@@ -2000,7 +2059,9 @@ export default function BaseControlForm({
                 {expanded && (
                   <View style={{ padding: 10, paddingTop: 0 }}>
                     {section.points.map((point, pointIdx) => {
-                      const hasPhotos = Array.isArray(section.photos[pointIdx]) && section.photos[pointIdx].length > 0;
+                      const remediation = section.remediation && section.remediation[point] ? section.remediation[point] : null;
+                      const isDeviation = section.statuses[pointIdx] === 'avvikelse';
+                      const isHandled = !!remediation;
                       return (
                         <View key={`point-${pointIdx}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                           {/* Status button (OK) */}
@@ -2076,135 +2137,30 @@ export default function BaseControlForm({
                           >
                             <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={20} color={'#1976D2'} />
                           </TouchableOpacity>
-                              {/* Modal for checklist point photos (gallery/add/take new) */}
-                              {photoModal.visible && typeof photoModal.sectionIdx === 'number' && typeof photoModal.pointIdx === 'number' && (
-                                <Modal
-                                  visible={photoModal.visible}
-                                  transparent
-                                  animationType="fade"
-                                  onRequestClose={() => setPhotoModal({ visible: false, uris: [], index: 0 })}
-                                >
-                                  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-start', alignItems: 'center' }}>
-                                    <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 18, width: '90%', maxWidth: 400, alignItems: 'center', position: 'relative', marginTop: 130 }}>
-                                      {/* Close (X) icon in top right */}
-                                      <TouchableOpacity
-                                        onPress={() => setPhotoModal({ visible: false, uris: [], index: 0 })}
-                                        style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 8 }}
-                                        accessibilityLabel="Stäng"
-                                      >
-                                        <Text style={{ fontSize: 28, color: '#222', fontWeight: 'bold' }}>×</Text>
-                                      </TouchableOpacity>
-                                      <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 10 }}>Bilder för kontrollpunkt</Text>
-                                      <ScrollView horizontal style={{ flexDirection: 'row', marginBottom: 12, maxHeight: 90 }} contentContainerStyle={{ alignItems: 'center' }}>
-                                        {photoModal.uris && photoModal.uris.length > 0 ? (
-                                          photoModal.uris.map((img, idx) => (
-                                            <TouchableOpacity key={`img-thumb-${idx}`} onPress={() => setPhotoModal({ ...photoModal, index: idx })} style={{ marginRight: 8 }}>
-                                              <Image source={{ uri: img.uri }} style={{ width: 64, height: 48, borderRadius: 6, borderWidth: photoModal.index === idx ? 2 : 1, borderColor: photoModal.index === idx ? '#1976D2' : '#ccc' }} />
-                                            </TouchableOpacity>
-                                          ))
-                                        ) : (
-                                          <Text style={{ color: '#888' }}>Inga bilder</Text>
-                                        )}
-                                      </ScrollView>
-                                      {/* Large preview of selected image */}
-                                      {photoModal.uris && photoModal.uris.length > 0 && (
-                                        <Image source={{ uri: photoModal.uris[photoModal.index]?.uri }} style={{ width: 220, height: 160, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#ccc' }} resizeMode="contain" />
-                                      )}
-                                      {/* Comment input and delete button */}
-                                      {photoModal.uris && photoModal.uris.length > 0 && (
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, width: 320 }}>
-                                          <TextInput
-                                            value={photoModal.uris[photoModal.index]?.comment || ''}
-                                            onChangeText={(text) => {
-                                              // Only update local modal state, save with button
-                                              const newUris = (photoModal.uris || []).map((p, i) => i === photoModal.index ? ({ uri: (p && p.uri) ? p.uri : p, comment: text }) : (p && p.uri ? { uri: p.uri, comment: p.comment || '' } : p));
-                                              setPhotoModal({ ...photoModal, uris: newUris });
-                                            }}
-                                            placeholder="Lägg till kommentar..."
-                                            placeholderTextColor="#888"
-                                            style={{ flex: 1, backgroundColor: '#f5f5f5', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, fontSize: 15, marginRight: 8 }}
-                                            multiline
-                                            maxLength={120}
-                                          />
-                                          <TouchableOpacity
-                                            onPress={() => {
-                                              // Save comment to checklist photos
-                                              try {
-                                                const sectionIdx = photoModal.sectionIdx;
-                                                const pointIdx = photoModal.pointIdx;
-                                                const comment = photoModal.uris[photoModal.index]?.comment || '';
-                                                setChecklist(prev => prev.map((section, sIdx) => {
-                                                  if (sIdx !== sectionIdx) return section;
-                                                  const points = Array.isArray(section.points) ? section.points : [];
-                                                  let photosArr = Array.isArray(section.photos) && section.photos.length === points.length
-                                                    ? [...section.photos]
-                                                    : Array(points.length).fill([]);
-                                                  if (!Array.isArray(photosArr[pointIdx])) photosArr[pointIdx] = [];
-                                                  photosArr[pointIdx] = (photosArr[pointIdx] || []).map((ph, pi) => {
-                                                    if (pi === photoModal.index) return { uri: (ph && ph.uri) ? ph.uri : ph, comment };
-                                                    return ph && ph.uri ? { uri: ph.uri, comment: ph.comment || '' } : ph;
-                                                  });
-                                                  return { ...section, photos: photosArr };
-                                                }));
-                                              } catch (e) {}
-                                            }}
-                                            style={{ backgroundColor: '#1976D2', borderRadius: 6, padding: 8, marginLeft: 4, marginRight: 4 }}
-                                            accessibilityLabel="Spara kommentar"
-                                          >
-                                            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>Spara</Text>
-                                          </TouchableOpacity>
-                                          <TouchableOpacity
-                                            onPress={() => {
-                                              // Delete current photo
-                                              const { uris, index } = photoModal;
-                                              if (!uris || uris.length === 0) {
-                                                setPhotoModal({ visible: false, uris: [], index: 0 });
-                                                return;
-                                              }
-                                              const newUris = uris.filter((u, i) => i !== index);
-                                              const newIndex = Math.max(0, index - 1);
-                                              setPhotoModal({ ...photoModal, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
-                                              // Remove from checklist photos
-                                              try {
-                                                const sectionIdx = photoModal.sectionIdx;
-                                                const pointIdx = photoModal.pointIdx;
-                                                setChecklist(prev => prev.map((section, sIdx) => {
-                                                  if (sIdx !== sectionIdx) return section;
-                                                  const points = Array.isArray(section.points) ? section.points : [];
-                                                  let photosArr = Array.isArray(section.photos) && section.photos.length === points.length
-                                                    ? [...section.photos]
-                                                    : Array(points.length).fill([]);
-                                                  if (!Array.isArray(photosArr[pointIdx])) photosArr[pointIdx] = [];
-                                                  photosArr[pointIdx] = (photosArr[pointIdx] || []).filter((ph, pi) => pi !== index);
-                                                  return { ...section, photos: photosArr };
-                                                }));
-                                              } catch (e) {}
-                                            }}
-                                            style={{ backgroundColor: '#e53935', borderRadius: 6, padding: 8, marginLeft: 4 }}
-                                            accessibilityLabel="Ta bort foto"
-                                          >
-                                            {/* Trash can icon instead of text */}
-                                            <MaterialIcons name="delete" size={22} color="#fff" />
-                                          </TouchableOpacity>
-                                        </View>
-                                      )}
-                                      {/* Action buttons row (tight layout) */}
-                                      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', width: 320, marginBottom: 8 }}>
-                                        <TouchableOpacity
-                                          onPress={() => {
-                                            setPhotoModal({ visible: false, uris: [], index: 0 });
-                                            handleNavigateToCamera(photoModal.sectionIdx, photoModal.pointIdx, project);
-                                          }}
-                                          style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginRight: 8, flexDirection: 'row', alignItems: 'center' }}
-                                        >
-                                          <MaterialIcons name="photo-camera" size={22} color="#fff" style={{ marginRight: 6 }} />
-                                          <Text style={{ color: '#fff', fontWeight: '600' }}>Lägg till foto</Text>
-                                        </TouchableOpacity>
-                                      </View>
-                                    </View>
-                                  </View>
-                                </Modal>
-                              )}
+                          {/* Åtgärda-knapp för avvikelse (Skyddsrond) */}
+                          {controlType === 'Skyddsrond' && isDeviation && !isHandled && (
+                            <TouchableOpacity
+                              onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false })}
+                              style={{ marginLeft: 8, backgroundColor: '#FFC107', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                            >
+                              <Text style={{ color: '#222', fontSize: 13 }}>Åtgärda</Text>
+                            </TouchableOpacity>
+                          )}
+                          {/* Visa info om åtgärd (Skyddsrond) */}
+                          {controlType === 'Skyddsrond' && isDeviation && isHandled && (
+                            <TouchableOpacity
+                              onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: remediation.comment, name: remediation.name, date: remediation.date, infoMode: true })}
+                              style={{ marginLeft: 8, backgroundColor: '#E0E0E0', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                            >
+                              <Text style={{ color: '#222', fontSize: 13 }}>Info</Text>
+                            </TouchableOpacity>
+                          )}
+                          {/* Visa åtgärdsstatus (Skyddsrond) */}
+                          {controlType === 'Skyddsrond' && isDeviation && isHandled && (
+                            <Text style={{ marginLeft: 8, color: '#388E3C', fontSize: 12 }}>
+                              Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
+                            </Text>
+                          )}
                         </View>
                       );
                     })}

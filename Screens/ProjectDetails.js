@@ -1067,7 +1067,39 @@ export default function ProjectDetails({ route, navigation }) {
               Riskbedömning: 'Riskbedömningar',
             };
 
-            return grouped.map(({ type: t, items }) => {
+            // Helper: check if all deviations in a Skyddsrond are handled
+            function allSkyddsrondDeviationsHandled(ctrl) {
+              if (!ctrl.checklistSections) return false;
+              let hasDeviation = false;
+              let allHandled = true;
+              ctrl.checklistSections.forEach(section => {
+                if (Array.isArray(section.deviation)) {
+                  section.deviation.forEach((pt, idx) => {
+                    hasDeviation = true;
+                    if (!section.remediation || !section.remediation[idx]) {
+                      allHandled = false;
+                    } else {
+                      const r = section.remediation[idx];
+                      if (!(r && r.signature && r.comment)) {
+                        allHandled = false;
+                      }
+                    }
+                  });
+                }
+              });
+              if (!hasDeviation) return null; // No deviations
+              return allHandled;
+            }
+
+            // For group header: are ALL Skyddsrond controls handled?
+            return grouped.map(({ type, items }) => {
+              const t = type;
+              let allHandled = true;
+              let anyDeviation = false;
+              if (t === 'Skyddsrond') {
+                allHandled = items.length > 0 && items.every(ctrl => allSkyddsrondDeviationsHandled(ctrl) === true);
+                anyDeviation = items.some(ctrl => allSkyddsrondDeviationsHandled(ctrl) !== null);
+              }
               const expanded = expandedByType[t] ?? false;
               return (
                 <View key={t} style={styles.groupContainer}>
@@ -1075,6 +1107,14 @@ export default function ProjectDetails({ route, navigation }) {
                     <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                       <MaterialIcons name={expanded ? 'expand-less' : 'expand-more'} size={22} color="#263238" />
                       <Text style={styles.groupTitle}>{pluralLabels[t] || t}</Text>
+                      {t === 'Skyddsrond' && (
+                        anyDeviation
+                          ? (allHandled
+                              ? <Ionicons name="shield-checkmark" size={20} color="#43A047" style={{ marginLeft: 8 }} />
+                              : <Ionicons name="alert-circle" size={20} color="#D32F2F" style={{ marginLeft: 8 }} />
+                            )
+                          : <Ionicons name="shield-outline" size={20} color="#888" style={{ marginLeft: 8 }} />
+                      )}
                     </View>
                     <View style={styles.groupBadge}><Text style={styles.groupBadgeText}>{items.length}</Text></View>
                   </TouchableOpacity>
@@ -1131,15 +1171,44 @@ export default function ProjectDetails({ route, navigation }) {
                             label = `${label} — ${String(item.deliveryDesc).trim()}`;
                           }
                         }
+                        // Kolla om skyddsrond har någon avvikelse (status === 'avvikelse' i checklist)
+                        let hasDeviation = false;
+                        let allHandled = false;
+                        if (item.type === 'Skyddsrond') {
+                          // Räkna avvikelser och åtgärdade avvikelser
+                          let totalDeviations = 0;
+                          let handledDeviations = 0;
+                          if (Array.isArray(item.checklistSections)) {
+                            item.checklistSections.forEach(section => {
+                              if (Array.isArray(section.statuses)) {
+                                section.statuses.forEach((status, idx) => {
+                                  if (status === 'avvikelse') {
+                                    totalDeviations++;
+                                    if (section.remediation && section.remediation[idx]) {
+                                      const r = section.remediation[idx];
+                                      if (r && r.signature && r.comment) handledDeviations++;
+                                    }
+                                  }
+                                });
+                              }
+                            });
+                          }
+                          allHandled = totalDeviations > 0 && handledDeviations === totalDeviations;
+                          hasDeviation = totalDeviations > 0 && handledDeviations < totalDeviations;
+                        }
                         return (
                           <View key={`${item.id || 'noid'}-${item.date || 'nodate'}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            {/* ...existerande kontrollkort JSX... */}
                             <TouchableOpacity
                               style={[
                                 styles.controlCard,
-                                item.isDraft
+                                (item.isDraft
                                   ? { backgroundColor: '#fff', borderColor: '#222' }
-                                  : { backgroundColor: '#fff', borderColor: '#e0e0e0' }
+                                  : item.type === 'Skyddsrond' && hasDeviation
+                                    ? { backgroundColor: '#fff', borderColor: '#D32F2F', borderWidth: 2 }
+                                    : item.type === 'Skyddsrond' && allHandled
+                                      ? { backgroundColor: '#fff', borderColor: '#43A047', borderWidth: 2 }
+                                      : { backgroundColor: '#fff', borderColor: '#e0e0e0' }
+                                )
                               ]}
                               onPress={() => {
                                 if (item.isDraft) {
@@ -1179,6 +1248,10 @@ export default function ProjectDetails({ route, navigation }) {
                                   <Line x1={12} y1={12} x2={16} y2={13} stroke="#111" strokeWidth={1.5} strokeLinecap="round" />
                                   <Circle cx={12} cy={12} r={1.2} fill="#111" />
                                 </Svg>
+                              ) : item.type === 'Skyddsrond' ? (
+                                allHandled
+                                  ? <Ionicons name="shield-checkmark" size={22} color="#43A047" style={{ marginRight: 8 }} />
+                                  : <Ionicons name="alert-circle" size={22} color="#D32F2F" style={{ marginRight: 8 }} />
                               ) : (
                                 <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
                                   <Circle cx={12} cy={12} r={10} fill="#43A047" stroke="#222" strokeWidth={1} />
