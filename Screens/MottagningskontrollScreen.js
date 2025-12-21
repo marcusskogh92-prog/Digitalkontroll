@@ -11,33 +11,46 @@ const LABELS = {
 
 export default function MottagningskontrollScreen({ date, participants = [] }) {
   const route = useRoute();
+  const navigation = require('@react-navigation/native').useNavigation();
   const project = route.params?.project;
   const initialValues = route.params?.initialValues;
 
   const handleSave = async (data) => {
     try {
-      // Always create a new id for the edited control
-      const newId = uuidv4();
-      const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: newId });
+      // Use existing id if present, otherwise create new
+      const controlId = data.id || uuidv4();
+      const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: controlId });
       const completedRaw = await AsyncStorage.getItem('completed_controls');
       let completedList = completedRaw ? JSON.parse(completedRaw) : [];
-      // Remove old control with same id (if any), or by matching project+type+savedAt if id is missing
-      if (data.id) {
-        completedList = completedList.filter(c => c.id !== data.id);
-      } else if (data.savedAt) {
-        completedList = completedList.filter(c => !(c.project?.id === project?.id && c.type === 'Mottagningskontroll' && c.savedAt === data.savedAt));
-      }
-      completedList.push(completed);
-      await AsyncStorage.setItem('completed_controls', JSON.stringify(completedList));
+      // Remove all previous versions (by id if present, else by project+type+savedAt)
+      let filteredControls = completedList.filter((c) => {
+        if (data.id || completed.id) {
+          // Remove all with same id
+          return c.id !== (data.id || completed.id);
+        } else {
+          // Remove all with same project+type+savedAt
+          return !(
+            c.project === data.project &&
+            c.type === data.type &&
+            c.savedAt === data.savedAt
+          );
+        }
+      });
+      filteredControls.push(completed);
+      await AsyncStorage.setItem('completed_controls', JSON.stringify(filteredControls));
       // Remove matching draft if exists
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
         if (draftRaw) {
           let drafts = JSON.parse(draftRaw) || [];
-          drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Mottagningskontroll' && (d.id === data.id || d.id === newId)));
+          drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Mottagningskontroll' && (d.id === data.id || d.id === controlId)));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
       } catch (e) {}
+      // Efter sparande: navigera till projektinformationen (ProjectDetails)
+      if (navigation && navigation.navigate) {
+        navigation.navigate('ProjectDetails', { project });
+      }
     } catch (e) {
       // Hantera fel
     }

@@ -997,6 +997,7 @@ export default function BaseControlForm({
   // Spara slutförd kontroll och ta bort ev. utkast
   const handleSave = async () => {
     if (onSave) onSave({
+      id: (typeof id !== 'undefined' && id !== null ? id : (initialValues && initialValues.id ? initialValues.id : undefined)),
       date: dateValue,
       project,
       weather: selectedWeather,
@@ -1023,22 +1024,34 @@ export default function BaseControlForm({
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
     } catch {}
-    // Clear dirty flag so beforeRemove won't intercept navigation, then show confirmation and go back
+    // Clear dirty flag so beforeRemove won't intercept navigation
     try {
       isDirtyRef.current = false;
     } catch (e) {}
-    try {
-      // Show a short confirmation modal, then navigate back
-      setShowFinishConfirm(true);
-      setTimeout(() => {
-        try { setShowFinishConfirm(false); } catch (e) {}
-        try {
-          if (navigation && navigation.canGoBack && navigation.canGoBack()) {
-            navigation.goBack();
-          }
-        } catch (e) {}
-      }, 1200);
-    } catch (e) {}
+    // Visa alert innan navigation
+    setTimeout(() => {
+      Alert.alert(
+        (initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))
+          ? 'Sparad'
+          : 'Slutförd',
+        (initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))
+          ? 'Dina ändringar är sparade i kontrollen.'
+          : 'Din kontroll är slutförd och sparas i projektet.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (navigation && navigation.navigate && project) {
+                navigation.navigate('ProjectDetails', { project });
+              } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
+                navigation.goBack();
+              }
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    }, 100);
   };
 
   // Spara utkast
@@ -1341,7 +1354,7 @@ export default function BaseControlForm({
         {/* Project number and name */}
         {project && (
           <>
-            <Text style={{ fontSize: 28, color: '#222', fontWeight: 'bold', marginBottom: 8, letterSpacing: 0.2 }}>
+            <Text style={{ fontSize: 20, color: '#222', fontWeight: 'bold', marginBottom: 8, letterSpacing: 0.2 }}>
               {project.id ? project.id : ''}{project.id && project.name ? ' – ' : ''}{project.name ? project.name : ''}
             </Text>
             <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '100%', marginBottom: 10 }} />
@@ -2469,9 +2482,16 @@ export default function BaseControlForm({
             </Text>
           </View>
         </TouchableOpacity>
-        {((initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))) ? (
+        {((initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed)) || !isDirtyRef.current) ? (
           <TouchableOpacity
-            onPress={() => setShowCancelEditConfirm(true)}
+            onPress={() => {
+              if (!isDirtyRef.current) {
+                // No changes, exit immediately
+                if (navigation && navigation.goBack) navigation.goBack();
+              } else {
+                setShowCancelEditConfirm(true);
+              }
+            }}
             style={{ flex: 1, alignItems: 'center', marginLeft: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0 }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>

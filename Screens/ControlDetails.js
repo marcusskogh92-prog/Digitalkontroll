@@ -200,6 +200,7 @@ export default function ControlDetails({ route }) {
           <Text style={styles.sectionTitle}>Kontrollpunkter</Text>
           {checklistSections.map((section, idx) => (
             <View key={idx} style={{ marginBottom: 8 }}>
+              {idx > 0 && <View style={styles.divider} />}
               <Text style={{ fontWeight: '600', fontSize: 15, color: '#444', marginBottom: 2 }}>{section.label}</Text>
               {section.approved.map((pt, i) => (
                 <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
