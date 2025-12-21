@@ -126,21 +126,26 @@ export default function BaseControlForm({
   try { console.log('[BaseControlForm] mounted route.key:', route && route.key); } catch (e) {}
   const [showBackConfirm, setShowBackConfirm] = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const [showDraftSavedConfirm, setShowDraftSavedConfirm] = useState(false);
   // Ref to store blocked navigation event
   const blockedNavEvent = useRef(null);
   // Keep a ref copy of isDirty so the beforeRemove listener can be attached once
   const isDirtyRef = useRef(false);
+  // Prevent duplicate rapid saves of drafts
+  const savingDraftRef = useRef(false);
+  const lastSavedDraftRef = useRef(null);
 
   const handleAttemptFinish = () => {
-    // Special validation rules for Mottagningskontroll
-    if (controlType !== 'Mottagningskontroll') {
+    // Special validation rules for Mottagningskontroll and Skyddsrond
+    if (controlType !== 'Mottagningskontroll' && controlType !== 'Skyddsrond') {
       handleSave();
       return;
     }
     const missing = [];
     // Date is optional for Mottagningskontroll; do not mark as missing
     if (!Array.isArray(localParticipants) || localParticipants.length === 0) missing.push('Deltagare');
-    if (!materialDesc || !materialDesc.trim()) missing.push('Beskriv leverans');
+    const descLabel = (controlType === 'Skyddsrond') ? 'Omfattning / beskrivning av skyddsrond' : 'Beskriv leverans';
+    if (!(controlType === 'Skyddsrond' ? deliveryDesc : materialDesc) || !(controlType === 'Skyddsrond' ? deliveryDesc : materialDesc).trim()) missing.push(descLabel);
     if (Array.isArray(checklist) && checklist.length > 0) {
       const anyMissing = checklist.some(sec => !(Array.isArray(sec.statuses) && sec.statuses.every(s => !!s)));
       if (anyMissing) missing.push('Kontrollpunkter');
@@ -529,10 +534,15 @@ export default function BaseControlForm({
             return uri ? { uri, comment: '' } : null;
           }).filter(Boolean);
           if (photos.length > 0) {
-            const prev = mottagningsPhotosRef.current || [];
-            const next = [...prev, ...photos];
-            setMottagningsPhotos(next);
-            mottagningsPhotosRef.current = next;
+            setMottagningsPhotos(prev => {
+              const prevArr = Array.isArray(prev) ? prev : (mottagningsPhotosRef.current || []);
+              const existing = new Set(prevArr.map(p => p && p.uri).filter(Boolean));
+              const toAdd = photos.filter(p => p && p.uri && !existing.has(p.uri));
+              if (!toAdd.length) return prevArr;
+              const next = [...prevArr, ...toAdd];
+              mottagningsPhotosRef.current = next;
+              return next;
+            });
           }
         } else {
           // User cancelled or no assets
@@ -547,31 +557,193 @@ export default function BaseControlForm({
     
   // Guarded camera result handling to avoid re-processing and param cycles
   const cameraHandledRef = useRef(false);
+  const processedCameraUrisRef = useRef(new Set());
+
+  // Helper: merge two drafts conservatively (preserve photos, participants, signatures, checklist photos)
+  const mergeDrafts = (existing, incoming) => {
+    if (!existing) return incoming;
+    if (!incoming) return existing;
+    const out = { ...existing, ...incoming };
+    // Merge participants (unique by name+company)
+    try {
+      const a = Array.isArray(existing.participants) ? existing.participants : [];
+      const b = Array.isArray(incoming.participants) ? incoming.participants : [];
+      const key = (p) => ((p && p.name) ? p.name : JSON.stringify(p)) + '::' + ((p && p.company) ? p.company : '');
+      const map = new Map();
+      a.concat(b).forEach(p => { try { map.set(key(p), p); } catch (e) {} });
+      out.participants = Array.from(map.values());
+    } catch (e) {}
+    // Merge mottagningsSignatures
+    try {
+      const a = Array.isArray(existing.mottagningsSignatures) ? existing.mottagningsSignatures : [];
+      const b = Array.isArray(incoming.mottagningsSignatures) ? incoming.mottagningsSignatures : [];
+      out.mottagningsSignatures = [...a, ...b.filter(s => !a.includes(s))];
+    } catch (e) {}
+    // Merge mottagningsPhotos by uri
+    try {
+      const a = Array.isArray(existing.mottagningsPhotos) ? existing.mottagningsPhotos : [];
+      const b = Array.isArray(incoming.mottagningsPhotos) ? incoming.mottagningsPhotos : [];
+      const seen = new Set(a.map(x => x && x.uri).filter(Boolean));
+      const merged = [...a];
+      b.forEach(x => { if (x && x.uri && !seen.has(x.uri)) { seen.add(x.uri); merged.push(x); } });
+      out.mottagningsPhotos = merged;
+    } catch (e) {}
+    // Merge checklist: prefer incoming structure but union photos per point
+    try {
+      const A = Array.isArray(existing.checklist) ? existing.checklist : [];
+      const B = Array.isArray(incoming.checklist) ? incoming.checklist : [];
+      if (B.length === 0) {
+        out.checklist = A;
+      } else if (A.length === 0) {
+        out.checklist = B;
+      } else {
+        const mergedChecklist = B.map((secB, sIdx) => {
+          const secA = A[sIdx] || {};
+          const points = Array.isArray(secB.points) ? secB.points : (Array.isArray(secA.points) ? secA.points : []);
+          const statuses = Array.isArray(secB.statuses) && secB.statuses.length === points.length ? secB.statuses : (secA.statuses || Array(points.length).fill(null));
+          const photosA = Array.isArray(secA.photos) ? secA.photos : Array(points.length).fill([]);
+          const photosB = Array.isArray(secB.photos) ? secB.photos : Array(points.length).fill([]);
+          const photos = points.map((_, pIdx) => {
+            const aArr = Array.isArray(photosA[pIdx]) ? photosA[pIdx] : (photosA[pIdx] ? [photosA[pIdx]] : []);
+            const bArr = Array.isArray(photosB[pIdx]) ? photosB[pIdx] : (photosB[pIdx] ? [photosB[pIdx]] : []);
+            const seen = new Set(aArr.map(x => (x && x.uri) ? x.uri : x).filter(Boolean));
+            const outArr = [...aArr];
+            bArr.forEach(item => { const uri = (item && item.uri) ? item.uri : item; if (uri && !seen.has(uri)) { seen.add(uri); outArr.push(item); } });
+            return outArr;
+          });
+          return { ...secB, points, statuses, photos };
+        });
+        out.checklist = mergedChecklist;
+      }
+    } catch (e) {}
+    return out;
+  };
+
+  // Persist a draft object by merging with existing matching draft(s)
+  const persistDraftObject = async (draftObj) => {
+    if (!draftObj || !draftObj.project) {
+      // still write minimal object to avoid losing the id
+    }
+    let arr = [];
+    try {
+      const raw = await AsyncStorage.getItem('draft_controls');
+      if (raw) arr = JSON.parse(raw) || [];
+    } catch (e) { arr = []; }
+    // Find matching draft by id first
+    let idx = -1;
+    if (draftObj && draftObj.id) {
+      idx = arr.findIndex(c => c.id === draftObj.id && c.project?.id === draftObj.project?.id && c.type === draftObj.type);
+    }
+    // If not found, try match by project+type (to merge newer content into older draft)
+    if (idx === -1 && draftObj && draftObj.project) {
+      idx = arr.findIndex(c => c.project?.id === draftObj.project?.id && c.type === draftObj.type);
+    }
+    if (idx !== -1) {
+      const merged = mergeDrafts(arr[idx], draftObj);
+      arr[idx] = merged;
+      lastSavedDraftRef.current = merged;
+    } else {
+      arr.push(draftObj);
+      lastSavedDraftRef.current = draftObj;
+    }
+    await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
+    try { console.log('[BaseControlForm] persistDraftObject saved id:', lastSavedDraftRef.current && lastSavedDraftRef.current.id, 'total:', arr.length); } catch (e) {}
+    return arr;
+  };
 
   const processCameraResult = (cameraResult) => {
-    if (!cameraResult || cameraHandledRef.current) return;
-    cameraHandledRef.current = true;
+    if (!cameraResult) return;
     try { console.log('[BaseControlForm] processing cameraResult from state/params:', cameraResult); } catch (e) {}
     const { uri, sectionIdx, pointIdx, returnedMottagningsPhotos } = cameraResult;
     if (returnedMottagningsPhotos && Array.isArray(returnedMottagningsPhotos)) {
       try {
         const norm = normalizePhotos(returnedMottagningsPhotos);
+        // Filter duplicates by uri
         const prev = mottagningsPhotosRef.current || [];
-        const next = [...prev, ...norm];
-        setMottagningsPhotos(next);
-        mottagningsPhotosRef.current = next;
-        try { console.log('[BaseControlForm] appended returnedMottagningsPhotos, total:', next.length, 'sample:', next[next.length - 1]); } catch (e) {}
+        const existingUris = new Set(prev.map(p => p && p.uri).filter(Boolean));
+        const toAdd = norm.filter(p => p && p.uri && !existingUris.has(p.uri));
+        // Attach any new returned photo URIs to the specific checklist point (if provided)
+        try {
+          if (sectionIdx !== undefined && pointIdx !== undefined) {
+            const urisToAttach = toAdd.map(p => p.uri).filter(Boolean);
+              if (urisToAttach.length > 0) {
+              try { console.log('[BaseControlForm] attaching returnedMottagningsPhotos to checklist point', sectionIdx, pointIdx, 'uris:', urisToAttach); } catch (e) {}
+              const prevChecklist = checklistRef.current || [];
+              const updated = prevChecklist.map((section, sIdx) => {
+                if (sIdx !== sectionIdx) return section;
+                const points = Array.isArray(section.points) ? section.points : [];
+                let photos = Array.isArray(section.photos) && section.photos.length === points.length
+                  ? [...section.photos]
+                  : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
+                photos[pointIdx] = Array.isArray(photos[pointIdx]) ? photos[pointIdx] : [];
+                photos[pointIdx] = [...photos[pointIdx], ...urisToAttach];
+                return { ...section, photos, points };
+              });
+              setChecklist(updated);
+              checklistRef.current = updated;
+              setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
+              // Persist draft with updated checklist (merge/upsert to avoid overwriting richer state)
+              (async () => {
+                try {
+                  const toSaveId = draftId || uuidv4();
+                  try { setDraftId(toSaveId); } catch (e) {}
+                  const draftObj = {
+                    id: toSaveId,
+                    date: dateValue,
+                    project,
+                    weather: selectedWeather,
+                    participants: localParticipants,
+                    materialDesc,
+                    qualityDesc,
+                    coverageDesc,
+                    mottagningsSignatures,
+                    mottagningsPhotos,
+                    checklist: updated,
+                    expandedChecklist,
+                    deliveryDesc,
+                    generalNote,
+                    type: controlType,
+                    savedAt: new Date().toISOString(),
+                  };
+                  try {
+                    await persistDraftObject(draftObj);
+                    try { console.log('[BaseControlForm] persisted draft after attaching photos, id:', draftObj.id); } catch (e) {}
+                  } catch (e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (er) {} }
+                } catch (e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (er) {} }
+              })();
+            }
+          }
+        } catch (er) {}
+        if (toAdd.length === 0) {
+          try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+          return;
+        }
+        setMottagningsPhotos(prevState => {
+          const next = [...(prevState || []), ...toAdd];
+          mottagningsPhotosRef.current = next;
+          return next;
+        });
+        try { console.log('[BaseControlForm] appended returnedMottagningsPhotos, added:', toAdd.length, 'uris:', toAdd.map(p=>p.uri)); } catch (e) {}
         try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
       } catch (e) {}
     } else if (uri) {
+      if (processedCameraUrisRef.current.has(uri)) {
+        try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+        return;
+      }
       if (controlType === 'Mottagningskontroll') {
         try {
-          const prevMp = mottagningsPhotosRef.current || [];
-          const newItem = { uri, comment: '' };
-          const newMp = [...prevMp, newItem];
-          setMottagningsPhotos(newMp);
-          mottagningsPhotosRef.current = newMp;
-          try { console.log('[BaseControlForm] appended uri to mottagningsPhotos, total:', newMp.length, 'item:', newItem); } catch (e) {}
+          processedCameraUrisRef.current.add(uri);
+          setMottagningsPhotos(prev => {
+            const prevArr = Array.isArray(prev) ? prev : (mottagningsPhotosRef.current || []);
+            // avoid duplicates
+            if (prevArr.findIndex(x => x && x.uri === uri) !== -1) return prevArr;
+            const newItem = { uri, comment: '' };
+            const next = [...prevArr, newItem];
+            mottagningsPhotosRef.current = next;
+            return next;
+          });
+          try { console.log('[BaseControlForm] appended uri to mottagningsPhotos, item:', uri); } catch (e) {}
           try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
         } catch (e) {}
       } else if (sectionIdx !== undefined && pointIdx !== undefined) {
@@ -591,6 +763,38 @@ export default function BaseControlForm({
           checklistRef.current = newChecklist;
           setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
           try { navigation.setParams({ cameraResult: undefined }); } catch (e) {}
+          // Persist updated checklist (including photos) to draft controls immediately so
+          // photos added from CameraCapture are not lost if the user navigates away.
+          (async () => {
+            try {
+              const toSaveId = draftId || uuidv4();
+              try { setDraftId(toSaveId); } catch (e) {}
+              const draftObj = {
+                id: toSaveId,
+                date: dateValue,
+                project,
+                weather: selectedWeather,
+                participants: localParticipants,
+                materialDesc,
+                qualityDesc,
+                coverageDesc,
+                mottagningsSignatures,
+                mottagningsPhotos,
+                checklist: newChecklist,
+                expandedChecklist,
+                deliveryDesc,
+                generalNote,
+                type: controlType,
+                savedAt: new Date().toISOString(),
+              };
+              try {
+                await persistDraftObject(draftObj);
+                try { console.log('[BaseControlForm] persisted draft after uri add, id:', draftObj.id); } catch (e) {}
+              } catch (e) { try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch (er) {} }
+            } catch (e) {
+              try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch (er) {}
+            }
+          })();
         } catch (e) {}
       }
     }
@@ -718,8 +922,30 @@ export default function BaseControlForm({
 
   // Spara utkast till AsyncStorage (flera per projekt/kontrolltyp)
   const saveDraftControl = async () => {
+    // Prevent concurrent saves causing duplicates
+    if (savingDraftRef.current) return lastSavedDraftRef.current;
+    savingDraftRef.current = true;
+    let draft = null;
     try {
-      const draft = {
+      // Guard: avoid creating a new empty draft unless there's meaningful data
+      const hasChecklistContent = Array.isArray(checklist) && checklist.some(sec => {
+        if (!sec) return false;
+        if (Array.isArray(sec.statuses) && sec.statuses.some(s => !!s)) return true;
+        if (Array.isArray(sec.photos) && sec.photos.some(pArr => Array.isArray(pArr) && pArr.length > 0)) return true;
+        return false;
+      });
+      const hasText = (deliveryDesc && String(deliveryDesc).trim().length > 0) || (materialDesc && String(materialDesc).trim().length > 0) || (generalNote && String(generalNote).trim().length > 0);
+      const hasPhotos = Array.isArray(mottagningsPhotos) && mottagningsPhotos.length > 0;
+      const hasSignatures = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length > 0;
+      const hasParticipantsLocal = Array.isArray(localParticipants) && localParticipants.length > 0;
+      const shouldPersist = !!lastSavedDraftRef.current || isDirtyRef.current || hasChecklistContent || hasText || hasPhotos || hasSignatures || hasParticipantsLocal;
+      if (!shouldPersist) {
+        // Nothing meaningful to save; avoid creating an empty draft
+        savingDraftRef.current = false;
+        return lastSavedDraftRef.current;
+      }
+      try { console.log('[BaseControlForm] saveDraftControl START, draftId:', draftId, 'project.id:', project && project.id, 'controlType:', controlType); } catch (e) {}
+      draft = {
         id: draftId || uuidv4(),
         date: dateValue,
         project,
@@ -737,21 +963,26 @@ export default function BaseControlForm({
         type: controlType,
         savedAt: new Date().toISOString(),
       };
-      let arr = [];
-      const existing = await AsyncStorage.getItem('draft_controls');
-      if (existing) arr = JSON.parse(existing);
-      // Ersätt om samma projekt+typ redan finns, annars lägg till
-      const idx = arr.findIndex(
-        c => c.project?.id === project?.id && c.type === controlType && c.id === draft.id
-      );
-      if (idx !== -1) {
-        arr[idx] = draft;
-      } else {
-        arr.push(draft);
+      // Ensure subsequent saves update the same draft instead of creating a new one
+      try { setDraftId(draft.id); } catch (e) {}
+
+      // Persist draft using merge-upsert helper so we don't overwrite richer data
+      try {
+        try { console.log('[BaseControlForm] existing draft_controls raw (upsert)'); } catch (e) {}
+        await persistDraftObject(draft);
+      } catch (e) {
+        try { console.warn('[BaseControlForm] failed to persist draft_controls', e); } catch (er) {}
       }
-      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
+      // store last saved draft so concurrent attempts can reuse it
+      lastSavedDraftRef.current = draft;
+      return draft;
     } catch (e) {
-      alert('Kunde inte spara utkast: ' + e.message);
+      // If persistence fails, still return the constructed draft so callers/upserters reuse same id
+      try { if (draft) lastSavedDraftRef.current = draft; } catch (er) {}
+      alert('Kunde inte spara utkast: ' + (e && e.message ? e.message : String(e)));
+      return draft;
+    } finally {
+      savingDraftRef.current = false;
     }
   };
 
@@ -804,8 +1035,9 @@ export default function BaseControlForm({
 
   // Spara utkast
   const handleSaveDraft = async () => {
-    await saveDraftControl();
-    if (onSaveDraft) onSaveDraft({
+    const draft = await saveDraftControl();
+    try { console.log('[BaseControlForm] handleSaveDraft got draft id:', draft && draft.id); } catch (e) {}
+    if (onSaveDraft) await onSaveDraft(draft || {
       date: dateValue,
       project,
       weather: selectedWeather,
@@ -821,6 +1053,23 @@ export default function BaseControlForm({
       generalNote,
       type: controlType,
     });
+    try {
+      // Mark form as not dirty and hide any back-confirm modal so navigation proceeds cleanly
+      try { isDirtyRef.current = false; } catch (e) {}
+      try { setShowBackConfirm(false); } catch (e) {}
+      setShowDraftSavedConfirm(true);
+      setTimeout(() => {
+        try { setShowDraftSavedConfirm(false); } catch (e) {}
+        try {
+          if (blockedNavEvent.current) {
+            blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
+            blockedNavEvent.current = null;
+          } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        } catch (e) {}
+      }, 1000);
+    } catch (e) {}
   };
 
   // Render
@@ -828,14 +1077,18 @@ export default function BaseControlForm({
   // For Mottagningskontroll we require: date, >=1 participant, material description,
   // all checklist points completed (if present) and at least one signature. Photos and weather are optional.
   const canFinish = (() => {
-    if (controlType !== 'Mottagningskontroll') return true;
+    if (controlType !== 'Mottagningskontroll' && controlType !== 'Skyddsrond') return true;
     const hasParticipants = Array.isArray(localParticipants) && localParticipants.length >= 1;
+    // For Mottagningskontroll and Skyddsrond require a short description/omfattning
     const hasMaterial = typeof materialDesc === 'string' && materialDesc.trim().length > 0;
+    const hasScope = typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0;
     const checklistComplete = (() => {
       if (!Array.isArray(checklist) || checklist.length === 0) return true;
       return checklist.every(sec => Array.isArray(sec.statuses) && sec.statuses.length > 0 && sec.statuses.every(s => !!s));
     })();
     const hasSignature = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length >= 1;
+    // For Skyddsrond also require scope/description
+    if (controlType === 'Skyddsrond') return hasParticipants && hasScope && checklistComplete && hasSignature;
     return hasParticipants && hasMaterial && checklistComplete && hasSignature;
   })();
 
@@ -866,8 +1119,8 @@ export default function BaseControlForm({
               <TouchableOpacity
                 style={{ flex: 1, borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent' }}
                 onPress={async () => {
-                  await saveDraftControl();
-                      if (onSaveDraft) onSaveDraft({
+                  const draft = await saveDraftControl();
+                      if (onSaveDraft) await onSaveDraft(draft || {
                         date: dateValue,
                         project,
                         weather: selectedWeather,
@@ -881,6 +1134,8 @@ export default function BaseControlForm({
                         generalNote,
                         type: controlType,
                       });
+                  // Ensure navigation won't be blocked by dirty flag after saving
+                  try { isDirtyRef.current = false; } catch (e) {}
                   setShowBackConfirm(false);
                   if (blockedNavEvent.current) {
                     blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
@@ -916,6 +1171,15 @@ export default function BaseControlForm({
           <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
             <Ionicons name="checkmark-circle" size={44} color="#43A047" style={{ marginBottom: 8 }} />
             <Text style={{ fontSize: 16, color: '#222', textAlign: 'center', fontWeight: '600' }}>Kontrollen är slutförd och sparad i projektet.</Text>
+          </View>
+        </View>
+      </Modal>
+      {/* Confirmation after saving draft */}
+      <Modal visible={showDraftSavedConfirm} transparent animationType="fade" onRequestClose={() => setShowDraftSavedConfirm(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 300, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Ionicons name="save-outline" size={44} color="#D32F2F" style={{ marginBottom: 8 }} />
+            <Text style={{ fontSize: 16, color: '#222', textAlign: 'center', fontWeight: '600' }}>Kontrollen sparas som utkast.</Text>
           </View>
         </View>
       </Modal>
@@ -1473,11 +1737,43 @@ export default function BaseControlForm({
           </View>
         </Modal>
         {/* Divider under participants, before weather (removed duplicate) */}
+        {/* Modal to add an extra signer (used by Lägg till signerare) */}
+        <Modal visible={showAddSignerModal} transparent animationType="fade" onRequestClose={() => setShowAddSignerModal(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ width: '90%', maxWidth: 340, backgroundColor: '#fff', borderRadius: 12, padding: 16 }}>
+              <TouchableOpacity onPress={() => { setShowAddSignerModal(false); setSignerName(''); }} style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, padding: 6 }}>
+                <Ionicons name="close" size={22} color="#888" />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, textAlign: 'center' }}>Lägg till signerare</Text>
+              <TextInput
+                value={signerName}
+                onChangeText={setSignerName}
+                placeholder="Namn på signerare"
+                placeholderTextColor="#888"
+                style={{ borderWidth: 1, borderColor: '#bbb', borderRadius: 8, padding: 10, fontSize: 16, marginBottom: 12 }}
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <TouchableOpacity onPress={() => { setShowAddSignerModal(false); setSignerName(''); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginRight: 8 }}>
+                  <Text style={{ color: '#777' }}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => {
+                  const name = (signerName || '').trim();
+                  if (!name) return;
+                  setLocalParticipants(prev => ([...(Array.isArray(prev) ? prev : []), { name }]));
+                  setSignerName('');
+                  setShowAddSignerModal(false);
+                }} style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}>
+                  <Text style={{ color: '#1976D2', fontWeight: '600' }}>Lägg till</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* Omfattning / beskrivning för Skyddsrond */}
         {controlType === 'Skyddsrond' && (
           <View style={{ marginTop: 8, marginBottom: 12, paddingHorizontal: 16 }}>
-            <Text style={{ fontSize: 15, color: '#222', marginBottom: 4, fontWeight: 'bold' }}>Omfattning / beskrivning</Text>
+            <Text style={{ fontSize: 15, color: (missingFields && missingFields.includes('Omfattning / beskrivning av skyddsrond')) ? '#D32F2F' : '#222', marginBottom: 4, fontWeight: 'bold' }}>Omfattning / beskrivning av skyddsrond</Text>
             <TextInput
               style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
               value={deliveryDesc}
@@ -1800,7 +2096,6 @@ export default function BaseControlForm({
           })()}
         </View>
       )}
-      {/* Date, Delivery Description, Participants, Checklist, Signature, Save Buttons */}
           {/* Centralized photos (for Mottagningskontroll) */}
           {controlType === 'Mottagningskontroll' && (
             <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
@@ -1838,8 +2133,7 @@ export default function BaseControlForm({
               )}
             </View>
           )}
-          {/* Signature section moved here (after Sammanställning) */}
-      {controlType === 'Mottagningskontroll' && (
+      {(controlType === 'Mottagningskontroll' || controlType === 'Skyddsrond') && (
         <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>

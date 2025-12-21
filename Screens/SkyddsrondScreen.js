@@ -72,20 +72,6 @@ const SKYDDSROND_CHECKLIST = [
     ]
   },
   {
-    label: 'Arbete på höjd',
-    points: [
-      'Används fallskydd där det behövs?',
-      'Är liftar och ställningar säkra?'
-    ]
-  },
-  {
-    label: 'Arbetsmiljö och trivsel',
-    points: [
-      'Finns tillgång till toalett och pausutrymme?',
-      'Är buller och vibrationer hanterade?'
-    ]
-  },
-  {
     label: 'Första hjälpen och olycksberedskap',
     points: [
       'Finns förbandslåda och rutiner?',
@@ -127,6 +113,7 @@ function getWeekAndYear(dateInput) {
 export default function SkyddsrondScreen({ date, participants = [] }) {
   const route = useRoute();
   const project = route.params?.project;
+  const initialValues = route.params?.initialValues || {};
   const { week, year } = getWeekAndYear(date);
   const LABELS = {
     title: `Skyddsrond ${year} V.${week < 10 ? '0' + week : week}`,
@@ -147,18 +134,41 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       if (existing) arr = JSON.parse(existing);
       arr.push(completed);
       await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
-      const draft = await AsyncStorage.getItem('draft_control');
-      if (draft) {
-        const parsed = JSON.parse(draft);
-        if (parsed.project?.id === project?.id) {
-          await AsyncStorage.removeItem('draft_control');
+      // Remove any matching drafts for this project+type
+      try {
+        const draftRaw = await AsyncStorage.getItem('draft_controls');
+        if (draftRaw) {
+          let drafts = JSON.parse(draftRaw) || [];
+          // If we have an id, remove only that draft. Otherwise remove drafts matching project+type.
+          if (data && data.id) {
+            drafts = drafts.filter(d => !(d.id === data.id && d.project?.id === project?.id && d.type === 'Skyddsrond'));
+          } else {
+            drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Skyddsrond'));
+          }
+          await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      }
+      } catch (e) {}
       alert('Kontrollen har sparats som utförd!');
     } catch (e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
     }
   };
+
+  const handleSaveDraft = async (data) => {
+    // Persistence is handled centrally in BaseControlForm.saveDraftControl().
+    // This screen should not write to AsyncStorage to avoid overwriting richer
+    // draft objects maintained by the form (which include photos, participants).
+    try { console.log('[SkyddsrondScreen] handleSaveDraft received draft id:', data && data.id); } catch (e) {}
+  };
+
+  const WEATHER_OPTIONS = [
+    { key: 'Soligt', icon: 'sunny' },
+    { key: 'Delvis molnigt', icon: 'partly-sunny' },
+    { key: 'Molnigt', icon: 'cloudy' },
+    { key: 'Regn', icon: 'rainy' },
+    { key: 'Snö', icon: 'snow' },
+    { key: 'Åska', icon: 'thunderstorm' },
+  ];
 
   return (
     <BaseControlForm
@@ -166,9 +176,11 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       controlType="Skyddsrond"
       labels={LABELS}
       participants={participants}
+      initialValues={initialValues}
       project={project}
       onSave={handleSave}
-      hideWeather
+      onSaveDraft={handleSaveDraft}
+      weatherOptions={WEATHER_OPTIONS}
       checklistConfig={SKYDDSROND_CHECKLIST}
     />
   );
