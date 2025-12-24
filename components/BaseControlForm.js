@@ -17,6 +17,7 @@ import 'react-native-get-random-values';
 import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
+import { saveDraftToFirestore } from './firebase';
 
 export default function BaseControlForm({
   project,
@@ -163,7 +164,9 @@ export default function BaseControlForm({
       handleSave();
     } else {
       setMissingFields(missing);
-      Alert.alert('Saknas', 'Följande saknas: ' + missing.join(', '));
+      // More descriptive guidance when saving fails validation
+      const humanMsg = 'Följande saknas: ' + missing.join(', ') + '.\nFyll i saknade fält eller markera kontrollpunkter. Om en avvikelse är åtgärdad, öppna punkten och tryck Åtgärda för att spara åtgärdsinfo.';
+      Alert.alert('Saknas', humanMsg);
       if (scrollRef && scrollRef.current && scrollRef.current.scrollTo) {
         scrollRef.current.scrollTo({ y: 0, animated: true });
       }
@@ -980,6 +983,10 @@ export default function BaseControlForm({
       try {
         // ...existing code...
         await persistDraftObject(draft);
+        try {
+          // Best-effort: also save draft to Firestore so web/app can sync
+          await saveDraftToFirestore(draft);
+        } catch (e) {}
       } catch (e) {
         try { console.warn('[BaseControlForm] failed to persist draft_controls', e); } catch (er) {}
       }
@@ -1184,6 +1191,12 @@ export default function BaseControlForm({
                       return { ...s, remediation };
                     }));
                     setRemediationModal({ ...remediationModal, visible: false });
+                    // Persist draft immediately so the saved åtgärd is not lost
+                    (async () => {
+                      try {
+                        await saveDraftControl();
+                      } catch (e) { }
+                    })();
                   }}
                   style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
                 >
@@ -1978,7 +1991,8 @@ export default function BaseControlForm({
             const sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
             // Ikonlogik: visa fotoikon om något foto finns, varning om någon avvikelse, grön check om alla är ifyllda (oavsett status)
             const allFilled = section.points.every((_, idx) => !!sectionStatuses[idx]);
-            const hasAvvikelse = sectionStatuses.some(s => s === 'avvikelse');
+            // Only consider unhandled avvikelser as active warnings
+            const hasAvvikelse = (sectionStatuses || []).some((s, si) => s === 'avvikelse' && !(section.remediation && section.remediation[(section.points || [])[si]]));
             const photos = checklist[sectionIdx]?.photos || [];
             const hasPhoto = photos.some(photoArr => Array.isArray(photoArr) && photoArr.length > 0);
             // Show green check if all filled, regardless of status
@@ -2000,7 +2014,11 @@ export default function BaseControlForm({
                   <View style={{ flex: 1, flexDirection: 'column' }}>
                     <Text numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 16, fontWeight: 'bold', color: sectionHeaderText }}>{section.label}</Text>
                     {(() => {
-                      const deviationCount = (sectionStatuses || []).filter(s => s === 'avvikelse').length;
+                      // Count only unhandled deviations (exclude points with saved remediation info)
+                      const deviationCount = (sectionStatuses || []).reduce((acc, s, si) => {
+                        const rem = section.remediation && section.remediation[(section.points || [])[si]];
+                        return acc + ((s === 'avvikelse' && !rem) ? 1 : 0);
+                      }, 0);
                       const okCount = (sectionStatuses || []).filter(s => s === 'ok').length;
                       const notRelevantCount = (sectionStatuses || []).filter(s => s === 'ejaktuell').length;
                       const total = (section.points || []).length || 0;
@@ -2059,108 +2077,114 @@ export default function BaseControlForm({
                 {expanded && (
                   <View style={{ padding: 10, paddingTop: 0 }}>
                     {section.points.map((point, pointIdx) => {
+                      const photosArr = Array.isArray(section.photos) ? section.photos : [];
+                      const hasPhotos = Array.isArray(photosArr[pointIdx]) && photosArr[pointIdx].length > 0;
                       const remediation = section.remediation && section.remediation[point] ? section.remediation[point] : null;
                       const isDeviation = section.statuses[pointIdx] === 'avvikelse';
                       const isHandled = !!remediation;
                       return (
-                        <View key={`point-${pointIdx}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                          {/* Status button (OK) */}
-                          <TouchableOpacity
-                            onPress={() => {
-                              setChecklist(prev => prev.map((s, sIdx) => {
-                                if (sIdx !== sectionIdx) return s;
-                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
-                                statuses[pointIdx] = statuses[pointIdx] === 'ok' ? null : 'ok';
-                                return { ...s, statuses };
-                              }));
-                            }}
-                            style={{ marginRight: 10, padding: 6 }}
-                            accessibilityLabel={`Markera ${point} som OK`}
-                          >
-                            <Ionicons name={section.statuses[pointIdx] === 'ok' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ok' ? '#43A047' : '#bbb'} />
-                          </TouchableOpacity>
-                          {/* Status button (Avvikelse) */}
-                          <TouchableOpacity
-                            onPress={() => {
-                              setChecklist(prev => prev.map((s, sIdx) => {
-                                if (sIdx !== sectionIdx) return s;
-                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
-                                statuses[pointIdx] = statuses[pointIdx] === 'avvikelse' ? null : 'avvikelse';
-                                return { ...s, statuses };
-                              }));
-                            }}
-                            style={{ marginRight: 10, padding: 6 }}
-                            accessibilityLabel={`Markera ${point} som avvikelse`}
-                          >
-                            <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: section.statuses[pointIdx] === 'avvikelse' ? '#D32F2F' : 'transparent' }}>
-                              {section.statuses[pointIdx] === 'avvikelse' ? (
-                                <Ionicons name="alert" size={18} color="#fff" />
-                              ) : (
-                                <Ionicons name="ellipse-outline" size={22} color="#bbb" />
-                              )}
-                            </View>
-                          </TouchableOpacity>
-                          {/* Status button (Ej aktuell) */}
-                          <TouchableOpacity
-                            onPress={() => {
-                              setChecklist(prev => prev.map((s, sIdx) => {
-                                if (sIdx !== sectionIdx) return s;
-                                const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
-                                statuses[pointIdx] = statuses[pointIdx] === 'ejaktuell' ? null : 'ejaktuell';
-                                return { ...s, statuses };
-                              }));
-                            }}
-                            style={{ marginRight: 10, padding: 6 }}
-                            accessibilityLabel={`Markera ${point} som ej aktuell`}
-                          >
-                            <Ionicons name={section.statuses[pointIdx] === 'ejaktuell' ? 'remove-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ejaktuell' ? '#607D8B' : '#bbb'} />
-                          </TouchableOpacity>
-                          {/* Kontrollpunkt text */}
-                          <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{point}</Text>
-                          {/* Photo button */}
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (hasPhotos) {
-                                setPhotoModal({
-                                  visible: true,
-                                  uris: section.photos[pointIdx].map(uri => (typeof uri === 'string' ? { uri, comment: '' } : uri)),
-                                  index: 0,
-                                  sectionIdx,
-                                  pointIdx,
-                                });
-                              } else {
-                                handleNavigateToCamera(sectionIdx, pointIdx, project);
-                              }
-                            }}
-                            style={{ marginLeft: 8, padding: 6 }}
-                            accessibilityLabel={hasPhotos ? `Visa och hantera bilder för ${point}` : `Lägg till foto för ${point}`}
-                          >
-                            <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={20} color={'#1976D2'} />
-                          </TouchableOpacity>
-                          {/* Åtgärda-knapp för avvikelse (Skyddsrond) */}
-                          {controlType === 'Skyddsrond' && isDeviation && !isHandled && (
+                        <View key={`point-${pointIdx}`} style={{ marginBottom: 0 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                            {/* Status button (OK) */}
                             <TouchableOpacity
-                              onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false })}
-                              style={{ marginLeft: 8, backgroundColor: '#FFC107', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                              onPress={() => {
+                                setChecklist(prev => prev.map((s, sIdx) => {
+                                  if (sIdx !== sectionIdx) return s;
+                                  const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                  statuses[pointIdx] = statuses[pointIdx] === 'ok' ? null : 'ok';
+                                  return { ...s, statuses };
+                                }));
+                              }}
+                              style={{ marginRight: 10, padding: 6 }}
+                              accessibilityLabel={`Markera ${point} som OK`}
                             >
-                              <Text style={{ color: '#222', fontSize: 13 }}>Åtgärda</Text>
+                              <Ionicons name={section.statuses[pointIdx] === 'ok' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ok' ? '#43A047' : '#bbb'} />
                             </TouchableOpacity>
-                          )}
-                          {/* Visa info om åtgärd (Skyddsrond) */}
-                          {controlType === 'Skyddsrond' && isDeviation && isHandled && (
+                            {/* Status button (Avvikelse) */}
                             <TouchableOpacity
-                              onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: remediation.comment, name: remediation.name, date: remediation.date, infoMode: true })}
-                              style={{ marginLeft: 8, backgroundColor: '#E0E0E0', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                              onPress={() => {
+                                setChecklist(prev => prev.map((s, sIdx) => {
+                                  if (sIdx !== sectionIdx) return s;
+                                  const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                  statuses[pointIdx] = statuses[pointIdx] === 'avvikelse' ? null : 'avvikelse';
+                                  return { ...s, statuses };
+                                }));
+                              }}
+                              style={{ marginRight: 10, padding: 6 }}
+                              accessibilityLabel={`Markera ${point} som avvikelse`}
                             >
-                              <Text style={{ color: '#222', fontSize: 13 }}>Info</Text>
+                              <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: section.statuses[pointIdx] === 'avvikelse' ? '#D32F2F' : 'transparent' }}>
+                                {section.statuses[pointIdx] === 'avvikelse' ? (
+                                  <Ionicons name="alert" size={18} color="#fff" />
+                                ) : (
+                                  <Ionicons name="ellipse-outline" size={22} color="#bbb" />
+                                )}
+                              </View>
                             </TouchableOpacity>
-                          )}
-                          {/* Visa åtgärdsstatus (Skyddsrond) */}
-                          {controlType === 'Skyddsrond' && isDeviation && isHandled && (
-                            <Text style={{ marginLeft: 8, color: '#388E3C', fontSize: 12 }}>
-                              Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
-                            </Text>
-                          )}
+                            {/* Status button (Ej aktuell) */}
+                            <TouchableOpacity
+                              onPress={() => {
+                                setChecklist(prev => prev.map((s, sIdx) => {
+                                  if (sIdx !== sectionIdx) return s;
+                                  const statuses = Array.isArray(s.statuses) ? [...s.statuses] : Array(s.points.length).fill(null);
+                                  statuses[pointIdx] = statuses[pointIdx] === 'ejaktuell' ? null : 'ejaktuell';
+                                  return { ...s, statuses };
+                                }));
+                              }}
+                              style={{ marginRight: 10, padding: 6 }}
+                              accessibilityLabel={`Markera ${point} som ej aktuell`}
+                            >
+                              <Ionicons name={section.statuses[pointIdx] === 'ejaktuell' ? 'remove-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ejaktuell' ? '#607D8B' : '#bbb'} />
+                            </TouchableOpacity>
+                            {/* Kontrollpunkt text */}
+                            <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{point}</Text>
+                            {/* Photo button */}
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (hasPhotos) {
+                                  setPhotoModal({
+                                    visible: true,
+                                    uris: section.photos[pointIdx].map(uri => (typeof uri === 'string' ? { uri, comment: '' } : uri)),
+                                    index: 0,
+                                    sectionIdx,
+                                    pointIdx,
+                                  });
+                                } else {
+                                  handleNavigateToCamera(sectionIdx, pointIdx, project);
+                                }
+                              }}
+                              style={{ marginLeft: 8, padding: 6 }}
+                              accessibilityLabel={hasPhotos ? `Visa och hantera bilder för ${point}` : `Lägg till foto för ${point}`}
+                            >
+                              <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={20} color={'#1976D2'} />
+                            </TouchableOpacity>
+                            {/* Åtgärda-knapp / Info för avvikelse (Skyddsrond).
+                                När en åtgärd sparas lagras remediation-info och avvikelsen
+                                betraktas som handlad (visas ej som aktiv varning i header),
+                                men vi sparar åtgärden för spårbarhet. */}
+                            {controlType === 'Skyddsrond' && section.statuses[pointIdx] === 'avvikelse' && !isHandled && (
+                              <TouchableOpacity
+                                onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false })}
+                                style={{ marginLeft: 8, backgroundColor: '#FFC107', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                              >
+                                <Text style={{ color: '#222', fontSize: 13 }}>Åtgärda</Text>
+                              </TouchableOpacity>
+                            )}
+                            {controlType === 'Skyddsrond' && section.statuses[pointIdx] === 'avvikelse' && isHandled && (
+                              <>
+                                <TouchableOpacity
+                                  onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: remediation.comment, name: remediation.name, date: remediation.date, infoMode: true })}
+                                  style={{ marginLeft: 8, backgroundColor: '#E0E0E0', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                                >
+                                  <Text style={{ color: '#222', fontSize: 13 }}>Info</Text>
+                                </TouchableOpacity>
+                                <Text style={{ marginLeft: 8, color: '#388E3C', fontSize: 12 }}>
+                                  Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
+                                </Text>
+                              </>
+                            )}
+                          </View>
+                          <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 6, marginBottom: 6 }} />
                         </View>
                       );
                     })}
@@ -2246,7 +2270,8 @@ export default function BaseControlForm({
               let allFilled = true;
               (section.points || []).forEach((_, pointIdx) => {
                 if (statuses[pointIdx] === 'ok') approvedPoints++;
-                if (statuses[pointIdx] === 'avvikelse') deviationPoints++;
+                // Count only unhandled deviations
+                if (statuses[pointIdx] === 'avvikelse' && !(section.remediation && section.remediation[section.points[pointIdx]])) deviationPoints++;
                 if (!statuses[pointIdx]) allFilled = false;
               });
               if ((section.points || []).length > 0 && allFilled) completedSections++;

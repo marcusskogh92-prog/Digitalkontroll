@@ -43,7 +43,8 @@ export async function saveHierarchy(companyId, items) {
   if (!companyId) return false;
   try {
     const ref = doc(db, 'foretag', companyId, 'hierarki', 'state');
-    await setDoc(ref, { items }, { merge: true });
+    // write items with server timestamp
+    await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
     return true;
   } catch (e) {
     return false;
@@ -83,6 +84,18 @@ export async function fetchUserProfile(uid) {
   return null;
 }
 
+// Save or update a user's profile document (client-side safe helper)
+export async function saveUserProfile(uid, data) {
+  if (!uid) return false;
+  try {
+    const ref = doc(db, 'users', uid);
+    await setDoc(ref, data, { merge: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 export async function signInEmailPassword(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
 }
@@ -99,6 +112,33 @@ export async function logUserAction({ uid, email, companyId, type, payload }) {
       payload: payload || {},
       ts: serverTimestamp(),
     });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Controls persistence helpers
+export async function saveControlToFirestore(control) {
+  try {
+    if (!control) return false;
+    const id = control.id || (new Date().getTime().toString());
+    const ref = doc(db, 'controls', id);
+    const payload = { ...control, savedAt: serverTimestamp() };
+    await setDoc(ref, payload, { merge: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function saveDraftToFirestore(draft) {
+  try {
+    if (!draft) return false;
+    const id = draft.id || (new Date().getTime().toString());
+    const ref = doc(db, 'draft_controls', id);
+    const payload = { ...draft, savedAt: serverTimestamp() };
+    await setDoc(ref, payload, { merge: true });
     return true;
   } catch (e) {
     return false;

@@ -53,6 +53,9 @@ Thumbs.db
 .env.production
 .env*.local
 
+# Service account keys (do not commit)
+/konton/*.json
+
 # TypeScript
 *.tsbuildinfo
 

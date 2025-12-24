@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useState } from 'react';
-import { ImageBackground, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { auth } from '../components/firebase';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, ImageBackground, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { auth, fetchHierarchy, fetchUserProfile, saveHierarchy, saveUserProfile } from '../components/firebase';
+import useBackgroundSync from '../hooks/useBackgroundSync';
+import ProjectDetails from './ProjectDetails';
+
 
 function getFirstName(email) {
   if (!email) return '';
@@ -11,6 +14,101 @@ function getFirstName(email) {
 }
 
 export default function HomeScreen({ route, navigation }) {
+  // Testdata för demo-kontot (används av dold admin-knapp)
+  const testHierarchy = [
+    {
+      id: 'main1',
+      name: 'Byggprojekt',
+      expanded: false,
+      children: [
+        {
+          id: 'sub1',
+          name: 'Stockholm',
+          expanded: false,
+          children: [
+            { id: 'P-1001', name: 'Projekt Slussen', type: 'project', status: 'ongoing', createdAt: new Date().toISOString() },
+            { id: 'P-1002', name: 'Projekt Hammarby', type: 'project', status: 'completed', createdAt: new Date().toISOString() }
+          ]
+        },
+        {
+          id: 'sub2',
+          name: 'Göteborg',
+          expanded: false,
+          children: [
+            { id: 'P-2001', name: 'Projekt Gamlestaden', type: 'project', status: 'ongoing', createdAt: new Date().toISOString() },
+            { id: 'P-2002', name: 'Projekt Mölndal', type: 'project', status: 'ongoing', createdAt: new Date().toISOString() }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'main2',
+      name: 'Serviceprojekt',
+      expanded: false,
+      children: [
+        {
+          id: 'sub3',
+          name: 'Malmö',
+          expanded: false,
+          children: [
+            { id: 'P-3001', name: 'Projekt Limhamn', type: 'project', status: 'completed', createdAt: new Date().toISOString() },
+            { id: 'P-3002', name: 'Projekt Hyllie', type: 'project', status: 'ongoing', createdAt: new Date().toISOString() }
+          ]
+        },
+        {
+          id: 'sub4',
+          name: 'Uppsala',
+          expanded: false,
+          children: [
+            { id: 'P-4001', name: 'Projekt Gränby', type: 'project', status: 'ongoing', createdAt: new Date().toISOString() },
+            { id: 'P-4002', name: 'Projekt Fyrislund', type: 'project', status: 'completed', createdAt: new Date().toISOString() }
+          ]
+        }
+      ]
+    }
+  ];
+
+  // Admin unlock (tap title 5 times)
+  const [adminTapCount, setAdminTapCount] = useState(0);
+  const [showAdminButton, setShowAdminButton] = useState(false);
+  const [adminActionRunning, setAdminActionRunning] = useState(false);
+  function handleAdminTitlePress() {
+    setAdminTapCount(c => {
+      if (c >= 4) {
+        setShowAdminButton(true);
+        return 0;
+      }
+      return c + 1;
+    });
+  }
+  
+  // Dev-only: promote current user to demo/admin and load test hierarchy
+  async function handleMakeDemoAdmin() {
+    if (!__DEV__) return;
+    if (adminActionRunning) return;
+    setAdminActionRunning(true);
+    try {
+      const user = auth.currentUser;
+      const demoCompanyId = 'demo-company';
+      if (user) {
+        await saveUserProfile(user.uid, {
+          companyId: demoCompanyId,
+          role: 'admin',
+          displayName: user.email ? user.email.split('@')[0] : 'Demo Admin',
+          email: user.email || null,
+          updatedAt: new Date().toISOString()
+        });
+        await AsyncStorage.setItem('dk_companyId', demoCompanyId);
+        setCompanyId(demoCompanyId);
+        setHierarchy(testHierarchy);
+      }
+    } catch (e) {
+      console.log('[Home] make demo admin error', e?.message || e);
+    } finally {
+      setAdminActionRunning(false);
+      setShowAdminButton(false);
+    }
+  }
       // Funktion för att uppdatera projektinfo i hierarchy
       function updateProject(updatedProject) {
         setHierarchy(prev => prev.map(main => ({
@@ -260,69 +358,138 @@ export default function HomeScreen({ route, navigation }) {
   const email = route?.params?.email || '';
   const firstName = getFirstName(email);
   const [loggingOut, setLoggingOut] = useState(false);
-  const defaultHierarchy = [
-    {
-      id: '1',
-      name: 'Entreprenad',
-      expanded: false,
-      children: [
-        {
-          id: '1-1',
-          name: '2025',
-          expanded: false,
-          children: []
-        },
-        {
-          id: '1-2',
-          name: 'Anna Projektledare',
-          expanded: false,
-          children: []
-        },
-      ],
-    },
-    {
-      id: '2',
-      name: 'Byggservice',
-      expanded: false,
-      children: [
-        {
-          id: '2-1',
-          name: 'Andersson AB',
-          expanded: false,
-          children: []
-        },
-      ],
-    },
-  ];
-  const [hierarchy, setHierarchy] = useState(defaultHierarchy);
+  // companyId kan komma från route.params eller användarprofil
+  const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
+  // Laddningsstate för hierarkin
+  const [loadingHierarchy, setLoadingHierarchy] = useState(true);
+  const [hierarchy, setHierarchy] = useState([]);
+  const [localFallbackExists, setLocalFallbackExists] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [selectedProject, setSelectedProject] = useState(null);
+  
 
-  // Ladda hierarchy från AsyncStorage vid appstart
+  // start background sync hook
+  const bg = useBackgroundSync(companyId, { onStatus: (s) => setSyncStatus(s) });
+  const didInitialLoadRef = React.useRef(false);
+
+  // Left column resizer state (default 320)
+  const [leftWidth, setLeftWidth] = useState(320);
+  const leftWidthRef = useRef(leftWidth);
+  useEffect(() => { leftWidthRef.current = leftWidth; }, [leftWidth]);
+  const initialLeftRef = useRef(0);
+
+  // PanResponder for resizing the left column (works on web + native)
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: (evt, gestureState) => true,
+    onPanResponderGrant: () => {
+      initialLeftRef.current = leftWidthRef.current;
+    },
+    onPanResponderMove: (evt, gestureState) => {
+      const dx = gestureState.dx || 0;
+      const newWidth = Math.max(240, Math.min(800, initialLeftRef.current + dx));
+      setLeftWidth(newWidth);
+    },
+    onPanResponderRelease: () => {},
+    onPanResponderTerminate: () => {},
+  })).current;
+
+
+  // Ladda hierarchy från Firestore vid appstart
   React.useEffect(() => {
     (async () => {
-      try {
-        const saved = await AsyncStorage.getItem('hierarchy');
-        console.log('[HomeScreen] loaded hierarchy from AsyncStorage:', saved ? (saved.length > 200 ? saved.substring(0,200) + '... (truncated)' : saved) : null);
-        if (saved) {
-          setHierarchy(JSON.parse(saved));
-        } else {
-          console.log('[HomeScreen] no saved hierarchy found in AsyncStorage');
+      let cid = companyId;
+      // If companyId not provided via params, try user profile by uid
+      if (!cid && route?.params?.uid) {
+        const userProfile = await fetchUserProfile(route.params.uid);
+        if (userProfile && userProfile.companyId) {
+          cid = userProfile.companyId;
+          setCompanyId(cid);
         }
-      } catch (e) {
-        // ignore
+      }
+      // As a last resort try local stored companyId (dk_companyId)
+      if (!cid) {
+        try {
+          const stored = await AsyncStorage.getItem('dk_companyId');
+          if (stored) {
+            cid = stored;
+            setCompanyId(cid);
+          }
+        } catch (e) {}
+      }
+      if (cid) {
+        setLoadingHierarchy(true);
+        const items = await fetchHierarchy(cid);
+        if (Array.isArray(items) && items.length > 0) {
+          setHierarchy(items);
+        } else {
+          // Firestore empty or failed — try local AsyncStorage fallback
+          try {
+            const raw = await AsyncStorage.getItem('hierarchy_local');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setHierarchy(parsed);
+                setLocalFallbackExists(true);
+                // Try to push local fallback to Firestore (best-effort)
+                try {
+                  const pushedRes = await saveHierarchy(cid, parsed);
+                  const pushed = pushedRes === true || (pushedRes && pushedRes.ok === true);
+                  if (pushed) {
+                    try { await AsyncStorage.removeItem('hierarchy_local'); } catch (er) {}
+                    setLocalFallbackExists(false);
+                  } else {
+                    try { console.error('[Home] push local fallback error', pushedRes && pushedRes.error ? pushedRes.error : pushedRes); } catch (er) {}
+                  }
+                } catch (er) {}
+              } else {
+                setHierarchy([]);
+              }
+            } else {
+              setHierarchy([]);
+            }
+          } catch (e) {
+            setHierarchy([]);
+          }
+        }
+        setLoadingHierarchy(false);
+        // mark that initial load completed to avoid initial empty save overwriting server
+        didInitialLoadRef.current = true;
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Spara hierarchy till AsyncStorage varje gång den ändras
+  // Spara hierarchy till Firestore varje gång den ändras (och companyId finns)
   React.useEffect(() => {
+    if (!companyId) return;
+    // don't save before initial load finished (avoid overwriting server with empty on mount)
+    if (!didInitialLoadRef.current) return;
     (async () => {
       try {
-        await AsyncStorage.setItem('hierarchy', JSON.stringify(hierarchy));
+        const res = await saveHierarchy(companyId, hierarchy);
+        const ok = res === true || (res && res.ok === true);
+        if (!ok) {
+          // Firestore save failed — persist locally as fallback
+          try {
+            await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
+            setLocalFallbackExists(true);
+          } catch (e) {}
+        } else {
+          // On successful cloud save, also clear local fallback
+          try {
+            await AsyncStorage.removeItem('hierarchy_local');
+            setLocalFallbackExists(false);
+          } catch (e) {}
+        }
       } catch (e) {
-        // ignore
+        try {
+          await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
+          setLocalFallbackExists(true);
+        } catch (er) {}
       }
     })();
-  }, [hierarchy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hierarchy, companyId]);
 
   // Remove all top-level folders named 'test' after initial load
   React.useEffect(() => {
@@ -409,23 +576,27 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                         style={{ paddingVertical: 8, borderBottomWidth: 1, borderColor: '#eee' }}
                         onPress={() => {
                           setSearchModalVisible(false);
-                          navigation.navigate('ProjectDetails', {
-                            project: {
-                              id: proj.id,
-                              name: proj.name,
-                              ansvarig: proj.ansvarig || '',
-                              adress: proj.adress || '',
-                              fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                              client: proj.client || '',
-                              status: proj.status || 'ongoing',
-                              createdAt: proj.createdAt || '',
-                              createdBy: proj.createdBy || ''
-                            },
-                            updateProject
-                          });
+                          if (Platform.OS === 'web') {
+                            setSelectedProject({ ...proj });
+                          } else {
+                            navigation.navigate('ProjectDetails', {
+                              project: {
+                                id: proj.id,
+                                name: proj.name,
+                                ansvarig: proj.ansvarig || '',
+                                adress: proj.adress || '',
+                                fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                                client: proj.client || '',
+                                status: proj.status || 'ongoing',
+                                createdAt: proj.createdAt || '',
+                                createdBy: proj.createdBy || ''
+                              },
+                              updateProject
+                            });
+                          }
                         }}
                       >
-                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{proj.id} - {proj.name}</Text>
+                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '600', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} - {proj.name}</Text>
                       </TouchableOpacity>
                     ))
                 )
@@ -442,17 +613,142 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
       </Modal>
       {newProjectModalComponent}
       <ImageBackground
-        source={require('../assets/images/inlogg.app.png')}
-        style={{ flex: 1, resizeMode: 'cover' }}
-        imageStyle={{ opacity: 1 }}
+        source={Platform.OS === 'web' ? require('../assets/images/inlogg.webb.jpg') : require('../assets/images/inlogg.app.png')}
+        style={Platform.OS === 'web' ? { flex: 1, width: '100%', minHeight: '100vh' } : { flex: 1 }}
+        imageStyle={{ opacity: Platform.OS === 'web' ? 0.15 : 1, resizeMode: 'cover' }}
       >
-      <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.85)' }}>
+      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
         {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC', borderBottomWidth: 1, borderColor: '#e6e6e6' }}>
           <View>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
+            <TouchableOpacity onPress={handleAdminTitlePress} activeOpacity={0.7}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
+            </TouchableOpacity>
             <Text style={{ fontSize: 14, color: '#666' }}>Välkommen tillbaka</Text>
+            {showAdminButton && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => {
+                  await saveHierarchy('testdemo', testHierarchy);
+                  setShowAdminButton(false);
+                  alert('Testdata har lagts in!');
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>Fyll på testdata</Text>
+              </TouchableOpacity>
+            )}
+            {showAdminButton && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => {
+                  await handleMakeDemoAdmin();
+                  alert('Din användare är nu markerad som demo/admin (client-side).');
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold' }}>{adminActionRunning ? 'Kör...' : 'Gör mig demo-admin'}</Text>
+              </TouchableOpacity>
+            )}
+            {localFallbackExists && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#FFB300', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => {
+                  // migrate local fallback to Firestore with confirmation
+                  try {
+                    const raw = await AsyncStorage.getItem('hierarchy_local');
+                    if (!raw) {
+                      Alert.alert('Ingen lokal data', 'Ingen lokalt sparad hierarki hittades.');
+                      setLocalFallbackExists(false);
+                      return;
+                    }
+                    const parsed = JSON.parse(raw);
+                    Alert.alert(
+                      'Migrera lokal data',
+                      'Vill du migrera den lokalt sparade hierarkin till molnet för kontot? Detta kan skriva över befintlig molnhierarki.',
+                      [
+                        { text: 'Avbryt', style: 'cancel' },
+                        { text: 'Migrera', onPress: async () => {
+                          try {
+                            const res = await saveHierarchy(companyId, parsed);
+                            const ok = res === true || (res && res.ok === true);
+                            if (ok) {
+                              await AsyncStorage.removeItem('hierarchy_local');
+                              setLocalFallbackExists(false);
+                              setHierarchy(parsed);
+                              Alert.alert('Klar', 'Lokal hierarki migrerad till molnet.');
+                            } else {
+                              Alert.alert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
+                            }
+                          } catch (e) {
+                            Alert.alert('Fel', 'Kunde inte migrera: ' + (e?.message || 'okänt fel'));
+                          }
+                        }}
+                      ],
+                    );
+                  } catch (e) {
+                    Alert.alert('Fel', 'Kunde inte läsa lokal data.');
+                  }
+                }}
+              >
+                <Text style={{ color: '#222', fontWeight: '700' }}>Migrera lokal data</Text>
+              </TouchableOpacity>
+            )}
+            {(auth && auth.currentUser) && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => {
+                  try {
+                    // Force refresh token
+                    await auth.currentUser.getIdToken(true);
+                    Alert.alert('Token uppdaterad', 'ID-token uppdaterad. Försöker migrera lokal data...');
+                    // attempt migration if local data exists
+                    const raw = await AsyncStorage.getItem('hierarchy_local');
+                    if (!raw) {
+                      Alert.alert('Ingen lokal data', 'Inget att migrera.');
+                      setLocalFallbackExists(false);
+                      return;
+                    }
+                    const parsed = JSON.parse(raw);
+                    const res = await saveHierarchy(companyId, parsed);
+                    const ok = res === true || (res && res.ok === true);
+                    if (ok) {
+                      await AsyncStorage.removeItem('hierarchy_local');
+                      setLocalFallbackExists(false);
+                      setHierarchy(parsed);
+                      Alert.alert('Klar', 'Lokal hierarki migrerad till molnet.');
+                    } else {
+                      Alert.alert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
+                    }
+                  } catch (e) {
+                    Alert.alert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (e?.message || e));
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Uppdatera token & synka</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={{ backgroundColor: '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+              onPress={async () => {
+                try {
+                  const user = auth.currentUser;
+                  const tokenRes = user ? await auth.currentUser.getIdTokenResult(true).catch(() => null) : null;
+                  const claims = tokenRes?.claims || {};
+                  const stored = await AsyncStorage.getItem('dk_companyId');
+                  Alert.alert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
+                } catch (e) {
+                  Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (e?.message || e));
+                }
+              }}
+            >
+              <Text style={{ color: '#222', fontWeight: '700' }}>Visa auth-info</Text>
+            </TouchableOpacity>
           </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={{ fontSize: 12, color: syncStatus === 'synced' ? '#2E7D32' : syncStatus === 'syncing' ? '#F57C00' : syncStatus === 'offline' ? '#757575' : syncStatus === 'error' ? '#D32F2F' : '#888', marginBottom: 6 }}>
+              Synk: {syncStatus}
+            </Text>
+            {null}
+ 
           <TouchableOpacity
             style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minWidth: 60, minHeight: 28 }}
             onPress={async () => {
@@ -464,45 +760,263 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
           >
             <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 13 }}>Logga ut</Text>
           </TouchableOpacity>
+          </View>
         </View>
         {/* Allt under headern är skrollbart */}
-        <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+        {Platform.OS === 'web' ? (
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: leftWidth, padding: 8, borderRightWidth: 0, borderColor: '#e6e6e6', backgroundColor: '#f5f6f7', height: 'calc(100vh - 140px)', position: 'relative' }}>
+                    {/* Thin right-side divider for visual separation */}
+                    <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 1, backgroundColor: '#e6e6e6' }} />
+                    {/* Draggable handle - sits above the divider */}
+                    <View
+                  {...(panResponder && panResponder.panHandlers)}
+                  style={Platform.OS === 'web' ? { position: 'absolute', right: -8, top: 0, bottom: 0, width: 16, cursor: 'col-resize', zIndex: 9 } : { position: 'absolute', right: -12, top: 0, bottom: 0, width: 24, zIndex: 9 }}
+                    />
+              <View style={{ paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 1, borderColor: '#eee', marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setNewFolderModalVisible(true);
+                      setNewSubName('');
+                    }}
+                    activeOpacity={0.7}
+                    style={{ padding: 6, marginRight: 8 }}
+                  >
+                    <Ionicons name="add-circle" size={20} color="#1976D2" />
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 20, fontWeight: '700', color: '#222' }}>Projekt</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSearchModalVisible(true)} activeOpacity={0.7} style={{ padding: 6, borderRadius: 8 }}>
+                  <Ionicons name="search" size={18} color="#1976D2" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView>
+                {loadingHierarchy || hierarchy.length === 0 ? (
+                  <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
+                    Inga mappar eller projekt skapade ännu.
+                  </Text>
+                ) : (
+                  <View style={{ paddingHorizontal: 4 }}>
+                    {[...hierarchy]
+                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                      .map((main) => (
+                        <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 4, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: main.expanded ? 1 : 0, borderColor: '#e0e0e0' }}>
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                              onPress={() => setHierarchy(prev => prev.map(m => m.id === main.id ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }))}
+                              activeOpacity={0.7}
+                              onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
+                              delayLongPress={2000}
+                              onPressIn={() => {
+                                if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
+                                mainTimersRef.current[main.id] = setTimeout(() => {
+                                  setEditModal({ visible: true, type: 'main', id: main.id, name: main.name });
+                                }, 2000);
+                              }}
+                              onPressOut={() => {
+                                if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
+                              }}
+                            >
+                              <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
+                              <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{main.name}</Text>
+                            </TouchableOpacity>
+                            {main.expanded && !main.children?.some(sub => sub.expanded) && (
+                              <TouchableOpacity
+                                style={{ marginLeft: 8, padding: 4 }}
+                                onPress={() => {
+                                  setNewSubModal({ visible: true, parentId: main.id });
+                                  setNewSubName("");
+                                }}
+                              >
+                                <Ionicons name="add-circle" size={22} color="#1976D2" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          {main.expanded && main.children && [...main.children]
+                            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                            .map((sub) => {
+                              const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
+                              return (
+                                <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 2, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                                    <TouchableOpacity
+                                      style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                                      onPress={() => setHierarchy(toggleExpand(1, sub.id))}
+                                      onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
+                                      delayLongPress={2000}
+                                      activeOpacity={0.7}
+                                    >
+                                      <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+                                      <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
+                                    </TouchableOpacity>
+                                    {sub.expanded && (
+                                      <TouchableOpacity
+                                        style={{ padding: 4 }}
+                                        onPress={() => {
+                                          setNewProjectModal({ visible: true, parentSubId: sub.id });
+                                          setNewProjectName("");
+                                          setNewProjectNumber("");
+                                        }}
+                                      >
+                                        <Ionicons name="add-circle" size={22} color="#1976D2" />
+                                      </TouchableOpacity>
+                                    )}
+                                  </View>
+                                  {sub.expanded && (
+                                    <React.Fragment>
+                                      {projects.length === 0 ? (
+                                        <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
+                                          Inga projekt skapade
+                                        </Text>
+                                      ) : (
+                                        projects
+                                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                                          .map((proj) => (
+                                            <TouchableOpacity
+                                              key={proj.id}
+                                              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
+                                              onPress={() => {
+                                                if (Platform.OS === 'web') {
+                                                  setSelectedProject({ ...proj });
+                                                } else {
+                                                  navigation.navigate('ProjectDetails', {
+                                                    project: {
+                                                      id: proj.id,
+                                                      name: proj.name,
+                                                      ansvarig: proj.ansvarig || '',
+                                                      adress: proj.adress || '',
+                                                      fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                                                      client: proj.client || '',
+                                                      status: proj.status || 'ongoing',
+                                                      createdAt: proj.createdAt || '',
+                                                      createdBy: proj.createdBy || ''
+                                                    },
+                                                    updateProject
+                                                  });
+                                                }
+                                              }}
+                                            >
+                                              <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
+                                              <Text
+                                                style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, flexShrink: 1 }}
+                                                numberOfLines={1}
+                                                ellipsizeMode="tail"
+                                              >
+                                                {proj.id} — {proj.name}
+                                              </Text>
+                                            </TouchableOpacity>
+                                          ))
+                                      )}
+                                    </React.Fragment>
+                                  )}
+                                </View>
+                              );
+                            })}
+                        </View>
+                      ))}
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+            <View style={{ flex: 1, minHeight: 'calc(100vh - 140px)' }}>
+              {selectedProject ? (
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1 }}>
+                      <ProjectDetails route={{ params: { project: selectedProject, updateProject } }} navigation={navigation} inlineClose={() => setSelectedProject(null)} />
+                    </View>
+                  </View>
+                ) : (
+                  <View style={{ flex: 1 }} />
+                )}
+            </View>
+          </View>
+        ) : null}
           {/* Skapa kontroll-knapp och popup för val av kontrolltyp */}
-          <View style={{ marginTop: 18, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 22, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
-              Skapa kontroll
+          <View style={Platform.OS === 'web' ? { marginTop: 18, marginBottom: 16, alignItems: 'flex-start', paddingHorizontal: 16 } : { marginTop: 18, marginBottom: 16, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={Platform.OS === 'web' ? { fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 } : { fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
+              Skapa kontroll:
             </Text>
-            <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '80%', marginBottom: 18 }} />
-
-
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#fff',
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: '#222',
-                paddingVertical: 14,
-                paddingHorizontal: 32,
-                alignItems: 'center',
-                flexDirection: 'row',
-                justifyContent: 'center',
-                shadowColor: '#1976D2',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.10,
-                shadowRadius: 6,
-                elevation: 2,
-                minHeight: 56,
-                maxWidth: 240,
-                width: '90%',
-                marginBottom: 16,
-                overflow: 'hidden',
-              }}
-              activeOpacity={0.85}
-              onPress={() => setShowControlTypeModal(true)}
-            >
-              <Ionicons name="add-circle-outline" size={26} color="#222" style={{ marginRight: 16 }} />
-              <Text style={{ color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
-            </TouchableOpacity>
+            {Platform.OS === 'web' ? (
+              <>
+                <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '100%', marginBottom: 12 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {[
+                    { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+                    { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+                    { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+                    { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+                    { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+                    { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+                  ].map(({ type, icon, color }) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: '#fff',
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#e0e0e0',
+                        paddingVertical: 10,
+                        paddingHorizontal: 14,
+                        marginRight: 10,
+                        marginBottom: 10,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: 0.06,
+                        shadowRadius: 4,
+                        elevation: 2,
+                        cursor: 'pointer'
+                      }}
+                      onPress={() => {
+                        setSelectProjectModal({ visible: true, type });
+                        setShowControlTypeModal(false);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name={icon} size={18} color={color} style={{ marginRight: 10 }} />
+                      <Text style={{ color: '#222', fontWeight: '600', fontSize: 15 }}>{type}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '80%', marginBottom: 18 }} />
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#fff',
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: '#222',
+                    paddingVertical: 14,
+                    paddingHorizontal: 32,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    shadowColor: '#1976D2',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.10,
+                    shadowRadius: 6,
+                    elevation: 2,
+                    minHeight: 56,
+                    maxWidth: 240,
+                    width: '90%',
+                    marginBottom: 16,
+                    overflow: 'hidden',
+                  }}
+                  activeOpacity={0.85}
+                  onPress={() => setShowControlTypeModal(true)}
+                >
+                  <Ionicons name="add-circle-outline" size={26} color="#222" style={{ marginRight: 16 }} />
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          
+            {/* Modal för val av kontrolltyp */}
             {/* Modal för val av kontrolltyp */}
             <Modal
               visible={showControlTypeModal}
@@ -599,12 +1113,6 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           autoCorrect={false}
                           autoCapitalize="none"
                         />
-                        <TouchableOpacity
-                          style={{ position: 'absolute', right: 8, top: '50%', marginTop: -11, backgroundColor: '#1976D2', borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 1, elevation: 1 }}
-                          onPress={() => setQuickAddModal({ visible: true, parentSubId: null })}
-                        >
-                          <Ionicons name="add" size={12} color="#fff" />
-                        </TouchableOpacity>
                         {/* Autocomplete-lista */}
                         {searchText.trim().length > 0 && (
                           <View style={{ position: 'absolute', top: 44, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0', zIndex: 10, maxHeight: 180 }}>
@@ -613,7 +1121,10 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 main.children.flatMap(sub =>
                                   (sub.children || [])
                                     .filter(child => child.type === 'project' &&
-                                      child.id.toLowerCase().startsWith(searchText.toLowerCase())
+                                      (
+                                        child.id.toLowerCase().includes(searchText.toLowerCase()) ||
+                                        child.name.toLowerCase().includes(searchText.toLowerCase())
+                                      )
                                     )
                                     .map(proj => (
                                       <TouchableOpacity
@@ -650,7 +1161,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                         }}
                                       >
                                         <Ionicons name="folder-open" size={16} color="#1976D2" style={{ marginRight: 7 }} />
-                                        <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.id} - {proj.name}</Text>
+                                        <Text style={{ fontSize: 15, color: '#1976D2', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} - {proj.name}</Text>
                                       </TouchableOpacity>
                                     ))
                                 )
@@ -659,211 +1170,6 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           </View>
                         )}
                       </View>
-                                            {/* Modal för snabbskapa projekt */}
-                                            <Modal
-                                              visible={quickAddModal.visible}
-                                              transparent
-                                              animationType="fade"
-                                              onRequestClose={() => {
-                                                setQuickAddModal({ visible: false, parentSubId: null });
-                                                setQuickAddName("");
-                                                setQuickAddNumber("");
-                                              }}
-                                            >
-                                              <TouchableOpacity
-                                                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
-                                                activeOpacity={1}
-                                                onPress={() => {
-                                                  setQuickAddModal({ visible: false, parentSubId: null });
-                                                  setQuickAddName("");
-                                                  setQuickAddNumber("");
-                                                }}
-                                              >
-                                                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-                                                  <TouchableOpacity
-                                                    style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, padding: 6 }}
-                                                    onPress={() => {
-                                                      setQuickAddModal({ visible: false, parentSubId: null });
-                                                      setQuickAddName("");
-                                                      setQuickAddNumber("");
-                                                    }}
-                                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                                  >
-                                                    <Ionicons name="close" size={26} color="#222" />
-                                                  </TouchableOpacity>
-                                                  <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
-                                                    Skapa nytt projekt
-                                                  </Text>
-                                                  {/* Expanderbar huvudmapp-dropdown */}
-                                                  <View style={{ marginBottom: 8 }}>
-                                                    <TouchableOpacity
-                                                      style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fafafa' }}
-                                                      onPress={() => setQuickAddModal(modal => ({ ...modal, showMainList: !modal.showMainList }))}
-                                                    >
-                                                      <Text style={{ color: '#222', fontWeight: '600', flex: 1 }}>
-                                                        {quickAddModal.parentMainId ? (hierarchy.find(m => m.id === quickAddModal.parentMainId)?.name || 'Välj huvudmapp...') : 'Välj huvudmapp...'}
-                                                      </Text>
-                                                      <Ionicons name={quickAddModal.showMainList ? 'chevron-up' : 'chevron-down'} size={18} color="#222" />
-                                                    </TouchableOpacity>
-                                                    {quickAddModal.showMainList && (
-                                                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fff', marginTop: 2, maxHeight: 120 }}>
-                                                        <ScrollView style={{ maxHeight: 120 }}>
-                                                          {hierarchy.map(main => (
-                                                            <TouchableOpacity
-                                                              key={main.id}
-                                                              style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: quickAddModal.parentMainId === main.id ? '#e3f2fd' : '#fff' }}
-                                                              onPress={() => setQuickAddModal(modal => ({ ...modal, parentMainId: main.id, parentSubId: null, showMainList: false, showSubList: false }))}
-                                                            >
-                                                              <Text style={{ color: '#222', fontWeight: '600' }}>{main.name}</Text>
-                                                            </TouchableOpacity>
-                                                          ))}
-                                                        </ScrollView>
-                                                      </View>
-                                                    )}
-                                                  </View>
-                                                  {/* Expanderbar undermapp-dropdown */}
-                                                  {quickAddModal.parentMainId && (
-                                                    <View style={{ marginBottom: 8 }}>
-                                                      <TouchableOpacity
-                                                        style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fafafa' }}
-                                                        onPress={() => setQuickAddModal(modal => ({ ...modal, showSubList: !modal.showSubList }))}
-                                                        disabled={!quickAddModal.parentMainId}
-                                                      >
-                                                        <Text style={{ color: '#222', fontWeight: '600', flex: 1 }}>
-                                                          {quickAddModal.parentSubId ? (hierarchy.find(m => m.id === quickAddModal.parentMainId)?.children.find(s => s.id === quickAddModal.parentSubId)?.name || 'Välj undermapp...') : 'Välj undermapp...'}
-                                                        </Text>
-                                                        <Ionicons name={quickAddModal.showSubList ? 'chevron-up' : 'chevron-down'} size={18} color="#222" />
-                                                      </TouchableOpacity>
-                                                      {quickAddModal.showSubList && (
-                                                        <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fff', marginTop: 2, maxHeight: 120 }}>
-                                                          <ScrollView style={{ maxHeight: 120 }}>
-                                                            {(() => {
-                                                              const main = hierarchy.find(m => m.id === quickAddModal.parentMainId);
-                                                              if (!main) return null;
-                                                              return main.children.map(sub => (
-                                                                <TouchableOpacity
-                                                                  key={sub.id}
-                                                                  style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: quickAddModal.parentSubId === sub.id ? '#e3f2fd' : '#fff' }}
-                                                                  onPress={() => setQuickAddModal(modal => ({ ...modal, parentSubId: sub.id, showSubList: false }))}
-                                                                >
-                                                                  <Text style={{ color: '#222', fontWeight: '600' }}>{sub.name}</Text>
-                                                                </TouchableOpacity>
-                                                              ));
-                                                            })()}
-                                                          </ScrollView>
-                                                        </View>
-                                                      )}
-                                                    </View>
-                                                  )}
-                                                  <TextInput
-                                                    value={quickAddNumber}
-                                                    onChangeText={setQuickAddNumber}
-                                                    placeholder="Projektnummer..."
-                                                    style={{
-                                                      borderWidth: 1,
-                                                      borderColor: quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) ? '#D32F2F' : '#e0e0e0',
-                                                      borderRadius: 8,
-                                                      padding: 12,
-                                                      fontSize: 16,
-                                                      backgroundColor: '#fafafa',
-                                                      color: !isProjectNumberUnique(quickAddNumber) && quickAddNumber.trim() !== '' ? '#D32F2F' : '#222',
-                                                      marginBottom: 10
-                                                    }}
-                                                    autoFocus
-                                                    keyboardType="default"
-                                                  />
-                                                  {quickAddNumber.trim() !== '' && !isProjectNumberUnique(quickAddNumber) && (
-                                                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 4 }}>
-                                                      <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
-                                                      <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>
-                                                        Projektnummer används redan.
-                                                      </Text>
-                                                    </View>
-                                                  )}
-                                                  <TextInput
-                                                    value={quickAddName}
-                                                    onChangeText={setQuickAddName}
-                                                    placeholder="Projektnamn..."
-                                                    placeholderTextColor="#888"
-                                                    style={{
-                                                      borderWidth: 1,
-                                                      borderColor: quickAddName.trim() === '' ? '#D32F2F' : '#e0e0e0',
-                                                      borderRadius: 8,
-                                                      padding: 12,
-                                                      fontSize: 16,
-                                                      marginBottom: 12,
-                                                      backgroundColor: '#fafafa',
-                                                      color: '#222'
-                                                    }}
-                                                    keyboardType="default"
-                                                  />
-                                                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
-                                                    <TouchableOpacity
-                                                      style={{
-                                                        backgroundColor: '#1976D2',
-                                                        borderRadius: 8,
-                                                        paddingVertical: 12,
-                                                        alignItems: 'center',
-                                                        flex: 1,
-                                                        marginRight: 8,
-                                                        opacity: (quickAddName.trim() === '' || quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) || !quickAddModal.parentMainId || !quickAddModal.parentSubId) ? 0.5 : 1
-                                                      }}
-                                                      disabled={quickAddName.trim() === '' || quickAddNumber.trim() === '' || !isProjectNumberUnique(quickAddNumber) || !quickAddModal.parentMainId || !quickAddModal.parentSubId}
-                                                      onPress={() => {
-                                                        // Skapa projekt i vald undermapp
-                                                        setHierarchy(prev => prev.map(main => ({
-                                                          ...main,
-                                                          children: main.children.map(sub =>
-                                                            sub.id === quickAddModal.parentSubId
-                                                              ? {
-                                                                  ...sub,
-                                                                  children: [
-                                                                    ...(sub.children || []),
-                                                                    {
-                                                                      id: quickAddNumber.trim(),
-                                                                      name: quickAddName.trim(),
-                                                                      type: 'project',
-                                                                      status: 'ongoing'
-                                                                    }
-                                                                  ]
-                                                                }
-                                                              : sub
-                                                          )
-                                                        })));
-                                                        setQuickAddModal({ visible: false, parentSubId: null, parentMainId: null });
-                                                        setQuickAddName("");
-                                                        setQuickAddNumber("");
-                                                        setShowProjectCreated(true);
-                                                                            {/* Bekräftelse-toast/snackbar */}
-                                                                            {showProjectCreated && (
-                                                                              <View style={{ position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center', zIndex: 100 }}>
-                                                                                <View style={{ backgroundColor: '#1976D2', borderRadius: 24, paddingVertical: 10, paddingHorizontal: 28, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, elevation: 4 }}>
-                                                                                  <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Projekt skapat!</Text>
-                                                                                </View>
-                                                                              </View>
-                                                                            )}
-                                                                            {/* Auto-hide toast efter 2 sekunder */}
-                                                                            {showProjectCreated && setTimeout(() => setShowProjectCreated(false), 2000)}
-                                                      }}
-                                                    >
-                                                      <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
-                                                        Skapa
-                                                      </Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                      style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
-                                                      onPress={() => {
-                                                        setQuickAddModal({ visible: false, parentSubId: null, parentMainId: null });
-                                                        setQuickAddName("");
-                                                        setQuickAddNumber("");
-                                                      }}
-                                                    >
-                                                      <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
-                                                    </TouchableOpacity>
-                                                  </View>
-                                                </View>
-                                              </TouchableOpacity>
-                                            </Modal>
                       <ScrollView style={{ maxHeight: 370 }}>
                         {[...hierarchy]
                           .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
@@ -927,25 +1233,28 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                 key={proj.id}
                                                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
                                                 onPress={() => {
-                                                  navigation.navigate('ProjectDetails', {
-                                                    project: {
-                                                      id: proj.id,
-                                                      name: proj.name,
-                                                      ansvarig: proj.ansvarig || '',
-                                                      adress: proj.adress || '',
-                                                      fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                                                      client: proj.client || '',
-                                                      status: proj.status || 'ongoing',
-                                                      createdAt: proj.createdAt || '',
-                                                      createdBy: proj.createdBy || ''
-                                                    },
-                                                    updateProject
-                                                  });
+                                                  if (Platform.OS === 'web') {
+                                                    setSelectedProject({ ...proj });
+                                                  } else {
+                                                    navigation.navigate('ProjectDetails', {
+                                                      project: {
+                                                        id: proj.id,
+                                                        name: proj.name,
+                                                        ansvarig: proj.ansvarig || '',
+                                                        adress: proj.adress || '',
+                                                        fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                                                        client: proj.client || '',
+                                                        status: proj.status || 'ongoing',
+                                                        createdAt: proj.createdAt || '',
+                                                        createdBy: proj.createdBy || ''
+                                                      },
+                                                      updateProject
+                                                    });
+                                                  }
                                                 }}
                                               >
                                                 <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                                <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
-                                                <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
+                                                <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} — {proj.name}</Text>
                                               </TouchableOpacity>
                                             ))
                                         )
@@ -967,6 +1276,12 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 </Modal>
               );
             })()}
+            {/* Utförda kontroller - rubrik med samma storlek som ovan */}
+            <View style={Platform.OS === 'web' ? { marginTop: 18, marginBottom: 8, alignItems: 'flex-start', paddingHorizontal: 16 } : { marginTop: 18, marginBottom: 8, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={Platform.OS === 'web' ? { fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 } : { fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
+                Utförda kontroller:
+              </Text>
+            </View>
           </View>
           {/* Projektträd */}
           {/* Rubrik och sök-knapp */}
@@ -988,14 +1303,16 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
             >
               <Text style={{ fontSize: 26, fontWeight: '600', color: '#263238', letterSpacing: 0.2, textAlign: 'center' }}>Projekt</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#222', paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4, elevation: 2, minHeight: 36, marginLeft: 16 }}
-              onPress={() => setSearchModalVisible(true)}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="search" size={18} color="#1976D2" style={{ marginRight: 6 }} />
-              <Text style={{ fontSize: 15, color: '#1976D2', fontWeight: '600', letterSpacing: 0.3 }}>Sök</Text>
-            </TouchableOpacity>
+            {Platform.OS !== 'web' && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#222', paddingHorizontal: 16, paddingVertical: 10, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4, elevation: 2, minHeight: 36, marginLeft: 16 }}
+                onPress={() => setSearchModalVisible(true)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="search" size={18} color="#1976D2" style={{ marginRight: 6 }} />
+                <Text style={{ fontSize: 15, color: '#1976D2', fontWeight: '600', letterSpacing: 0.3 }}>Sök</Text>
+              </TouchableOpacity>
+            )}
           </View>
           {/* Ny huvudmapp popup modal */}
           <Modal
@@ -1040,19 +1357,32 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 )}
                 <TouchableOpacity
                   style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginBottom: 8 }}
-                  onPress={() => {
+                  onPress={async () => {
                     if (newSubName.trim() === '' || !isFolderNameUnique(newSubName)) return;
-                    setHierarchy(prev => [
-                      ...prev,
-                      {
-                        id: (Math.random() * 100000).toFixed(0),
-                        name: newSubName.trim(),
-                        expanded: false,
-                        children: [],
-                      },
-                    ]);
+                    const newMain = {
+                      id: (Math.random() * 100000).toFixed(0),
+                      name: newSubName.trim(),
+                      expanded: false,
+                      children: [],
+                    };
+                    const newHierarchy = [...hierarchy, newMain];
+                    setHierarchy(newHierarchy);
                     setNewSubName('');
                     setNewFolderModalVisible(false);
+                    try {
+                      const ok = await saveHierarchy(companyId, newHierarchy);
+                      if (!ok) {
+                          await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy));
+                          setLocalFallbackExists(true);
+                          Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
+                        } else {
+                          try { await AsyncStorage.removeItem('hierarchy_local'); } catch (e) {}
+                          setLocalFallbackExists(false);
+                      }
+                    } catch (e) {
+                      try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy)); } catch (er) {}
+                      Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
+                    }
                   }}
                   disabled={newSubName.trim() === '' || !isFolderNameUnique(newSubName)}
                 >
@@ -1072,275 +1402,132 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               </View>
             </TouchableOpacity>
           </Modal>
-          <View style={{ flex: 1 }}>
-            {hierarchy.length === 0 ? (
-              <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
-                Inga projekt eller mappar ännu.
-              </Text>
-            ) : (
-              <View style={{ paddingHorizontal: 4 }}>
-                {[...hierarchy]
-                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                  .map((main) => (
-                    <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 4, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: main.expanded ? 1 : 0, borderColor: '#e0e0e0' }}>
-                        <TouchableOpacity
-                          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                          onPress={() => setHierarchy(prev => prev.map(m => m.id === main.id ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }))}
-                          activeOpacity={0.7}
-                          onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
-                          delayLongPress={2000}
-                          onPressIn={() => {
-                            if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
-                            mainTimersRef.current[main.id] = setTimeout(() => {
-                              setEditModal({ visible: true, type: 'main', id: main.id, name: main.name });
-                            }, 2000);
-                          }}
-                          onPressOut={() => {
-                            if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
-                          }}
-                        >
-                          <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
-                          <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
-                        </TouchableOpacity>
-                        {/* Visa endast om ingen undermapp är expanderad */}
-                        {main.expanded && !main.children?.some(sub => sub.expanded) && (
+          {Platform.OS !== 'web' && (
+            <View style={{ flex: 1 }}>
+              {loadingHierarchy || hierarchy.length === 0 ? (
+                <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
+                  Inga mappar eller projekt skapade ännu.
+                </Text>
+              ) : (
+                <View style={{ paddingHorizontal: 4 }}>
+                  {[...hierarchy]
+                    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                    .map((main) => (
+                      <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 4, padding: 8, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: main.expanded ? 1 : 0, borderColor: '#e0e0e0' }}>
                           <TouchableOpacity
-                            style={{ marginLeft: 8, padding: 4 }}
-                            onPress={() => {
-                              setNewSubModal({ visible: true, parentId: main.id });
-                              setNewSubName("");
+                            style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                            onPress={() => setHierarchy(prev => prev.map(m => m.id === main.id ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }))}
+                            activeOpacity={0.7}
+                            onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
+                            delayLongPress={2000}
+                            onPressIn={() => {
+                              if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
+                              mainTimersRef.current[main.id] = setTimeout(() => {
+                                setEditModal({ visible: true, type: 'main', id: main.id, name: main.name });
+                              }, 2000);
+                            }}
+                            onPressOut={() => {
+                              if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
                             }}
                           >
-                            <Ionicons name="add-circle" size={22} color="#1976D2" />
+                            <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
+                            <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                           </TouchableOpacity>
-                        )}
-                      </View>
-                      {main.expanded && main.children && [...main.children]
-                        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                        .map((sub) => {
-                          const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
-                          return (
-                            <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 2, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
-                                <TouchableOpacity
-                                  style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                                  onPress={() => setHierarchy(toggleExpand(1, sub.id))}
-                                  onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
-                                  delayLongPress={2000}
-                                  activeOpacity={0.7}
-                                >
-                                  <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
-                                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
-                                </TouchableOpacity>
-                                {sub.expanded && (
+                          {/* Visa endast om ingen undermapp är expanderad */}
+                          {main.expanded && !main.children?.some(sub => sub.expanded) && (
+                            <TouchableOpacity
+                              style={{ marginLeft: 8, padding: 4 }}
+                              onPress={() => {
+                                setNewSubModal({ visible: true, parentId: main.id });
+                                setNewSubName("");
+                              }}
+                            >
+                              <Ionicons name="add-circle" size={22} color="#1976D2" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        {main.expanded && main.children && [...main.children]
+                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                          .map((sub) => {
+                            const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
+                            return (
+                              <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 2, marginLeft: 16, padding: 6, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
                                   <TouchableOpacity
-                                    style={{ padding: 4 }}
-                                    onPress={() => {
-                                      setNewProjectModal({ visible: true, parentSubId: sub.id });
-                                      setNewProjectName("");
-                                      setNewProjectNumber("");
-                                    }}
+                                    style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                                    onPress={() => setHierarchy(toggleExpand(1, sub.id))}
+                                    onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
+                                    delayLongPress={2000}
+                                    activeOpacity={0.7}
                                   >
-                                    <Ionicons name="add-circle" size={22} color="#1976D2" />
+                                    <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+                                    <Text style={{ fontSize: 16, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
                                   </TouchableOpacity>
+                                  {sub.expanded && (
+                                    <TouchableOpacity
+                                      style={{ padding: 4 }}
+                                      onPress={() => {
+                                        setNewProjectModal({ visible: true, parentSubId: sub.id });
+                                        setNewProjectName("");
+                                        setNewProjectNumber("");
+                                      }}
+                                    >
+                                      <Ionicons name="add-circle" size={22} color="#1976D2" />
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                                {/* ...existing code... */}
+                                {sub.expanded && (
+                                  <React.Fragment>
+                                    {projects.length === 0 ? (
+                                      <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
+                                        Inga projekt skapade
+                                      </Text>
+                                    ) : (
+                                      projects
+                                        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                                        .map((proj) => (
+                                          <TouchableOpacity
+                                            key={proj.id}
+                                            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
+                                            onPress={() => {
+                                              if (Platform.OS === 'web') {
+                                                setSelectedProject({ ...proj });
+                                              } else {
+                                                navigation.navigate('ProjectDetails', {
+                                                  project: {
+                                                    id: proj.id,
+                                                    name: proj.name,
+                                                    ansvarig: proj.ansvarig || '',
+                                                    adress: proj.adress || '',
+                                                    fastighetsbeteckning: proj.fastighetsbeteckning || '',
+                                                    client: proj.client || '',
+                                                    status: proj.status || 'ongoing',
+                                                    createdAt: proj.createdAt || '',
+                                                    createdBy: proj.createdBy || ''
+                                                  },
+                                                  updateProject
+                                                });
+                                              }
+                                            }}
+                                          >
+                                            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
+                                            <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} — {proj.name}</Text>
+                                          </TouchableOpacity>
+                                        ))
+                                    )}
+                                  </React.Fragment>
                                 )}
                               </View>
-                                    {/* Edit modal for main/sub group */}
-                                    <Modal
-                                      visible={editModal.visible}
-                                      transparent
-                                      animationType="fade"
-                                      onRequestClose={() => setEditModal({ visible: false, type: '', id: null, name: '' })}
-                                    >
-                                      <TouchableOpacity
-                                        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}
-                                        activeOpacity={1}
-                                        onPress={() => setEditModal({ visible: false, type: '', id: null, name: '' })}
-                                      >
-                                        <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-                                          {/* Close (X) button */}
-                                          <TouchableOpacity
-                                            style={{ position: 'absolute', top: 14, right: 14, zIndex: 2, padding: 6 }}
-                                            onPress={() => setEditModal({ visible: false, type: '', id: null, name: '' })}
-                                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                          >
-                                            <Ionicons name="close" size={26} color="#222" />
-                                          </TouchableOpacity>
-                                          <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
-                                            {editModal.type === 'main' ? 'Hantera huvudmapp' : 'Hantera undermapp'}
-                                          </Text>
-                                          <TextInput
-                                            value={editModal.name}
-                                            onChangeText={txt => setEditModal(modal => ({ ...modal, name: txt }))}
-                                            placeholder={editModal.type === 'main' ? 'Nytt namn på huvudmapp...' : 'Nytt namn på undermapp...'}
-                                            style={{
-                                              borderWidth: 1,
-                                              borderColor: editModal.name.trim() === '' ? '#D32F2F' : '#e0e0e0',
-                                              borderRadius: 8,
-                                              padding: 12,
-                                              fontSize: 16,
-                                              marginBottom: 12,
-                                              backgroundColor: '#fafafa'
-                                            }}
-                                            autoFocus
-                                          />
-                                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
-                                            <TouchableOpacity
-                                              style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginRight: 8 }}
-                                              onPress={() => {
-                                                if (editModal.name.trim() !== '') {
-                                                  if (editModal.type === 'main') {
-                                                    setHierarchy(prev => prev.map(main => main.id === editModal.id ? { ...main, name: editModal.name.trim() } : main));
-                                                  } else if (editModal.type === 'sub') {
-                                                    setHierarchy(prev => prev.map(main => ({
-                                                      ...main,
-                                                      children: main.children.map(sub => sub.id === editModal.id ? { ...sub, name: editModal.name.trim() } : sub)
-                                                    })));
-                                                  }
-                                                  setEditModal({ visible: false, type: '', id: null, name: '' });
-                                                }
-                                              }}
-                                            >
-                                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="checkmark" size={18} color="#fff" style={{ marginRight: 6 }} />
-                                                <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>Spara</Text>
-                                              </View>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                              style={{
-                                                backgroundColor:
-                                                  (editModal.type === 'main' && hierarchy.find(main => main.id === editModal.id)?.children?.length > 0) ||
-                                                  (editModal.type === 'sub' && (() => {
-                                                    const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                                    const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                                    return sub?.children?.length > 0;
-                                                  })())
-                                                    ? '#aaa'
-                                                    : '#D32F2F',
-                                                borderRadius: 8,
-                                                paddingVertical: 12,
-                                                alignItems: 'center',
-                                                flex: 1,
-                                                marginLeft: 8
-                                              }}
-                                              disabled={
-                                                (editModal.type === 'main' && hierarchy.find(main => main.id === editModal.id)?.children?.length > 0) ||
-                                                (editModal.type === 'sub' && (() => {
-                                                  const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                                  const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                                  return sub?.children?.length > 0;
-                                                })())
-                                              }
-                                              onPress={() => {
-                                                if (editModal.type === 'main') {
-                                                  const mainFolder = hierarchy.find(main => main.id === editModal.id);
-                                                  if (!mainFolder || (mainFolder.children && mainFolder.children.length > 0)) return;
-                                                  setHierarchy(prev => prev.filter(main => main.id !== editModal.id));
-                                                } else if (editModal.type === 'sub') {
-                                                  const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                                  const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                                  if (sub && sub.children && sub.children.length > 0) return;
-                                                  setHierarchy(prev => prev.map(main => ({
-                                                    ...main,
-                                                    children: main.children.filter(sub => sub.id !== editModal.id)
-                                                  })));
-                                                }
-                                                setEditModal({ visible: false, type: '', id: null, name: '' });
-                                              }}
-                                            >
-                                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="trash" size={18} color={
-                                                  (editModal.type === 'main' && hierarchy.find(main => main.id === editModal.id)?.children?.length > 0) ||
-                                                  (editModal.type === 'sub' && (() => {
-                                                    const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                                    const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                                    return sub?.children?.length > 0;
-                                                  })())
-                                                    ? '#eee'
-                                                    : '#fff'
-                                                } style={{ marginRight: 6 }} />
-                                                <Text style={{
-                                                  color:
-                                                    (editModal.type === 'main' && hierarchy.find(main => main.id === editModal.id)?.children?.length > 0) ||
-                                                    (editModal.type === 'sub' && (() => {
-                                                      const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                                      const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                                      return sub?.children?.length > 0;
-                                                    })())
-                                                      ? '#eee'
-                                                      : '#fff',
-                                                  fontWeight: '600', fontSize: 16
-                                                }}>Radera</Text>
-                                              </View>
-                                            </TouchableOpacity>
-                                          </View>
-                                          {editModal.type === 'main' && hierarchy.find(main => main.id === editModal.id)?.children?.length > 0 && (
-                                            <Text style={{ color: '#D32F2F', fontSize: 13, textAlign: 'center', marginTop: 10 }}>
-                                              Tips: Du kan bara radera en huvudmapp om den är tom.
-                                            </Text>
-                                          )}
-                                          {editModal.type === 'sub' && (() => {
-                                            const parent = hierarchy.find(main => main.children.some(sub => sub.id === editModal.id));
-                                            const sub = parent?.children?.find(sub => sub.id === editModal.id);
-                                            return sub?.children?.length > 0;
-                                          })() && (
-                                            <Text style={{ color: '#D32F2F', fontSize: 13, textAlign: 'center', marginTop: 10 }}>
-                                              Tips: Du kan bara radera en undermapp om den är tom.
-                                            </Text>
-                                          )}
-                                        </View>
-                                      </TouchableOpacity>
-                                    </Modal>
-                              {sub.expanded && (
-                                <React.Fragment>
-                                  {projects.length === 0 ? (
-                                    <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
-                                      Inga projekt skapade
-                                    </Text>
-                                  ) : (
-                                    projects
-                                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                      .map((proj) => (
-                                        <TouchableOpacity
-                                          key={proj.id}
-                                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, marginLeft: 18, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 3, paddingHorizontal: 8 }}
-                                          onPress={() => {
-                                            navigation.navigate('ProjectDetails', {
-                                              project: {
-                                                id: proj.id,
-                                                name: proj.name,
-                                                ansvarig: proj.ansvarig || '',
-                                                adress: proj.adress || '',
-                                                fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                                                client: proj.client || '',
-                                                status: proj.status || 'ongoing',
-                                                createdAt: proj.createdAt || '',
-                                                createdBy: proj.createdBy || ''
-                                              },
-                                              updateProject
-                                            });
-                                          }}
-                                        >
-                                          <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                          {/* Projektnummer */}
-                                          <Text style={{ fontSize: 15, color: '#1976D2', marginLeft: 4, marginRight: 8, minWidth: 40 }}>{proj.id}</Text>
-                                          {/* Projektnamn */}
-                                          <Text style={{ fontSize: 15, color: '#1976D2' }}>{proj.name}</Text>
-                                        </TouchableOpacity>
-                                      ))
-                                  )}
-                                </React.Fragment>
-                              )}
-                            </View>
-                          );
-                        })}
-                    </View>
-                  ))}
-              </View>
-            )}
-          </View>
-        </ScrollView>
+                            );
+                          })}
+                      </View>
+                    ))}
+                </View>
+              )}
+            </View>
+          )}
                   {/* Ny huvudmapp popup modal */}
                   {/* Ny undermapp popup modal */}
       {/* Ny undermapp popup modal */}

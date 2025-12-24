@@ -1,32 +1,15 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Använd foretag/{companyId} och svenska undermappar
-    match /foretag/{companyId} {
-      allow read, write: if isAuthorized(companyId);
-      match /hierarki/{docId} {
-        allow read, write: if isAuthorized(companyId);
-      }
-      match /profil/{docId} {
-        allow read, write: if isAuthorized(companyId);
-      }
+    // Allow read for hierarchy; writes only when authenticated and token.companyId matches path
+    match /foretag/{company}/hierarki/state {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.companyId == company;
     }
 
+    // Allow users to read/write their own profile doc
     match /users/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid;
-    }
-
-    function isAuthorized(companyId) {
-      return request.auth != null && userCompanyId() == companyId;
-    }
-
-    function userCompanyId() {
-      // Försök först med custom claims, fall tillbaka till users/{uid}.companyId
-      return request.auth.token.companyId != null
-        ? request.auth.token.companyId
-        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
   }
 }

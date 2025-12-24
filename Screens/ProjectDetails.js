@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
   centerOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
 });
 
-export default function ProjectDetails({ route, navigation }) {
+export default function ProjectDetails({ route, navigation, inlineClose }) {
               const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
@@ -561,14 +561,53 @@ export default function ProjectDetails({ route, navigation }) {
     >
       {/* Rubrik för projektinfo (med redigera-knapp till höger) */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>Projektinformation</Text>
-        <TouchableOpacity
-          onPress={() => setEditingInfo(true)}
-          accessibilityLabel="Ändra projektinfo"
-          style={{ padding: 6 }}
-        >
-          <Ionicons name="create-outline" size={22} color="#1976D2" />
-        </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
+          {inlineClose && (
+            <TouchableOpacity onPress={inlineClose} style={{ padding: 6, marginRight: 8 }} accessibilityLabel="Stäng projekt">
+              <Ionicons name="chevron-back" size={20} color="#1976D2" />
+            </TouchableOpacity>
+          )}
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">Projektinformation</Text>
+        </View>
+          {Platform.OS === 'web' ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap' }}>
+            <TouchableOpacity
+              style={{ padding: 6, marginRight: 8, borderRadius: 8 }}
+              onPress={() => setShowSummary(true)}
+              accessibilityLabel="Skriv ut"
+            >
+              <Ionicons name="print-outline" size={20} color="#222" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setEditingInfo(true)}
+              accessibilityLabel="Ändra projektinfo"
+              style={{ padding: 6, marginRight: 8 }}
+            >
+              <Ionicons name="create-outline" size={22} color="#1976D2" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ padding: 6 }}
+              onPress={() => {
+                if ((controls || []).length === 0) {
+                  setShowDeleteModal(true);
+                } else {
+                  setShowDeleteWarning(true);
+                }
+              }}
+              accessibilityLabel="Radera projekt"
+            >
+              <Ionicons name="trash-outline" size={20} color="#D32F2F" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => setEditingInfo(true)}
+            accessibilityLabel="Ändra projektinfo"
+            style={{ padding: 6 }}
+          >
+            <Ionicons name="create-outline" size={22} color="#1976D2" />
+          </TouchableOpacity>
+        )}
       </View>
       {/* Projektinfo med logga, status, projektnummer, projektnamn */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
@@ -833,90 +872,160 @@ export default function ProjectDetails({ route, navigation }) {
       {/* Knapprad med horisontella linjer */}
       <View style={{ marginBottom: 12 }}>
         <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 10, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-          <TouchableOpacity
-            style={{
-              backgroundColor: '#f5f5f5',
-              borderRadius: 10,
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingVertical: 6,
-              paddingHorizontal: 18,
-              shadowColor: '#222',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.08,
-              shadowRadius: 4,
-              elevation: 1,
-              minHeight: 36,
-              maxWidth: 180,
-              width: 'auto',
-              marginBottom: 8,
-              marginRight: 40,
-              overflow: 'hidden',
-            }}
-            activeOpacity={0.85}
-            onPress={() => setShowControlTypeModal(true)}
-          >
-            <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
-            <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={{
-              backgroundColor: '#f5f5f5',
-              borderRadius: 10,
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingVertical: 6,
-              paddingHorizontal: 12,
-              shadowColor: '#222',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.08,
-              shadowRadius: 4,
-              elevation: 1,
-              minHeight: 36,
-              maxWidth: 50,
-              marginRight: 10,
-              marginBottom: 8,
-              overflow: 'hidden',
-            }}
-            activeOpacity={0.85}
-            onPress={() => setShowSummary(true)}
-            accessibilityLabel="Skriv ut"
-          >
-            <Ionicons name="print-outline" size={20} color="#222" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={{
-              backgroundColor: '#f5f5f5',
-              borderRadius: 10,
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingVertical: 6,
-              paddingHorizontal: 12,
-              shadowColor: '#D32F2F',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.08,
-              shadowRadius: 4,
-              elevation: 1,
-              minHeight: 36,
-              maxWidth: 50,
-              marginRight: 0,
-              marginBottom: 8,
-              overflow: 'hidden',
-            }}
-            activeOpacity={0.85}
-            onPress={() => {
-              if (controls.length === 0) {
-                setShowDeleteModal(true);
-              } else {
-                setShowDeleteWarning(true);
-              }
-            }}
-            accessibilityLabel="Radera projekt"
-          >
-            <Ionicons name="trash-outline" size={20} color="#D32F2F" />
-          </TouchableOpacity>
-        </View>
+        {Platform.OS === 'web' ? (
+          <>
+            <View style={{ marginBottom: 8, alignItems: 'flex-start', paddingHorizontal: 0 }}>
+              <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>Skapa kontroll:</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+              {[
+                { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+                { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+                { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+                { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+                { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+                { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+              ].map(({ type, icon, color }) => (
+                <TouchableOpacity
+                  key={type}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: '#fff',
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: '#e0e0e0',
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    marginRight: 10,
+                    marginBottom: 10,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.06,
+                    shadowRadius: 4,
+                    elevation: 2,
+                    cursor: 'pointer'
+                  }}
+                  onPress={() => {
+                    switch (type) {
+                      case 'Arbetsberedning':
+                        navigation.navigate('ArbetsberedningScreen', { project });
+                        break;
+                      case 'Riskbedömning':
+                        navigation.navigate('RiskbedömningScreen', { project });
+                        break;
+                      case 'Fuktmätning':
+                        navigation.navigate('FuktmätningScreen', { project });
+                        break;
+                      case 'Egenkontroll':
+                        navigation.navigate('EgenkontrollScreen', { project });
+                        break;
+                      case 'Mottagningskontroll':
+                        navigation.navigate('MottagningskontrollScreen', { project });
+                        break;
+                      case 'Skyddsrond':
+                        navigation.navigate('SkyddsrondScreen', { project });
+                        break;
+                      default:
+                        navigation.navigate('ControlForm', { project, controlType: type });
+                    }
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name={icon} size={18} color={color} style={{ marginRight: 10 }} />
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 15 }}>{type}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 6,
+                  paddingHorizontal: 18,
+                  shadowColor: '#222',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 4,
+                  elevation: 1,
+                  minHeight: 36,
+                  maxWidth: 180,
+                  width: 'auto',
+                  marginBottom: 8,
+                  marginRight: 40,
+                  overflow: 'hidden',
+                }}
+                activeOpacity={0.85}
+                onPress={() => setShowControlTypeModal(true)}
+              >
+                <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
+                <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  shadowColor: '#222',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 4,
+                  elevation: 1,
+                  minHeight: 36,
+                  maxWidth: 50,
+                  marginRight: 10,
+                  marginBottom: 8,
+                  overflow: 'hidden',
+                }}
+                activeOpacity={0.85}
+                onPress={() => setShowSummary(true)}
+                accessibilityLabel="Skriv ut"
+              >
+                <Ionicons name="print-outline" size={20} color="#222" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  shadowColor: '#D32F2F',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 4,
+                  elevation: 1,
+                  minHeight: 36,
+                  maxWidth: 50,
+                  marginRight: 0,
+                  marginBottom: 8,
+                  overflow: 'hidden',
+                }}
+                activeOpacity={0.85}
+                onPress={() => {
+                  if ((controls || []).length === 0) {
+                    setShowDeleteModal(true);
+                  } else {
+                    setShowDeleteWarning(true);
+                  }
+                }}
+                accessibilityLabel="Radera projekt"
+              >
+                <Ionicons name="trash-outline" size={20} color="#D32F2F" />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 10, width: '110%', marginLeft: '-5%' }} />
       </View>
 
@@ -1021,7 +1130,11 @@ export default function ProjectDetails({ route, navigation }) {
                   </View>
                 </View>
               </Modal>
-        <Text style={[styles.subtitle, { lineHeight: 32 }]}>Utförda kontroller:</Text>
+        <View style={{ marginTop: 0, marginBottom: 0, alignItems: 'flex-start' }}>
+          <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>
+            Utförda kontroller:
+          </Text>
+        </View>
       </View>
 
       {/* Sökfält för kontroller */}

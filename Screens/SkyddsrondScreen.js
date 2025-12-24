@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
+import { saveControlToFirestore } from '../components/firebase';
 // Skyddsrond checklist config: sections with control points
 const SKYDDSROND_CHECKLIST = [
   {
@@ -133,6 +134,13 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
         savedAt: new Date().toISOString(),
         id: data.id || require('uuid').v4(),
       };
+      // Try saving to Firestore first (best-effort). If Firestore fails, fall back to local AsyncStorage.
+      try {
+        const ok = await saveControlToFirestore(completed);
+        if (!ok) throw new Error('Firestore save failed');
+      } catch (e) {
+        // fallback to local storage below
+      }
       const existing = await AsyncStorage.getItem('completed_controls');
       let arr = [];
       if (existing) arr = JSON.parse(existing);

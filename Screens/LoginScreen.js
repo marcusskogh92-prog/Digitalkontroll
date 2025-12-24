@@ -7,6 +7,8 @@ import { auth, fetchUserProfile, signInEmailPassword } from '../components/fireb
 
 export default function LoginScreen() {
   const navigation = useNavigation();
+  // Toggle this to `true` only for fast local development. Leave `false` for real login flow.
+  const DEV_BYPASS = false;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -18,7 +20,7 @@ export default function LoginScreen() {
 
   // Dev-only: bypass login to speed up testing
   useEffect(() => {
-    if (__DEV__ && !autoHandled) {
+    if (DEV_BYPASS && __DEV__ && !autoHandled) {
       (async () => {
         try {
           const storedCompanyId = await AsyncStorage.getItem('dk_companyId');
@@ -75,7 +77,14 @@ export default function LoginScreen() {
       setAutoHandled(true); // Prevent onAuthStateChanged duplicate navigation
       // Navigate immediately (without waiting for profile)
       navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email } } ] });
-      // Fetch and then update companyId
+      // Refresh ID token to pick up any custom claims, then fetch and update companyId
+      try {
+        if (cred && cred.user) {
+          await auth.currentUser.getIdToken(true);
+        }
+      } catch (e) {
+        console.log('[Login] Token refresh failed', e?.message || e);
+      }
       fetchUserProfile(cred.user.uid)
         .then(async (profile) => {
           const companyId = profile?.companyId || null;
@@ -114,6 +123,78 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  // On web, TouchableWithoutFeedback can interfere with input focus — use a plain View wrapper there.
+  const isWeb = Platform.OS === 'web';
+  if (isWeb) {
+    return (
+      <View style={{ flex: 1 }}>
+        <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <ImageBackground
+            source={require('../assets/images/inlogg.app.png')}
+            style={styles.bg}
+            imageStyle={styles.bgImage}
+            resizeMode="cover"
+          >
+          <View style={styles.overlay} />
+          <View style={styles.contentWrapper}>
+          <Text style={styles.title}>Logga in</Text>
+          <Text style={styles.slogan}>Digitala kontroller – direkt i telefonen</Text>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>E-postadress</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Fyll i e-postadress"
+              placeholderTextColor="#888"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+            />
+            {!isEmailValid(email.trim()) && email.length > 0 ? (
+              <Text style={styles.hint}>Ogiltig e‑postadress</Text>
+            ) : null}
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Lösenord</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Fyll i lösenord"
+              placeholderTextColor="#888"
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
+              <Text style={styles.toggleText}>{showPassword ? 'Dölj lösenord' : 'Visa lösenord'}</Text>
+            </TouchableOpacity>
+            {password.length === 0 && error ? (
+              <Text style={styles.hint}>Fyll i ditt lösenord</Text>
+            ) : null}
+          </View>
+
+          <Image
+            source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
+            style={[styles.logo, { alignSelf: 'center' }]}
+            resizeMode="contain"
+          />
+
+          {error ? <Text style={{ color: 'red', marginBottom: 8 }}>{error}</Text> : null}
+
+          <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
+            <Text style={styles.buttonText}>{loading ? 'Loggar in…' : 'LOGGA IN'}</Text>
+          </TouchableOpacity>
+
+          {/* Konto skapas av administratör – ingen självregistrering */}
+          </View>
+          </ImageBackground>
+        </KeyboardAvoidingView>
+      </View>
+    );
+  }
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>

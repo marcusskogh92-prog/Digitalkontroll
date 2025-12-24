@@ -384,9 +384,7 @@ export default function CameraCapture() {
           <TouchableOpacity
             style={[styles.previewButton, styles.previewButtonSave]}
             onPress={() => {
-              Alert.alert('Kommentar sparad');
               const target = route.params?.returnScreen || 'SkyddsrondScreen';
-              try { console.log('[CameraCapture] Save pressed, photoPreview.uri:', photoPreview && photoPreview.uri); } catch (e) {}
               // Merge params into the existing route instead of pushing a new instance
               try {
                   // If caller provided `returnKey`, set params directly on that route (no remount).
@@ -399,7 +397,7 @@ export default function CameraCapture() {
                     },
                     project,
                   };
-                  try { console.log('[CameraCapture] returning cameraResult to key:', route.params?.returnKey, 'cameraResult:', payload.cameraResult); } catch (e) {}
+                  // Removed debug logging
                   try {
                     const returnKey = route.params?.returnKey;
                     if (returnKey) {
