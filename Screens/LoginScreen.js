@@ -1,7 +1,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { auth, fetchUserProfile, signInEmailPassword } from '../components/firebase';
 
@@ -17,6 +17,22 @@ export default function LoginScreen() {
   const [autoHandled, setAutoHandled] = useState(false);
   const isEmailValid = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
   const isFormValid = isEmailValid(email.trim()) && password.length > 0;
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+  const [rememberMe, setRememberMe] = useState(false);
+
+  // Load saved email if user previously chose to be remembered
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem('dk_saved_email');
+        if (saved) {
+          setEmail(saved);
+          setRememberMe(true);
+        }
+      } catch (e) {}
+    })();
+  }, []);
 
   // Dev-only: bypass login to speed up testing
   useEffect(() => {
@@ -77,6 +93,15 @@ export default function LoginScreen() {
       setAutoHandled(true); // Prevent onAuthStateChanged duplicate navigation
       // Navigate immediately (without waiting for profile)
       navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email } } ] });
+      // Persist remembered email preference
+      try {
+        if (rememberMe) {
+          await AsyncStorage.setItem('dk_saved_email', email.trim());
+        } else {
+          await AsyncStorage.removeItem('dk_saved_email');
+        }
+      } catch (e) {}
+
       // Refresh ID token to pick up any custom claims, then fetch and update companyId
       try {
         if (cred && cred.user) {
@@ -119,6 +144,8 @@ export default function LoginScreen() {
         }
       }
       setError(message);
+      // focus email field when login fails
+      try { emailRef.current?.focus(); } catch (e) {}
     } finally {
       setLoading(false);
     }
@@ -138,55 +165,70 @@ export default function LoginScreen() {
           >
           <View style={styles.overlay} />
           <View style={styles.contentWrapper}>
-          <Text style={styles.title}>Logga in</Text>
-          <Text style={styles.slogan}>Digitala kontroller – direkt i telefonen</Text>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>E-postadress</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Fyll i e-postadress"
-              placeholderTextColor="#888"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
+            <Image
+              source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
+              style={styles.logo}
+              resizeMode="contain"
             />
-            {!isEmailValid(email.trim()) && email.length > 0 ? (
-              <Text style={styles.hint}>Ogiltig e‑postadress</Text>
+            
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
             ) : null}
-          </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Lösenord</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Fyll i lösenord"
-              placeholderTextColor="#888"
-              secureTextEntry={!showPassword}
-              value={password}
-              onChangeText={setPassword}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
-              <Text style={styles.toggleText}>{showPassword ? 'Dölj lösenord' : 'Visa lösenord'}</Text>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>E-postadress</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Fyll i e-postadress"
+                placeholderTextColor="#888"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+                ref={emailRef}
+                returnKeyType="next"
+                onSubmitEditing={() => passwordRef.current?.focus()}
+              />
+              {!isEmailValid(email.trim()) && email.length > 0 ? (
+                <Text style={styles.hint}>Ogiltig e‑postadress</Text>
+              ) : null}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Lösenord</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Fyll i lösenord"
+                placeholderTextColor="#888"
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+                autoCapitalize="none"
+                ref={passwordRef}
+                returnKeyType="go"
+                onSubmitEditing={() => { if (!loading && isFormValid) handleLogin(); }}
+              />
+              <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
+                <Text style={styles.toggleText}>{showPassword ? 'Dölj lösenord' : 'Visa lösenord'}</Text>
+              </TouchableOpacity>
+              {password.length === 0 && error ? (
+                <Text style={styles.hint}>Fyll i ditt lösenord</Text>
+              ) : null}
+            </View>
+
+            <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8 }}>
+              <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: '#222', marginRight: 8, alignItems: 'center', justifyContent: 'center' }}>
+                {rememberMe ? <View style={{ width: 12, height: 12, backgroundColor: '#1976D2' }} /> : null}
+              </View>
+              <Text style={{ color: '#222', fontWeight: '600' }}>Kom ihåg mig</Text>
             </TouchableOpacity>
-            {password.length === 0 && error ? (
-              <Text style={styles.hint}>Fyll i ditt lösenord</Text>
-            ) : null}
-          </View>
 
-          <Image
-            source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
-            style={[styles.logo, { alignSelf: 'center' }]}
-            resizeMode="contain"
-          />
-
-          {error ? <Text style={{ color: 'red', marginBottom: 8 }}>{error}</Text> : null}
-
-          <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
-            <Text style={styles.buttonText}>{loading ? 'Loggar in…' : 'LOGGA IN'}</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
+              <Text style={styles.buttonText}>{loading ? 'Loggar in…' : 'LOGGA IN'}</Text>
+            </TouchableOpacity>
 
           {/* Konto skapas av administratör – ingen självregistrering */}
           </View>
@@ -206,56 +248,71 @@ export default function LoginScreen() {
         resizeMode="cover"
       >
       <View style={styles.overlay} />
-      <View style={styles.contentWrapper}>
-      <Text style={styles.title}>Logga in</Text>
-      <Text style={styles.slogan}>Digitala kontroller – direkt i telefonen</Text>
-
-      <View style={styles.inputContainer}>
-        <Text style={styles.label}>E-postadress</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Fyll i e-postadress"
-          placeholderTextColor="#888"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          value={email}
-          onChangeText={setEmail}
+      <View style={[styles.contentWrapper, { justifyContent: 'flex-start', paddingTop: 12, paddingBottom: 24 }]}>
+        <Image
+          source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
+          style={styles.logo}
+          resizeMode="contain"
         />
-        {!isEmailValid(email.trim()) && email.length > 0 ? (
-          <Text style={styles.hint}>Ogiltig e‑postadress</Text>
+        
+
+        {error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
         ) : null}
-      </View>
 
-      <View style={styles.inputContainer}>
-        <Text style={styles.label}>Lösenord</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Fyll i lösenord"
-          placeholderTextColor="#888"
-          secureTextEntry={!showPassword}
-          value={password}
-          onChangeText={setPassword}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
-          <Text style={styles.toggleText}>{showPassword ? 'Dölj lösenord' : 'Visa lösenord'}</Text>
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>E-postadress</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Fyll i e-postadress"
+            placeholderTextColor="#888"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={email}
+            onChangeText={setEmail}
+            ref={emailRef}
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+          />
+          {!isEmailValid(email.trim()) && email.length > 0 ? (
+            <Text style={styles.hint}>Ogiltig e‑postadress</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>Lösenord</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Fyll i lösenord"
+            placeholderTextColor="#888"
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+            autoCapitalize="none"
+            ref={passwordRef}
+            returnKeyType="go"
+            onSubmitEditing={() => { if (!loading && isFormValid) handleLogin(); }}
+          />
+          <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
+            <Text style={styles.toggleText}>{showPassword ? 'Dölj lösenord' : 'Visa lösenord'}</Text>
+          </TouchableOpacity>
+          {password.length === 0 && error ? (
+            <Text style={styles.hint}>Fyll i ditt lösenord</Text>
+          ) : null}
+        </View>
+
+        <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8 }}>
+          <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: '#222', marginRight: 8, alignItems: 'center', justifyContent: 'center' }}>
+            {rememberMe ? <View style={{ width: 12, height: 12, backgroundColor: '#1976D2' }} /> : null}
+          </View>
+          <Text style={{ color: '#222', fontWeight: '600' }}>Kom ihåg mig</Text>
         </TouchableOpacity>
-        {password.length === 0 && error ? (
-          <Text style={styles.hint}>Fyll i ditt lösenord</Text>
-        ) : null}
-      </View>
 
-      <Image
-        source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
-        style={[styles.logo, { alignSelf: 'center' }]}
-        resizeMode="contain"
-      />
-
-      {error ? <Text style={{ color: 'red', marginBottom: 8 }}>{error}</Text> : null}
-
-      <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
-        <Text style={styles.buttonText}>{loading ? 'Loggar in…' : 'LOGGA IN'}</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
+          <Text style={styles.buttonText}>{loading ? 'Loggar in…' : 'LOGGA IN'}</Text>
+        </TouchableOpacity>
 
       {/* Konto skapas av administratör – ingen självregistrering */}
       </View>
@@ -298,20 +355,18 @@ const styles = StyleSheet.create({
   contentWrapper: {
     width: '100%',
     maxWidth: 420,
-    paddingHorizontal: 24,
-    paddingVertical: 24,
-    paddingTop: 56,
-    position: 'relative',
-    marginTop: -16,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    paddingTop: 24,
+    marginTop: 0,
     alignItems: 'center',
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     marginBottom: 10,
-    position: 'absolute',
-    top: -16,
     textAlign: 'center',
+    marginTop: 8,
   },
   inputContainer: {
     width: '100%',
@@ -346,19 +401,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   logo: {
-    width: 240,
-    height: 120,
-    marginTop: 8,
-    marginBottom: 16,
+    width: 200,
+    height: 90,
+    marginTop: 0,
+    marginBottom: 12,
   },
   slogan: {
     fontSize: 16,
     color: '#111',
     textAlign: 'center',
     marginBottom: 12,
-    marginTop: -16,
+    marginTop: 8,
     opacity: 0.9,
     fontWeight: '600',
+  },
+  errorBox: {
+    width: '100%',
+    maxWidth: 350,
+    backgroundColor: '#fdecea',
+    borderLeftWidth: 4,
+    borderLeftColor: '#d32f2f',
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 12,
+  },
+  errorText: {
+    color: '#b71c1c',
+    fontSize: 14,
   },
   button: {
     width: '100%',

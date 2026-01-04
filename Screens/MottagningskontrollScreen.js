@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
+import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 
 const LABELS = {
   title: 'Mottagningskontroll',
@@ -20,24 +21,29 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
       // Use existing id if present, otherwise create new
       const controlId = data.id || uuidv4();
       const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: controlId });
-      const completedRaw = await AsyncStorage.getItem('completed_controls');
-      let completedList = completedRaw ? JSON.parse(completedRaw) : [];
-      // Remove all previous versions (by id if present, else by project+type+savedAt)
-      let filteredControls = completedList.filter((c) => {
-        if (data.id || completed.id) {
-          // Remove all with same id
-          return c.id !== (data.id || completed.id);
-        } else {
-          // Remove all with same project+type+savedAt
-          return !(
-            c.project === data.project &&
-            c.type === data.type &&
-            c.savedAt === data.savedAt
-          );
-        }
-      });
-      filteredControls.push(completed);
-      await AsyncStorage.setItem('completed_controls', JSON.stringify(filteredControls));
+      try {
+        const ok = await saveControlToFirestore(completed);
+        if (!ok) throw new Error('Firestore save failed');
+      } catch (e) {
+        const completedRaw = await AsyncStorage.getItem('completed_controls');
+        let completedList = completedRaw ? JSON.parse(completedRaw) : [];
+        // Remove all previous versions (by id if present, else by project+type+savedAt)
+        let filteredControls = completedList.filter((c) => {
+          if (data.id || completed.id) {
+            // Remove all with same id
+            return c.id !== (data.id || completed.id);
+          } else {
+            // Remove all with same project+type+savedAt
+            return !(
+              c.project === data.project &&
+              c.type === data.type &&
+              c.savedAt === data.savedAt
+            );
+          }
+        });
+        filteredControls.push(completed);
+        await AsyncStorage.setItem('completed_controls', JSON.stringify(filteredControls));
+      }
       // Remove matching draft if exists
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
@@ -59,19 +65,24 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
   const handleSaveDraft = async (data) => {
     try {
       const draft = normalizeControl({ ...data, project, status: 'UTKAST', savedAt: new Date().toISOString(), type: 'Mottagningskontroll', id: data.id || uuidv4() });
-      let arr = [];
-      const existing = await AsyncStorage.getItem('draft_controls');
-      if (existing) arr = JSON.parse(existing);
-      // Ersätt om samma projekt+typ+id redan finns, annars lägg till
-      const idx = arr.findIndex(
-        c => c.project?.id === project?.id && c.type === 'Mottagningskontroll' && c.id === draft.id
-      );
-      if (idx !== -1) {
-        arr[idx] = draft;
-      } else {
-        arr.push(draft);
+      try {
+        const ok = await saveDraftToFirestore(draft);
+        if (!ok) throw new Error('Firestore draft save failed');
+      } catch (e) {
+        let arr = [];
+        const existing = await AsyncStorage.getItem('draft_controls');
+        if (existing) arr = JSON.parse(existing);
+        // Ersätt om samma projekt+typ+id redan finns, annars lägg till
+        const idx = arr.findIndex(
+          c => c.project?.id === project?.id && c.type === 'Mottagningskontroll' && c.id === draft.id
+        );
+        if (idx !== -1) {
+          arr[idx] = draft;
+        } else {
+          arr.push(draft);
+        }
+        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
-      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
     } catch (e) {
       // Hantera fel
     }

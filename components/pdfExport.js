@@ -6,6 +6,7 @@ export function buildControlPdfHtml({ control, project, company }) {
   const date = control?.date || '';
   const companyName = company?.name || 'FÖRETAG AB';
   const companyLogoUrl = company?.logoUrl || '';
+  const companyLogoBase64 = company?.logoBase64 || null;
 
   // Fält för Fuktmätning
   const device = control?.device || '';
@@ -17,12 +18,17 @@ export function buildControlPdfHtml({ control, project, company }) {
   const reference = control?.reference || '';
   const measurements = Array.isArray(control?.measurements) ? control.measurements : [];
 
-  const logoSrc = companyLogoUrl || 'assets/images/foretag_ab.png';
+  const logoSrcFallback = 'assets/images/foretag_ab.png';
+  const logoImgTag = companyLogoBase64
+    ? `<img src="data:image/png;base64,${companyLogoBase64}" style="height:48px; display:block;"/>`
+    : (companyLogoUrl
+      ? `<img src="${companyLogoUrl}" style="height:48px; display:block;"/>`
+      : `<img src="${logoSrcFallback}" style="height:48px; display:block;"/>`);
   const headerHtml = `
     <table style="width:100%; border-collapse:collapse;">
       <tr>
         <td style="vertical-align:middle; width:40%;">
-          ${logoSrc ? `<img src="${logoSrc}" style="height:48px; display:block;"/>` : ''}
+          ${logoImgTag}
           <div style="font-weight:700; color:#263238; margin-top:6px;">${companyName}</div>
         </td>
         <td style="text-align:right; vertical-align:middle; width:60%;">

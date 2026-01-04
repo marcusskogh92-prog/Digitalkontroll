@@ -5,6 +5,7 @@ import { useRoute } from '@react-navigation/native';
 import { Text, View } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
+import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 
 
 const CONTROL_TYPE_ICONS = {
@@ -60,10 +61,15 @@ export default function RiskbedömningScreen({ date, participants = [] }) {
   const handleSave = async (data) => {
     try {
       const completed = normalizeControl({ ...data, project, status: 'UTFÖRD', savedAt: new Date().toISOString(), id: data.id || uuidv4() });
-      const completedRaw = await AsyncStorage.getItem('completed_controls');
-      const completedList = completedRaw ? JSON.parse(completedRaw) : [];
-      completedList.push(completed);
-      await AsyncStorage.setItem('completed_controls', JSON.stringify(completedList));
+      try {
+        const ok = await saveControlToFirestore(completed);
+        if (!ok) throw new Error('Firestore save failed');
+      } catch (e) {
+        const completedRaw = await AsyncStorage.getItem('completed_controls');
+        const completedList = completedRaw ? JSON.parse(completedRaw) : [];
+        completedList.push(completed);
+        await AsyncStorage.setItem('completed_controls', JSON.stringify(completedList));
+      }
       // Remove matching draft if exists
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
@@ -81,19 +87,24 @@ export default function RiskbedömningScreen({ date, participants = [] }) {
   const handleSaveDraft = async (data) => {
     try {
       const draft = normalizeControl({ ...data, project, status: 'UTKAST', savedAt: new Date().toISOString(), type: 'Riskbedömning', id: data.id || uuidv4() });
-      let arr = [];
-      const existing = await AsyncStorage.getItem('draft_controls');
-      if (existing) arr = JSON.parse(existing);
-      // Ersätt om samma projekt+typ+id redan finns, annars lägg till
-      const idx = arr.findIndex(
-        c => c.project?.id === project?.id && c.type === 'Riskbedömning' && c.id === draft.id
-      );
-      if (idx !== -1) {
-        arr[idx] = draft;
-      } else {
-        arr.push(draft);
+      try {
+        const ok = await saveDraftToFirestore(draft);
+        if (!ok) throw new Error('Firestore draft save failed');
+      } catch (e) {
+        let arr = [];
+        const existing = await AsyncStorage.getItem('draft_controls');
+        if (existing) arr = JSON.parse(existing);
+        // Ersätt om samma projekt+typ+id redan finns, annars lägg till
+        const idx = arr.findIndex(
+          c => c.project?.id === project?.id && c.type === 'Riskbedömning' && c.id === draft.id
+        );
+        if (idx !== -1) {
+          arr[idx] = draft;
+        } else {
+          arr.push(draft);
+        }
+        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
-      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
     } catch (e) {
       // Hantera fel
     }

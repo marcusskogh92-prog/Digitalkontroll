@@ -22,6 +22,7 @@ import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 
 // Utility: read a file URI as base64 if possible
 async function readUriAsBase64(uri) {
@@ -210,8 +211,20 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
           setExportingPdf(true);
           try {
             try { Haptics.selectionAsync(); } catch {}
+
+            // Prefer company profile logo for PDF (MVP branding: only on print/PDF)
+            let profile = companyProfile;
+            if (!profile && companyId) {
+              try {
+                profile = await fetchCompanyProfile(companyId);
+                if (profile) setCompanyProfile(profile);
+              } catch (e) {}
+            }
+            const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
+            const companyLogoFromProfile = profile?.logoUrl || null;
+
             // Try to use a local file path for the logo for better reliability
-            let logoForPrint = companyLogoUri || null;
+            let logoForPrint = companyLogoFromProfile || companyLogoUri || null;
             if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
               try {
                 const fileName = 'company-logo.preview.png';
@@ -250,7 +263,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 html = buildSummaryHtml(exportFilter, logoForPrint);
               } else {
                 console.warn('[PDF] buildSummaryHtml not available, falling back to per-control builder');
-                const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                const companyObj = { name: companyNameForPdf, logoUrl: companyLogoFromProfile, logoBase64 };
                 const preparedControls = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
                 html = (preparedControls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
               }
@@ -284,7 +297,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
                 else {
                   const preparedControls2 = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
-                  html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+                  html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: companyNameForPdf } })).join('<div style="page-break-after:always"></div>');
                 }
                 console.log('[PDF] retry HTML length:', html2 ? String(html2).length : 0);
                 if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry HTML');
@@ -318,7 +331,19 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
         setExportingPdf(true);
         try {
           try { Haptics.selectionAsync(); } catch {}
-          let logoForPrint = companyLogoUri || null;
+
+          // Prefer company profile logo for PDF (MVP branding: only on print/PDF)
+          let profile = companyProfile;
+          if (!profile && companyId) {
+            try {
+              profile = await fetchCompanyProfile(companyId);
+              if (profile) setCompanyProfile(profile);
+            } catch (e) {}
+          }
+          const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
+          const companyLogoFromProfile = profile?.logoUrl || null;
+
+          let logoForPrint = companyLogoFromProfile || companyLogoUri || null;
           if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
             try {
               const fileName = 'company-logo.export.png';
@@ -351,7 +376,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
           try {
             if (typeof buildSummaryHtml === 'function') html = buildSummaryHtml(exportFilter, logoForPrint);
             else {
-                const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                const companyObj = { name: companyNameForPdf, logoUrl: companyLogoFromProfile, logoBase64 };
                 const preparedControls = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
               html = (preparedControls || []).map(c => buildPdfHtmlForControl({ control: c, project, company: companyObj })).join('<div style="page-break-after:always"></div>');
             }
@@ -383,7 +408,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
               if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
               else {
                 const preparedControls2 = await Promise.all((controls || []).map(c => embedImagesInControl(c)));
-                html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: project?.client || project?.name || '' } })).join('<div style="page-break-after:always"></div>');
+                html2 = (preparedControls2 || []).map(c => buildPdfHtmlForControl({ control: c, project, company: { name: companyNameForPdf } })).join('<div style="page-break-after:always"></div>');
               }
               console.log('[PDF] retry export HTML length:', html2 ? String(html2).length : 0);
               if (!html2 || String(html2).trim().length < 20) throw new Error('Empty retry export HTML');
@@ -475,6 +500,30 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
         });
       }
     } catch {}
+    // Try fetching from Firestore as well (merge remote completed controls)
+    try {
+      const remote = await fetchControlsForProject(project.id, companyId);
+      if (Array.isArray(remote) && remote.length > 0) {
+        remote.forEach(r => {
+          // avoid duplicates if already in allControls by id
+          if (!allControls.find(c => c.id && r.id && c.id === r.id)) {
+            allControls.push(Object.assign({}, r, { isDraft: false }));
+          }
+        });
+      }
+    } catch (e) { /* ignore Firestore errors - we already have local fallback */ }
+
+    // Fetch remote drafts too so a draft created in app can be finished on web
+    try {
+      const remoteDrafts = await fetchDraftControlsForProject(project.id, companyId);
+      if (Array.isArray(remoteDrafts) && remoteDrafts.length > 0) {
+        remoteDrafts.forEach(r => {
+          if (!allControls.find(c => c.id && r.id && c.id === r.id)) {
+            allControls.push(Object.assign({}, r, { isDraft: true }));
+          }
+        });
+      }
+    } catch (e) { /* ignore */ }
     // Sort controls by date (prefer date || savedAt || createdAt) descending
     allControls.sort((a,b) => {
       const ta = new Date(a.date || a.savedAt || a.createdAt || 0).getTime() || 0;
@@ -493,8 +542,14 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
     return unsubscribe;
   }, [navigation, loadControls]);
   const [editableProject, setEditableProject] = useState(project);
-    // Store original id for update
-    const [originalProjectId] = useState(project.id);
+    // Store original id for update (keep up to date when route.project changes)
+    const [originalProjectId, setOriginalProjectId] = useState(project?.id || null);
+
+  // Update editableProject when parent passes a new project (e.g., selecting another project inline)
+  React.useEffect(() => {
+    setEditableProject(project);
+    setOriginalProjectId(project?.id || null);
+  }, [project?.id]);
   const [showControlPicker, setShowControlPicker] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
@@ -505,6 +560,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
   const [expandedType, setExpandedType] = useState(null);
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const [companyLogoUri, setCompanyLogoUri] = useState(null);
+  const [companyProfile, setCompanyProfile] = useState(null);
   const [exportFilter, setExportFilter] = useState('Alla');
   const [selectedControl, setSelectedControl] = useState(null);
   const [showControlOptions, setShowControlOptions] = useState(false);
@@ -512,6 +568,19 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
   const [deleteConfirm, setDeleteConfirm] = useState({ visible: false, control: null });
   const undoTimerRef = useRef(null);
   // ...existing code...
+
+  // Prefetch company profile for PDF branding (logo/name) without affecting UI
+  React.useEffect(() => {
+    let active = true;
+    if (!companyId) {
+      setCompanyProfile(null);
+      return () => { active = false; };
+    }
+    fetchCompanyProfile(companyId)
+      .then((p) => { if (active) setCompanyProfile(p || null); })
+      .catch(() => { /* ignore */ });
+    return () => { active = false; };
+  }, [companyId]);
 
   // Handler for long-press on a control
   const handleControlLongPress = (control) => {
@@ -540,6 +609,9 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
         c => c.id !== control.id
       );
       await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
+
+      // Best-effort: delete remote draft too
+      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch (e) {}
     } else {
       // Remove from completed_controls
       const completedRaw = await AsyncStorage.getItem('completed_controls');
@@ -548,6 +620,9 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
         c => c.id !== control.id
       );
       await AsyncStorage.setItem('completed_controls', JSON.stringify(completed));
+
+      // Best-effort: delete remote control too
+      try { await deleteControlFromFirestore(control.id, companyId); } catch (e) {}
     }
   };
 
@@ -1405,8 +1480,17 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                       // Bygg HTML för EN kontroll
                                       try {
                                         console.log('[PDF] using buildSummaryHtml?', typeof buildSummaryHtml);
-                                        // Prepare logo (try downloading + base64 embed)
-                                        let logoForPrint = companyLogoUri || null;
+                                        // Prepare logo (prefer company profile for PDF; try downloading + base64 embed)
+                                        let profile = companyProfile;
+                                        if (!profile && companyId) {
+                                          try {
+                                            profile = await fetchCompanyProfile(companyId);
+                                            if (profile) setCompanyProfile(profile);
+                                          } catch (e) {}
+                                        }
+                                        const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
+                                        const companyLogoFromProfile = profile?.logoUrl || null;
+                                        let logoForPrint = companyLogoFromProfile || companyLogoUri || null;
                                         if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
                                           try {
                                             const fileName = 'company-logo.single.png';
@@ -1440,7 +1524,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                           html = buildSummaryHtml('En', logoForPrint, [embeddedItem]);
                                           } else {
                                           console.warn('[PDF] buildSummaryHtml not found, falling back to type-aware builder');
-                                          const companyObj = { name: project?.client || project?.name || '', logoBase64 };
+                                          const companyObj = { name: companyNameForPdf, logoUrl: companyLogoFromProfile, logoBase64 };
                                           html = buildPdfHtmlForControl({ control: embeddedItem, project, company: companyObj });
                                         }
                                         // Generate PDF file and present share/save dialog instead of directly printing
@@ -1476,7 +1560,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                           if (typeof buildSummaryHtml === 'function') {
                                             html2 = buildSummaryHtml('En', null, [item]);
                                           } else {
-                                            html2 = buildPdfHtmlForControl({ control: item, project, company: { name: project?.client || project?.name || '' } });
+                                            html2 = buildPdfHtmlForControl({ control: item, project, company: { name: companyNameForPdf } });
                                           }
                                           // Try generating file again without logo
                                           const fileResult2 = await Print.printToFileAsync({ html: html2 });

@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, ImageBackground, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { auth, fetchHierarchy, fetchUserProfile, saveHierarchy, saveUserProfile } from '../components/firebase';
+import { Alert, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { auth, fetchControlsForProject, fetchHierarchy, fetchUserProfile, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile } from '../components/firebase';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import ProjectDetails from './ProjectDetails';
 
@@ -81,6 +81,10 @@ export default function HomeScreen({ route, navigation }) {
       return c + 1;
     });
   }
+
+  // Support/debug tools should not be visible in normal UI.
+  // Shown only in development or after explicit admin-unlock.
+  const showSupportTools = __DEV__ || showAdminButton;
   
   // Dev-only: promote current user to demo/admin and load test hierarchy
   async function handleMakeDemoAdmin() {
@@ -366,6 +370,83 @@ export default function HomeScreen({ route, navigation }) {
   const [localFallbackExists, setLocalFallbackExists] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
+
+  // Recompute whether any local fallback data exists (hierarki eller kontroller)
+  async function refreshLocalFallbackFlag() {
+    try {
+      const [h, c, d] = await Promise.all([
+        AsyncStorage.getItem('hierarchy_local'),
+        AsyncStorage.getItem('completed_controls'),
+        AsyncStorage.getItem('draft_controls'),
+      ]);
+      const exists = !!((h && h !== '[]') || (c && c !== '[]') || (d && d !== '[]'));
+      setLocalFallbackExists(exists);
+    } catch (e) {}
+  }
+  
+  // Debug helper: dump local AsyncStorage keys and compare with Firestore counts
+  async function dumpLocalRemoteControls() {
+    try {
+      const keys = ['hierarchy_local', 'completed_controls', 'draft_controls', 'completed_controls_backup', 'draft_controls_backup'];
+      const data = {};
+      for (const k of keys) {
+        try {
+          const raw = await AsyncStorage.getItem(k);
+          data[k] = raw ? JSON.parse(raw) : null;
+        } catch (e) { data[k] = null; }
+      }
+      // Build summary
+      const summary = {
+        completed_count: Array.isArray(data.completed_controls) ? data.completed_controls.length : 0,
+        draft_count: Array.isArray(data.draft_controls) ? data.draft_controls.length : 0,
+        backups: {
+          completed_backup_exists: !!data.completed_controls_backup,
+          draft_backup_exists: !!data.draft_controls_backup,
+        },
+      };
+
+      // Query Firestore for any project IDs found in local completed controls
+      const projectIds = new Set();
+      (data.completed_controls || []).forEach(c => { if (c && c.project && c.project.id) projectIds.add(String(c.project.id)); });
+      (data.draft_controls || []).forEach(d => { if (d && d.project && d.project.id) projectIds.add(String(d.project.id)); });
+
+      const remoteInfo = {};
+      for (const pid of projectIds) {
+        try {
+          const remote = await fetchControlsForProject(pid, companyId).catch(() => []);
+          remoteInfo[pid] = { remote_count: Array.isArray(remote) ? remote.length : 0, sample_ids: (remote || []).slice(0,5).map(r => r.id) };
+        } catch (e) {
+          remoteInfo[pid] = { remote_count: -1, error: String(e) };
+        }
+      }
+      const final = { summary, remote: remoteInfo, sample_local_completed: (data.completed_controls || []).slice(0,5).map(c => ({ id: c.id, projectId: c.project?.id })) };
+      try { console.log('[dumpLocalRemoteControls] full dump', final); } catch (e) {}
+      Alert.alert('Debug: lokal vs moln', JSON.stringify(final, null, 2).slice(0,1000));
+    } catch (e) {
+      Alert.alert('Debug-fel', String(e));
+    }
+  }
+
+  // Show the last Firestore error saved by firebase helpers
+  async function showLastFsError() {
+    try {
+      // Prefer the full errors array if available
+      const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+      if (rawArr) {
+        let parsedArr = null;
+        try { parsedArr = JSON.parse(rawArr); } catch (e) { parsedArr = [rawArr]; }
+        return Alert.alert('Senaste FS-fel', JSON.stringify(parsedArr, null, 2).slice(0,2000));
+      }
+      // Fallback to single-entry key for older records
+      const raw = await AsyncStorage.getItem('dk_last_fs_error');
+      if (!raw) return Alert.alert('Senaste FS-fel', 'Ingen fel-logg hittades.');
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch (e) { parsed = { raw }; }
+      Alert.alert('Senaste FS-fel', JSON.stringify(parsed, null, 2).slice(0,2000));
+    } catch (e) {
+      Alert.alert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (e?.message || e));
+    }
+  }
   
 
   // start background sync hook
@@ -436,7 +517,7 @@ export default function HomeScreen({ route, navigation }) {
                   const pushed = pushedRes === true || (pushedRes && pushedRes.ok === true);
                   if (pushed) {
                     try { await AsyncStorage.removeItem('hierarchy_local'); } catch (er) {}
-                    setLocalFallbackExists(false);
+                    await refreshLocalFallbackFlag();
                   } else {
                     try { console.error('[Home] push local fallback error', pushedRes && pushedRes.error ? pushedRes.error : pushedRes); } catch (er) {}
                   }
@@ -459,6 +540,21 @@ export default function HomeScreen({ route, navigation }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Visa migreringsknappen även om det finns lokala kontroller (completed/draft)
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const completed = await AsyncStorage.getItem('completed_controls');
+        const drafts = await AsyncStorage.getItem('draft_controls');
+        if ((completed && completed !== '[]') || (drafts && drafts !== '[]')) {
+          setLocalFallbackExists(true);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
+
   // Spara hierarchy till Firestore varje gång den ändras (och companyId finns)
   React.useEffect(() => {
     if (!companyId) return;
@@ -476,9 +572,9 @@ export default function HomeScreen({ route, navigation }) {
           } catch (e) {}
         } else {
           // On successful cloud save, also clear local fallback
-          try {
+            try {
             await AsyncStorage.removeItem('hierarchy_local');
-            setLocalFallbackExists(false);
+            await refreshLocalFallbackFlag();
           } catch (e) {}
         }
       } catch (e) {
@@ -515,7 +611,7 @@ const kontrollKnappStil = { backgroundColor: '#fff', borderRadius: 16, marginBot
 const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 };
 
   return (
-    <>
+    <View style={{ flex: 1 }}>
       {/* Sök-popup/modal */}
       <Modal
         visible={searchModalVisible}
@@ -591,7 +687,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 createdAt: proj.createdAt || '',
                                 createdBy: proj.createdBy || ''
                               },
-                              updateProject
+                              updateProject,
+                              companyId
                             });
                           }
                         }}
@@ -612,12 +709,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
         </TouchableOpacity>
       </Modal>
       {newProjectModalComponent}
-      <ImageBackground
-        source={Platform.OS === 'web' ? require('../assets/images/inlogg.webb.jpg') : require('../assets/images/inlogg.app.png')}
-        style={Platform.OS === 'web' ? { flex: 1, width: '100%', minHeight: '100vh' } : { flex: 1 }}
-        imageStyle={{ opacity: Platform.OS === 'web' ? 0.15 : 1, resizeMode: 'cover' }}
-      >
-      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+      <View style={Platform.OS === 'web' ? { flex: 1, width: '100%', minHeight: '100vh' } : { flex: 1 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} scrollEnabled={Platform.OS !== 'web'} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC', borderBottomWidth: 1, borderColor: '#e6e6e6' }}>
           <View>
@@ -625,7 +718,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
             </TouchableOpacity>
             <Text style={{ fontSize: 14, color: '#666' }}>Välkommen tillbaka</Text>
-            {showAdminButton && (
+            {__DEV__ && showAdminButton && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -637,7 +730,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>Fyll på testdata</Text>
               </TouchableOpacity>
             )}
-            {showAdminButton && (
+            {__DEV__ && showAdminButton && (
               <TouchableOpacity
                 style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -648,36 +741,96 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>{adminActionRunning ? 'Kör...' : 'Gör mig demo-admin'}</Text>
               </TouchableOpacity>
             )}
-            {localFallbackExists && (
+            {showSupportTools && localFallbackExists && (
               <TouchableOpacity
                 style={{ backgroundColor: '#FFB300', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
-                  // migrate local fallback to Firestore with confirmation
+                  // migrate local fallback (hierarki + controls) to Firestore with confirmation
                   try {
-                    const raw = await AsyncStorage.getItem('hierarchy_local');
-                    if (!raw) {
-                      Alert.alert('Ingen lokal data', 'Ingen lokalt sparad hierarki hittades.');
-                      setLocalFallbackExists(false);
+                    const rawHierarchy = await AsyncStorage.getItem('hierarchy_local');
+                    const rawCompleted = await AsyncStorage.getItem('completed_controls');
+                    const rawDrafts = await AsyncStorage.getItem('draft_controls');
+
+                    if (!rawHierarchy && !rawCompleted && !rawDrafts) {
+                      Alert.alert('Ingen lokal data', 'Ingen lokalt sparad hierarki eller kontroller hittades.');
+                      await refreshLocalFallbackFlag();
                       return;
                     }
-                    const parsed = JSON.parse(raw);
+
                     Alert.alert(
                       'Migrera lokal data',
-                      'Vill du migrera den lokalt sparade hierarkin till molnet för kontot? Detta kan skriva över befintlig molnhierarki.',
+                      'Vill du migrera lokalt sparad hierarki och kontroller till molnet för kontot? Detta kan skriva över befintlig molndata.',
                       [
                         { text: 'Avbryt', style: 'cancel' },
                         { text: 'Migrera', onPress: async () => {
                           try {
-                            const res = await saveHierarchy(companyId, parsed);
-                            const ok = res === true || (res && res.ok === true);
-                            if (ok) {
-                              await AsyncStorage.removeItem('hierarchy_local');
-                              setLocalFallbackExists(false);
-                              setHierarchy(parsed);
-                              Alert.alert('Klar', 'Lokal hierarki migrerad till molnet.');
-                            } else {
-                              Alert.alert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
+                            let successMsgs = [];
+
+                            // Hierarki
+                            if (rawHierarchy) {
+                              try {
+                                const parsed = JSON.parse(rawHierarchy);
+                                const res = await saveHierarchy(companyId, parsed);
+                                const ok = res === true || (res && res.ok === true);
+                                if (ok) {
+                                  await AsyncStorage.removeItem('hierarchy_local');
+                                  setHierarchy(parsed);
+                                  successMsgs.push('Hierarki migrerad');
+                                } else {
+                                  successMsgs.push('Hierarki misslyckades');
+                                }
+                              } catch (e) {
+                                successMsgs.push('Hierarki-fel');
+                              }
                             }
+
+                            // Controls: backup locally first
+                            if (rawCompleted) {
+                              try {
+                                await AsyncStorage.setItem('completed_controls_backup', rawCompleted);
+                                const parsedCompleted = JSON.parse(rawCompleted);
+                                let okCount = 0;
+                                for (const ctl of parsedCompleted) {
+                                  try {
+                                    const ok = await saveControlToFirestore(ctl);
+                                    if (ok) okCount++;
+                                  } catch (e) {}
+                                }
+                                if (okCount > 0) {
+                                  await AsyncStorage.removeItem('completed_controls');
+                                  successMsgs.push(`${okCount} utförda kontroller migrerade`);
+                                } else {
+                                  successMsgs.push('Inga utförda kontroller migrerade');
+                                }
+                              } catch (e) {
+                                successMsgs.push('Backup/migrering av utförda kontroller misslyckades');
+                              }
+                            }
+
+                            if (rawDrafts) {
+                              try {
+                                await AsyncStorage.setItem('draft_controls_backup', rawDrafts);
+                                const parsedDrafts = JSON.parse(rawDrafts);
+                                let okDrafts = 0;
+                                for (const d of parsedDrafts) {
+                                  try {
+                                    const ok = await saveDraftToFirestore(d);
+                                    if (ok) okDrafts++;
+                                  } catch (e) {}
+                                }
+                                if (okDrafts > 0) {
+                                  await AsyncStorage.removeItem('draft_controls');
+                                  successMsgs.push(`${okDrafts} utkast migrerade`);
+                                } else {
+                                  successMsgs.push('Inga utkast migrerade');
+                                }
+                              } catch (e) {
+                                successMsgs.push('Backup/migrering av utkast misslyckades');
+                              }
+                            }
+
+                            Alert.alert('Migrering klar', successMsgs.join('\n'));
+                            await refreshLocalFallbackFlag();
                           } catch (e) {
                             Alert.alert('Fel', 'Kunde inte migrera: ' + (e?.message || 'okänt fel'));
                           }
@@ -692,7 +845,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#222', fontWeight: '700' }}>Migrera lokal data</Text>
               </TouchableOpacity>
             )}
-            {(auth && auth.currentUser) && (
+            {showSupportTools && (auth && auth.currentUser) && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -704,7 +857,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     const raw = await AsyncStorage.getItem('hierarchy_local');
                     if (!raw) {
                       Alert.alert('Ingen lokal data', 'Inget att migrera.');
-                      setLocalFallbackExists(false);
+                      await refreshLocalFallbackFlag();
                       return;
                     }
                     const parsed = JSON.parse(raw);
@@ -712,7 +865,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     const ok = res === true || (res && res.ok === true);
                     if (ok) {
                       await AsyncStorage.removeItem('hierarchy_local');
-                      setLocalFallbackExists(false);
+                      await refreshLocalFallbackFlag();
                       setHierarchy(parsed);
                       Alert.alert('Klar', 'Lokal hierarki migrerad till molnet.');
                     } else {
@@ -726,22 +879,40 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Uppdatera token & synka</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              style={{ backgroundColor: '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
-              onPress={async () => {
-                try {
-                  const user = auth.currentUser;
-                  const tokenRes = user ? await auth.currentUser.getIdTokenResult(true).catch(() => null) : null;
-                  const claims = tokenRes?.claims || {};
-                  const stored = await AsyncStorage.getItem('dk_companyId');
-                  Alert.alert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
-                } catch (e) {
-                  Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (e?.message || e));
-                }
-              }}
-            >
-              <Text style={{ color: '#222', fontWeight: '700' }}>Visa auth-info</Text>
-            </TouchableOpacity>
+            {showSupportTools && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => {
+                  try {
+                    const user = auth.currentUser;
+                    const tokenRes = user ? await auth.currentUser.getIdTokenResult(true).catch(() => null) : null;
+                    const claims = tokenRes?.claims || {};
+                    const stored = await AsyncStorage.getItem('dk_companyId');
+                    Alert.alert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
+                  } catch (e) {
+                    Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (e?.message || e));
+                  }
+                }}
+              >
+                <Text style={{ color: '#222', fontWeight: '700' }}>Visa auth-info</Text>
+              </TouchableOpacity>
+            )}
+            {showSupportTools && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => { await dumpLocalRemoteControls(); }}
+              >
+                <Text style={{ color: '#222', fontWeight: '700' }}>Debug: visa lokal/moln</Text>
+              </TouchableOpacity>
+            )}
+            {showSupportTools && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={async () => { await showLastFsError(); }}
+              >
+                <Text style={{ color: '#222', fontWeight: '700' }}>Visa senaste FS-fel</Text>
+              </TouchableOpacity>
+            )}
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={{ fontSize: 12, color: syncStatus === 'synced' ? '#2E7D32' : syncStatus === 'syncing' ? '#F57C00' : syncStatus === 'offline' ? '#757575' : syncStatus === 'error' ? '#D32F2F' : '#888', marginBottom: 6 }}>
@@ -762,6 +933,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
           </TouchableOpacity>
           </View>
         </View>
+        </ScrollView>
         {/* Allt under headern är skrollbart */}
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -893,7 +1065,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                       createdAt: proj.createdAt || '',
                                                       createdBy: proj.createdBy || ''
                                                     },
-                                                    updateProject
+                                                    updateProject,
+                                                    companyId
                                                   });
                                                 }
                                               }}
@@ -924,7 +1097,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               {selectedProject ? (
                   <View style={{ flex: 1 }}>
                     <View style={{ flex: 1 }}>
-                      <ProjectDetails route={{ params: { project: selectedProject, updateProject } }} navigation={navigation} inlineClose={() => setSelectedProject(null)} />
+                      <ProjectDetails route={{ params: { project: selectedProject, updateProject, companyId } }} navigation={navigation} inlineClose={() => setSelectedProject(null)} />
                     </View>
                   </View>
                 ) : (
@@ -1248,7 +1421,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                         createdAt: proj.createdAt || '',
                                                         createdBy: proj.createdBy || ''
                                                       },
-                                                      updateProject
+                                                      updateProject,
+                                                      companyId
                                                     });
                                                   }
                                                 }}
@@ -1276,12 +1450,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 </Modal>
               );
             })()}
-            {/* Utförda kontroller - rubrik med samma storlek som ovan */}
-            <View style={Platform.OS === 'web' ? { marginTop: 18, marginBottom: 8, alignItems: 'flex-start', paddingHorizontal: 16 } : { marginTop: 18, marginBottom: 8, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={Platform.OS === 'web' ? { fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 } : { fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8, color: '#263238', letterSpacing: 0.2 }}>
-                Utförda kontroller:
-              </Text>
-            </View>
+            {/* Utförda kontroller header removed from main screen; it's shown inside project details only */}
           </View>
           {/* Projektträd */}
           {/* Rubrik och sök-knapp */}
@@ -1377,7 +1546,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
                         } else {
                           try { await AsyncStorage.removeItem('hierarchy_local'); } catch (e) {}
-                          setLocalFallbackExists(false);
+                          await refreshLocalFallbackFlag();
                       }
                     } catch (e) {
                       try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy)); } catch (er) {}
@@ -1403,7 +1572,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
             </TouchableOpacity>
           </Modal>
           {Platform.OS !== 'web' && (
-            <View style={{ flex: 1 }}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 4 }}>
               {loadingHierarchy || hierarchy.length === 0 ? (
                 <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
                   Inga mappar eller projekt skapade ännu.
@@ -1507,7 +1676,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                     createdAt: proj.createdAt || '',
                                                     createdBy: proj.createdBy || ''
                                                   },
-                                                  updateProject
+                                                  updateProject,
+                                                  companyId
                                                 });
                                               }
                                             }}
@@ -1526,7 +1696,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     ))}
                 </View>
               )}
-            </View>
+            </ScrollView>
           )}
                   {/* Ny huvudmapp popup modal */}
                   {/* Ny undermapp popup modal */}
@@ -1631,8 +1801,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
           </View>
         </TouchableOpacity>
       </Modal>
-        </View>
-      </ImageBackground>
-    </>
+      </View>
+    </View>
   );
 }

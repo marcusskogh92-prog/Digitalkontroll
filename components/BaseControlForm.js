@@ -17,7 +17,7 @@ import 'react-native-get-random-values';
 import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
-import { saveDraftToFirestore } from './firebase';
+import { deleteDraftControlFromFirestore, saveDraftToFirestore } from './firebase';
 
 export default function BaseControlForm({
   project,
@@ -1033,6 +1033,16 @@ export default function BaseControlForm({
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
     } catch {}
+
+    // Best-effort: also delete the draft in Firestore so web/app stay in sync
+    try {
+      const draftIdToDelete = (initialValues && initialValues.id)
+        ? initialValues.id
+        : (typeof id !== 'undefined' && id !== null ? id : null);
+      if (draftIdToDelete) {
+        await deleteDraftControlFromFirestore(draftIdToDelete);
+      }
+    } catch (e) {}
     // Clear dirty flag so beforeRemove won't intercept navigation
     try {
       isDirtyRef.current = false;

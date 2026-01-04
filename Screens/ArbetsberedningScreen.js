@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
+import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 
 const LABELS = {
   title: 'Arbetsberedning',
@@ -34,16 +35,23 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
     try {
       const completed = {
         ...data,
+        project: data.project || project,
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
         type: 'Arbetsberedning',
         id: data.id || require('uuid').v4(),
       };
-      const existing = await AsyncStorage.getItem('completed_controls');
-      let arr = [];
-      if (existing) arr = JSON.parse(existing);
-      arr.push(completed);
-      await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+      // Försök spara till Firestore först (best-effort). Vid fel/failure -> fallback till AsyncStorage
+      try {
+        const ok = await saveControlToFirestore(completed);
+        if (!ok) throw new Error('Firestore save failed');
+      } catch (e) {
+        const existing = await AsyncStorage.getItem('completed_controls');
+        let arr = [];
+        if (existing) arr = JSON.parse(existing);
+        arr.push(completed);
+        await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+      }
     } catch (e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
     }
@@ -58,19 +66,24 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
         type: 'Arbetsberedning',
         id: data.id || require('uuid').v4(),
       };
-      let arr = [];
-      const existing = await AsyncStorage.getItem('draft_controls');
-      if (existing) arr = JSON.parse(existing);
-      // Ersätt om samma projekt+typ+id redan finns, annars lägg till
-      const idx = arr.findIndex(
-        c => c.project?.id === project?.id && c.type === 'Arbetsberedning' && c.id === draft.id
-      );
-      if (idx !== -1) {
-        arr[idx] = draft;
-      } else {
-        arr.push(draft);
+      try {
+        const ok = await saveDraftToFirestore(draft);
+        if (!ok) throw new Error('Firestore draft save failed');
+      } catch (e) {
+        let arr = [];
+        const existing = await AsyncStorage.getItem('draft_controls');
+        if (existing) arr = JSON.parse(existing);
+        // Ersätt om samma projekt+typ+id redan finns, annars lägg till
+        const idx = arr.findIndex(
+          c => c.project?.id === project?.id && c.type === 'Arbetsberedning' && c.id === draft.id
+        );
+        if (idx !== -1) {
+          arr[idx] = draft;
+        } else {
+          arr.push(draft);
+        }
+        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
-      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
     } catch (e) {
       // Hantera fel
     }

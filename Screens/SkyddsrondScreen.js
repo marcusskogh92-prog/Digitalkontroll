@@ -130,8 +130,10 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
     try {
       const completed = {
         ...data,
+        project: data.project || project,
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
+        type: 'Skyddsrond',
         id: data.id || require('uuid').v4(),
       };
       // Try saving to Firestore first (best-effort). If Firestore fails, fall back to local AsyncStorage.

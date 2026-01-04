@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "admin:provision-company": "node ./scripts/provision-company.js",
+    "admin:add-user": "node ./scripts/add-user.js",
+    "admin:set-company-claim": "node ./scripts/set-company-claim.js",
+    "admin:list-companies": "node ./scripts/list-foretag.js",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
