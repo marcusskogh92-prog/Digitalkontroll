@@ -62,7 +62,7 @@ export default function App() {
             }} 
           />
           <Stack.Screen name="ControlDetails" component={ControlDetails} options={{ title: 'Kontrolldetaljer' }} />
-          <Stack.Screen name="ControlForm" component={ControlForm} options={{
+          <Stack.Screen name="ControlForm" component={ControlForm} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="checkbox-outline" size={28} color="#7B1FA2" style={{ marginRight: 10 }} />
@@ -70,8 +70,19 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
-          <Stack.Screen name="ArbetsberedningScreen" component={ArbetsberedningScreen} options={{
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
+          <Stack.Screen name="ArbetsberedningScreen" component={ArbetsberedningScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="construct-outline" size={28} color="#1976D2" style={{ marginRight: 10 }} />
@@ -79,8 +90,19 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
-          <Stack.Screen name="RiskbedömningScreen" component={RiskbedömningScreen} options={{
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
+          <Stack.Screen name="RiskbedömningScreen" component={RiskbedömningScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="warning-outline" size={28} color="#FFD600" style={{ marginRight: 10 }} />
@@ -88,8 +110,19 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
-          <Stack.Screen name="FuktmätningScreen" component={FuktmätningScreen} options={{
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
+          <Stack.Screen name="FuktmätningScreen" component={FuktmätningScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="water-outline" size={28} color="#0288D1" style={{ marginRight: 10 }} />
@@ -97,8 +130,19 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
-          <Stack.Screen name="EgenkontrollScreen" component={EgenkontrollScreen} options={{
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
+          <Stack.Screen name="EgenkontrollScreen" component={EgenkontrollScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="checkmark-done-outline" size={28} color="#388E3C" style={{ marginRight: 10 }} />
@@ -106,18 +150,39 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
-          }} />
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
           <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
-          <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={{
+          <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={({ navigation }) => ({
             headerTitle: () => (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="shield-half-outline" size={28} color="#388E3C" style={{ marginRight: 10 }} />
                 <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#222' }}>Skyddsrond</Text>
               </View>
             ),
-            headerBackTitle: 'Tillbaka',
-            headerBackTitleVisible: true,
-          }} />
+            headerBackTitleVisible: false,
+            headerBackTitle: '',
+            headerLeft: () => (
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
+              </TouchableOpacity>
+            ),
+          })} />
           <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
           <Stack.Screen name="MottagningskontrollScreen" component={MottagningskontrollScreen} options={({ navigation }) => ({
             headerTitle: () => (
@@ -127,9 +192,15 @@ export default function App() {
               </View>
             ),
             headerBackTitleVisible: false,
+            headerBackTitle: '',
             headerLeft: () => (
-              <TouchableOpacity onPress={() => navigation.goBack()} style={{ paddingHorizontal: 12 }} accessibilityLabel="Tillbaka">
-                <Ionicons name="chevron-back" size={26} color="#000" />
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                accessibilityLabel="Tillbaka"
+                hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+              >
+                <Ionicons name="chevron-back" size={30} color="#000" />
               </TouchableOpacity>
             ),
           })} />

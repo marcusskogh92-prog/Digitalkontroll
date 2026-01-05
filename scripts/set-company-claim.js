@@ -17,8 +17,10 @@ async function main() {
   const serviceAccount = args.serviceAccount || process.env.GOOGLE_APPLICATION_CREDENTIALS || './konton/demo-service.json';
   const email = args.email;
   const company = args.company;
+  const roleRaw = (args.role || 'admin').trim().toLowerCase();
+  const role = (roleRaw === 'admin') ? 'admin' : 'user';
   if (!email || !company) {
-    console.error('Usage: node scripts/set-company-claim.js --serviceAccount=./konton/demo-service.json --email=demo@... --company=demo-service');
+    console.error('Usage: node scripts/set-company-claim.js --serviceAccount=./konton/demo-service.json --email=demo@... --company=demo-service [--role=admin|user]');
     process.exit(1);
   }
   const saPath = path.resolve(serviceAccount);
@@ -32,8 +34,9 @@ async function main() {
       console.error('User not found:', email);
       process.exit(1);
     }
-    await auth.setCustomUserClaims(user.uid, { companyId: company, admin: true });
-    console.log('Set custom claim companyId=%s for uid=%s', company, user.uid);
+    const claims = { companyId: company, role, admin: (role === 'admin') };
+    await auth.setCustomUserClaims(user.uid, claims);
+    console.log('Set custom claims for uid=%s:', user.uid, claims);
     process.exit(0);
   } catch (e) {
     console.error('Error:', e);

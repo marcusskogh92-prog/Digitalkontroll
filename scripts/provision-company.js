@@ -56,7 +56,7 @@ async function main() {
         userRecord = await auth.createUser({ email: adminEmail, password: adminPassword, displayName: adminEmail.split('@')[0] });
         console.log('Created admin user:', userRecord.uid);
       }
-      await auth.setCustomUserClaims(userRecord.uid, { admin: true, companyId: company });
+      await auth.setCustomUserClaims(userRecord.uid, { admin: true, role: 'admin', companyId: company });
       await db.collection('users').doc(userRecord.uid).set({ companyId: company, role: 'admin', email: adminEmail, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       console.log('Provisioned admin user and claims. Password (if created):', adminPassword);
     }

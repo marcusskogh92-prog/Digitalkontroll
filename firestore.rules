@@ -34,6 +34,16 @@ service cloud.firestore {
       allow write: if isCompanyMember(company);
     }
 
+    // Byggdel mall-register (company-scoped)
+    match /foretag/{company}/byggdel_mallar/{mallId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Byggdel hierarki (company-scoped)
+    match /foretag/{company}/byggdel_hierarki/state {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Allow users to read/write their own profile doc
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;

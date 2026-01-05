@@ -69,7 +69,7 @@ node scripts/list-foretag.js</pre>
   <ul>
     <li><code>foretag/{companyId}</code> (företagsdokument)</li>
     <li><code>foretag/{companyId}/mallar</code> (minst en mall)</li>
-    <li>Auth-användare + custom claims: <code>{ companyId, admin: true }</code></li>
+    <li>Auth-användare + custom claims: <code>{ companyId, role: "admin", admin: true }</code></li>
     <li><code>users/{uid}</code> med <code>companyId</code> och roll</li>
   </ul>
 
@@ -125,6 +125,18 @@ node scripts/list-foretag.js</pre>
     <li>På HomeScreen: tryck <b>Visa auth-info</b> och kontrollera att <code>claims.companyId</code> matchar företagets <code>companyId</code>.</li>
     <li>Skapa ett utkast i appen och kontrollera att det syns på webben.</li>
   </ol>
+
+  <h2>4) (Valfritt) Visa/dölj kontrolltyper per företag</h2>
+  <p class="muted">Som standard (om fältet saknas) visas alla 6 kontrolltyper. Om du sätter en lista i profilen visas bara de som ingår.</p>
+  <p>Fält i Firestore:</p>
+  <ul>
+    <li><code>foretag/{companyId}/profil/public.enabledControlTypes</code> = lista av kontrolltyper</li>
+  </ul>
+
+  <p><b>Bygg (standard)</b>: ska ha alla 6 kontrolltyper:</p>
+  <pre>node scripts/set-enabled-control-types.js --serviceAccount=./konton/XXXX.json --company=ACME --types=Arbetsberedning,Egenkontroll,Fuktmätning,Mottagningskontroll,Riskbedömning,Skyddsrond</pre>
+
+  <p class="muted">Obs: om du sätter <code>--types=</code> (tom lista) blir det inga valbara kontrolltyper i “Välj kontrolltyp”.</p>
 
   <h2>Felsökning (snabbt)</h2>
   <ul>

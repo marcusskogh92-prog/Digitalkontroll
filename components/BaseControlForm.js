@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View } from 'react-native';
+import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -17,7 +17,7 @@ import 'react-native-get-random-values';
 import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
-import { deleteDraftControlFromFirestore, saveDraftToFirestore } from './firebase';
+import { createByggdelMall, deleteByggdelMall, deleteDraftControlFromFirestore, fetchByggdelHierarchy, fetchByggdelMallar, saveByggdelHierarchy, saveDraftToFirestore, updateByggdelMall } from './firebase';
 
 export default function BaseControlForm({
   project,
@@ -32,6 +32,169 @@ export default function BaseControlForm({
   initialValues = {},
   hideWeather = false,
 }) {
+  const arbetsberedningCategoryKey = (projectId) => `dk_ab_categories_${String(projectId || '').trim()}`;
+  const arbetsberedningActiveByggdelKey = (projectId) => `dk_ab_active_byggdel_${String(projectId || '').trim()}`;
+  const didInitArbetsberedningCategoriesRef = useRef(false);
+  const loadedAktivaByggdelPidRef = useRef('');
+
+  const suppressNextMallPressRef = useRef(false);
+  const formatByggdelLabelFromTemplate = (tpl) => {
+    try {
+      if (!tpl) return '';
+      const hg = tpl.huvudgrupp || '';
+      const mm = tpl.moment || '';
+      const nm = tpl.mallName || tpl.name || '';
+      const parts = [hg, mm, nm].map(x => String(x || '').trim()).filter(Boolean);
+      return parts.join(' / ');
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const formatByggdelMomentLabelFromTemplate = (tpl) => {
+    try {
+      if (!tpl) return '';
+      const hg = tpl.huvudgrupp || '';
+      const mm = tpl.moment || '';
+      const parts = [hg, mm].map(x => String(x || '').trim()).filter(Boolean);
+      return parts.join(' / ');
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const fixedByggdelHuvudgrupper = useMemo(() => (
+    [
+      '0 - Sammansatta byggdelar',
+      '1 - Mark',
+      '2 - Husunderbyggnad',
+      '3 - Stomme',
+      '4 - Yttertak',
+      '5 - Fasad',
+      '6 - Stomkomplettering',
+      '7 - Invändiga ytskikt',
+      '8 - Installationer',
+      '9 - Gemensamma arbeten',
+    ]
+  ), []);
+
+  const byggdelHuvudgruppOptions = fixedByggdelHuvudgrupper;
+
+  const defaultByggdelMomentsByGroup = useMemo(() => (
+    {
+      // Prefer numeric prefix keys so labels can change without breaking lookups
+      '0': ['03 - Rivning', '06 - Håltagning'],
+      '1': ['10 - Markarbeten'],
+      '2': ['23 - Markförstärkningar', '24 - Grundkonstruktioner', '25 - Kulvert', '27 - Platta på mark'],
+      '3': [
+        '30 - Sammansatta',
+        '31 - Väggar',
+        '32 - Pelare',
+        '33 - Prefab',
+        '34 - Bjälklag/Balkar',
+        '35 - Smide',
+        '36 - Trappor/Hiss/Schakt',
+        '37 - Samverkande takstomme',
+        '38 - Huskomplettering',
+        '39 - Hall/UE (Tätt hus)',
+      ],
+      '4': [
+        '40 - Sammansatta',
+        '41 - Takstomme',
+        '42 - Taklagskomplettering',
+        '43 - Taktäckning',
+        '44 - Takfot & gavlar',
+        '45 - Öppningskomplettering (takluckor)',
+        '47 - Terrasser/altaner',
+        '48 - Huskomplettering',
+        '49 - Plåt',
+      ],
+      '5': [
+        '50 - Sammansatta',
+        '51 - Stomkomplettering (utfackning)',
+        '53 - Fasadbeklädnad/ytskikt',
+        '55 - Fönster/dörrar/partier',
+        '56 - Utvändiga trappor',
+        '58 - Huskomplettering',
+      ],
+      '6': [
+        '60 - Sammansatta',
+        '61 - Insida yttervägg',
+        '62 - Undergolv',
+        '63 - Innerväggar',
+        '64 - Innertak',
+        '65 - Invändiga dörrar & partier',
+        '66 - Invändiga trappor',
+        '67 - Brandskydd',
+        '68 - Huskomplettering',
+        '69 - Lås & passer',
+      ],
+      '7': [
+        '70 - Sammansatta',
+        '71 - Kakel/klinkers/keramik',
+        '72 - Ytskikt golv & trappor',
+        '73 - Ytskikt vägg',
+        '74 - Ytskikt tak/undertak',
+        '75 - Målning',
+        '76 - Vita varor',
+        '77 - Skåp & inredningssnickerier',
+        '78 - Rumskomplettering/övrigt',
+      ],
+      '8': [
+        '80 - Sammansatta',
+        '81 - Sprinkler',
+        '82 - Process',
+        '83 - Storkök',
+        '84 - Sanitet/värme',
+        '85 - Luft',
+        '86 - El',
+        '87 - Transport',
+        '88 - Styr',
+        '89 - Kyla',
+      ],
+      '9': [
+        '90 - Hyresmaskiner',
+        '91 - Gemensamma arbeten',
+        '92 - Ställningar',
+        '94 - Kran & lyft',
+        '96 - Bodar/etablering',
+        '98 - Konsulter',
+        '99 - TJ-tid',
+      ],
+    }
+  ), []);
+
+  const mergeByggdelMomentsByGroup = (existing) => {
+    const safeExisting = (existing && typeof existing === 'object') ? existing : {};
+    let changed = false;
+    const merged = { ...safeExisting };
+
+    const mergeList = (current, additions) => {
+      const base = Array.isArray(current) ? current.map(x => String(x || '').trim()).filter(Boolean) : [];
+      const add = Array.isArray(additions) ? additions.map(x => String(x || '').trim()).filter(Boolean) : [];
+      const set = new Set(base);
+      const out = [...base];
+      for (const item of add) {
+        if (!set.has(item)) {
+          set.add(item);
+          out.push(item);
+        }
+      }
+      return out;
+    };
+
+    for (const key of Object.keys(defaultByggdelMomentsByGroup)) {
+      const defaults = defaultByggdelMomentsByGroup[key];
+      const current = merged[key];
+      const next = mergeList(current, defaults);
+      if (!Array.isArray(current) || next.length !== (Array.isArray(current) ? current.length : 0)) {
+        merged[key] = next;
+        changed = true;
+      }
+    }
+
+    return { merged, changed };
+  };
   // State för deltagar-modalens fält (måste ligga här!)
   const [participantName, setParticipantName] = useState('');
   const [participantCompany, setParticipantCompany] = useState('');
@@ -41,6 +204,7 @@ export default function BaseControlForm({
   // State for adding custom checklist points
   const [addPointModal, setAddPointModal] = useState({ visible: false, sectionIdx: null });
   const [newPointText, setNewPointText] = useState('');
+  const [newPointActionText, setNewPointActionText] = useState('');
   const [sectionMenuIndex, setSectionMenuIndex] = useState(null);
   const [participantRole, setParticipantRole] = useState('');
   const [participantPhone, setParticipantPhone] = useState('');
@@ -106,6 +270,13 @@ export default function BaseControlForm({
   // Add state for draftId and selectedWeather
   const [draftId, setDraftId] = useState(initialValues.id || null);
   const [selectedWeather, setSelectedWeather] = useState(initialValues.weather || null);
+
+  const weatherPayload = useMemo(
+    () => (hideWeather ? {} : { weather: selectedWeather }),
+    [hideWeather, selectedWeather]
+  );
+  const [byggdelTemplate, setByggdelTemplate] = useState(initialValues.byggdelTemplate || null);
+  const [byggdel, setByggdel] = useState(initialValues.byggdel || formatByggdelLabelFromTemplate(initialValues.byggdelTemplate) || '');
   const [materialDesc, setMaterialDesc] = useState(initialValues.materialDesc || '');
   const [qualityDesc, setQualityDesc] = useState(initialValues.qualityDesc || '');
   const [coverageDesc, setCoverageDesc] = useState(initialValues.coverageDesc || '');
@@ -197,6 +368,34 @@ export default function BaseControlForm({
       setPhotoModal({ visible: false, uris: [], index: 0 });
       return;
     }
+
+    // 0) If viewing mall (template) photos, remove only from mall draft
+    try {
+      const mallSectionId = photoModal && photoModal.mallSectionId ? String(photoModal.mallSectionId) : '';
+      const mallPointIdx = (photoModal && typeof photoModal.mallPointIdx === 'number') ? photoModal.mallPointIdx : null;
+      if (mallSectionId && mallPointIdx !== null && mallPointIdx >= 0) {
+        setByggdelMallSectionsDraft(prev => {
+          const arr = Array.isArray(prev) ? prev : [];
+          return arr.map(s => {
+            if (String(s && s.id ? s.id : '') !== mallSectionId) return s;
+            const pts = Array.isArray(s && s.points) ? s.points : [];
+            const photosOuter = Array.isArray(s && s.photos) ? s.photos : Array(pts.length).fill(null).map(() => []);
+            const photos = photosOuter.map(a => Array.isArray(a) ? [...a] : (a ? [a] : []));
+            if (!Array.isArray(photos[mallPointIdx])) photos[mallPointIdx] = [];
+            const list = photos[mallPointIdx] || [];
+            const pos = list.findIndex(item => (item && item.uri) ? item.uri === uri : item === uri);
+            if (pos !== -1) {
+              photos[mallPointIdx] = list.filter((_, i) => i !== pos);
+            }
+            return Object.assign({}, s, { photos });
+          });
+        });
+        const newUris = uris.filter((u, i) => i !== index);
+        const newIndex = Math.max(0, index - 1);
+        setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0, mallSectionId, mallPointIdx });
+        return;
+      }
+    } catch (e) {}
 
     // 1) Try remove from mottagningsPhotos (central photos list)
     try {
@@ -298,12 +497,18 @@ export default function BaseControlForm({
     } else if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
       raw = initialValues.checklist;
     } else if (Array.isArray(checklistConfig) && checklistConfig.length > 0) {
+      // Arbetsberedning: start with no visible sections until user selects categories
+      if (controlType === 'Arbetsberedning') {
+        raw = [];
+      } else {
       raw = checklistConfig.map(section => ({
         label: section.label,
         points: Array.isArray(section.points) ? [...section.points] : [],
         statuses: Array(Array.isArray(section.points) ? section.points.length : 0).fill(null),
         photos: Array(Array.isArray(section.points) ? section.points.length : 0).fill([]),
+          comments: Array(Array.isArray(section.points) ? section.points.length : 0).fill(''),
       }));
+      }
     } else if (controlType === 'Mottagningskontroll') {
       // Use predefined Mottagningskontroll sections when no checklistConfig is provided
       raw = mottagningsTemplate.map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [] }));
@@ -319,11 +524,15 @@ export default function BaseControlForm({
         : Array(Array.isArray(points) ? points.length : 0).fill(null).map(() => []);
       // Ensure every photos[i] is an array
       photos = photos.map(arr => Array.isArray(arr) ? arr : (arr ? [arr] : []));
+      const comments = Array.isArray(section.comments) && Array.isArray(points) && section.comments.length === points.length
+        ? section.comments
+        : Array(Array.isArray(points) ? points.length : 0).fill('');
       return {
         label: section.label,
         points,
         statuses,
         photos,
+        comments,
       };
     });
   });
@@ -332,24 +541,120 @@ export default function BaseControlForm({
   const checklistRef = useRef(checklist);
   useEffect(() => { checklistRef.current = checklist; }, [checklist]);
 
+  const byggdelMallLocksCategories = useMemo(() => {
+    if (controlType !== 'Arbetsberedning') return false;
+    const tpl = byggdelTemplate || null;
+    return !!(tpl && (tpl.mallId || tpl.mallName || tpl.name));
+  }, [controlType, byggdelTemplate]);
+
+  const hasAnyChecklistPoints = (list) => {
+    try {
+      const arr = Array.isArray(list) ? list : [];
+      for (const sec of arr) {
+        const pts = Array.isArray(sec && sec.points) ? sec.points : [];
+        if (pts.length > 0) return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const buildChecklistFromMallPoints = ({ mallName, points, sections }) => {
+    const coerceArrayLike = (v) => {
+      if (Array.isArray(v)) return v;
+      if (v && typeof v === 'object') {
+        const keys = Object.keys(v).filter(k => String(parseInt(k, 10)) === k).map(k => parseInt(k, 10)).sort((a, b) => a - b);
+        if (!keys.length) return [];
+        const arr = [];
+        keys.forEach(k => { arr[k] = v[k]; });
+        return arr;
+      }
+      return [];
+    };
+
+    const secArr = Array.isArray(sections) ? sections : [];
+    const normalizedSections = secArr
+      .map(s => {
+        const label = String(s && (s.title ?? s.label ?? '')).trim();
+        const pts = (Array.isArray(s && s.points) ? s.points : []).map(p => String(p || '').trim()).filter(Boolean);
+        const rawStatuses = coerceArrayLike(s && s.statuses);
+        const statuses = pts.map((_, i) => {
+          const v = rawStatuses[i];
+          return (v === 'ok' || v === 'avvikelse' || v === 'ejaktuell') ? v : null;
+        });
+        const rawPhotosOuter = coerceArrayLike(s && s.photos);
+        const photos = pts.map((_, i) => {
+          const row = rawPhotosOuter[i];
+          const list = Array.isArray(row) ? row : (row ? [row] : []);
+          return list
+            .map(item => {
+              if (!item) return null;
+              if (typeof item === 'string') return item;
+              if (item && typeof item === 'object' && item.uri) return { uri: item.uri, comment: item.comment || '' };
+              return null;
+            })
+            .filter(Boolean);
+        });
+        return { label, points: pts, statuses, photos };
+      })
+      .filter(s => (String(s.label || '').trim() || (Array.isArray(s.points) && s.points.length > 0)));
+
+    if (normalizedSections.length > 0) {
+      return normalizedSections.map(s => {
+        const lbl = String(s.label || '').trim() || String(mallName || 'Mall');
+        const pts = Array.isArray(s.points) ? s.points : [];
+        return {
+          label: lbl,
+          points: pts,
+          statuses: (Array.isArray(s.statuses) && s.statuses.length === pts.length) ? s.statuses : Array(pts.length).fill(null),
+          photos: (Array.isArray(s.photos) && s.photos.length === pts.length) ? s.photos.map(a => Array.isArray(a) ? a : (a ? [a] : [])) : Array(pts.length).fill(null).map(() => []),
+          comments: Array(pts.length).fill(''),
+        };
+      });
+    }
+
+    const pts = (Array.isArray(points) ? points : []).map(p => String(p || '').trim()).filter(Boolean);
+    return [
+      {
+        label: String(mallName || 'Mall'),
+        points: pts,
+        statuses: Array(pts.length).fill(null),
+        photos: Array(pts.length).fill([]),
+        comments: Array(pts.length).fill(''),
+      },
+    ];
+  };
+
   // Track initial state for dirty checking
   const initialChecklist = useMemo(() => {
+    if (route.params && Array.isArray(route.params.savedChecklist) && route.params.savedChecklist.length > 0) {
+      return route.params.savedChecklist;
+    }
+    if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
+      return initialValues.checklist;
+    }
+    // Arbetsberedning: baseline is empty until user selects categories
+    if (controlType === 'Arbetsberedning') return [];
     if (Array.isArray(checklistConfig)) {
       return checklistConfig.map(section => ({
         label: section.label,
         points: Array.isArray(section.points) ? [...section.points] : [],
-        statuses: Array(section.points.length).fill(null),
-        photos: Array(section.points.length).fill([]),
+        statuses: Array(Array.isArray(section.points) ? section.points.length : 0).fill(null),
+        photos: Array(Array.isArray(section.points) ? section.points.length : 0).fill([]),
+        comments: Array(Array.isArray(section.points) ? section.points.length : 0).fill(''),
       }));
     }
     return [];
-  }, [checklistConfig]);
+  }, [checklistConfig, controlType, initialValues, route.params]);
 
   const initialParticipants = useMemo(() => {
     if (initialValues && Array.isArray(initialValues.participants) && initialValues.participants.length > 0) return initialValues.participants;
     return Array.isArray(participants) ? participants : [];
   }, [participants, initialValues]);
   const initialDate = useMemo(() => date || initialValues.date || '', [date, initialValues.date]);
+  const initialWeather = useMemo(() => initialValues.weather || null, [initialValues.weather]);
+  const initialByggdel = useMemo(() => initialValues.byggdel || formatByggdelLabelFromTemplate(initialValues.byggdelTemplate) || '', [initialValues.byggdel, initialValues.byggdelTemplate]);
   const initialDeliveryDesc = useMemo(() => initialValues.deliveryDesc || '', [initialValues.deliveryDesc]);
   const initialGeneralNote = useMemo(() => initialValues.generalNote || '', [initialValues.generalNote]);
   const initialMaterialDesc = useMemo(() => initialValues.materialDesc || '', [initialValues.materialDesc]);
@@ -413,6 +718,8 @@ export default function BaseControlForm({
     if (!shallowEqual(localParticipants, initialParticipants)) return true;
     if (!shallowEqual(checklist, initialChecklist)) return true;
     if (dateValue !== initialDate) return true;
+    if (selectedWeather !== initialWeather) return true;
+    if ((byggdel || '') !== (initialByggdel || '')) return true;
     if (deliveryDesc !== initialDeliveryDesc) return true;
     if (generalNote !== initialGeneralNote) return true;
     if (materialDesc !== initialMaterialDesc) return true;
@@ -421,23 +728,578 @@ export default function BaseControlForm({
     if (!shallowEqual(mottagningsSignatures, initialMottagningsSignatures)) return true;
     if (!shallowEqual(mottagningsPhotos, initialMottagningsPhotos)) return true;
     return false;
-  }, [localParticipants, checklist, dateValue, deliveryDesc, generalNote, materialDesc, qualityDesc, coverageDesc, mottagningsSignatures, mottagningsPhotos, initialParticipants, initialChecklist, initialDate, initialDeliveryDesc, initialGeneralNote, initialMaterialDesc, initialQualityDesc, initialCoverageDesc, initialMottagningsSignatures, initialMottagningsPhotos]);
+  }, [localParticipants, checklist, dateValue, selectedWeather, byggdel, deliveryDesc, generalNote, materialDesc, qualityDesc, coverageDesc, mottagningsSignatures, mottagningsPhotos, initialParticipants, initialChecklist, initialDate, initialWeather, initialByggdel, initialDeliveryDesc, initialGeneralNote, initialMaterialDesc, initialQualityDesc, initialCoverageDesc, initialMottagningsSignatures, initialMottagningsPhotos]);
   // Keep isDirtyRef in sync with latest computed isDirty
   useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
   const [showAddParticipantModal, setShowAddParticipantModal] = useState(false);
   const [showAddSignerModal, setShowAddSignerModal] = useState(false);
   const [signerName, setSignerName] = useState('');
   const [showWeatherModal, setShowWeatherModal] = useState(false);
+  const [showByggdelModal, setShowByggdelModal] = useState(false);
+  const [showAktivaByggdelarModal, setShowAktivaByggdelarModal] = useState(false);
+  const [aktivaByggdelarSelectedKeys, setAktivaByggdelarSelectedKeys] = useState([]);
+  const [aktivaByggdelarDraftKeys, setAktivaByggdelarDraftKeys] = useState([]);
+  const [aktivaByggdelarExpandedPrefix, setAktivaByggdelarExpandedPrefix] = useState('');
+  const [byggdelHierarchyLoading, setByggdelHierarchyLoading] = useState(false);
+  const [byggdelMomentsByGroup, setByggdelMomentsByGroup] = useState(() => defaultByggdelMomentsByGroup);
+  const [byggdelMallarLoading, setByggdelMallarLoading] = useState(false);
+  const [byggdelMallar, setByggdelMallar] = useState([]);
+  const [byggdelHuvudgruppDraft, setByggdelHuvudgruppDraft] = useState('');
+  const [byggdelMomentDraft, setByggdelMomentDraft] = useState('');
+  const [byggdelMallDraft, setByggdelMallDraft] = useState(null);
+  const [byggdelExpandedHuvudgrupp, setByggdelExpandedHuvudgrupp] = useState('');
+  const [byggdelExpandedMomentKey, setByggdelExpandedMomentKey] = useState('');
+  const [showByggdelHuvudgruppRolldown, setShowByggdelHuvudgruppRolldown] = useState(true);
+  const [showKontrollplanRolldown, setShowKontrollplanRolldown] = useState(true);
+  const [newByggdelMallName, setNewByggdelMallName] = useState('');
+  const [savingByggdelMall, setSavingByggdelMall] = useState(false);
+  const [deletingByggdelMallId, setDeletingByggdelMallId] = useState('');
+  const [showCreateByggdelMallModal, setShowCreateByggdelMallModal] = useState(false);
+  const [createByggdelMallContext, setCreateByggdelMallContext] = useState(null);
+  const [showByggdelMallEditor, setShowByggdelMallEditor] = useState(false);
+  const [byggdelMallEditor, setByggdelMallEditor] = useState(null);
+  const [byggdelMallSectionsDraft, setByggdelMallSectionsDraft] = useState([]);
+  const [newByggdelMallSectionTitle, setNewByggdelMallSectionTitle] = useState('');
+  const [byggdelMallEditorExpandedSectionId, setByggdelMallEditorExpandedSectionId] = useState('');
+  const [newByggdelMallPointBySectionId, setNewByggdelMallPointBySectionId] = useState({});
+  const [savingByggdelMallPoints, setSavingByggdelMallPoints] = useState(false);
+  const [showCreateByggdelMoment, setShowCreateByggdelMoment] = useState(false);
+  const [newByggdelMomentName, setNewByggdelMomentName] = useState('');
+
+  // Keep create-mall popup bottom aligned right above the keyboard.
+  const DEFAULT_CREATE_MALL_KEYBOARD_HEIGHT_IOS = 320;
+  const [createMallKeyboardHeight, setCreateMallKeyboardHeight] = useState(Platform.OS === 'ios' ? DEFAULT_CREATE_MALL_KEYBOARD_HEIGHT_IOS : 0);
+  useEffect(() => {
+    if (showCreateByggdelMallModal && Platform.OS === 'ios' && !(createMallKeyboardHeight > 0)) {
+      setCreateMallKeyboardHeight(DEFAULT_CREATE_MALL_KEYBOARD_HEIGHT_IOS);
+    }
+  }, [showCreateByggdelMallModal]);
+
+  // Shift mall editor up when keyboard is visible so footer buttons aren't covered.
+  const [mallEditorKeyboardHeight, setMallEditorKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e) => {
+      const h = (e && e.endCoordinates && typeof e.endCoordinates.height === 'number') ? e.endCoordinates.height : 0;
+      setMallEditorKeyboardHeight(h || 0);
+    };
+    const onHide = () => setMallEditorKeyboardHeight(0);
+
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      try { subShow && subShow.remove && subShow.remove(); } catch (e) {}
+      try { subHide && subHide.remove && subHide.remove(); } catch (e) {}
+    };
+  }, []);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e) => {
+      const h = (e && e.endCoordinates && typeof e.endCoordinates.height === 'number') ? e.endCoordinates.height : 0;
+      setCreateMallKeyboardHeight(h || 0);
+    };
+    const onHide = () => {
+      // iOS: keep last height to avoid jumping down and showing underlying footer.
+      if (Platform.OS === 'ios') return;
+      setCreateMallKeyboardHeight(0);
+    };
+
+    const subShow = Keyboard.addListener(showEvent, onShow);
+    const subHide = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      try { subShow && subShow.remove && subShow.remove(); } catch (e) {}
+      try { subHide && subHide.remove && subHide.remove(); } catch (e) {}
+    };
+  }, []);
+
+  const closeByggdelModal = () => {
+    try { Keyboard.dismiss && Keyboard.dismiss(); } catch (e) {}
+    setShowByggdelModal(false);
+    setShowAktivaByggdelarModal(false);
+    setNewByggdelMallName('');
+    setSavingByggdelMall(false);
+    setShowCreateByggdelMallModal(false);
+    setCreateByggdelMallContext(null);
+    setShowCreateByggdelMoment(false);
+    setNewByggdelMomentName('');
+  };
+
+  const closeCreateByggdelMallModal = () => {
+    try { Keyboard.dismiss && Keyboard.dismiss(); } catch (e) {}
+    setShowCreateByggdelMallModal(false);
+    setCreateByggdelMallContext(null);
+    setNewByggdelMallName('');
+    setSavingByggdelMall(false);
+  };
+
+  const submitCreateByggdelMall = async () => {
+    try {
+      const nm = String(newByggdelMallName || '').trim();
+      if (!nm) {
+        Alert.alert('Ange namn', 'Skriv ett namn på mallen.');
+        return;
+      }
+      if (savingByggdelMall) return;
+
+      const ctx = createByggdelMallContext;
+      const hgKeyPrefix = String(ctx && ctx.huvudgrupp ? ctx.huvudgrupp : '').trim();
+      const momentLabel = String(ctx && ctx.moment ? ctx.moment : '').trim();
+      if (!hgKeyPrefix || !momentLabel) {
+        Alert.alert('Kunde inte skapa', 'Saknar byggdel/moment. Försök igen.');
+        return;
+      }
+
+      setSavingByggdelMall(true);
+      const createdId = await createByggdelMall({ huvudgrupp: hgKeyPrefix, moment: momentLabel, name: nm });
+
+      // Optimistic insert so the mall is visible immediately under this moment.
+      setByggdelMallar(prev => {
+        const current = Array.isArray(prev) ? prev : [];
+        const next = [
+          ...current.filter(x => String(x && x.id ? x.id : '') !== String(createdId || '')),
+          { id: createdId, huvudgrupp: hgKeyPrefix, moment: momentLabel, name: nm, points: [], sections: [] },
+        ];
+        next.sort((a, b) => {
+          const ag = String(a && (a.huvudgrupp ?? '')).trim();
+          const bg = String(b && (b.huvudgrupp ?? '')).trim();
+          if (ag !== bg) return ag.localeCompare(bg, 'sv');
+          const am = String(a && (a.moment ?? '')).trim();
+          const bm = String(b && (b.moment ?? '')).trim();
+          if (am !== bm) return am.localeCompare(bm, 'sv');
+          const an = String(a && (a.name ?? '')).trim();
+          const bn = String(b && (b.name ?? '')).trim();
+          return an.localeCompare(bn, 'sv');
+        });
+        return next;
+      });
+
+      // Best-effort refresh (keeps list in sync across devices)
+      refreshByggdelMallar();
+
+      setByggdelMallDraft({ id: createdId || null, name: nm });
+      closeCreateByggdelMallModal();
+      if (createdId) {
+        // iOS/Expo Go: avoid stacking RN Modals; close Byggdel modal before opening editor.
+        setShowByggdelModal(false);
+        setTimeout(() => {
+          openByggdelMallEditor({ id: createdId, name: nm, huvudgrupp: hgKeyPrefix, moment: momentLabel, points: [], sections: [] });
+        }, 250);
+      }
+    } catch (e) {
+      const code = e && e.code ? String(e.code) : '';
+      const msg = (e && e.message) ? String(e.message) : '';
+      const isDuplicate = code === 'already-exists' || code === 'already_exists' || (msg && msg.toLowerCase().includes('already') && msg.toLowerCase().includes('exist'));
+      const isPermission = code === 'permission-denied' || (msg && msg.toLowerCase().includes('permission'));
+      const isAuth = code === 'unauthenticated';
+      const isOffline = code === 'unavailable' || (msg && (msg.toLowerCase().includes('network') || msg.toLowerCase().includes('offline')));
+      if (isDuplicate) {
+        Alert.alert('Finns redan', 'Det finns redan en mall med detta namn i företaget. Välj ett annat namn.');
+      } else if (isPermission) {
+        Alert.alert('Kunde inte skapa', 'Du saknar behörighet till företaget. Logga ut och in igen (eller be admin sätta rätt företag på användaren) och försök igen.');
+      } else if (isAuth) {
+        Alert.alert('Kunde inte skapa', 'Du är inte inloggad. Logga in igen och försök igen.');
+      } else if (isOffline) {
+        Alert.alert('Kunde inte skapa', 'Ingen kontakt med servern. Kontrollera internetanslutningen och försök igen.');
+      } else if (code === 'no_company') {
+        Alert.alert('Kunde inte skapa', 'Saknar företag på användaren. Logga ut/in eller be admin koppla användaren till ett företag.');
+      } else {
+        Alert.alert('Kunde inte skapa', 'Försök igen.');
+      }
+    } finally {
+      setSavingByggdelMall(false);
+    }
+  };
+
+  const openByggdelMallEditor = (mall) => {
+    try {
+      const id = mall && mall.id ? String(mall.id) : '';
+      const name = String(mall && (mall.name || '')).trim();
+      if (!id) {
+        Alert.alert('Kunde inte öppna', 'Mallen saknar id.');
+        return;
+      }
+      const coerceArrayLike = (v) => {
+        if (Array.isArray(v)) return v;
+        if (v && typeof v === 'object') {
+          const keys = Object.keys(v).filter(k => String(parseInt(k, 10)) === k).map(k => parseInt(k, 10)).sort((a, b) => a - b);
+          if (!keys.length) return [];
+          const arr = [];
+          keys.forEach(k => { arr[k] = v[k]; });
+          return arr;
+        }
+        return [];
+      };
+      const normalizeStatus = (v) => (v === 'ok' || v === 'avvikelse' || v === 'ejaktuell') ? v : null;
+
+      const makeSectionId = (idx) => `sec-${Date.now()}-${idx}`;
+      const rawSections = Array.isArray(mall && mall.sections) ? mall.sections : [];
+
+      let sections = [];
+      if (rawSections.length > 0) {
+        sections = rawSections
+          .map((s, idx) => {
+            const title = String(s && (s.title ?? s.label ?? '')).trim();
+            const pts = (Array.isArray(s && s.points) ? s.points : []).map(p => String(p || '').trim()).filter(Boolean);
+            const rawStatuses = coerceArrayLike(s && s.statuses);
+            const statuses = pts.map((_, i) => normalizeStatus(rawStatuses[i]));
+            const rawPhotosOuter = coerceArrayLike(s && s.photos);
+            const photos = pts.map((_, i) => {
+              const row = rawPhotosOuter[i];
+              const list = Array.isArray(row) ? row : (row ? [row] : []);
+              return list.map(item => {
+                if (!item) return null;
+                if (typeof item === 'string') return item;
+                if (item && typeof item === 'object' && item.uri) return { uri: item.uri, comment: item.comment || '' };
+                return null;
+              }).filter(Boolean);
+            });
+            return { id: makeSectionId(idx), title, points: pts, statuses, photos };
+          })
+          .filter(s => String(s && s.title ? s.title : '').trim() || (Array.isArray(s && s.points) && s.points.length > 0));
+      } else {
+        const pts = Array.isArray(mall && mall.points) ? mall.points : [];
+        const normalized = pts.map(p => String(p || '').trim()).filter(Boolean);
+        if (normalized.length > 0) {
+          sections = [{ id: makeSectionId(0), title: 'Kontrollpunkter', points: normalized, statuses: Array(normalized.length).fill(null), photos: Array(normalized.length).fill(null).map(() => []) }];
+        }
+      }
+      setByggdelMallEditor({
+        id,
+        name,
+        huvudgrupp: String(mall && (mall.huvudgrupp || '')).trim(),
+        moment: String(mall && (mall.moment || '')).trim(),
+      });
+      setByggdelMallSectionsDraft(sections);
+      setByggdelMallEditorExpandedSectionId((sections && sections[0] && sections[0].id) ? String(sections[0].id) : '');
+      setNewByggdelMallSectionTitle('');
+      setNewByggdelMallPointBySectionId({});
+      setShowByggdelMallEditor(true);
+    } catch (e) {
+      Alert.alert('Kunde inte öppna', 'Försök igen.');
+    }
+  };
+
+  const handlePickMallPointFromLibrary = async (mallSectionId, mallPointIdx) => {
+    try {
+      const sid = String(mallSectionId || '').trim();
+      const pIdx = (typeof mallPointIdx === 'number') ? mallPointIdx : -1;
+      if (!sid || pIdx < 0) return;
+      try { Keyboard.dismiss(); } catch (e) {}
+
+      let perm = null;
+      try {
+        if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
+          perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+        }
+      } catch (e) {}
+      if (!perm || !(perm.granted === true || perm.status === 'granted')) {
+        try {
+          perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        } catch (e) {}
+      }
+      const ok = (perm && (perm.granted === true || perm.status === 'granted'));
+      if (!ok) {
+        alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
+        return;
+      }
+
+      const mediaTypesOption = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
+        ? ImagePicker.MediaTypeOptions.Images
+        : undefined;
+      const pickerOptions = { quality: 0.8 };
+      if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
+      await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 200)));
+      const res = await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      const assets = (res && Array.isArray(res.assets) && res.assets.length) ? res.assets : (res && res.uri ? [{ uri: res.uri }] : []);
+      const photos = (assets || [])
+        .map(a => {
+          const uri = a?.uri || a?.uriString || a?.localUri || (a?.base64 ? `data:image/jpeg;base64,${a.base64}` : null);
+          return uri ? { uri, comment: '' } : null;
+        })
+        .filter(Boolean);
+      if (!photos.length) return;
+
+      let modalUris = [];
+      setByggdelMallSectionsDraft(prev => {
+        const arr = Array.isArray(prev) ? prev : [];
+        return arr.map(s => {
+          if (String(s && s.id ? s.id : '') !== sid) return s;
+          const pts = Array.isArray(s && s.points) ? s.points : [];
+          const photosOuter = Array.isArray(s && s.photos) && s.photos.length === pts.length
+            ? s.photos.map(a => Array.isArray(a) ? [...a] : (a ? [a] : []))
+            : Array(pts.length).fill(null).map(() => []);
+          if (!Array.isArray(photosOuter[pIdx])) photosOuter[pIdx] = [];
+          const existingUris = new Set((photosOuter[pIdx] || []).map(p => (p && p.uri) ? p.uri : p).filter(Boolean));
+          const toAdd = photos.filter(p => p && p.uri && !existingUris.has(p.uri));
+          if (toAdd.length) {
+            photosOuter[pIdx] = [...(photosOuter[pIdx] || []), ...toAdd];
+          }
+          modalUris = photosOuter[pIdx];
+          return Object.assign({}, s, { photos: photosOuter });
+        });
+      });
+      setPhotoModal({ visible: true, uris: Array.isArray(modalUris) ? modalUris : [], index: 0, mallSectionId: sid, mallPointIdx: pIdx });
+    } catch (e) {
+      alert('Kunde inte välja bild: ' + (e?.message || e));
+    }
+  };
+
+  const refreshByggdelHierarchy = async () => {
+    try {
+      setByggdelHierarchyLoading(true);
+      const res = await fetchByggdelHierarchy();
+      const mbg = res && typeof res.momentsByGroup === 'object' && res.momentsByGroup ? res.momentsByGroup : {};
+      const { merged, changed } = mergeByggdelMomentsByGroup(mbg);
+      setByggdelMomentsByGroup(merged);
+
+      // Best-effort: persist defaults once per company so web/app share the same baseline.
+      if (changed) {
+        saveByggdelHierarchy({ momentsByGroup: merged }).catch(() => {});
+      }
+    } catch (e) {
+      setByggdelMomentsByGroup(defaultByggdelMomentsByGroup);
+    } finally {
+      setByggdelHierarchyLoading(false);
+    }
+  };
+
+  const refreshByggdelMallar = async () => {
+    try {
+      setByggdelMallarLoading(true);
+      const list = await fetchByggdelMallar();
+      const arr = Array.isArray(list) ? list : [];
+      arr.sort((a, b) => {
+        const ag = String(a && (a.huvudgrupp ?? '')).trim();
+        const bg = String(b && (b.huvudgrupp ?? '')).trim();
+        if (ag !== bg) return ag.localeCompare(bg, 'sv');
+        const am = String(a && (a.moment ?? '')).trim();
+        const bm = String(b && (b.moment ?? '')).trim();
+        if (am !== bm) return am.localeCompare(bm, 'sv');
+        const an = String(a && (a.name ?? '')).trim();
+        const bn = String(b && (b.name ?? '')).trim();
+        return an.localeCompare(bn, 'sv');
+      });
+      setByggdelMallar(arr);
+    } catch (e) {
+      setByggdelMallar([]);
+    } finally {
+      setByggdelMallarLoading(false);
+    }
+  };
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [selectedCategories, setSelectedCategories] = useState(() => Array.isArray(checklistConfig) ? checklistConfig.map(() => true) : []);
+  const [selectedCategories, setSelectedCategories] = useState(() => {
+    if (!Array.isArray(checklistConfig) || checklistConfig.length === 0) return [];
+    // Arbetsberedning: start with all categories unchecked
+    if (controlType === 'Arbetsberedning') {
+      if (initialValues && Array.isArray(initialValues.selectedCategories) && initialValues.selectedCategories.length === checklistConfig.length) {
+        return initialValues.selectedCategories;
+      }
+      if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
+        const selectedLabels = new Set((initialValues.checklist || []).map(s => s && s.label).filter(Boolean));
+        return checklistConfig.map(sec => selectedLabels.has(sec.label));
+      }
+      return checklistConfig.map(() => false);
+    }
+    // Other controls: default to all categories enabled
+    return checklistConfig.map(() => true);
+  });
+
+  const applySelectedCategoriesToChecklist = (categoryFlags) => {
+    try {
+      const cfg = (Array.isArray(checklistConfig) ? checklistConfig : []);
+      const flags = Array.isArray(categoryFlags) ? categoryFlags : [];
+      const current = Array.isArray(checklist) ? checklist : [];
+      const existingByLabel = new Map(current.map(s => [s && s.label ? s.label : '', s]));
+      const newChecklist = cfg
+        .filter((_, i) => !!flags[i])
+        .map(section => {
+          const points = Array.isArray(section.points) ? [...section.points] : [];
+          const existing = existingByLabel.get(section.label) || null;
+          if (existing && Array.isArray(existing.points)) {
+            const existingStatuses = Array.isArray(existing.statuses) ? existing.statuses : [];
+            const existingPhotos = Array.isArray(existing.photos) ? existing.photos : [];
+            const existingComments = Array.isArray(existing.comments) ? existing.comments : [];
+            const idxByPoint = new Map((existing.points || []).map((pt, idx) => [pt, idx]));
+            const statuses = points.map(pt => {
+              const exIdx = idxByPoint.get(pt);
+              return (exIdx === undefined) ? null : (existingStatuses[exIdx] ?? null);
+            });
+            const photos = points.map(pt => {
+              const exIdx = idxByPoint.get(pt);
+              const p = (exIdx === undefined) ? [] : existingPhotos[exIdx];
+              return Array.isArray(p) ? p : (p ? [p] : []);
+            });
+            const comments = points.map(pt => {
+              const exIdx = idxByPoint.get(pt);
+              return (exIdx === undefined) ? '' : (existingComments[exIdx] ?? '');
+            });
+            return {
+              ...existing,
+              label: section.label,
+              points,
+              statuses,
+              photos,
+              comments,
+            };
+          }
+          return {
+            label: section.label,
+            points,
+            statuses: Array(points.length).fill(null),
+            photos: Array(points.length).fill([]),
+            comments: Array(points.length).fill(''),
+          };
+        });
+      if (!shallowEqual(newChecklist, checklist)) {
+        setChecklist(newChecklist);
+      }
+      setExpandedChecklist([]);
+    } catch (e) {}
+  };
 
   useEffect(() => {
-    // When checklistConfig changes, reset selected categories to all true (guarded)
-    const newSel = Array.isArray(checklistConfig) ? checklistConfig.map(() => true) : [];
-    if (!shallowEqual(newSel, selectedCategories)) {
-      setSelectedCategories(newSel);
+    // Arbetsberedning: load project-level category defaults (local AsyncStorage)
+    if (controlType !== 'Arbetsberedning') return;
+    const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
+    const pid = project && project.id ? String(project.id) : '';
+    if (!pid || cfg.length === 0) return;
+    if (didInitArbetsberedningCategoriesRef.current) return;
+
+    const hasInitialSelection = !!(
+      (initialValues && Array.isArray(initialValues.selectedCategories) && initialValues.selectedCategories.length === cfg.length) ||
+      (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0)
+    );
+    if (hasInitialSelection) {
+      didInitArbetsberedningCategoriesRef.current = true;
+      return;
     }
-  }, [checklistConfig, selectedCategories]);
+
+    didInitArbetsberedningCategoriesRef.current = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(arbetsberedningCategoryKey(pid));
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+
+        let flags = null;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Backward compatible formats:
+          // - boolean[] same length as cfg
+          // - string[] of selected labels
+          if (parsed.every(v => typeof v === 'boolean') && parsed.length === cfg.length) {
+            flags = parsed;
+          } else if (parsed.every(v => typeof v === 'string')) {
+            const selectedLabels = new Set(parsed.map(s => String(s || '').trim()).filter(Boolean));
+            flags = cfg.map(sec => selectedLabels.has(String(sec && sec.label ? sec.label : '').trim()));
+          }
+        } else if (parsed && typeof parsed === 'object') {
+          // Newer format: { selectedLabels: string[] }
+          if (Array.isArray(parsed.selectedLabels) && parsed.selectedLabels.every(v => typeof v === 'string')) {
+            const selectedLabels = new Set(parsed.selectedLabels.map(s => String(s || '').trim()).filter(Boolean));
+            flags = cfg.map(sec => selectedLabels.has(String(sec && sec.label ? sec.label : '').trim()));
+          }
+        }
+
+        if (!flags || flags.length !== cfg.length) return;
+        setSelectedCategories(flags);
+
+        // If this is a new control with empty checklist, apply immediately.
+        const currentChecklist = Array.isArray(checklistRef?.current) ? checklistRef.current : (Array.isArray(checklist) ? checklist : []);
+        if (!currentChecklist || currentChecklist.length === 0) {
+          applySelectedCategoriesToChecklist(flags);
+        }
+      } catch (e) {}
+    })();
+  }, [controlType, project && project.id, checklistConfig, initialValues]);
+
+  useEffect(() => {
+    // Arbetsberedning: load project-level active byggdel filter (local AsyncStorage)
+    if (controlType !== 'Arbetsberedning') return;
+    const pid = project && project.id ? String(project.id) : '';
+    if (!pid) return;
+    if (loadedAktivaByggdelPidRef.current === pid) return;
+    loadedAktivaByggdelPidRef.current = pid;
+
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(arbetsberedningActiveByggdelKey(pid));
+        if (!raw) {
+          setAktivaByggdelarSelectedKeys([]);
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        let keys = [];
+        let legacyPrefixes = [];
+
+        if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string')) {
+          // Backward compatible formats:
+          // - string[] of "prefix" (e.g. "3")
+          // - string[] of "prefix||moment" keys
+          const anyKey = parsed.some(v => String(v || '').includes('||'));
+          if (anyKey) {
+            keys = parsed;
+          } else {
+            legacyPrefixes = parsed;
+          }
+        } else if (parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed.selectedKeys) && parsed.selectedKeys.every(v => typeof v === 'string')) {
+            keys = parsed.selectedKeys;
+          } else if (Array.isArray(parsed.selectedPrefixes) && parsed.selectedPrefixes.every(v => typeof v === 'string')) {
+            legacyPrefixes = parsed.selectedPrefixes;
+          }
+        }
+
+        const normalizedKeys = (Array.isArray(keys) ? keys : [])
+          .map(x => String(x || '').trim())
+          .filter(x => !!x && x.includes('||'));
+
+        if (normalizedKeys.length > 0) {
+          setAktivaByggdelarSelectedKeys(normalizedKeys);
+          return;
+        }
+
+        // Migrate legacy huvudgrupp-prefix filter to moment keys (select all moments in those prefixes)
+        const prefixes = (Array.isArray(legacyPrefixes) ? legacyPrefixes : [])
+          .map(x => String(x || '').trim())
+          .filter(Boolean);
+        if (prefixes.length === 0) {
+          setAktivaByggdelarSelectedKeys([]);
+          return;
+        }
+
+        const migrated = [];
+        prefixes.forEach(prefix => {
+          const momentsCandidate = (defaultByggdelMomentsByGroup && defaultByggdelMomentsByGroup[prefix]) || [];
+          const moments = Array.isArray(momentsCandidate) ? momentsCandidate : [];
+          moments.forEach(mm => {
+            const m = String(mm || '').trim();
+            if (!m) return;
+            migrated.push(`${prefix}||${m}`);
+          });
+        });
+
+        const uniq = Array.from(new Set(migrated.map(x => String(x || '').trim()).filter(Boolean)));
+        setAktivaByggdelarSelectedKeys(uniq);
+      } catch (e) {
+        setAktivaByggdelarSelectedKeys([]);
+      }
+    })();
+  }, [controlType, project && project.id]);
+
+  useEffect(() => {
+    // If checklistConfig arrives/changes, initialize checkbox array length once without overriding user toggles
+    const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
+    setSelectedCategories(prev => {
+      if (Array.isArray(prev) && prev.length === cfg.length) return prev;
+      if (cfg.length === 0) return [];
+      if (controlType === 'Arbetsberedning') return cfg.map(() => false);
+      return cfg.map(() => true);
+    });
+  }, [checklistConfig, controlType]);
   const windowWidth = Dimensions.get('window').width;
   const startX = useRef(0);
   const handleTouchStart = (e) => {
@@ -492,7 +1354,9 @@ export default function BaseControlForm({
           alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
           return;
         }
-        const mediaTypesOption = (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images) ? ImagePicker.MediaType.Images : undefined;
+        const mediaTypesOption = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
+          ? ImagePicker.MediaTypeOptions.Images
+          : undefined;
         const pickerOptions = { quality: 0.8 };
         if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
         await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 500)));
@@ -567,7 +1431,6 @@ export default function BaseControlForm({
       }
     };
 
-    
   // Guarded camera result handling to avoid re-processing and param cycles
   const cameraHandledRef = useRef(false);
   const processedCameraUrisRef = useRef(new Set());
@@ -704,7 +1567,9 @@ export default function BaseControlForm({
                     id: toSaveId,
                     date: dateValue,
                     project,
-                    weather: selectedWeather,
+                    ...weatherPayload,
+                    byggdel,
+                    byggdelTemplate,
                     participants: localParticipants,
                     materialDesc,
                     qualityDesc,
@@ -786,7 +1651,9 @@ export default function BaseControlForm({
                 id: toSaveId,
                 date: dateValue,
                 project,
-                weather: selectedWeather,
+                ...weatherPayload,
+                byggdel,
+                byggdelTemplate,
                 participants: localParticipants,
                 materialDesc,
                 qualityDesc,
@@ -947,11 +1814,12 @@ export default function BaseControlForm({
         if (Array.isArray(sec.photos) && sec.photos.some(pArr => Array.isArray(pArr) && pArr.length > 0)) return true;
         return false;
       });
-      const hasText = (deliveryDesc && String(deliveryDesc).trim().length > 0) || (materialDesc && String(materialDesc).trim().length > 0) || (generalNote && String(generalNote).trim().length > 0);
+      const hasText = (deliveryDesc && String(deliveryDesc).trim().length > 0) || (materialDesc && String(materialDesc).trim().length > 0) || (generalNote && String(generalNote).trim().length > 0) || (byggdel && String(byggdel).trim().length > 0);
       const hasPhotos = Array.isArray(mottagningsPhotos) && mottagningsPhotos.length > 0;
       const hasSignatures = Array.isArray(mottagningsSignatures) && mottagningsSignatures.length > 0;
       const hasParticipantsLocal = Array.isArray(localParticipants) && localParticipants.length > 0;
-      const shouldPersist = !!lastSavedDraftRef.current || isDirtyRef.current || hasChecklistContent || hasText || hasPhotos || hasSignatures || hasParticipantsLocal;
+      const hasWeather = !hideWeather && !!selectedWeather;
+      const shouldPersist = !!lastSavedDraftRef.current || isDirtyRef.current || hasChecklistContent || hasText || hasPhotos || hasSignatures || hasParticipantsLocal || hasWeather;
       if (!shouldPersist) {
         // Nothing meaningful to save; avoid creating an empty draft
         savingDraftRef.current = false;
@@ -962,7 +1830,10 @@ export default function BaseControlForm({
         id: draftId || uuidv4(),
         date: dateValue,
         project,
-        weather: selectedWeather,
+        ...weatherPayload,
+        byggdel,
+        byggdelTemplate,
+        selectedCategories,
         participants: localParticipants,
         materialDesc,
         qualityDesc,
@@ -1006,10 +1877,13 @@ export default function BaseControlForm({
   // Spara slutförd kontroll och ta bort ev. utkast
   const handleSave = async () => {
     if (onSave) onSave({
-      id: (typeof id !== 'undefined' && id !== null ? id : (initialValues && initialValues.id ? initialValues.id : undefined)),
+      id: (initialValues && initialValues.id) ? initialValues.id : (draftId || undefined),
       date: dateValue,
       project,
-      weather: selectedWeather,
+      ...weatherPayload,
+      byggdel,
+      byggdelTemplate,
+      selectedCategories,
       participants: localParticipants,
       materialDesc,
       qualityDesc,
@@ -1038,7 +1912,7 @@ export default function BaseControlForm({
     try {
       const draftIdToDelete = (initialValues && initialValues.id)
         ? initialValues.id
-        : (typeof id !== 'undefined' && id !== null ? id : null);
+        : (draftId || null);
       if (draftIdToDelete) {
         await deleteDraftControlFromFirestore(draftIdToDelete);
       }
@@ -1080,7 +1954,10 @@ export default function BaseControlForm({
     if (onSaveDraft) await onSaveDraft(draft || {
       date: dateValue,
       project,
-      weather: selectedWeather,
+      ...weatherPayload,
+      byggdel,
+      byggdelTemplate,
+      selectedCategories,
       participants: localParticipants,
       materialDesc,
       qualityDesc,
@@ -1237,8 +2114,8 @@ export default function BaseControlForm({
             >
               <Ionicons name="close" size={26} color="#888" />
             </TouchableOpacity>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center', marginTop: 4 }}>Vill du avsluta kontrollen?</Text>
-            <Text style={{ fontSize: 15, color: '#222', marginBottom: 28, textAlign: 'center' }}>Du har osparade ändringar. Välj om du vill spara utkast eller radera ändringarna.</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#222', textAlign: 'center', marginTop: 4 }}>Vill du avbryta kontrollen?</Text>
+            <Text style={{ fontSize: 15, color: '#222', marginBottom: 28, textAlign: 'center' }}>Du har osparade ändringar. Välj om du vill spara utkast eller avbryta.</Text>
             <View style={{ flexDirection: 'row', width: '100%', justifyContent: 'space-between' }}>
               <TouchableOpacity
                 style={{ flex: 1, borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent' }}
@@ -1247,7 +2124,10 @@ export default function BaseControlForm({
                       if (onSaveDraft) await onSaveDraft(draft || {
                         date: dateValue,
                         project,
-                        weather: selectedWeather,
+                        ...weatherPayload,
+                        byggdel,
+                        byggdelTemplate,
+                        selectedCategories,
                         participants: localParticipants,
                         materialDesc,
                         qualityDesc,
@@ -1283,7 +2163,7 @@ export default function BaseControlForm({
                   }
                 }}
               >
-                <Text style={{ color: '#D32F2F', fontWeight: 'normal', fontSize: 16 }}>Radera</Text>
+                <Text style={{ color: '#D32F2F', fontWeight: 'normal', fontSize: 16 }}>Avbryt</Text>
               </TouchableOpacity>
             </View>
             </View>
@@ -1478,7 +2358,7 @@ export default function BaseControlForm({
             activeOpacity={0.7}
             accessibilityLabel="Ändra datum"
           >
-            <Ionicons name="create-outline" size={22} color="#888" />
+            <Ionicons name="create-outline" size={22} color="#1976D2" />
           </TouchableOpacity>
         </View>
         {/* Soft horizontal divider under date */}
@@ -1577,7 +2457,7 @@ export default function BaseControlForm({
         <View style={{ flexDirection: 'column', marginBottom: 2 }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
-              <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 7, marginTop: 2 }} />
+              <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 10, marginTop: 2 }} />
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 18, color: (missingFields && missingFields.includes('Deltagare')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
                 <View style={{ paddingVertical: 6 }}>
@@ -1604,69 +2484,359 @@ export default function BaseControlForm({
             </TouchableOpacity>
           </View>
 
-          {/* Divider between participants and weather */}
-          <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 8 }} />
+          {/* Divider between participants and weather/byggdel */}
+          {(!hideWeather || controlType === 'Egenkontroll') && (
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 8 }} />
+          )}
 
           {/* Weather row (separate) */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              {/* Fixed weather icon on the left, same blue as other icons */}
-              <Ionicons name="sunny" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
-                <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Väderlek</Text>
-                {!selectedWeather && (
+          {!hideWeather && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {/* Fixed weather icon on the left, same blue as other icons */}
+                <Ionicons name="partly-sunny" size={26} color="#1976D2" style={{ marginRight: 10 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+                  <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Väderlek</Text>
+                  {!selectedWeather && (
+                    <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
+                  )}
+                  {selectedWeather && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 10 }}>
+                      <Ionicons
+                        name={(() => {
+                          const defaultWeatherOptions = [
+                            { key: 'Soligt', icon: 'sunny' },
+                            { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                            { key: 'Molnigt', icon: 'cloudy' },
+                            { key: 'Regn', icon: 'rainy' },
+                            { key: 'Snö', icon: 'snow' },
+                            { key: 'Åska', icon: 'thunderstorm' },
+                          ];
+                          const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                            ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                            : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                          const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                          return (meta && meta.icon) ? meta.icon : 'sunny';
+                        })()}
+                        size={14}
+                        color={(() => {
+                          const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
+                          const defaultWeatherOptions = [
+                            { key: 'Soligt', icon: 'sunny' },
+                            { key: 'Delvis molnigt', icon: 'partly-sunny' },
+                            { key: 'Molnigt', icon: 'cloudy' },
+                            { key: 'Regn', icon: 'rainy' },
+                            { key: 'Snö', icon: 'snow' },
+                            { key: 'Åska', icon: 'thunderstorm' },
+                          ];
+                          const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
+                            ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
+                            : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
+                          const meta = localWeather.find(w => (w.key || w) === selectedWeather);
+                          const icon = meta && meta.icon ? meta.icon : 'sunny';
+                          return cmap[icon] || '#1976D2';
+                        })()}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={{ color: '#222', marginRight: 8 }}>{selectedWeather}</Text>
+                      <TouchableOpacity onPress={() => setSelectedWeather(null)}>
+                        <Ionicons name="close-circle" size={18} color="#D32F2F" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowWeatherModal(true)} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till väder">
+                <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Byggdel row (Egenkontroll, where weather usually is) */}
+          {hideWeather && controlType === 'Egenkontroll' && (
+            <View style={{ flexDirection: 'column', marginTop: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="cube-outline" size={26} color="#1976D2" style={{ marginRight: 10 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+                  <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Byggdel</Text>
+                  {!((byggdelTemplate && (byggdelTemplate.huvudgrupp || byggdelTemplate.moment)) || byggdel) && (
+                    <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
+                  )}
+                  {!!((byggdelTemplate && (byggdelTemplate.huvudgrupp || byggdelTemplate.moment)) || byggdel) && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 10, flexShrink: 1, minWidth: 0 }}>
+                      <Text style={{ color: '#222', marginRight: 8, flexShrink: 1 }} numberOfLines={1}>
+                        {(() => {
+                          const tpl = byggdelTemplate || null;
+                          const lbl = tpl ? formatByggdelMomentLabelFromTemplate(tpl) : '';
+                          return lbl || byggdel;
+                        })()}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const tpl = byggdelTemplate || null;
+                          const hadMall = !!(tpl && (tpl.mallId || tpl.mallName || tpl.name));
+                          const clearOnlySelection = () => {
+                            setByggdel('');
+                            setByggdelTemplate(null);
+                          };
+                          const clearSelectionAndChecklist = () => {
+                            setByggdel('');
+                            setByggdelTemplate(null);
+                            setChecklist([]);
+                            setExpandedChecklist([]);
+                            try {
+                              if (controlType === 'Arbetsberedning') {
+                                const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
+                                if (cfg.length > 0) setSelectedCategories(cfg.map(() => false));
+                              }
+                            } catch (e) {}
+                          };
+
+                          if (hadMall && hasAnyChecklistPoints(checklistRef.current)) {
+                            Alert.alert(
+                              'Ta bort mall?'
+                              ,
+                              'Du har valt en mall. Vill du behålla kontrollpunkterna eller rensa dem?'
+                              ,
+                              [
+                                { text: 'Avbryt', style: 'cancel' },
+                                { text: 'Behåll punkter', onPress: clearOnlySelection },
+                                { text: 'Rensa punkter', style: 'destructive', onPress: clearSelectionAndChecklist },
+                              ]
+                            );
+                            return;
+                          }
+
+                          if (hadMall) {
+                            clearSelectionAndChecklist();
+                            return;
+                          }
+
+                          clearOnlySelection();
+                        }}
+                        accessibilityLabel="Rensa byggdel"
+                      >
+                        <Ionicons name="close-circle" size={18} color="#D32F2F" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  const tpl = byggdelTemplate || null;
+                  const hg = String(tpl?.huvudgrupp || '').trim();
+                  const mm = String(tpl?.moment || '').trim();
+                  setByggdelHuvudgruppDraft(hg);
+                  setByggdelMomentDraft(mm);
+                  setByggdelMallDraft(tpl && (tpl.mallId || tpl.mallName || tpl.name) ? { id: tpl.mallId || null, name: tpl.mallName || tpl.name || '' } : null);
+                  setByggdelExpandedHuvudgrupp(hg);
+                  setByggdelExpandedMomentKey(hg && mm ? `${String(hg || '').split('-')[0].trim()}||${mm}` : '');
+                  setNewByggdelMallName('');
+                  setShowCreateByggdelMoment(false);
+                  setNewByggdelMomentName('');
+                  setShowCreateByggdelMallModal(false);
+                  setCreateByggdelMallContext(null);
+                  setShowKontrollplanRolldown(true);
+                  refreshByggdelHierarchy();
+                  refreshByggdelMallar();
+                  setShowByggdelModal(true);
+                }}
+                style={{ padding: 4, marginLeft: 8 }}
+                accessibilityLabel="Ange byggdel"
+              >
+                <Ionicons name={byggdel ? 'create-outline' : 'add-circle-outline'} size={26} color="#1976D2" />
+              </TouchableOpacity>
+              </View>
+
+              {/* Divider between byggdel and kontrollplan */}
+              <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
+
+              {/* Kontrollplan row (Egenkontroll) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="clipboard-outline" size={26} color="#1976D2" style={{ marginRight: 10 }} />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+                    <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Kontrollplan</Text>
+                    {!String((byggdelTemplate && (byggdelTemplate.mallName || byggdelTemplate.name)) || '').trim() && (
+                      <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
+                    )}
+                    {!!String((byggdelTemplate && (byggdelTemplate.mallName || byggdelTemplate.name)) || '').trim() && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 10, flexShrink: 1, minWidth: 0 }}>
+                        <Text style={{ color: '#222', marginRight: 8, flexShrink: 1 }} numberOfLines={1}>
+                          {String((byggdelTemplate && (byggdelTemplate.mallName || byggdelTemplate.name)) || '').trim()}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => {
+                            const tpl = byggdelTemplate || null;
+                            const hadMall = !!(tpl && (tpl.mallId || tpl.mallName || tpl.name));
+                            if (!hadMall) return;
+
+                            const clearOnlyPlan = () => {
+                              const nextTpl = { huvudgrupp: tpl.huvudgrupp, moment: tpl.moment };
+                              setByggdelTemplate(nextTpl);
+                              setByggdel(formatByggdelMomentLabelFromTemplate(nextTpl));
+                            };
+                            const clearPlanAndChecklist = () => {
+                              const nextTpl = { huvudgrupp: tpl.huvudgrupp, moment: tpl.moment };
+                              setByggdelTemplate(nextTpl);
+                              setByggdel(formatByggdelMomentLabelFromTemplate(nextTpl));
+                              setChecklist([]);
+                              setExpandedChecklist([]);
+                            };
+
+                            if (hasAnyChecklistPoints(checklistRef.current)) {
+                              Alert.alert(
+                                'Ta bort mall?'
+                                ,
+                                'Du har valt en mall. Vill du behålla kontrollpunkterna eller rensa dem?'
+                                ,
+                                [
+                                  { text: 'Avbryt', style: 'cancel' },
+                                  { text: 'Behåll punkter', onPress: clearOnlyPlan },
+                                  { text: 'Rensa punkter', style: 'destructive', onPress: clearPlanAndChecklist },
+                                ]
+                              );
+                              return;
+                            }
+
+                            clearOnlyPlan();
+                          }}
+                          accessibilityLabel="Rensa kontrollplan"
+                        >
+                          <Ionicons name="close-circle" size={18} color="#D32F2F" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    const tpl = byggdelTemplate || null;
+                    const hg = String(tpl?.huvudgrupp || '').trim();
+                    const mm = String(tpl?.moment || '').trim();
+                    setByggdelHuvudgruppDraft(hg);
+                    setByggdelMomentDraft(mm);
+                    setByggdelMallDraft(tpl && (tpl.mallId || tpl.mallName || tpl.name) ? { id: tpl.mallId || null, name: tpl.mallName || tpl.name || '' } : null);
+                    setByggdelExpandedHuvudgrupp(hg);
+                    setByggdelExpandedMomentKey(hg && mm ? `${String(hg || '').split('-')[0].trim()}||${mm}` : '');
+                    setNewByggdelMallName('');
+                    setShowCreateByggdelMoment(false);
+                    setNewByggdelMomentName('');
+                    setShowCreateByggdelMallModal(false);
+                    setCreateByggdelMallContext(null);
+                    setShowKontrollplanRolldown(true);
+                    refreshByggdelHierarchy();
+                    refreshByggdelMallar();
+                    setShowByggdelModal(true);
+                  }}
+                  style={{ padding: 4, marginLeft: 8 }}
+                  accessibilityLabel="Ange kontrollplan"
+                >
+                  <Ionicons name={String((byggdelTemplate && (byggdelTemplate.mallName || byggdelTemplate.name)) || '').trim() ? 'create-outline' : 'add-circle-outline'} size={26} color="#1976D2" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Soft horizontal divider between weather and byggdel (same as date -> participants) */}
+          {controlType === 'Arbetsberedning' && !hideWeather && (
+            <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
+          )}
+
+          {/* Byggdel row (Arbetsberedning only) */}
+          {controlType === 'Arbetsberedning' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: hideWeather ? 12 : 2, justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                <Ionicons name="cube-outline" size={26} color="#1976D2" style={{ marginRight: 10 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10, flexShrink: 0 }}>
+                  <Text style={{ fontSize: 18, color: '#222', fontWeight: '600' }}>Byggdel</Text>
                   <Text style={{ fontSize: 12, color: '#666', fontWeight: '400', marginLeft: 6 }}>(valfritt)</Text>
-                )}
-                {selectedWeather && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, marginLeft: 10 }}>
-                    <Ionicons
-                      name={(() => {
-                        const defaultWeatherOptions = [
-                          { key: 'Soligt', icon: 'sunny' },
-                          { key: 'Delvis molnigt', icon: 'partly-sunny' },
-                          { key: 'Molnigt', icon: 'cloudy' },
-                          { key: 'Regn', icon: 'rainy' },
-                          { key: 'Snö', icon: 'snow' },
-                          { key: 'Åska', icon: 'thunderstorm' },
-                        ];
-                        const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
-                          ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
-                          : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
-                        const meta = localWeather.find(w => (w.key || w) === selectedWeather);
-                        return (meta && meta.icon) ? meta.icon : 'sunny';
-                      })()}
-                      size={14}
-                      color={(() => {
-                        const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
-                        const defaultWeatherOptions = [
-                          { key: 'Soligt', icon: 'sunny' },
-                          { key: 'Delvis molnigt', icon: 'partly-sunny' },
-                          { key: 'Molnigt', icon: 'cloudy' },
-                          { key: 'Regn', icon: 'rainy' },
-                          { key: 'Snö', icon: 'snow' },
-                          { key: 'Åska', icon: 'thunderstorm' },
-                        ];
-                        const localWeather = (Array.isArray(weatherOptions) && weatherOptions.length > 0)
-                          ? weatherOptions.map(w => (typeof w === 'string' ? { key: w, icon: null } : w))
-                          : (controlType === 'Mottagningskontroll' ? defaultWeatherOptions : []);
-                        const meta = localWeather.find(w => (w.key || w) === selectedWeather);
-                        const icon = meta && meta.icon ? meta.icon : 'sunny';
-                        return cmap[icon] || '#1976D2';
-                      })()}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={{ color: '#222', marginRight: 8 }}>{selectedWeather}</Text>
-                    <TouchableOpacity onPress={() => setSelectedWeather(null)}>
+                </View>
+
+                {!!byggdel && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 10, flexShrink: 1, minWidth: 0 }}>
+                    <Text style={{ color: '#222', marginRight: 8, flexShrink: 1 }} numberOfLines={1}>
+                      {byggdel}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const tpl = byggdelTemplate || null;
+                        const hadMall = !!(tpl && (tpl.mallId || tpl.mallName || tpl.name));
+                        const clearOnlySelection = () => {
+                          setByggdel('');
+                          setByggdelTemplate(null);
+                        };
+                        const clearSelectionAndChecklist = () => {
+                          setByggdel('');
+                          setByggdelTemplate(null);
+                          setChecklist([]);
+                          setExpandedChecklist([]);
+                          try {
+                            if (controlType === 'Arbetsberedning') {
+                              const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
+                              if (cfg.length > 0) setSelectedCategories(cfg.map(() => false));
+                            }
+                          } catch (e) {}
+                        };
+
+                        if (hadMall && hasAnyChecklistPoints(checklistRef.current)) {
+                          Alert.alert(
+                            'Ta bort mall?'
+                            ,
+                            'Du har valt en mall. Vill du behålla kontrollpunkterna eller rensa dem?'
+                            ,
+                            [
+                              { text: 'Avbryt', style: 'cancel' },
+                              { text: 'Behåll punkter', onPress: clearOnlySelection },
+                              { text: 'Rensa punkter', style: 'destructive', onPress: clearSelectionAndChecklist },
+                            ]
+                          );
+                          return;
+                        }
+
+                        if (hadMall) {
+                          clearSelectionAndChecklist();
+                          return;
+                        }
+
+                        clearOnlySelection();
+                      }}
+                      accessibilityLabel="Rensa byggdel"
+                    >
                       <Ionicons name="close-circle" size={18} color="#D32F2F" />
                     </TouchableOpacity>
                   </View>
                 )}
               </View>
+              <TouchableOpacity
+                onPress={() => {
+                  const tpl = byggdelTemplate || null;
+                  const hg = String(tpl?.huvudgrupp || '').trim();
+                  const mm = String(tpl?.moment || '').trim();
+                  setByggdelHuvudgruppDraft(hg);
+                  setByggdelMomentDraft(mm);
+                  setByggdelMallDraft(tpl && (tpl.mallId || tpl.mallName || tpl.name) ? { id: tpl.mallId || null, name: tpl.mallName || tpl.name || '' } : null);
+                  setByggdelExpandedHuvudgrupp(hg);
+                  setByggdelExpandedMomentKey(hg && mm ? `${String(hg || '').split('-')[0].trim()}||${mm}` : '');
+                  setNewByggdelMallName('');
+                  setShowCreateByggdelMoment(false);
+                  setNewByggdelMomentName('');
+                  setShowCreateByggdelMallModal(false);
+                  setCreateByggdelMallContext(null);
+                  refreshByggdelHierarchy();
+                  refreshByggdelMallar();
+                  setShowByggdelModal(true);
+                }}
+                style={{ padding: 4, marginLeft: 8 }}
+                accessibilityLabel="Ange byggdel"
+              >
+                <Ionicons name={byggdel ? 'create-outline' : 'add-circle-outline'} size={26} color="#1976D2" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => setShowWeatherModal(true)} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till väder">
-              <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
-            </TouchableOpacity>
-          </View>
+          )}
         </View>
         {/* Horizontal divider between participants and material description */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
@@ -1711,6 +2881,1108 @@ export default function BaseControlForm({
             </View>
           </TouchableOpacity>
         </Modal>
+
+        {/* Byggdel modal (Arbetsberedning + Egenkontroll) */}
+        {(controlType === 'Arbetsberedning' || controlType === 'Egenkontroll') && (
+          <Modal visible={showByggdelModal} transparent animationType="fade" onRequestClose={closeByggdelModal}>
+            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+              <Pressable onPress={closeByggdelModal} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
+              <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
+                <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                  <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }}>Byggdel</Text>
+                </View>
+                <View style={{ padding: 16 }}>
+                  {byggdelHierarchyLoading ? (
+                    <Text style={{ color: '#444' }}>Laddar moment…</Text>
+                  ) : null}
+
+                  {byggdelMallarLoading ? (
+                    <Text style={{ color: '#444' }}>Laddar mallar…</Text>
+                  ) : null}
+
+                  {controlType === 'Arbetsberedning' ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        const current = (Array.isArray(aktivaByggdelarSelectedKeys) ? aktivaByggdelarSelectedKeys : []);
+                        setAktivaByggdelarDraftKeys(current);
+                        setAktivaByggdelarExpandedPrefix('');
+                        setShowAktivaByggdelarModal(true);
+                      }}
+                      style={{
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: '#e0e0e0',
+                        backgroundColor: '#fff',
+                        alignSelf: 'flex-start',
+                        marginBottom: 10,
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Aktiva byggdelar"
+                    >
+                      <Text style={{ color: '#1976D2', fontWeight: '700' }}>Aktiva byggdelar</Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 10 }}>Välj byggdel och moment.</Text>
+
+                  {controlType === 'Arbetsberedning' && (!Array.isArray(aktivaByggdelarSelectedKeys) || aktivaByggdelarSelectedKeys.length === 0) ? (
+                    <Text style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>
+                      Inga byggdelar är aktiva ännu. Tryck på “Aktiva byggdelar” och välj vilka moment som är aktuella i projektet.
+                    </Text>
+                  ) : null}
+
+                  {/* Step 1: Huvudgrupp */}
+                  {controlType === 'Egenkontroll' && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setShowByggdelHuvudgruppRolldown(prev => !prev);
+                      }}
+                      style={{
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: '#e0e0e0',
+                        backgroundColor: '#fff',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: 8,
+                      }}
+                      accessibilityLabel="Byggdel"
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'baseline', flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 14, color: '#222', fontWeight: '700' }}>Byggdel</Text>
+                        <Text style={{ fontSize: 12, color: '#666', marginLeft: 8, flexShrink: 1 }} numberOfLines={1}>
+                          {byggdelHuvudgruppDraft ? byggdelHuvudgruppDraft : 'Välj'}
+                        </Text>
+                      </View>
+                      <Ionicons name={showByggdelHuvudgruppRolldown ? 'chevron-up' : 'chevron-down'} size={18} color={'#666'} style={{ marginLeft: 8 }} />
+                    </TouchableOpacity>
+                  )}
+
+                  {(controlType !== 'Egenkontroll' || showByggdelHuvudgruppRolldown) && (
+                    <View style={{ flexDirection: 'column' }}>
+                      {(() => {
+                        const options = Array.isArray(byggdelHuvudgruppOptions) ? byggdelHuvudgruppOptions : [];
+                        if (controlType !== 'Arbetsberedning') return options;
+                        const selected = Array.isArray(aktivaByggdelarSelectedKeys) ? aktivaByggdelarSelectedKeys : [];
+                        if (!selected || selected.length === 0) return [];
+                        const selectedPrefixes = new Set(selected
+                          .map(k => String(k || '').split('||')[0].trim())
+                          .filter(Boolean));
+                        return options.filter(hg => selectedPrefixes.has(String(hg || '').split('-')[0].trim()));
+                      })().map(hg => {
+                      const isSelected = String(byggdelHuvudgruppDraft || '') === hg;
+                      const isExpanded = String(byggdelExpandedHuvudgrupp || '') === hg;
+                      const hgKeyPrefix = String(hg || '').split('-')[0].trim();
+                      const momentsCandidate = (byggdelMomentsByGroup && (byggdelMomentsByGroup[hg] || byggdelMomentsByGroup[hgKeyPrefix])) || [];
+                      let moments = Array.isArray(momentsCandidate) ? momentsCandidate : [];
+                      if (controlType === 'Arbetsberedning') {
+                        const selected = Array.isArray(aktivaByggdelarSelectedKeys) ? aktivaByggdelarSelectedKeys : [];
+                        if (!selected || selected.length === 0) {
+                          moments = [];
+                        } else {
+                          const activeSet = new Set(selected
+                            .filter(k => String(k || '').startsWith(`${hgKeyPrefix}||`))
+                            .map(k => String(k || '').split('||')[1])
+                            .map(x => String(x || '').trim())
+                            .filter(Boolean));
+                          moments = moments.filter(mm => activeSet.has(String(mm || '').trim()));
+                        }
+                      }
+                      return (
+                        <View key={`hg-${hg}`} style={{ marginBottom: 8 }}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+                              // Toggle expansion
+                              const nextExpanded = isExpanded ? '' : hg;
+                              setByggdelExpandedHuvudgrupp(nextExpanded);
+
+                              // Selecting a huvudgrupp resets moment (unless staying on same group)
+                              if (!isSelected) {
+                                setByggdelHuvudgruppDraft(hg);
+                                setByggdelMomentDraft('');
+                                setByggdelMallDraft(null);
+                                setByggdelExpandedMomentKey('');
+                                setShowCreateByggdelMallModal(false);
+                                setCreateByggdelMallContext(null);
+                                setNewByggdelMallName('');
+                              }
+                              setShowCreateByggdelMoment(false);
+                              setNewByggdelMomentName('');
+                            }}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: isExpanded ? '#1976D2' : '#e0e0e0',
+                              backgroundColor: isExpanded ? '#E8F0FF' : '#fff',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                          >
+                            <Text style={{ color: isExpanded ? '#1976D2' : '#444', fontWeight: isExpanded ? '700' : '500', flex: 1 }} numberOfLines={2}>
+                              {hg}
+                            </Text>
+                            <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={isExpanded ? '#1976D2' : '#666'} style={{ marginLeft: 8 }} />
+                          </TouchableOpacity>
+
+                          {isExpanded ? (
+                            <View style={{ marginTop: 4, paddingLeft: 12, paddingRight: 12, paddingBottom: 2 }}>
+
+                              {moments.length === 0 ? (
+                                <Text style={{ color: '#666' }}>Inga moment finns ännu för denna byggdel.</Text>
+                              ) : (
+                                <View style={{ flexDirection: 'column' }}>
+                                  {moments.map((mm) => {
+                                    const momentKey = `${hgKeyPrefix}||${String(mm || '')}`;
+                                    const isMomentExpanded = String(byggdelExpandedMomentKey || '') === momentKey;
+                                    const mallarForMoment = (Array.isArray(byggdelMallar) ? byggdelMallar : []).filter(m => {
+                                      const mg = String(m && (m.huvudgrupp ?? '')).trim();
+                                      const mom = String(m && (m.moment ?? '')).trim();
+                                      return mg === hgKeyPrefix && mom === String(mm || '').trim();
+                                    });
+                                    return (
+                                      <View key={`mm-${hg}-${mm}`} style={{ marginBottom: 6 }}>
+                                        <TouchableOpacity
+                                          onPress={() => {
+                                            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                            setByggdelMomentDraft(String(mm || ''));
+                                            setByggdelMallDraft(null);
+                                            setNewByggdelMallName('');
+                                            setByggdelExpandedMomentKey(isMomentExpanded ? '' : momentKey);
+                                          }}
+                                          style={{
+                                            paddingVertical: 10,
+                                            paddingHorizontal: 12,
+                                            borderRadius: 10,
+                                            borderWidth: 1,
+                                            borderColor: isMomentExpanded ? '#1976D2' : '#e0e0e0',
+                                            backgroundColor: isMomentExpanded ? '#E8F0FF' : '#fff',
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                          }}
+                                        >
+                                          <Text style={{ color: isMomentExpanded ? '#1976D2' : '#444', fontWeight: isMomentExpanded ? '700' : '500', flex: 1 }} numberOfLines={2}>
+                                            {String(mm || '')}
+                                          </Text>
+                                          <Ionicons name={isMomentExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={isMomentExpanded ? '#1976D2' : '#666'} style={{ marginLeft: 8 }} />
+                                        </TouchableOpacity>
+
+                                        {isMomentExpanded ? (
+                                          <View style={{ marginTop: 4, paddingLeft: 12, paddingRight: 12, paddingBottom: 2 }}>
+                                            {controlType === 'Egenkontroll' && (
+                                              <TouchableOpacity
+                                                onPress={() => {
+                                                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                                  setShowKontrollplanRolldown(prev => !prev);
+                                                }}
+                                                style={{
+                                                  paddingVertical: 10,
+                                                  paddingHorizontal: 12,
+                                                  borderRadius: 10,
+                                                  borderWidth: 1,
+                                                  borderColor: '#e0e0e0',
+                                                  backgroundColor: '#fff',
+                                                  flexDirection: 'row',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'space-between',
+                                                  marginBottom: 8,
+                                                }}
+                                                accessibilityLabel="Kontrollplan"
+                                              >
+                                                <View style={{ flexDirection: 'row', alignItems: 'baseline', flex: 1, minWidth: 0 }}>
+                                                  <Text style={{ fontSize: 14, color: '#222', fontWeight: '700' }}>Kontrollplan</Text>
+                                                  <Text style={{ fontSize: 12, color: '#666', marginLeft: 8, flexShrink: 1 }} numberOfLines={1}>
+                                                    {(() => {
+                                                      const tpl = byggdelTemplate || null;
+                                                      const tplHg = String(tpl?.huvudgrupp || '').trim();
+                                                      const tplMom = String(tpl?.moment || '').trim();
+                                                      const tplMall = String((tpl && (tpl.mallName || tpl.name)) || '').trim();
+                                                      const isForThis = tplHg === String(hgKeyPrefix || '').trim() && tplMom === String(mm || '').trim();
+                                                      return (isForThis && tplMall) ? tplMall : 'Välj';
+                                                    })()}
+                                                  </Text>
+                                                </View>
+                                                <Ionicons name={showKontrollplanRolldown ? 'chevron-up' : 'chevron-down'} size={18} color={'#666'} style={{ marginLeft: 8 }} />
+                                              </TouchableOpacity>
+                                            )}
+
+                                            {(controlType !== 'Egenkontroll' || showKontrollplanRolldown) && (
+                                              <View>
+                                                {mallarForMoment.length === 0 ? (
+                                                  <Text style={{ color: '#666', marginBottom: 8 }}>Inga mallar skapade.</Text>
+                                                ) : (
+                                                  <View style={{ marginBottom: 8 }}>
+                                                    {mallarForMoment.map((m) => {
+                                                      const id = m && m.id ? String(m.id) : '';
+                                                      const name = String(m && (m.name || '')).trim();
+                                                      const isSelectedMall = !!(byggdelMallDraft && ((byggdelMallDraft.id && id && byggdelMallDraft.id === id) || (byggdelMallDraft.name && name && byggdelMallDraft.name === name)));
+                                                      return (
+                                                        <TouchableOpacity
+                                                          key={`mall-${momentKey}-${id || name}`}
+                                                          onPress={() => {
+                                                            if (suppressNextMallPressRef.current) return;
+                                                            setByggdelMallDraft({ id: id || null, name });
+                                                            openByggdelMallEditor(m);
+                                                          }}
+                                                          delayLongPress={2000}
+                                                          onLongPress={() => {
+                                                            if (!id && !name) return;
+                                                            suppressNextMallPressRef.current = true;
+                                                            setTimeout(() => { suppressNextMallPressRef.current = false; }, 350);
+
+                                                            Alert.alert(
+                                                              'Mall',
+                                                              name || '(namnlös mall)',
+                                                              [
+                                                                { text: 'Avbryt', style: 'cancel' },
+                                                                {
+                                                                  text: 'Ändra mall',
+                                                                  onPress: () => {
+                                                                    openByggdelMallEditor(m);
+                                                                  }
+                                                                },
+                                                                {
+                                                                  text: 'Radera',
+                                                                  style: 'destructive',
+                                                                  onPress: () => {
+                                                                    if (!id) {
+                                                                      Alert.alert('Kunde inte radera', 'Mallen saknar id.');
+                                                                      return;
+                                                                    }
+
+                                                                    Alert.alert(
+                                                                      'Radera mall?',
+                                                                      `Vill du radera "${name || '(namnlös mall)'}"?`,
+                                                                      [
+                                                                        { text: 'Avbryt', style: 'cancel' },
+                                                                        {
+                                                                          text: 'Radera',
+                                                                          style: 'destructive',
+                                                                          onPress: async () => {
+                                                                            try {
+                                                                              if (deletingByggdelMallId) return;
+                                                                              setDeletingByggdelMallId(id);
+                                                                              await deleteByggdelMall({ mallId: id });
+
+                                                                              setByggdelMallar(prev => (Array.isArray(prev) ? prev.filter(x => String(x && x.id ? x.id : '') !== id) : []));
+
+                                                                              // Clear current selection if it was this mall
+                                                                              if (byggdelMallDraft) {
+                                                                                const pid = byggdelMallDraft.id ? String(byggdelMallDraft.id) : '';
+                                                                                const pname = byggdelMallDraft.name ? String(byggdelMallDraft.name).trim() : '';
+                                                                                if ((pid && pid === id) || (!pid && pname && pname === name)) {
+                                                                                  setByggdelMallDraft(null);
+                                                                                }
+                                                                              }
+
+                                                                              // Clear saved template reference if it was this mall (avoid dangling mallId)
+                                                                              if (byggdelTemplate) {
+                                                                                const pmid = byggdelTemplate.mallId ? String(byggdelTemplate.mallId) : '';
+                                                                                const pmname = byggdelTemplate.mallName ? String(byggdelTemplate.mallName).trim() : '';
+                                                                                const isMatch = (pmid && pmid === id) || (!pmid && pmname && pmname === name);
+                                                                                if (isMatch) {
+                                                                                  const nextTpl = { huvudgrupp: byggdelTemplate.huvudgrupp, moment: byggdelTemplate.moment };
+                                                                                  setByggdelTemplate(nextTpl);
+                                                                                  setByggdel(formatByggdelLabelFromTemplate(nextTpl));
+                                                                                }
+                                                                              }
+
+                                                                              if (byggdelMallEditor && String(byggdelMallEditor.id || '') === id) {
+                                                                                setShowByggdelMallEditor(false);
+                                                                                setByggdelMallEditor(null);
+                                                                                setByggdelMallSectionsDraft([]);
+                                                                                setNewByggdelMallSectionTitle('');
+                                                                              }
+                                                                            } catch (e) {
+                                                                              const msg = (e && e.message) ? String(e.message) : '';
+                                                                              const code = e && e.code ? String(e.code) : '';
+                                                                              const isPermission = code === 'permission-denied' || (msg && msg.toLowerCase().includes('permission'));
+                                                                              if (isPermission) {
+                                                                                Alert.alert('Kunde inte radera', 'Du saknar behörighet att radera mallar i företaget.');
+                                                                              } else {
+                                                                                Alert.alert('Kunde inte radera', 'Försök igen.');
+                                                                              }
+                                                                            } finally {
+                                                                              setDeletingByggdelMallId('');
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      ]
+                                                                    );
+                                                                  }
+                                                                }
+                                                              ]
+                                                            );
+                                                          }}
+                                                          style={{
+                                                            paddingVertical: 10,
+                                                            paddingHorizontal: 12,
+                                                            borderRadius: 10,
+                                                            borderWidth: 1,
+                                                            borderColor: isSelectedMall ? '#1976D2' : '#e0e0e0',
+                                                            backgroundColor: isSelectedMall ? '#E8F0FF' : '#fff',
+                                                            marginBottom: 6,
+                                                            opacity: deletingByggdelMallId && deletingByggdelMallId === id ? 0.5 : 1,
+                                                          }}
+                                                        >
+                                                          <Text style={{ color: isSelectedMall ? '#1976D2' : '#444', fontWeight: isSelectedMall ? '700' : '500' }}>
+                                                            {name || '(namnlös mall)'}
+                                                          </Text>
+                                                        </TouchableOpacity>
+                                                      );
+                                                    })}
+                                                  </View>
+                                                )}
+
+                                                <TouchableOpacity
+                                                  onPress={() => {
+                                                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                                    setCreateByggdelMallContext({ huvudgrupp: hgKeyPrefix, moment: String(mm || '').trim(), momentKey });
+                                                    setNewByggdelMallName('');
+                                                    setShowCreateByggdelMallModal(true);
+                                                  }}
+                                                  style={{
+                                                    paddingVertical: 10,
+                                                    paddingHorizontal: 2,
+                                                    alignItems: 'flex-start',
+                                                  }}
+                                                  accessibilityRole="button"
+                                                  accessibilityLabel="Skapa ny mall"
+                                                >
+                                                  <Text style={{ color: '#1976D2', fontWeight: '700' }}>+ Skapa ny mall</Text>
+                                                </TouchableOpacity>
+                                              </View>
+                                            )}
+                                          </View>
+                                        ) : null}
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              )}
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                      })}
+                    </View>
+                  )}
+
+                </View>
+
+                {/* Create mall overlay (inside Byggdel modal for iOS/Expo Go stability) */}
+                {showCreateByggdelMallModal ? (
+                  <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
+                    <View
+                      style={{
+                        flex: 1,
+                        justifyContent: 'flex-end',
+                        alignItems: 'center',
+                        paddingTop: 14,
+                        paddingHorizontal: 14,
+                        paddingBottom: createMallKeyboardHeight > 0 ? createMallKeyboardHeight : 14,
+                      }}
+                    >
+                      <View style={{ width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
+                        <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                          <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }}>Skapa ny mall</Text>
+                          {!!(createByggdelMallContext && createByggdelMallContext.moment) ? (
+                            <Text style={{ color: '#666', fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                              {String(createByggdelMallContext.moment || '').trim()}
+                            </Text>
+                          ) : null}
+                        </View>
+
+                        <View style={{ padding: 16 }}>
+                          <TextInput
+                            value={newByggdelMallName}
+                            onChangeText={setNewByggdelMallName}
+                            placeholder="Mallnamn"
+                            placeholderTextColor="#888"
+                            style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff' }}
+                          />
+                        </View>
+
+                        <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <TouchableOpacity onPress={closeCreateByggdelMallModal} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                            <Text style={{ color: '#777' }}>Avbryt</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={submitCreateByggdelMall} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                            <Text style={{ color: '#1976D2', fontWeight: '700' }}>{savingByggdelMall ? 'Sparar…' : 'Spara'}</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
+
+                <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <TouchableOpacity onPress={closeByggdelModal} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                    <Text style={{ color: '#777' }}>Avbryt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const hg = String(byggdelHuvudgruppDraft || '').trim();
+                      const mm = String(byggdelMomentDraft || '').trim();
+
+                      if (!hg) {
+                        setByggdelTemplate(null);
+                        setByggdel('');
+                        closeByggdelModal();
+                        return;
+                      }
+
+                      const hgKeyPrefix = String(hg || '').split('-')[0].trim();
+                      const momentsCandidate = (byggdelMomentsByGroup && (byggdelMomentsByGroup[hg] || byggdelMomentsByGroup[hgKeyPrefix])) || [];
+                      const availableMoments = Array.isArray(momentsCandidate) ? momentsCandidate : [];
+
+                      if (!mm && availableMoments.length > 0) {
+                        Alert.alert('Välj moment', 'Välj ett moment under vald byggdel innan du sparar.');
+                        return;
+                      }
+
+                      const mid = byggdelMallDraft && byggdelMallDraft.id ? String(byggdelMallDraft.id) : null;
+                      const mname = byggdelMallDraft && byggdelMallDraft.name ? String(byggdelMallDraft.name) : '';
+                      const tpl = mm
+                        ? (mid || mname ? { huvudgrupp: hg, moment: mm, mallId: mid, mallName: mname } : { huvudgrupp: hg, moment: mm })
+                        : { huvudgrupp: hg };
+
+                      const finishSave = () => {
+                        setByggdelTemplate(tpl);
+                        setByggdel(formatByggdelLabelFromTemplate(tpl));
+                        setShowCategoryModal(false);
+                        closeByggdelModal();
+                      };
+
+                      // If a mall is selected, apply its points as the Arbetsberedning checklist.
+                      if (controlType === 'Arbetsberedning' && (mid || mname)) {
+                        const mallList = Array.isArray(byggdelMallar) ? byggdelMallar : [];
+                        const selectedMall = (mid
+                          ? mallList.find(m => String(m && m.id ? m.id : '') === String(mid))
+                          : null) || mallList.find(m => {
+                          const nm = String(m && (m.name ?? '')).trim();
+                          const hg2 = String(m && (m.huvudgrupp ?? '')).trim();
+                          const mm2 = String(m && (m.moment ?? '')).trim();
+                          return !!mname && nm === String(mname).trim() && hg2 === hgKeyPrefix && mm2 === String(mm || '').trim();
+                        });
+                        const mallPoints = Array.isArray(selectedMall && selectedMall.points) ? selectedMall.points : [];
+                        const mallSections = Array.isArray(selectedMall && selectedMall.sections) ? selectedMall.sections : [];
+                        const nextChecklist = buildChecklistFromMallPoints({ mallName: mname || (selectedMall && selectedMall.name) || 'Mall', points: mallPoints, sections: mallSections });
+                        const shouldConfirm = hasAnyChecklistPoints(checklistRef.current);
+
+                        if (shouldConfirm) {
+                          Alert.alert(
+                            'Ersätta kontrollpunkter?',
+                            'Detta ersätter dina nuvarande punkter.',
+                            [
+                              { text: 'Avbryt', style: 'cancel' },
+                              {
+                                text: 'Fortsätt',
+                                style: 'destructive',
+                                onPress: () => {
+                                  setChecklist(nextChecklist);
+                                  setExpandedChecklist([]);
+                                  finishSave();
+                                }
+                              }
+                            ]
+                          );
+                          return;
+                        }
+
+                        setChecklist(nextChecklist);
+                        setExpandedChecklist([]);
+                        finishSave();
+                        return;
+                      }
+
+                      finishSave();
+                    }}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                  >
+                    <Text style={{ color: '#1976D2', fontWeight: '600' }}>Spara</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {showAktivaByggdelarModal ? (
+                <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 350 }}>
+                  <Pressable onPress={() => setShowAktivaByggdelarModal(false)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
+                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 320, height: '80%', alignItems: 'stretch', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 8 }}>
+                    <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222' }}>Aktiva byggdelar</Text>
+                    <ScrollView style={{ flex: 1, marginBottom: 12 }}>
+                      {(Array.isArray(byggdelHuvudgruppOptions) ? byggdelHuvudgruppOptions : []).map((hg) => {
+                        const prefix = String(hg || '').split('-')[0].trim();
+                        const isExpanded = String(aktivaByggdelarExpandedPrefix || '') === String(prefix || '');
+                        const momentsCandidate = (byggdelMomentsByGroup && (byggdelMomentsByGroup[hg] || byggdelMomentsByGroup[prefix])) || [];
+                        const moments = Array.isArray(momentsCandidate) ? momentsCandidate : [];
+                        const draftSet = new Set((Array.isArray(aktivaByggdelarDraftKeys) ? aktivaByggdelarDraftKeys : []).map(x => String(x || '').trim()).filter(Boolean));
+
+                        return (
+                          <View key={`ab-hg-active-${hg}`} style={{ marginBottom: 6 }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                setAktivaByggdelarExpandedPrefix(prev => (String(prev || '') === String(prefix || '') ? '' : prefix));
+                              }}
+                              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            >
+                              <Text style={{ fontSize: 15, color: '#222', fontWeight: '700', flex: 1 }} numberOfLines={2}>{hg}</Text>
+                              <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={'#666'} style={{ marginLeft: 8 }} />
+                            </TouchableOpacity>
+
+                            {isExpanded ? (
+                              <View style={{ paddingLeft: 14, paddingBottom: 8 }}>
+                                {moments.length === 0 ? (
+                                  <Text style={{ color: '#666', marginBottom: 6 }}>Inga byggdelar finns ännu för denna nivå.</Text>
+                                ) : (
+                                  <View style={{ flexDirection: 'column' }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                      <TouchableOpacity
+                                        onPress={() => {
+                                          setAktivaByggdelarDraftKeys(prev => {
+                                            const cur = new Set((Array.isArray(prev) ? prev : []).map(x => String(x || '').trim()).filter(Boolean));
+                                            const next = new Set(cur);
+                                            (Array.isArray(moments) ? moments : []).forEach(mm => {
+                                              const momentLabel = String(mm || '').trim();
+                                              if (!prefix || !momentLabel) return;
+                                              next.add(`${prefix}||${momentLabel}`);
+                                            });
+                                            return Array.from(next);
+                                          });
+                                        }}
+                                        style={{ paddingVertical: 6, paddingHorizontal: 0 }}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Välj alla byggdelar i ${hg}`}
+                                      >
+                                        <Text style={{ color: '#1976D2', fontWeight: '700', fontSize: 13 }}>Välj alla i nivån</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        onPress={() => {
+                                          setAktivaByggdelarDraftKeys(prev => {
+                                            const cur = new Set((Array.isArray(prev) ? prev : []).map(x => String(x || '').trim()).filter(Boolean));
+                                            const next = new Set(cur);
+                                            (Array.isArray(moments) ? moments : []).forEach(mm => {
+                                              const momentLabel = String(mm || '').trim();
+                                              if (!prefix || !momentLabel) return;
+                                              next.delete(`${prefix}||${momentLabel}`);
+                                            });
+                                            return Array.from(next);
+                                          });
+                                        }}
+                                        style={{ paddingVertical: 6, paddingHorizontal: 0 }}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Rensa byggdelar i ${hg}`}
+                                      >
+                                        <Text style={{ color: '#777', fontWeight: '700', fontSize: 13 }}>Rensa nivån</Text>
+                                      </TouchableOpacity>
+                                    </View>
+
+                                    {moments.map((mm) => {
+                                      const momentLabel = String(mm || '').trim();
+                                      const key = `${prefix}||${momentLabel}`;
+                                      const checked = !!(prefix && momentLabel && draftSet.has(key));
+                                      return (
+                                        <TouchableOpacity
+                                          key={`ab-mm-active-${prefix}-${momentLabel}`}
+                                          onPress={() => {
+                                            setAktivaByggdelarDraftKeys(prev => {
+                                              const cur = new Set((Array.isArray(prev) ? prev : []).map(x => String(x || '').trim()).filter(Boolean));
+                                              if (!prefix || !momentLabel) return Array.from(cur);
+                                              if (cur.has(key)) cur.delete(key);
+                                              else cur.add(key);
+                                              return Array.from(cur);
+                                            });
+                                          }}
+                                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                        >
+                                          <Ionicons name={checked ? 'checkbox' : 'square-outline'} size={20} color={checked ? '#1976D2' : '#666'} style={{ marginRight: 10 }} />
+                                          <Text style={{ fontSize: 14, color: '#222', flex: 1 }} numberOfLines={2}>{momentLabel}</Text>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                )}
+                              </View>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <TouchableOpacity onPress={() => setShowAktivaByggdelarModal(false)} style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginRight: 8 }}>
+                        <Text style={{ color: '#777' }}>Avbryt</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          try {
+                            const draftSet = new Set((Array.isArray(aktivaByggdelarDraftKeys) ? aktivaByggdelarDraftKeys : [])
+                              .map(x => String(x || '').trim())
+                              .filter(x => !!x && x.includes('||')));
+
+                            const normalized = Array.from(draftSet);
+
+                            setAktivaByggdelarSelectedKeys(normalized);
+                            const pid = project && project.id ? String(project.id) : '';
+                            if (pid) {
+                              AsyncStorage.setItem(arbetsberedningActiveByggdelKey(pid), JSON.stringify({ selectedKeys: normalized })).catch(() => {});
+                            }
+                          } catch (e) {}
+                          setShowAktivaByggdelarModal(false);
+                        }}
+                        style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
+                      >
+                        <Text style={{ color: '#1976D2', fontWeight: '600' }}>Bekräfta</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          </Modal>
+        )}
+
+        {/* Create mall popup (separate from Byggdel modal to avoid nested Modals) */}
+        {controlType === 'Arbetsberedning' && (
+          <Modal visible={showCreateByggdelMallModal && !showByggdelModal} transparent animationType="fade" onRequestClose={() => {}}>
+            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}>
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: 'flex-end',
+                  alignItems: 'center',
+                  paddingTop: 14,
+                  paddingHorizontal: 14,
+                  paddingBottom: createMallKeyboardHeight > 0 ? createMallKeyboardHeight : 14,
+                }}
+              >
+                <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
+                  <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                    <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }}>Skapa ny mall</Text>
+                    {!!(createByggdelMallContext && createByggdelMallContext.moment) ? (
+                      <Text style={{ color: '#666', fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                        {String(createByggdelMallContext.moment || '').trim()}
+                      </Text>
+                    ) : null}
+                  </View>
+
+                <View style={{ padding: 16 }}>
+                  <TextInput
+                    value={newByggdelMallName}
+                    onChangeText={setNewByggdelMallName}
+                    placeholder="Mallnamn"
+                    placeholderTextColor="#888"
+                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff' }}
+                  />
+                </View>
+
+                  <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <TouchableOpacity onPress={closeCreateByggdelMallModal} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                      <Text style={{ color: '#777' }}>Avbryt</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={submitCreateByggdelMall} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                      <Text style={{ color: '#1976D2', fontWeight: '700' }}>{savingByggdelMall ? 'Sparar…' : 'Spara'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        {/* Byggdel mall editor (kontrollpunkter) */}
+        {controlType === 'Arbetsberedning' && (
+          <Modal
+            visible={showByggdelMallEditor}
+            transparent
+            animationType="fade"
+            onRequestClose={() => {}}
+          >
+            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+              <View style={{ width: '90%', maxWidth: 420, height: '85%', backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd', marginBottom: mallEditorKeyboardHeight > 0 ? Math.min(mallEditorKeyboardHeight, 220) : 0 }}>
+                <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                  <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }} numberOfLines={2}>
+                    {String(byggdelMallEditor && byggdelMallEditor.name ? byggdelMallEditor.name : 'Mall')}
+                  </Text>
+                  {!!(byggdelMallEditor && (byggdelMallEditor.huvudgrupp || byggdelMallEditor.moment)) ? (
+                    <Text style={{ color: '#666', fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                      {String(byggdelMallEditor.huvudgrupp || '').trim()}{byggdelMallEditor.moment ? ` / ${String(byggdelMallEditor.moment || '').trim()}` : ''}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16 }}>
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 10 }}>
+                    Rubriker/huvudmoment. Tryck för att visa/dölja kontrollpunkter.
+                  </Text>
+
+                  {Array.isArray(byggdelMallSectionsDraft) && byggdelMallSectionsDraft.length > 0 ? (
+                    <View style={{ marginBottom: 12 }}>
+                      {byggdelMallSectionsDraft.map((sec) => {
+                        const sid = String(sec && sec.id ? sec.id : '');
+                        const title = String(sec && (sec.title || '')).trim();
+                        const pts = Array.isArray(sec && sec.points) ? sec.points : [];
+                        const isExpanded = sid && String(byggdelMallEditorExpandedSectionId || '') === sid;
+
+                        return (
+                          <View key={`bsec-${sid}`} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                                setByggdelMallEditorExpandedSectionId(prev => (String(prev || '') === sid ? '' : sid));
+                              }}
+                              style={{ flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: isExpanded ? '#E8F0FF' : '#fff' }}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Visa eller dölj ${title || 'rubrik'}`}
+                            >
+                              <Ionicons name={isExpanded ? 'chevron-down' : 'chevron-forward'} size={18} color={isExpanded ? '#1976D2' : '#666'} style={{ marginRight: 10 }} />
+                              <Text style={{ flex: 1, color: isExpanded ? '#1976D2' : '#222', fontWeight: '700' }} numberOfLines={2}>
+                                {title || '(Rubrik)'}
+                              </Text>
+                            </TouchableOpacity>
+
+                            {isExpanded ? (
+                              <View style={{ padding: 12, paddingTop: 0 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                  <TextInput
+                                    value={title}
+                                    onChangeText={(txt) => {
+                                      setByggdelMallSectionsDraft(prev => {
+                                        const arr = Array.isArray(prev) ? prev : [];
+                                        return arr.map(s => {
+                                          if (String(s && s.id ? s.id : '') !== sid) return s;
+                                          return Object.assign({}, s, { title: txt });
+                                        });
+                                      });
+                                    }}
+                                    placeholder="Rubrik / huvudmoment"
+                                    placeholderTextColor="#888"
+                                    style={{ flex: 1, marginRight: 10, paddingVertical: 8, paddingHorizontal: 10, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, fontWeight: '700', color: '#222', backgroundColor: '#fff' }}
+                                  />
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      Alert.alert(
+                                        'Ta bort rubrik?',
+                                        `Vill du ta bort "${title || '(Rubrik)'}"?`,
+                                        [
+                                          { text: 'Avbryt', style: 'cancel' },
+                                          {
+                                            text: 'Ta bort',
+                                            style: 'destructive',
+                                            onPress: () => {
+                                              setByggdelMallSectionsDraft(prev => (Array.isArray(prev) ? prev.filter(s => String(s && s.id ? s.id : '') !== sid) : []));
+                                              setByggdelMallEditorExpandedSectionId(prev => (String(prev || '') === sid ? '' : prev));
+                                              setNewByggdelMallPointBySectionId(prev => {
+                                                const next = Object.assign({}, (prev && typeof prev === 'object') ? prev : {});
+                                                try { delete next[sid]; } catch (e) {}
+                                                return next;
+                                              });
+                                            }
+                                          }
+                                        ]
+                                      );
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Ta bort rubrik"
+                                    style={{ padding: 6 }}
+                                  >
+                                    <Ionicons name="trash-outline" size={18} color="#D32F2F" />
+                                  </TouchableOpacity>
+                                </View>
+
+                                {pts.length > 0 ? (
+                                  <View style={{ marginBottom: 10 }}>
+                                    {pts.map((p, idx) => {
+                                      const statusVal = (sec && Array.isArray(sec.statuses)) ? (sec.statuses[idx] ?? null) : null;
+                                      const photosOuter = (sec && Array.isArray(sec.photos)) ? sec.photos : [];
+                                      const photoList = Array.isArray(photosOuter[idx]) ? photosOuter[idx] : (photosOuter[idx] ? [photosOuter[idx]] : []);
+                                      const hasPhotos = Array.isArray(photoList) && photoList.length > 0;
+
+                                      return (
+                                        <View key={`bp-${sid}-${idx}`} style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 10, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 10, marginBottom: 8, backgroundColor: '#fff' }}>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8, paddingTop: 2 }}>
+                                            <TouchableOpacity
+                                              onPress={() => {
+                                                setByggdelMallSectionsDraft(prev => {
+                                                  const arr = Array.isArray(prev) ? prev : [];
+                                                  return arr.map(s => {
+                                                    if (String(s && s.id ? s.id : '') !== sid) return s;
+                                                    const pp = Array.isArray(s && s.points) ? s.points : [];
+                                                    const statuses = Array.isArray(s && s.statuses) && s.statuses.length === pp.length ? [...s.statuses] : Array(pp.length).fill(null);
+                                                    const next = (statuses[idx] === 'ok') ? null : 'ok';
+                                                    statuses[idx] = next;
+                                                    return Object.assign({}, s, { statuses });
+                                                  });
+                                                });
+                                              }}
+                                              style={{ padding: 4, marginRight: 6 }}
+                                              accessibilityRole="button"
+                                              accessibilityLabel="Markera som godkänd"
+                                            >
+                                              <Ionicons name={statusVal === 'ok' ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={statusVal === 'ok' ? '#43A047' : '#bbb'} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                              onPress={() => {
+                                                setByggdelMallSectionsDraft(prev => {
+                                                  const arr = Array.isArray(prev) ? prev : [];
+                                                  return arr.map(s => {
+                                                    if (String(s && s.id ? s.id : '') !== sid) return s;
+                                                    const pp = Array.isArray(s && s.points) ? s.points : [];
+                                                    const statuses = Array.isArray(s && s.statuses) && s.statuses.length === pp.length ? [...s.statuses] : Array(pp.length).fill(null);
+                                                    const next = (statuses[idx] === 'avvikelse') ? null : 'avvikelse';
+                                                    statuses[idx] = next;
+                                                    return Object.assign({}, s, { statuses });
+                                                  });
+                                                });
+                                              }}
+                                              style={{ padding: 4 }}
+                                              accessibilityRole="button"
+                                              accessibilityLabel="Markera som avvikelse"
+                                            >
+                                              <View style={{ width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: statusVal === 'avvikelse' ? '#D32F2F' : 'transparent' }}>
+                                                {statusVal === 'avvikelse' ? (
+                                                  <Ionicons name="alert" size={14} color="#fff" />
+                                                ) : (
+                                                  <Ionicons name="ellipse-outline" size={20} color="#bbb" />
+                                                )}
+                                              </View>
+                                            </TouchableOpacity>
+                                          </View>
+
+                                          <TextInput
+                                            value={String(p || '')}
+                                            onChangeText={(txt) => {
+                                              setByggdelMallSectionsDraft(prev => {
+                                                const arr = Array.isArray(prev) ? prev : [];
+                                                return arr.map(s => {
+                                                  if (String(s && s.id ? s.id : '') !== sid) return s;
+                                                  const pp = Array.isArray(s && s.points) ? [...s.points] : [];
+                                                  if (idx < 0 || idx >= pp.length) return s;
+                                                  pp[idx] = txt;
+                                                  return Object.assign({}, s, { points: pp });
+                                                });
+                                              });
+                                            }}
+                                            multiline
+                                            placeholderTextColor="#888"
+                                            style={{ color: '#222', flex: 1, marginRight: 10, paddingVertical: 6, paddingHorizontal: 8, borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fff', minHeight: 36, textAlignVertical: 'top' }}
+                                          />
+
+                                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 2 }}>
+                                            <TouchableOpacity
+                                              onPress={() => {
+                                                if (hasPhotos) {
+                                                  setPhotoModal({ visible: true, uris: photoList, index: 0, mallSectionId: sid, mallPointIdx: idx });
+                                                  return;
+                                                }
+                                                handlePickMallPointFromLibrary(sid, idx);
+                                              }}
+                                              style={{ padding: 6, marginRight: 2 }}
+                                              accessibilityRole="button"
+                                              accessibilityLabel={hasPhotos ? 'Visa bilder' : 'Lägg till bilder'}
+                                            >
+                                              <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={18} color={'#1976D2'} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                              onPress={() => {
+                                                setByggdelMallSectionsDraft(prev => {
+                                                  const arr = Array.isArray(prev) ? prev : [];
+                                                  return arr.map(s => {
+                                                    if (String(s && s.id ? s.id : '') !== sid) return s;
+                                                    const pp = Array.isArray(s && s.points) ? s.points : [];
+                                                    const statuses = Array.isArray(s && s.statuses) && s.statuses.length === pp.length ? s.statuses : Array(pp.length).fill(null);
+                                                    const photos = Array.isArray(s && s.photos) && s.photos.length === pp.length ? s.photos : Array(pp.length).fill(null).map(() => []);
+                                                    return Object.assign({}, s, {
+                                                      points: pp.filter((_, i) => i !== idx),
+                                                      statuses: statuses.filter((_, i) => i !== idx),
+                                                      photos: photos.filter((_, i) => i !== idx),
+                                                    });
+                                                  });
+                                                });
+                                              }}
+                                              accessibilityRole="button"
+                                              accessibilityLabel="Ta bort kontrollpunkt"
+                                              style={{ padding: 6 }}
+                                            >
+                                              <Ionicons name="trash-outline" size={18} color="#D32F2F" />
+                                            </TouchableOpacity>
+                                          </View>
+                                        </View>
+                                      );
+                                    })}
+                                  </View>
+                                ) : (
+                                  <Text style={{ color: '#666', marginBottom: 10 }}>Inga kontrollpunkter under denna rubrik ännu.</Text>
+                                )}
+
+                                <Text style={{ fontSize: 13, color: '#444', marginBottom: 6 }}>Lägg till kontrollpunkt</Text>
+                                <TextInput
+                                  value={String((newByggdelMallPointBySectionId && newByggdelMallPointBySectionId[sid]) ? newByggdelMallPointBySectionId[sid] : '')}
+                                  onChangeText={(txt) => {
+                                    setNewByggdelMallPointBySectionId(prev => Object.assign({}, (prev && typeof prev === 'object') ? prev : {}, { [sid]: txt }));
+                                  }}
+                                  multiline
+                                  placeholder="Ny kontrollpunkt"
+                                  placeholderTextColor="#888"
+                                  style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff', marginBottom: 10, minHeight: 44, textAlignVertical: 'top' }}
+                                />
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const raw = (newByggdelMallPointBySectionId && newByggdelMallPointBySectionId[sid]) ? newByggdelMallPointBySectionId[sid] : '';
+                                    const txt = String(raw || '').trim();
+                                    if (!txt) {
+                                      Alert.alert('Ange text', 'Skriv en kontrollpunkt.');
+                                      return;
+                                    }
+                                    setByggdelMallSectionsDraft(prev => {
+                                      const arr = Array.isArray(prev) ? prev : [];
+                                      return arr.map(s => {
+                                        if (String(s && s.id ? s.id : '') !== sid) return s;
+                                        const pp = Array.isArray(s && s.points) ? s.points : [];
+                                        const statuses = Array.isArray(s && s.statuses) && s.statuses.length === pp.length ? s.statuses : Array(pp.length).fill(null);
+                                        const photos = Array.isArray(s && s.photos) && s.photos.length === pp.length ? s.photos : Array(pp.length).fill(null).map(() => []);
+                                        return Object.assign({}, s, {
+                                          points: [...pp, txt],
+                                          statuses: [...statuses, null],
+                                          photos: [...photos, []],
+                                        });
+                                      });
+                                    });
+                                    setNewByggdelMallPointBySectionId(prev => Object.assign({}, (prev && typeof prev === 'object') ? prev : {}, { [sid]: '' }));
+                                  }}
+                                  style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#1976D2', backgroundColor: '#E8F0FF', alignItems: 'center' }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Lägg till kontrollpunkt"
+                                >
+                                  <Text style={{ color: '#1976D2', fontWeight: '700' }}>+ Lägg till kontrollpunkt</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <Text style={{ color: '#666', marginBottom: 12 }}>Inga rubriker ännu.</Text>
+                  )}
+
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 6 }}>Lägg till rubrik</Text>
+                  <TextInput
+                    value={newByggdelMallSectionTitle}
+                    onChangeText={setNewByggdelMallSectionTitle}
+                    placeholder="Ny rubrik / huvudmoment"
+                    placeholderTextColor="#888"
+                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff', marginBottom: 10 }}
+                  />
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      const title = String(newByggdelMallSectionTitle || '').trim();
+                      if (!title) {
+                        Alert.alert('Ange rubrik', 'Skriv en rubrik/huvudmoment.');
+                        return;
+                      }
+                      const sid = `sec-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                      setByggdelMallSectionsDraft(prev => {
+                        const arr = Array.isArray(prev) ? prev : [];
+                        return [...arr, { id: sid, title, points: [], statuses: [], photos: [] }];
+                      });
+                      setNewByggdelMallSectionTitle('');
+                      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                      setByggdelMallEditorExpandedSectionId(sid);
+                    }}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#1976D2', backgroundColor: '#E8F0FF', alignItems: 'center', marginBottom: 14 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Lägg till rubrik"
+                  >
+                    <Text style={{ color: '#1976D2', fontWeight: '700' }}>+ Lägg till rubrik</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+
+                <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <TouchableOpacity
+                    onPress={() => setShowByggdelMallEditor(false)}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Stäng mall"
+                  >
+                    <Text style={{ color: '#777' }}>Stäng</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        if (!byggdelMallEditor || !byggdelMallEditor.id) return;
+                        if (savingByggdelMallPoints) return;
+                        setSavingByggdelMallPoints(true);
+                        const secs = Array.isArray(byggdelMallSectionsDraft) ? byggdelMallSectionsDraft : [];
+                        const sectionsForSave = secs
+                          .map(s => {
+                            const title = String(s && (s.title || '')).trim();
+                            const rawPts = Array.isArray(s && s.points) ? s.points : [];
+                            const rawStatuses = Array.isArray(s && s.statuses) ? s.statuses : [];
+                            const rawPhotosOuter = Array.isArray(s && s.photos) ? s.photos : [];
+                            const normalizeStatus = (v) => (v === 'ok' || v === 'avvikelse' || v === 'ejaktuell') ? v : null;
+                            const items = rawPts
+                              .map((p, i) => ({
+                                text: String(p || '').trim(),
+                                status: rawStatuses[i],
+                                photos: rawPhotosOuter[i],
+                              }))
+                              .filter(it => !!it.text);
+                            const pts = items.map(it => it.text);
+                            const statuses = items.map(it => normalizeStatus(it.status));
+                            const photos = items.map(it => {
+                              const list = Array.isArray(it.photos) ? it.photos : (it.photos ? [it.photos] : []);
+                              return list
+                                .map(item => {
+                                  if (!item) return null;
+                                  if (typeof item === 'string') return item;
+                                  if (item && typeof item === 'object' && item.uri) return { uri: item.uri, comment: item.comment || '' };
+                                  return null;
+                                })
+                                .filter(Boolean);
+                            });
+                            return { title, points: pts, statuses, photos };
+                          })
+                          .filter(s => String(s && s.title ? s.title : '').trim() || (Array.isArray(s && s.points) && s.points.length > 0));
+                        const flatPoints = sectionsForSave.reduce((acc, s) => acc.concat(Array.isArray(s.points) ? s.points : []), []);
+                        const ok = await updateByggdelMall({ mallId: byggdelMallEditor.id, patch: { sections: sectionsForSave, points: flatPoints } });
+                        if (!ok) {
+                          Alert.alert('Kunde inte spara', 'Försök igen.');
+                          return;
+                        }
+                        await refreshByggdelMallar();
+                        setShowByggdelMallEditor(false);
+                      } catch (e) {
+                        Alert.alert('Kunde inte spara', 'Försök igen.');
+                      } finally {
+                        setSavingByggdelMallPoints(false);
+                      }
+                    }}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Spara kontrollpunkter"
+                  >
+                    <Text style={{ color: '#1976D2', fontWeight: '700' }}>{savingByggdelMallPoints ? 'Sparar…' : 'Spara'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
         {/* Material description for Mottagningskontroll */}
         {controlType === 'Mottagningskontroll' && (
           <View style={{ marginTop: 8, marginBottom: 10, paddingHorizontal: 16 }}>
@@ -1739,17 +4011,29 @@ export default function BaseControlForm({
             />
           </View>
         )}
-        {/* Divider under participants, before weather */}
-        <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
-                {/* Button to choose categories for Arbetsberedning */}
+        {/* Button to choose categories for Arbetsberedning */}
         {controlType === 'Arbetsberedning' && Array.isArray(checklistConfig) && (
           <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
             <TouchableOpacity
-              onPress={() => setShowCategoryModal(true)}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
+              onPress={() => {
+                if (byggdelMallLocksCategories) return;
+                setShowCategoryModal(true);
+              }}
+              disabled={byggdelMallLocksCategories}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: 10,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+                backgroundColor: (Array.isArray(checklist) && checklist.length > 0) ? 'transparent' : '#E8F0FF',
+                borderWidth: (Array.isArray(checklist) && checklist.length > 0) ? 0 : 1,
+                borderColor: (Array.isArray(checklist) && checklist.length > 0) ? 'transparent' : '#1976D2',
+                opacity: byggdelMallLocksCategories ? 0.4 : 1,
+              }}
               accessibilityRole="button"
             >
-              <Ionicons name="options-outline" size={22} color="#1976D2" style={{ marginRight: 8 }} />
+              <Ionicons name="options-outline" size={26} color="#1976D2" style={{ marginRight: 10 }} />
               <Text style={{ color: '#1976D2', fontWeight: '600', fontSize: 16 }}>Välj kategorier att gå igenom</Text>
             </TouchableOpacity>
           </View>
@@ -1946,7 +4230,7 @@ export default function BaseControlForm({
           </View>
         )}
         {/* Category selection modal for Arbetsberedning */}
-        {showCategoryModal && (
+        {showCategoryModal && !byggdelMallLocksCategories && (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-start', alignItems: 'center', zIndex: 300 }}>
             <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: 320, maxHeight: '70%', alignItems: 'stretch', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 8, marginTop: 120 }}>
               <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222' }}>Välj kategorier</Text>
@@ -1969,15 +4253,19 @@ export default function BaseControlForm({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
-                    // Apply selected categories to checklist state
-                    const newChecklist = (Array.isArray(checklistConfig) ? checklistConfig : [])
-                      .map(section => ({ label: section.label, points: Array.isArray(section.points) ? [...section.points] : [], statuses: Array.isArray(section.points) ? Array(section.points.length).fill(null) : [], photos: Array.isArray(section.points) ? Array(section.points.length).fill([]) : [] }))
-                      .filter((_, i) => selectedCategories[i]);
-                    // Only update state if checklist actually changes
-                    if (!shallowEqual(newChecklist, checklist)) {
-                      setChecklist(newChecklist);
+                    applySelectedCategoriesToChecklist(selectedCategories);
+
+                    // Persist as project default (local device) for Arbetsberedning
+                    if (controlType === 'Arbetsberedning') {
+                      try {
+                        const pid = project && project.id ? String(project.id) : '';
+                        const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
+                        if (pid && cfg.length > 0 && Array.isArray(selectedCategories) && selectedCategories.length === cfg.length) {
+                          const selectedLabels = cfg.filter((_, i) => !!selectedCategories[i]).map(sec => sec && sec.label ? sec.label : '').filter(Boolean);
+                          AsyncStorage.setItem(arbetsberedningCategoryKey(pid), JSON.stringify({ selectedLabels })).catch(() => {});
+                        }
+                      } catch (e) {}
                     }
-                    setExpandedChecklist([]);
                     setShowCategoryModal(false);
                   }}
                   style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
@@ -1989,10 +4277,15 @@ export default function BaseControlForm({
           </View>
         )}
       {/* Checklist rendering for Skyddsrond och andra kontroller */}
-      {Array.isArray(checklist) && checklist.length > 0 && (
+      {(controlType === 'Arbetsberedning' || (Array.isArray(checklist) && checklist.length > 0)) && (
         <View style={{ marginTop: 8, marginBottom: 16, paddingHorizontal: 16 }}>
           <Text style={{ fontSize: 18, fontWeight: 'bold', color: (missingFields && missingFields.includes('Kontrollpunkter')) ? '#D32F2F' : '#222', marginBottom: 10, marginLeft: 2 }}>Kontrollpunkter</Text>
-          {checklist.map((section, sectionIdx) => {
+          {(!Array.isArray(checklist) || checklist.length === 0) ? (
+            <Text style={{ color: '#666', fontSize: 14, marginLeft: 2 }}>
+              Inga kategorier är valda än. Tryck på “Välj kategorier att gå igenom” ovan.
+            </Text>
+          ) : null}
+          {(Array.isArray(checklist) ? checklist : []).map((section, sectionIdx) => {
             const expanded = expandedChecklist.includes(sectionIdx);
             // Check if any point in this section is not filled in
             const sectionStatuses = checklist[sectionIdx]?.statuses || [];
@@ -2092,9 +4385,13 @@ export default function BaseControlForm({
                       const remediation = section.remediation && section.remediation[point] ? section.remediation[point] : null;
                       const isDeviation = section.statuses[pointIdx] === 'avvikelse';
                       const isHandled = !!remediation;
+                      const pointText = (typeof point === 'string') ? point : String(point || '');
+                      const actionText = (controlType === 'Arbetsberedning' && Array.isArray(section.comments) && typeof section.comments[pointIdx] === 'string')
+                        ? section.comments[pointIdx]
+                        : '';
                       return (
                         <View key={`point-${pointIdx}`} style={{ marginBottom: 0 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                          <View style={{ flexDirection: 'row', alignItems: controlType === 'Arbetsberedning' ? 'flex-start' : 'center', paddingVertical: 8 }}>
                             {/* Status button (OK) */}
                             <TouchableOpacity
                               onPress={() => {
@@ -2106,7 +4403,7 @@ export default function BaseControlForm({
                                 }));
                               }}
                               style={{ marginRight: 10, padding: 6 }}
-                              accessibilityLabel={`Markera ${point} som OK`}
+                              accessibilityLabel={`Markera ${pointText} som OK`}
                             >
                               <Ionicons name={section.statuses[pointIdx] === 'ok' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ok' ? '#43A047' : '#bbb'} />
                             </TouchableOpacity>
@@ -2121,7 +4418,7 @@ export default function BaseControlForm({
                                 }));
                               }}
                               style={{ marginRight: 10, padding: 6 }}
-                              accessibilityLabel={`Markera ${point} som avvikelse`}
+                              accessibilityLabel={`Markera ${pointText} som avvikelse`}
                             >
                               <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: section.statuses[pointIdx] === 'avvikelse' ? '#D32F2F' : 'transparent' }}>
                                 {section.statuses[pointIdx] === 'avvikelse' ? (
@@ -2142,12 +4439,52 @@ export default function BaseControlForm({
                                 }));
                               }}
                               style={{ marginRight: 10, padding: 6 }}
-                              accessibilityLabel={`Markera ${point} som ej aktuell`}
+                              accessibilityLabel={`Markera ${pointText} som ej aktuell`}
                             >
                               <Ionicons name={section.statuses[pointIdx] === 'ejaktuell' ? 'remove-circle' : 'ellipse-outline'} size={22} color={section.statuses[pointIdx] === 'ejaktuell' ? '#607D8B' : '#bbb'} />
                             </TouchableOpacity>
                             {/* Kontrollpunkt text */}
-                            <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{point}</Text>
+                            {controlType === 'Arbetsberedning' ? (
+                              <View style={{ flex: 1, marginRight: 10 }}>
+                                <TextInput
+                                  value={pointText}
+                                  onChangeText={(txt) => {
+                                    setChecklist(prev => prev.map((s, sIdx) => {
+                                      if (sIdx !== sectionIdx) return s;
+                                      const pointsArr = Array.isArray(s.points) ? [...s.points] : [];
+                                      if (pointIdx < 0 || pointIdx >= pointsArr.length) return s;
+                                      pointsArr[pointIdx] = txt;
+                                      return { ...s, points: pointsArr };
+                                    }));
+                                  }}
+                                  placeholder="Risk / moment"
+                                  placeholderTextColor="#888"
+                                  style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff', color: '#222' }}
+                                  multiline
+                                />
+                                <TextInput
+                                  value={actionText}
+                                  onChangeText={(txt) => {
+                                    setChecklist(prev => prev.map((s, sIdx) => {
+                                      if (sIdx !== sectionIdx) return s;
+                                      const pointsArr = Array.isArray(s.points) ? s.points : [];
+                                      const comments = Array.isArray(s.comments) && s.comments.length === pointsArr.length
+                                        ? [...s.comments]
+                                        : Array(pointsArr.length).fill('');
+                                      comments[pointIdx] = txt;
+                                      return { ...s, comments };
+                                    }));
+                                  }}
+                                  placeholder="Åtgärd / hantering (hur ska risken hanteras?)"
+                                  placeholderTextColor="#888"
+                                  style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff', color: '#222', marginTop: 8 }}
+                                  multiline
+                                  textAlignVertical="top"
+                                />
+                              </View>
+                            ) : (
+                              <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{pointText}</Text>
+                            )}
                             {/* Photo button */}
                             <TouchableOpacity
                               onPress={() => {
@@ -2164,7 +4501,7 @@ export default function BaseControlForm({
                                 }
                               }}
                               style={{ marginLeft: 8, padding: 6 }}
-                              accessibilityLabel={hasPhotos ? `Visa och hantera bilder för ${point}` : `Lägg till foto för ${point}`}
+                              accessibilityLabel={hasPhotos ? `Visa och hantera bilder för ${pointText}` : `Lägg till foto för ${pointText}`}
                             >
                               <Ionicons name={hasPhotos ? 'camera' : 'camera-outline'} size={20} color={'#1976D2'} />
                             </TouchableOpacity>
@@ -2204,6 +4541,7 @@ export default function BaseControlForm({
                       onPress={() => {
                         setAddPointModal({ visible: true, sectionIdx });
                         setNewPointText('');
+                        setNewPointActionText('');
                       }}
                       accessibilityLabel="Lägg till kontrollpunkt"
                     >
@@ -2219,6 +4557,7 @@ export default function BaseControlForm({
                         onRequestClose={() => {
                           setAddPointModal({ visible: false, sectionIdx: null });
                           setNewPointText('');
+                          setNewPointActionText('');
                         }}
                       >
                         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }}>
@@ -2227,14 +4566,25 @@ export default function BaseControlForm({
                             <TextInput
                               value={newPointText}
                               onChangeText={setNewPointText}
-                              placeholder="Skriv rubrik på kontrollpunkt"
+                              placeholder={controlType === 'Arbetsberedning' ? 'Risk / moment' : 'Skriv rubrik på kontrollpunkt'}
                               style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8, fontSize: 16, backgroundColor: '#fafafa' }}
                               autoFocus
                             />
+                            {controlType === 'Arbetsberedning' && (
+                              <TextInput
+                                value={newPointActionText}
+                                onChangeText={setNewPointActionText}
+                                placeholder="Åtgärd / hantering (hur ska risken hanteras?)"
+                                style={{ borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8, fontSize: 16, backgroundColor: '#fafafa', marginTop: 10 }}
+                                multiline
+                                textAlignVertical="top"
+                              />
+                            )}
                             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
                               <TouchableOpacity onPress={() => {
                                 setAddPointModal({ visible: false, sectionIdx: null });
                                 setNewPointText('');
+                                setNewPointActionText('');
                               }} style={{ marginRight: 16 }}>
                                 <Text style={{ color: '#1976D2' }}>Avbryt</Text>
                               </TouchableOpacity>
@@ -2245,10 +4595,18 @@ export default function BaseControlForm({
                                   const points = [...s.points, newPointText.trim()];
                                   const statuses = Array.isArray(s.statuses) ? [...s.statuses, null] : Array(points.length).fill(null);
                                   const photos = Array.isArray(s.photos) ? [...s.photos, []] : Array(points.length).fill([]);
+                                  if (controlType === 'Arbetsberedning') {
+                                    const comments = Array.isArray(s.comments) ? [...s.comments, String(newPointActionText || '')] : Array(points.length).fill('');
+                                    if (comments.length === points.length) {
+                                      comments[points.length - 1] = String(newPointActionText || '');
+                                    }
+                                    return { ...s, points, statuses, photos, comments };
+                                  }
                                   return { ...s, points, statuses, photos };
                                 }));
                                 setAddPointModal({ visible: false, sectionIdx: null });
                                 setNewPointText('');
+                                setNewPointActionText('');
                               }}>
                                 <Text style={{ color: '#1976D2', fontWeight: 'bold' }}>Lägg till</Text>
                               </TouchableOpacity>

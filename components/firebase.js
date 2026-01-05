@@ -528,3 +528,356 @@ export async function deleteControlFromFirestore(controlId, companyIdOverride) {
     return false;
   }
 }
+
+// Byggdel-hierarki per företag
+// Storage: foretag/{companyId}/byggdel_hierarki/state
+// Shape: { momentsByGroup: { [huvudgrupp: string]: string[] }, updatedAt }
+export async function fetchByggdelHierarchy(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return { momentsByGroup: {} };
+    const ref = doc(db, 'foretag', companyId, 'byggdel_hierarki', 'state');
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return { momentsByGroup: {} };
+    const data = snap.data() || {};
+    const momentsByGroup = (data && typeof data.momentsByGroup === 'object' && data.momentsByGroup) ? data.momentsByGroup : {};
+    return { momentsByGroup };
+  } catch (e) {
+    return { momentsByGroup: {} };
+  }
+}
+
+export async function saveByggdelHierarchy({ momentsByGroup }, companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return false;
+    const ref = doc(db, 'foretag', companyId, 'byggdel_hierarki', 'state');
+    await setDoc(ref, { momentsByGroup: momentsByGroup || {}, updatedAt: serverTimestamp() }, { merge: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Byggdel mall-register per företag
+// Data model: foretag/{companyId}/byggdel_mallar/{mallId} with fields:
+// { huvudgrupp: string, moment: string, name: string, createdAt, updatedAt }
+export async function fetchByggdelMallar(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const out = [];
+
+    // Avoid multi-field orderBy here: it can require a composite index.
+    // Fetch all mall docs and sort client-side for predictable UI ordering.
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'byggdel_mallar'));
+    snap.forEach(docSnap => {
+      const d = docSnap.data() || {};
+      out.push(Object.assign({}, d, { id: docSnap.id }));
+    });
+
+    out.sort((a, b) => {
+      const ag = String(a && (a.huvudgrupp ?? '')).trim();
+      const bg = String(b && (b.huvudgrupp ?? '')).trim();
+      if (ag !== bg) return ag.localeCompare(bg, 'sv');
+
+      const am = String(a && (a.moment ?? '')).trim();
+      const bm = String(b && (b.moment ?? '')).trim();
+      if (am !== bm) return am.localeCompare(bm, 'sv');
+
+      const an = String(a && (a.name ?? '')).trim();
+      const bn = String(b && (b.name ?? '')).trim();
+      return an.localeCompare(bn, 'sv');
+    });
+
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdOverride) {
+  function normalizeMallNameLower(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    return s.replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function makeMallNameKey(nameLower) {
+    const s = String(nameLower || '').trim();
+    if (!s) return '';
+    // Convert to a stable Firestore doc id
+    // - remove diacritics (åäö -> aao)
+    // - keep [a-z0-9-]
+    let base = s;
+    try {
+      base = base.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    } catch (e) {
+      // normalize may not exist in some environments; fall back
+      base = s;
+    }
+    base = base
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '')
+      .replace(/-+/g, '-');
+    return base || '';
+  }
+
+  async function attemptWrite({ forceTokenRefresh } = { forceTokenRefresh: false }) {
+    if (forceTokenRefresh) {
+      try {
+        if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      } catch (e) {}
+    }
+
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) {
+      const err = new Error('no_company');
+      err.code = 'no_company';
+      throw err;
+    }
+    const hg = String(huvudgrupp || '').trim();
+    const mm = String(moment || '').trim();
+    const nm = String(name || '').trim();
+    if (!hg || !mm || !nm) {
+      const err = new Error('invalid-argument');
+      err.code = 'invalid-argument';
+      throw err;
+    }
+
+    const nmLower = normalizeMallNameLower(nm);
+    const nameKey = makeMallNameKey(nmLower);
+    if (!nmLower || !nameKey) {
+      const err = new Error('invalid-argument');
+      err.code = 'invalid-argument';
+      throw err;
+    }
+
+    const colRef = collection(db, 'foretag', companyId, 'byggdel_mallar');
+
+    // Uniqueness per company (case-insensitive)
+    // Must also cover older docs that may not have nameLower.
+    const allSnap = await getDocs(colRef);
+    let hasDuplicate = false;
+    allSnap.forEach(docSnap => {
+      const d = docSnap.data() || {};
+      const existingLower = normalizeMallNameLower(d.nameLower || d.name || '');
+      if (existingLower && existingLower === nmLower) hasDuplicate = true;
+    });
+    if (hasDuplicate) {
+      const err = new Error('already-exists');
+      err.code = 'already-exists';
+      throw err;
+    }
+
+    const docRef = doc(db, 'foretag', companyId, 'byggdel_mallar', nameKey);
+    const existingById = await getDoc(docRef);
+    if (existingById.exists()) {
+      const err = new Error('already-exists');
+      err.code = 'already-exists';
+      throw err;
+    }
+
+    const payload = {
+      huvudgrupp: hg,
+      moment: mm,
+      name: nm,
+      nameLower: nmLower,
+      nameKey,
+      points: [],
+      sections: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    try {
+      await setDoc(docRef, payload, { merge: false });
+      return docRef.id;
+    } catch (e) {
+      const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+      if (permissionDenied) {
+        const err = e || new Error('permission-denied');
+        err.code = err.code || 'permission-denied';
+        err.__permissionDenied = true;
+        throw err;
+      }
+      throw e;
+    }
+  }
+
+  try {
+    return await attemptWrite({ forceTokenRefresh: false });
+  } catch (e) {
+    const isPermissionError = !!(e && (e.__permissionDenied === true || e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+    if (isPermissionError) {
+      try {
+        return await attemptWrite({ forceTokenRefresh: true });
+      } catch (e2) {
+        e = e2 || e;
+      }
+    }
+
+    // Store debug info for troubleshooting (same pattern as other writes)
+    try {
+      const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+      let arr = rawArr ? JSON.parse(rawArr) : [];
+      const debug = await getAuthDebugSnapshot();
+      let resolvedCompanyId = null;
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (er) {}
+      const entry = {
+        fn: 'createByggdelMall',
+        code: e?.code || null,
+        err: (e && e.message) ? e.message : String(e),
+        full: (e && e.stack) ? e.stack : String(e),
+        ts: new Date().toISOString(),
+        resolvedCompanyId,
+        auth: debug,
+      };
+      arr.push(entry);
+      await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
+      await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
+    } catch (er) {}
+
+    throw e;
+  }
+}
+
+export async function deleteByggdelMall({ mallId }, companyIdOverride) {
+  async function attemptDelete({ forceTokenRefresh } = { forceTokenRefresh: false }) {
+    if (forceTokenRefresh) {
+      try {
+        if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      } catch (e) {}
+    }
+
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) {
+      const err = new Error('no_company');
+      err.code = 'no_company';
+      throw err;
+    }
+
+    const id = String(mallId || '').trim();
+    if (!id) {
+      const err = new Error('invalid-argument');
+      err.code = 'invalid-argument';
+      throw err;
+    }
+
+    await deleteDoc(doc(db, 'foretag', companyId, 'byggdel_mallar', id));
+    return true;
+  }
+
+  try {
+    return await attemptDelete({ forceTokenRefresh: false });
+  } catch (e) {
+    const permissionDenied = !!(e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+    if (permissionDenied) {
+      try {
+        return await attemptDelete({ forceTokenRefresh: true });
+      } catch (e2) {
+        e = e2 || e;
+      }
+    }
+
+    try {
+      const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+      let arr = rawArr ? JSON.parse(rawArr) : [];
+      const debug = await getAuthDebugSnapshot();
+      let resolvedCompanyId = null;
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (er) {}
+      const entry = {
+        fn: 'deleteByggdelMall',
+        code: e?.code || null,
+        err: (e && e.message) ? e.message : String(e),
+        full: (e && e.stack) ? e.stack : String(e),
+        ts: new Date().toISOString(),
+        resolvedCompanyId,
+        auth: debug,
+      };
+      arr.push(entry);
+      await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
+      await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
+    } catch (er) {}
+
+    throw e;
+  }
+}
+
+// Update a Byggdel mall document (merge)
+// Example: updateByggdelMall({ mallId, patch: { points: ['...'] } })
+export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
+  async function attemptWrite({ forceTokenRefresh } = { forceTokenRefresh: false }) {
+    if (forceTokenRefresh) {
+      try {
+        if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      } catch (e) {}
+    }
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) {
+      const err = new Error('no_company');
+      err.code = 'no_company';
+      throw err;
+    }
+    const id = String(mallId || '').trim();
+    if (!id) {
+      const err = new Error('invalid-argument');
+      err.code = 'invalid-argument';
+      throw err;
+    }
+
+    const safePatch = sanitizeForFirestore(patch || {});
+    const ref = doc(db, 'foretag', companyId, 'byggdel_mallar', id);
+    try {
+      await setDoc(ref, Object.assign({}, safePatch || {}, { updatedAt: serverTimestamp() }), { merge: true });
+      return true;
+    } catch (e) {
+      const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+      if (permissionDenied) {
+        const err = e || new Error('permission-denied');
+        err.code = err.code || 'permission-denied';
+        err.__permissionDenied = true;
+        throw err;
+      }
+      throw e;
+    }
+  }
+
+  try {
+    const ok = await attemptWrite({ forceTokenRefresh: false });
+    return ok;
+  } catch (e) {
+    const isPermissionError = !!(e && (e.__permissionDenied === true || e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+    if (isPermissionError) {
+      try {
+        return await attemptWrite({ forceTokenRefresh: true });
+      } catch (e2) {
+        e = e2 || e;
+      }
+    }
+
+    try {
+      const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+      let arr = rawArr ? JSON.parse(rawArr) : [];
+      const debug = await getAuthDebugSnapshot();
+      let resolvedCompanyId = null;
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (er) {}
+      const entry = {
+        fn: 'updateByggdelMall',
+        code: e?.code || null,
+        err: (e && e.message) ? e.message : String(e),
+        full: (e && e.stack) ? e.stack : String(e),
+        ts: new Date().toISOString(),
+        mallId: String(mallId || '').trim() || null,
+        resolvedCompanyId,
+        auth: debug,
+      };
+      arr.push(entry);
+      await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
+      await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
+    } catch (er) {}
+
+    throw e;
+  }
+}

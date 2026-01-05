@@ -51,6 +51,7 @@ export default function EgenkontrollScreen({ date, participants = [] }) {
     <BaseControlForm
       date={date}
       controlType="Egenkontroll"
+      hideWeather={true}
       labels={LABELS}
       participants={participants}
       project={project}

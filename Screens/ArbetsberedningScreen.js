@@ -1,7 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
+import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
+import { saveControlToFirestore } from '../components/firebase';
 
 const LABELS = {
   title: 'Arbetsberedning',
@@ -39,53 +39,12 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
         type: 'Arbetsberedning',
-        id: data.id || require('uuid').v4(),
+        id: data.id || uuidv4(),
       };
-      // Försök spara till Firestore först (best-effort). Vid fel/failure -> fallback till AsyncStorage
-      try {
-        const ok = await saveControlToFirestore(completed);
-        if (!ok) throw new Error('Firestore save failed');
-      } catch (e) {
-        const existing = await AsyncStorage.getItem('completed_controls');
-        let arr = [];
-        if (existing) arr = JSON.parse(existing);
-        arr.push(completed);
-        await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
-      }
+      // Central helper handles permission-denied and local fallback.
+      await saveControlToFirestore(completed);
     } catch (e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
-    }
-  };
-
-  const handleSaveDraft = async (data) => {
-    try {
-      const draft = {
-        ...data,
-        status: 'UTKAST',
-        savedAt: new Date().toISOString(),
-        type: 'Arbetsberedning',
-        id: data.id || require('uuid').v4(),
-      };
-      try {
-        const ok = await saveDraftToFirestore(draft);
-        if (!ok) throw new Error('Firestore draft save failed');
-      } catch (e) {
-        let arr = [];
-        const existing = await AsyncStorage.getItem('draft_controls');
-        if (existing) arr = JSON.parse(existing);
-        // Ersätt om samma projekt+typ+id redan finns, annars lägg till
-        const idx = arr.findIndex(
-          c => c.project?.id === project?.id && c.type === 'Arbetsberedning' && c.id === draft.id
-        );
-        if (idx !== -1) {
-          arr[idx] = draft;
-        } else {
-          arr.push(draft);
-        }
-        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
-      }
-    } catch (e) {
-      // Hantera fel
     }
   };
 
@@ -98,7 +57,6 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
       participants={participants}
       project={project}
       onSave={handleSave}
-      onSaveDraft={handleSaveDraft}
       initialValues={initialValues}
     />
   );

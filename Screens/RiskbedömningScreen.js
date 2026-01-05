@@ -1,21 +1,8 @@
-
-import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
-import { Text, View } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
 import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
-
-
-const CONTROL_TYPE_ICONS = {
-  'Arbetsberedning': { icon: 'construct-outline', color: '#1976D2' },
-  'Egenkontroll': { icon: 'checkmark-done-outline', color: '#388E3C' },
-  'Fuktmätning': { icon: 'water-outline', color: '#0288D1' },
-  'Mottagningskontroll': { icon: 'checkbox-outline', color: '#7B1FA2' },
-  'Riskbedömning': { icon: 'warning-outline', color: '#FFD600' },
-  'Skyddsrond': { icon: 'shield-half-outline', color: '#388E3C' },
-};
 
 const LABELS = {
   title: 'Riskbedömning',
@@ -139,27 +126,18 @@ export default function RiskbedömningScreen({ date, participants = [] }) {
     { key: 'Åska', icon: 'thunderstorm' },
   ];
 
-  // Header with icon and title
-  const { icon, color } = CONTROL_TYPE_ICONS['Riskbedömning'];
-
   return (
-    <>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginTop: 8, alignSelf: 'flex-start' }}>
-        <Ionicons name={icon} size={28} color={color} style={{ marginRight: 10 }} />
-        <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#222' }}>Riskbedömning</Text>
-      </View>
-      <BaseControlForm
-        project={project}
-        date={date}
-        participants={participants}
-        labels={LABELS}
-        onSave={handleSave}
-        onSaveDraft={handleSaveDraft}
-        initialValues={initialValues}
-        controlType="Riskbedömning"
-        weatherOptions={WEATHER_OPTIONS}
-        checklistConfig={RISKBEDOMNING_CHECKLIST}
-      />
-    </>
+    <BaseControlForm
+      project={project}
+      date={date}
+      participants={participants}
+      labels={LABELS}
+      onSave={handleSave}
+      onSaveDraft={handleSaveDraft}
+      initialValues={initialValues}
+      controlType="Riskbedömning"
+      weatherOptions={WEATHER_OPTIONS}
+      checklistConfig={RISKBEDOMNING_CHECKLIST}
+    />
   );
 }

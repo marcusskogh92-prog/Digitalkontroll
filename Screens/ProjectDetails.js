@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
+import { emitProjectUpdated } from '../components/projectBus';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
@@ -561,6 +562,24 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const [companyLogoUri, setCompanyLogoUri] = useState(null);
   const [companyProfile, setCompanyProfile] = useState(null);
+
+  const controlTypeOptions = React.useMemo(() => {
+    const all = [
+      { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
+      { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
+      { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
+      { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
+      { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
+      { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
+    ];
+
+    const enabled = companyProfile?.enabledControlTypes;
+    const filtered = Array.isArray(enabled)
+      ? all.filter(o => enabled.includes(o.type))
+      : all;
+
+    return filtered.slice().sort((a, b) => a.type.localeCompare(b.type));
+  }, [companyProfile]);
   const [exportFilter, setExportFilter] = useState('Alla');
   const [selectedControl, setSelectedControl] = useState(null);
   const [showControlOptions, setShowControlOptions] = useState(false);
@@ -908,20 +927,20 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
             </ScrollView>
             <TouchableOpacity
               style={{
-                backgroundColor: '#f5f5f5',
+                backgroundColor: 'transparent',
                 borderRadius: 10,
-                borderWidth: 2,
-                borderColor: '#222',
+                borderWidth: 1,
+                borderColor: '#1976D2',
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
                 paddingVertical: 10,
                 paddingHorizontal: 18,
-                shadowColor: '#222',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.08,
-                shadowRadius: 4,
-                elevation: 1,
+                shadowColor: 'transparent',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0,
+                shadowRadius: 0,
+                elevation: 0,
                 minHeight: 36,
                 marginTop: 8,
                 marginBottom: 2,
@@ -932,14 +951,12 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 if (typeof navigation?.setParams === 'function') {
                   navigation.setParams({ project: editableProject });
                 }
-                if (typeof route?.params?.updateProject === 'function') {
-                  route.params.updateProject({ ...editableProject, originalId: originalProjectId });
-                }
+                emitProjectUpdated({ ...editableProject, originalId: originalProjectId });
                 setEditingInfo(false);
               }}
             >
-              <Ionicons name="checkmark-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
-              <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5 }}>Spara</Text>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#1976D2" style={{ marginRight: 10 }} />
+              <Text style={{ color: '#1976D2', fontWeight: '600', fontSize: 15, letterSpacing: 0.5 }}>Spara</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1020,6 +1037,8 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 style={{
                   backgroundColor: '#f5f5f5',
                   borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#e0e0e0',
                   flexDirection: 'row',
                   alignItems: 'center',
                   paddingVertical: 6,
@@ -1046,6 +1065,8 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 style={{
                   backgroundColor: '#f5f5f5',
                   borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#e0e0e0',
                   flexDirection: 'row',
                   alignItems: 'center',
                   paddingVertical: 6,
@@ -1071,6 +1092,8 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 style={{
                   backgroundColor: '#f5f5f5',
                   borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#e0e0e0',
                   flexDirection: 'row',
                   alignItems: 'center',
                   paddingVertical: 6,
@@ -1118,14 +1141,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
             <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
               Välj kontrolltyp
             </Text>
-            {[
-              { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
-              { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
-              { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
-              { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
-              { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
-              { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
-            ].sort((a, b) => a.type.localeCompare(b.type)).map(({ type, icon, color }) => (
+            {controlTypeOptions.map(({ type, icon, color }) => (
               <TouchableOpacity
                 key={type}
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
@@ -1163,6 +1179,11 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                 <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{type}</Text>
               </TouchableOpacity>
             ))}
+            {Array.isArray(companyProfile?.enabledControlTypes) && controlTypeOptions.length === 0 ? (
+              <Text style={{ color: '#D32F2F', textAlign: 'center', marginTop: 6, marginBottom: 8 }}>
+                Inga kontrolltyper är aktiverade för företaget.
+              </Text>
+            ) : null}
                       <TouchableOpacity
                         style={{ marginTop: 8, alignSelf: 'center' }}
                         onPress={() => setShowControlTypeModal(false)}

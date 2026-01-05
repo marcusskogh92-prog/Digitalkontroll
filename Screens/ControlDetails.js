@@ -170,7 +170,7 @@ export default function ControlDetails({ route }) {
       {participants.length > 0 && <View style={styles.divider} />}
 
       {/* Väderlek */}
-      {weather && (
+      {weather && type !== 'Egenkontroll' && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Väderlek</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -195,7 +195,7 @@ export default function ControlDetails({ route }) {
           </View>
         </View>
       )}
-      {weather && <View style={styles.divider} />}
+      {weather && type !== 'Egenkontroll' && <View style={styles.divider} />}
 
       {/* Beskrivning av moment */}
       {(deliveryDesc || description) && (

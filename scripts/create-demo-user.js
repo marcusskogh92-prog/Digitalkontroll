@@ -57,7 +57,7 @@ async function main() {
     }
 
     // Set custom claims
-    const claims = { admin: true, companyId: company };
+    const claims = { admin: true, role: 'admin', companyId: company };
     await auth.setCustomUserClaims(userRecord.uid, claims);
     console.log('Set custom claims:', claims);
 
