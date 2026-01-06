@@ -26,10 +26,10 @@ const ARBETSBEREDNING_CHECKLIST = [
   { label: 'Avslut & överlämning', points: ['Återställning av plats', 'Borttagning av temporära skydd', 'Överlämningsrapport klar'] },
 ];
 
-export default function ArbetsberedningScreen({ date, participants = [] }) {
+export default function ArbetsberedningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = initialValuesProp ?? route.params?.initialValues;
 
   const handleSave = async (data) => {
     try {
@@ -58,6 +58,8 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
       project={project}
       onSave={handleSave}
       initialValues={initialValues}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

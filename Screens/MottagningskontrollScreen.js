@@ -10,11 +10,17 @@ const LABELS = {
   saveDraftButton: 'Spara och slutför senare',
 };
 
-export default function MottagningskontrollScreen({ date, participants = [] }) {
+export default function MottagningskontrollScreen({
+  date,
+  participants = [],
+  project: projectProp,
+  initialValues: initialValuesProp,
+  onExit,
+  onFinished,
+}) {
   const route = useRoute();
-  const navigation = require('@react-navigation/native').useNavigation();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = (initialValuesProp ?? route.params?.initialValues) || undefined;
 
   const handleSave = async (data) => {
     try {
@@ -53,10 +59,6 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
       } catch (e) {}
-      // Efter sparande: navigera till projektinformationen (ProjectDetails)
-      if (navigation && navigation.navigate) {
-        navigation.navigate('ProjectDetails', { project });
-      }
     } catch (e) {
       // Hantera fel
     }
@@ -119,6 +121,8 @@ export default function MottagningskontrollScreen({ date, participants = [] }) {
       onSaveDraft={handleSaveDraft}
       initialValues={initialValues}
       controlType="Mottagningskontroll"
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

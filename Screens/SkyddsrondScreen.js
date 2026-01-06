@@ -111,10 +111,17 @@ function getWeekAndYear(dateInput) {
 
 
 
-export default function SkyddsrondScreen({ date, participants = [] }) {
+export default function SkyddsrondScreen({
+  date,
+  participants = [],
+  project: projectProp,
+  initialValues: initialValuesProp,
+  onExit,
+  onFinished,
+}) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValuesRaw = route.params?.initialValues || {};
+  const project = projectProp ?? route.params?.project;
+  const initialValuesRaw = (initialValuesProp ?? route.params?.initialValues) || {};
   const initialValues = {
     ...initialValuesRaw,
     mottagningsSignatures: initialValuesRaw.mottagningsSignatures || [],
@@ -202,6 +209,8 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       onSaveDraft={handleSaveDraft}
       weatherOptions={WEATHER_OPTIONS}
       checklistConfig={SKYDDSROND_CHECKLIST}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

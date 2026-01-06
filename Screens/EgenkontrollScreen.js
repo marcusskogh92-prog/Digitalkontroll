@@ -9,9 +9,17 @@ const LABELS = {
   saveDraftButton: 'Spara och slutför senare',
 };
 
-export default function EgenkontrollScreen({ date, participants = [] }) {
+export default function EgenkontrollScreen({
+  date,
+  participants = [],
+  project: projectProp,
+  initialValues: initialValuesProp,
+  onExit,
+  onFinished,
+}) {
   const route = useRoute();
-  const project = route.params?.project;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = (initialValuesProp ?? route.params?.initialValues) || undefined;
 
   const handleSave = async (data) => {
     try {
@@ -56,6 +64,9 @@ export default function EgenkontrollScreen({ date, participants = [] }) {
       participants={participants}
       project={project}
       onSave={handleSave}
+      initialValues={initialValues}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

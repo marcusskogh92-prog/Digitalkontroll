@@ -23,6 +23,13 @@ import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
 
+import ArbetsberedningScreen from './ArbetsberedningScreen';
+import EgenkontrollScreen from './EgenkontrollScreen';
+import FuktmätningScreen from './FuktmätningScreen';
+import MottagningskontrollScreen from './MottagningskontrollScreen';
+import RiskbedömningScreen from './RiskbedömningScreen';
+import SkyddsrondScreen from './SkyddsrondScreen';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 
@@ -444,6 +451,33 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
     const scrollRef = useRef(null);
   // Destructure navigation params
   const { project, companyId, initialCreator, selectedAction } = route.params || {};
+  const [inlineControl, setInlineControl] = useState(null);
+  const openInlineControl = (type, initialValues) => {
+    if (!type) return;
+    setInlineControl({ type, initialValues: initialValues || undefined });
+    try {
+      if (scrollRef?.current && typeof scrollRef.current.scrollTo === 'function') {
+        scrollRef.current.scrollTo({ y: 0, animated: false });
+      }
+    } catch (e) {}
+  };
+  const closeInlineControl = () => setInlineControl(null);
+
+  // When HomeScreen passes a selectedAction (e.g. open a draft from the dashboard),
+  // process it once and open the corresponding inline control.
+  const lastProcessedActionIdRef = useRef('');
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const id = selectedAction && selectedAction.id ? String(selectedAction.id) : '';
+    if (!id) return;
+    if (lastProcessedActionIdRef.current === id) return;
+    lastProcessedActionIdRef.current = id;
+    try {
+      if (selectedAction.kind === 'openDraft' && selectedAction.type) {
+        openInlineControl(selectedAction.type, selectedAction.initialValues || undefined);
+      }
+    } catch (e) {}
+  }, [selectedAction?.id]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
   const [companyAdmins, setCompanyAdmins] = useState([]);
   const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
@@ -487,22 +521,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
       cancelled = true;
     };
   }, [adminPickerVisible, companyId]);
-  // Defensive check: If project is undefined or null, show fallback UI
-  if (!project || typeof project !== 'object' || !project.id) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
-        <Text style={{ fontSize: 18, color: '#D32F2F', textAlign: 'center' }}>
-          Kunde inte läsa projektdata.
-        </Text>
-        <Text style={{ fontSize: 14, color: '#888', marginTop: 8, textAlign: 'center' }}>
-          Projektet är inte korrekt laddat eller saknar ID.
-        </Text>
-        <TouchableOpacity style={{ marginTop: 24, padding: 12, backgroundColor: '#1976D2', borderRadius: 8 }} onPress={() => navigation.goBack()}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>Tillbaka</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const hasValidProject = !!(project && typeof project === 'object' && project.id);
     // ...befintlig kod...
     // Visa lista med kontroller under projektinfo
     // Placera där du vill i din layout, t.ex. direkt efter projektinfo:
@@ -697,6 +716,70 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
   };
 
   // Huvud-UI return
+  if (!hasValidProject) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+        <Text style={{ fontSize: 18, color: '#D32F2F', textAlign: 'center' }}>
+          Kunde inte läsa projektdata.
+        </Text>
+        <Text style={{ fontSize: 14, color: '#888', marginTop: 8, textAlign: 'center' }}>
+          Projektet är inte korrekt laddat eller saknar ID.
+        </Text>
+        <TouchableOpacity
+          style={{ marginTop: 24, padding: 12, backgroundColor: '#1976D2', borderRadius: 8 }}
+          onPress={() => {
+            if (typeof inlineClose === 'function') inlineClose();
+            else navigation.goBack();
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Tillbaka</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Web: keep header/tree and render control forms inside the right pane
+  if (Platform.OS === 'web' && inlineControl && inlineControl.type) {
+    const commonProps = {
+      project,
+      initialValues: inlineControl.initialValues,
+      onExit: closeInlineControl,
+      onFinished: () => {
+        closeInlineControl();
+        loadControls();
+      },
+    };
+
+    switch (inlineControl.type) {
+      case 'Arbetsberedning':
+        return <ArbetsberedningScreen {...commonProps} />;
+      case 'Riskbedömning':
+        return <RiskbedömningScreen {...commonProps} />;
+      case 'Fuktmätning':
+        return <FuktmätningScreen {...commonProps} />;
+      case 'Egenkontroll':
+        return <EgenkontrollScreen {...commonProps} />;
+      case 'Mottagningskontroll':
+        return <MottagningskontrollScreen {...commonProps} />;
+      case 'Skyddsrond':
+        return <SkyddsrondScreen {...commonProps} />;
+      default:
+        return (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <Text style={{ fontSize: 16, color: '#D32F2F', textAlign: 'center' }}>
+              Okänd kontrolltyp: {String(inlineControl.type)}
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 16, padding: 12, backgroundColor: '#1976D2', borderRadius: 8 }}
+              onPress={closeInlineControl}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Tillbaka</Text>
+            </TouchableOpacity>
+          </View>
+        );
+    }
+  }
+
   return (
     <ScrollView
       ref={scrollRef}
@@ -1127,25 +1210,32 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                   onPress={() => {
                     switch (type) {
                       case 'Arbetsberedning':
-                        navigation.navigate('ArbetsberedningScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
+                        else navigation.navigate('ArbetsberedningScreen', { project });
                         break;
                       case 'Riskbedömning':
-                        navigation.navigate('RiskbedömningScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Riskbedömning');
+                        else navigation.navigate('RiskbedömningScreen', { project });
                         break;
                       case 'Fuktmätning':
-                        navigation.navigate('FuktmätningScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Fuktmätning');
+                        else navigation.navigate('FuktmätningScreen', { project });
                         break;
                       case 'Egenkontroll':
-                        navigation.navigate('EgenkontrollScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Egenkontroll');
+                        else navigation.navigate('EgenkontrollScreen', { project });
                         break;
                       case 'Mottagningskontroll':
-                        navigation.navigate('MottagningskontrollScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
+                        else navigation.navigate('MottagningskontrollScreen', { project });
                         break;
                       case 'Skyddsrond':
-                        navigation.navigate('SkyddsrondScreen', { project });
+                        if (Platform.OS === 'web') openInlineControl('Skyddsrond');
+                        else navigation.navigate('SkyddsrondScreen', { project });
                         break;
                       default:
-                        navigation.navigate('ControlForm', { project, controlType: type });
+                        if (Platform.OS === 'web') openInlineControl(type);
+                        else navigation.navigate('ControlForm', { project, controlType: type });
                     }
                   }}
                   activeOpacity={0.85}
@@ -1276,25 +1366,32 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                   // Route each control type to its dedicated screen
                   switch (type) {
                     case 'Arbetsberedning':
-                      navigation.navigate('ArbetsberedningScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
+                      else navigation.navigate('ArbetsberedningScreen', { project });
                       break;
                     case 'Riskbedömning':
-                      navigation.navigate('RiskbedömningScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Riskbedömning');
+                      else navigation.navigate('RiskbedömningScreen', { project });
                       break;
                     case 'Fuktmätning':
-                      navigation.navigate('FuktmätningScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Fuktmätning');
+                      else navigation.navigate('FuktmätningScreen', { project });
                       break;
                     case 'Egenkontroll':
-                      navigation.navigate('EgenkontrollScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Egenkontroll');
+                      else navigation.navigate('EgenkontrollScreen', { project });
                       break;
                     case 'Mottagningskontroll':
-                      navigation.navigate('MottagningskontrollScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
+                      else navigation.navigate('MottagningskontrollScreen', { project });
                       break;
                     case 'Skyddsrond':
-                      navigation.navigate('SkyddsrondScreen', { project });
+                      if (Platform.OS === 'web') openInlineControl('Skyddsrond');
+                      else navigation.navigate('SkyddsrondScreen', { project });
                       break;
                     default:
-                      navigation.navigate('ControlForm', {
+                      if (Platform.OS === 'web') openInlineControl(type);
+                      else navigation.navigate('ControlForm', {
                         project,
                         controlType: type
                       });
@@ -1549,25 +1646,32 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                 if (item.isDraft) {
                                   switch (item.type) {
                                     case 'Arbetsberedning':
-                                      navigation.navigate('ArbetsberedningScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Arbetsberedning', item);
+                                      else navigation.navigate('ArbetsberedningScreen', { initialValues: item, project });
                                       break;
                                     case 'Riskbedömning':
-                                      navigation.navigate('RiskbedömningScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Riskbedömning', item);
+                                      else navigation.navigate('RiskbedömningScreen', { initialValues: item, project });
                                       break;
                                     case 'Fuktmätning':
-                                      navigation.navigate('FuktmätningScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Fuktmätning', item);
+                                      else navigation.navigate('FuktmätningScreen', { initialValues: item, project });
                                       break;
                                     case 'Egenkontroll':
-                                      navigation.navigate('EgenkontrollScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Egenkontroll', item);
+                                      else navigation.navigate('EgenkontrollScreen', { initialValues: item, project });
                                       break;
                                     case 'Mottagningskontroll':
-                                      navigation.navigate('MottagningskontrollScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Mottagningskontroll', item);
+                                      else navigation.navigate('MottagningskontrollScreen', { initialValues: item, project });
                                       break;
                                     case 'Skyddsrond':
-                                      navigation.navigate('SkyddsrondScreen', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl('Skyddsrond', item);
+                                      else navigation.navigate('SkyddsrondScreen', { initialValues: item, project });
                                       break;
                                     default:
-                                      navigation.navigate('ControlForm', { initialValues: item, project });
+                                      if (Platform.OS === 'web') openInlineControl(item.type, item);
+                                      else navigation.navigate('ControlForm', { initialValues: item, project });
                                   }
                                 } else {
                                   navigation.navigate('ControlDetails', { control: item, project });

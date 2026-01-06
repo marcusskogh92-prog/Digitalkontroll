@@ -12,11 +12,11 @@ const LABELS = {
 
 
 
-export default function RiskbedömningScreen({ date, participants = [] }) {
+export default function RiskbedömningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
-  const project = route.params?.project;
+  const project = projectProp ?? route.params?.project;
   // Se till att initialValues alltid har mottagningsSignatures för att visa signatursektionen
-  const initialValuesRaw = route.params?.initialValues || {};
+  const initialValuesRaw = (initialValuesProp ?? route.params?.initialValues) || {};
 
   const RISKBEDOMNING_CHECKLIST = [
     {
@@ -138,6 +138,8 @@ export default function RiskbedömningScreen({ date, participants = [] }) {
       controlType="Riskbedömning"
       weatherOptions={WEATHER_OPTIONS}
       checklistConfig={RISKBEDOMNING_CHECKLIST}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

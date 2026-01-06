@@ -29,9 +29,16 @@ export default function BaseControlForm({
   labels = {},
   onSave,
   onSaveDraft,
+  onExit,
+  onFinished,
   initialValues = {},
   hideWeather = false,
 }) {
+  const onExitRef = useRef(onExit);
+  useEffect(() => {
+    onExitRef.current = onExit;
+  }, [onExit]);
+
   const arbetsberedningCategoryKey = (projectId) => `dk_ab_categories_${String(projectId || '').trim()}`;
   const arbetsberedningActiveByggdelKey = (projectId) => `dk_ab_active_byggdel_${String(projectId || '').trim()}`;
   const didInitArbetsberedningCategoriesRef = useRef(false);
@@ -355,6 +362,43 @@ export default function BaseControlForm({
     });
     return unsubscribe;
   }, [navigation]);
+
+  // Web (inline mode): allow browser back button to trigger the same
+  // unsaved-changes flow (save draft or abort) instead of forcing the user
+  // to press the in-app "Avbryt" button.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    if (!window.history || typeof window.history.pushState !== 'function') return;
+    // Only enable this guard when the form is rendered inline (i.e. it has an onExit handler)
+    if (typeof onExitRef.current !== 'function') return;
+
+    const guardId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    try {
+      window.history.pushState({ ...(window.history.state || {}), dkInlineControl: guardId }, '');
+    } catch (e) {}
+
+    const onPopState = () => {
+      try {
+        if (isDirtyRef.current) {
+          // Re-add guard entry so the user stays "here" until they choose
+          // to save draft or abort from the dialog.
+          try {
+            window.history.pushState({ ...(window.history.state || {}), dkInlineControl: guardId }, '');
+          } catch (e) {}
+          setShowBackConfirm(true);
+          return;
+        }
+        // No unsaved changes -> exit immediately (back to project panel)
+        if (typeof onExitRef.current === 'function') onExitRef.current();
+      } catch (e) {}
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      try { window.removeEventListener('popstate', onPopState); } catch (e) {}
+    };
+  }, []);
   const [photoModal, setPhotoModal] = useState({ visible: false, uris: [], index: 0 });
   const handleDeletePhoto = () => {
     const { uris, index } = photoModal || {};
@@ -713,6 +757,21 @@ export default function BaseControlForm({
     if (initialValues && Array.isArray(initialValues.participants) && initialValues.participants.length > 0) return initialValues.participants;
     return Array.isArray(participants) ? participants : [];
   });
+
+  // NOTE: These states must be declared before any hook (e.g. isDirty) references them.
+  // Otherwise web can crash with "Cannot access '<var>' before initialization".
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [dateValue, setDateValue] = useState(date || (initialValues && initialValues.date) || todayIso);
+  // Ensure dateValue is populated if props arrive asynchronously or after hot restart
+  useEffect(() => {
+    if (!dateValue || dateValue === '') {
+      const fallback = date || (initialValues && initialValues.date) || todayIso;
+      setDateValue(fallback);
+    }
+  }, [date, initialValues && initialValues.date]);
+  const [deliveryDesc, setDeliveryDesc] = useState((initialValues && initialValues.deliveryDesc) || '');
+  const [generalNote, setGeneralNote] = useState((initialValues && initialValues.generalNote) || '');
+
   // Dirty state: true if any field differs from initial
   const isDirty = useMemo(() => {
     if (!shallowEqual(localParticipants, initialParticipants)) return true;
@@ -1736,19 +1795,8 @@ export default function BaseControlForm({
     drainPending();
     return unsub2;
   }, [navigation, processCameraResult]);
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const [dateValue, setDateValue] = useState(date || initialValues.date || todayIso);
-  // Ensure dateValue is populated if props arrive asynchronously or after hot restart
-  useEffect(() => {
-    if (!dateValue || dateValue === '') {
-      const fallback = date || (initialValues && initialValues.date) || todayIso;
-      setDateValue(fallback);
-    }
-  }, [date, initialValues && initialValues.date]);
   const [showDateModal, setShowDateModal] = useState(false);
   const [tempDate, setTempDate] = useState('');
-  const [deliveryDesc, setDeliveryDesc] = useState(initialValues.deliveryDesc || '');
-  const [generalNote, setGeneralNote] = useState(initialValues.generalNote || '');
   const [expandedChecklist, setExpandedChecklist] = useState([]);
   const [signatureForIndex, setSignatureForIndex] = useState(null);
   const [sigStrokes, setSigStrokes] = useState([]);
@@ -1934,6 +1982,14 @@ export default function BaseControlForm({
           {
             text: 'OK',
             onPress: () => {
+              if (typeof onFinished === 'function') {
+                onFinished();
+                return;
+              }
+              if (typeof onExit === 'function') {
+                onExit();
+                return;
+              }
               if (navigation && navigation.navigate && project) {
                 navigation.navigate('ProjectDetails', { project });
               } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
@@ -1981,6 +2037,8 @@ export default function BaseControlForm({
           if (blockedNavEvent.current) {
             blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
             blockedNavEvent.current = null;
+          } else if (typeof onExit === 'function') {
+            onExit();
           } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
             navigation.goBack();
           }
@@ -2144,6 +2202,8 @@ export default function BaseControlForm({
                   if (blockedNavEvent.current) {
                     blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
                     blockedNavEvent.current = null;
+                  } else if (typeof onExit === 'function') {
+                    onExit();
                   } else {
                     navigation.goBack();
                   }
@@ -2158,6 +2218,8 @@ export default function BaseControlForm({
                   if (blockedNavEvent.current) {
                     blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
                     blockedNavEvent.current = null;
+                  } else if (typeof onExit === 'function') {
+                    onExit();
                   } else {
                     navigation.goBack();
                   }
@@ -4836,7 +4898,8 @@ export default function BaseControlForm({
             onPress={() => {
               if (!isDirtyRef.current) {
                 // No changes, exit immediately
-                if (navigation && navigation.goBack) navigation.goBack();
+                if (typeof onExit === 'function') onExit();
+                else if (navigation && navigation.goBack) navigation.goBack();
               } else {
                 setShowCancelEditConfirm(true);
               }
@@ -4878,7 +4941,8 @@ export default function BaseControlForm({
                   setShowBackConfirm(false); // Prevent double modal
                   try { isDirtyRef.current = false; } catch (e) {}
                   try { if (blockedNavEvent) blockedNavEvent.current = null; } catch (e) {}
-                  if (navigation && navigation.goBack) navigation.goBack();
+                  if (typeof onExit === 'function') onExit();
+                  else if (navigation && navigation.goBack) navigation.goBack();
                 }}
                 style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
               >

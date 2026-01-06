@@ -42,10 +42,10 @@ const LABELS = {
 };
 
 
-export default function ControlForm({ date, participants = [] }) {
+export default function ControlForm({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = initialValuesProp ?? route.params?.initialValues;
   return (
     <BaseControlForm
       date={date}
@@ -56,6 +56,8 @@ export default function ControlForm({ date, participants = [] }) {
       project={project}
       labels={LABELS}
       initialValues={initialValues}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

@@ -5,7 +5,6 @@ import { Alert, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, P
 import ContextMenu from '../components/ContextMenu';
 import { auth, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
-import { onProjectUpdated } from '../components/projectBus';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import ProjectDetails from './ProjectDetails';
 
@@ -21,6 +20,7 @@ export default function HomeScreen({ route, navigation }) {
   const [headerHeight, setHeaderHeight] = useState(0);
   const leftTreeScrollRef = useRef(null);
   const rightPaneScrollRef = useRef(null);
+  const hierarchyRef = useRef([]);
 
   const webPaneHeight = Platform.OS === 'web'
     ? Math.max(240, (windowHeight || 800) - (headerHeight || 140))
@@ -34,6 +34,10 @@ export default function HomeScreen({ route, navigation }) {
       else if (typeof node.scrollTo === 'function') node.scrollTo({ y: 1e9, animated: true });
     } catch (e) {}
   };
+
+  // companyId state is declared later in this component; referencing it early can crash on web.
+  // Use the route param as the safe early value for Firestore lookups.
+  const routeCompanyId = route?.params?.companyId || '';
   // Testdata för demo-kontot (används av dold admin-knapp)
   const testHierarchy = [
     {
@@ -132,72 +136,140 @@ export default function HomeScreen({ route, navigation }) {
       setAdminActionRunning(false);
       setShowAdminButton(false);
     }
-  }
-      // Funktion för att uppdatera projektinfo i hierarchy
-      function updateProject(updatedProject) {
-        setHierarchy(prev => prev.map(main => ({
-          ...main,
-          children: main.children.map(sub => ({
-            ...sub,
-            children: sub.children ? sub.children.map(child => {
-              // Match on originalId if present, otherwise fallback to id
-              if (child.type === 'project' && (child.id === updatedProject.originalId || child.id === updatedProject.id)) {
-                const { originalId, ...rest } = updatedProject;
-                return { ...child, ...rest };
-              }
-              return child;
-            }) : []
-          }))
-        })));
-      }
+                    <View style={{ width: '100%', maxWidth: 1200, alignSelf: 'flex-end' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                        {/* Left column: continue */}
+                        <View style={{ flex: 2, marginRight: 16, minWidth: 0 }}>
+                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                            Fortsätt där du slutade
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
+                            {(() => {
+                              const uniq = [];
+                              const seen = new Set();
+                              (dashboardRecent || []).forEach((a) => {
+                                if (!a || !a.projectId) return;
+                                const pid = String(a.projectId);
+                                if (seen.has(pid)) return;
+                                seen.add(pid);
+                                uniq.push({ pid, ts: a.ts });
+                              });
+                              const items = uniq.slice(0, 10);
+                              if (dashboardLoading) {
+                                return <Text style={{ color: '#777', padding: 12 }}>Laddar…</Text>;
+                              }
+                              if (items.length === 0) {
+                                return <Text style={{ color: '#777', padding: 12 }}>Välj ett projekt i listan till vänster för att komma igång.</Text>;
+                              }
+                              return items.map((x, idx) => {
+                                const p = findProjectById(x.pid);
+                                return (
+                                  <TouchableOpacity
+                                    key={`recent-proj-${x.pid}`}
+                                    activeOpacity={0.85}
+                                    onPress={() => {
+                                      if (p) {
+                                        setProjectSelectedAction(null);
+                                        setSelectedProject({ ...p });
+                                      }
+                                    }}
+                                    style={{ paddingVertical: 12, paddingHorizontal: 6, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#eee' }}
+                                  >
+                                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#1976D2' }} numberOfLines={1}>
+                                      {p ? `${p.id} — ${p.name}` : x.pid}
+                                    </Text>
+                                    <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                      {formatRelativeTime(x.ts)}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              });
+                            })()}
+                          </View>
+                        </View>
 
-      // React Navigation params must be serializable. Instead of passing updateProject
-      // as a param, listen for project updates via a simple event bus.
-      React.useEffect(() => {
-        const unsubscribe = onProjectUpdated((p) => {
-          if (p && typeof p === 'object') updateProject(p);
-        });
-        return unsubscribe;
-      }, []);
-    // State for control type selection modal
-    const [showControlTypeModal, setShowControlTypeModal] = useState(false);
-  // State för nytt projekt-modal i undermapp
+                        {/* Right column: overview + activity */}
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                            Översikt
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 16, backgroundColor: '#fff', marginBottom: 16 }}>
+                            {[
+                              { key: 'activeProjects', label: 'Pågående projekt', color: '#43A047', value: dashboardOverview.activeProjects },
+                              { key: 'openDeviations', label: 'Öppna avvikelser', color: '#FFD600', value: dashboardOverview.openDeviations },
+                              { key: 'controlsToSign', label: 'Kontroller att signera', color: '#D32F2F', value: dashboardOverview.controlsToSign },
+                              { key: 'drafts', label: 'Sparade utkast', color: '#888', value: dashboardOverview.drafts },
+                            ].map((row, idx) => (
+                              <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#eee' }}>
+                                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: row.color, marginRight: 12 }} />
+                                <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{row.label}</Text>
+                                <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }}>{String(row.value ?? 0)}</Text>
+                              </View>
+                            ))}
+                          </View>
 
-  // Keep a ref to hierarchy so early-defined helpers/modals can safely read it on web
-  const hierarchyRef = useRef([]);
-
-  // Funktion för att alltid nollställa projektfält
-  const resetProjectFields = () => {
-    setNewProjectName("");
-    setNewProjectNumber("");
-    setNewProjectResponsible(null);
-  };
-
-  const didUpsertMemberKeyRef = useRef('');
-
-  async function ensureCurrentUserMemberDoc() {
-    try {
-      const uid = auth?.currentUser?.uid;
-      if (!uid || !companyId) return;
-
-      const key = `${companyId}::${uid}`;
-      if (didUpsertMemberKeyRef.current === key) return;
-
-      // Prefer role/displayName from user profile if present
-      const profile = await fetchUserProfile(uid).catch(() => null);
-      const role = profile?.role || null;
-      const email = profile?.email || auth?.currentUser?.email || null;
-      const displayName = profile?.displayName || auth?.currentUser?.displayName || (email ? String(email).split('@')[0] : null);
-
-      const ok = await upsertCompanyMember({ companyId, uid, role, email, displayName });
-      if (ok) didUpsertMemberKeyRef.current = key;
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  // Kontrollera om projektnummer är unikt i hela hierarkin
-  function isProjectNumberUnique(num) {
+                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                            Senaste aktivitet
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
+                            {dashboardLoading ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Laddar…</Text>
+                            ) : (dashboardRecent || []).length === 0 ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Ingen aktivitet ännu.</Text>
+                            ) : (
+                              (dashboardRecent || []).map((a, idx) => {
+                                const iconName = a.kind === 'draft' ? 'document-text-outline' : 'checkmark-circle';
+                                const iconColor = a.kind === 'draft' ? '#FFD600' : '#43A047';
+                                const subtitle = a.projectName ? `i ${a.projectName}` : (a.projectId ? `i ${a.projectId}` : '');
+                                return (
+                                  <TouchableOpacity
+                                    key={`${a.kind}-${a.ts || 'no-ts'}-${idx}`}
+                                    activeOpacity={0.85}
+                                    onPress={() => {
+                                      if (!a.projectId) return;
+                                      const p = findProjectById(a.projectId);
+                                      if (!p) return;
+                                      if (a.kind === 'draft' && a.type && a.raw) {
+                                        setProjectSelectedAction({
+                                          id: `${String(a.projectId)}-${String(a.ts || '')}-${String(a.type)}`,
+                                          kind: 'openDraft',
+                                          type: a.type,
+                                          initialValues: a.raw,
+                                        });
+                                      } else {
+                                        setProjectSelectedAction(null);
+                                      }
+                                      setSelectedProject({ ...p });
+                                    }}
+                                    style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 12, paddingHorizontal: 6, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#eee' }}
+                                  >
+                                    <Ionicons name={iconName} size={20} color={iconColor} style={{ marginTop: 2, marginRight: 12 }} />
+                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                      <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }} numberOfLines={2}>
+                                        {a.kind === 'draft' ? `Utkast sparat: ${a.type}` : `Slutförd: ${a.type}`}
+                                      </Text>
+                                      {subtitle ? (
+                                        <Text style={{ fontSize: 14, color: '#1976D2', marginTop: 2 }} numberOfLines={1}>
+                                          {subtitle}
+                                        </Text>
+                                      ) : null}
+                                      {a.desc ? (
+                                        <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }} numberOfLines={1}>
+                                          {a.desc}
+                                        </Text>
+                                      ) : null}
+                                      <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                        {formatRelativeTime(a.ts)}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                    </View>
     if (!num) return true;
     const n = String(num ?? '').trim();
     for (const main of hierarchyRef.current || []) {
@@ -234,13 +306,28 @@ export default function HomeScreen({ route, navigation }) {
 
   const loadCompanyAdmins = React.useCallback(async ({ force } = { force: false }) => {
     try {
-      if (!companyId) return;
+      if (!routeCompanyId) return;
       if (loadingCompanyAdmins && !force) return;
       setLoadingCompanyAdmins(true);
       setCompanyAdminsPermissionDenied(false);
       // Ensure at least the current user is present in members directory
-      await ensureCurrentUserMemberDoc();
-      const admins = await fetchCompanyMembers(companyId, { role: 'admin' });
+      // (Inline to avoid any scope issues on native/web builds.)
+      try {
+        const user = auth?.currentUser;
+        if (user?.uid) {
+          const profile = await fetchUserProfile(user.uid).catch(() => null);
+          const displayName = profile?.displayName || profile?.name || (user.email ? String(user.email).split('@')[0] : null);
+          const role = profile?.role || null;
+          await upsertCompanyMember({
+            companyId: routeCompanyId || null,
+            uid: user.uid,
+            displayName,
+            email: user.email || null,
+            role,
+          });
+        }
+      } catch (e) {}
+      const admins = await fetchCompanyMembers(routeCompanyId, { role: 'admin' });
       setCompanyAdmins(Array.isArray(admins) ? admins : []);
       setCompanyAdminsLastFetchAt(Date.now());
     } catch (e) {
@@ -250,19 +337,19 @@ export default function HomeScreen({ route, navigation }) {
     } finally {
       setLoadingCompanyAdmins(false);
     }
-  }, [companyId, loadingCompanyAdmins]);
+  }, [routeCompanyId, loadingCompanyAdmins]);
 
   // If the create-project modal opens before companyId is ready, onShow can early-return.
   // This effect ensures admins are fetched as soon as companyId is available while the modal is open.
   React.useEffect(() => {
     if (!newProjectModal?.visible) return;
-    if (!companyId) return;
+    if (!routeCompanyId) return;
     // Avoid refetch loop; only fetch if we have nothing yet.
     if (companyAdmins && companyAdmins.length > 0) return;
     if (loadingCompanyAdmins) return;
     loadCompanyAdmins({ force: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newProjectModal?.visible, companyId]);
+  }, [newProjectModal?.visible, routeCompanyId]);
 
   // While the ansvarig picker is open, subscribe to admins in realtime.
   // This avoids the common "empty cache" problem on fresh logins.
@@ -272,14 +359,14 @@ export default function HomeScreen({ route, navigation }) {
       companyAdminsUnsubRef.current = null;
       return;
     }
-    if (!companyId) return;
+    if (!routeCompanyId) return;
 
     setLoadingCompanyAdmins(true);
     setCompanyAdminsPermissionDenied(false);
     try {
       if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current();
     } catch (e) {}
-    companyAdminsUnsubRef.current = subscribeCompanyMembers(companyId, {
+    companyAdminsUnsubRef.current = subscribeCompanyMembers(routeCompanyId, {
       role: 'admin',
       onData: (admins) => {
         setCompanyAdmins(Array.isArray(admins) ? admins : []);
@@ -297,7 +384,7 @@ export default function HomeScreen({ route, navigation }) {
       try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch (e) {}
       companyAdminsUnsubRef.current = null;
     };
-  }, [responsiblePickerVisible, companyId]);
+  }, [responsiblePickerVisible, routeCompanyId]);
 
   // Track native keyboard height for the create-project modal.
   // We keep this separate from the search modal keyboard handling to avoid stale/reset values.
@@ -332,6 +419,26 @@ export default function HomeScreen({ route, navigation }) {
   // Modal för nytt projekt i undermapp (läggs utanför return)
   // State for project selection modal (for creating controls)
   const [selectProjectModal, setSelectProjectModal] = useState({ visible: false, type: null });
+  const [showControlTypeModal, setShowControlTypeModal] = useState(false);
+
+  // Check that a project number/id is unique across the whole hierarchy.
+  // Must be declared before any JSX/constants that reference it (RN-web TDZ).
+  const isProjectNumberUnique = React.useCallback((num) => {
+    if (!num) return true;
+    const n = String(num ?? '').trim();
+    if (!n) return true;
+    try {
+      for (const main of (hierarchyRef.current || [])) {
+        for (const sub of (main.children || [])) {
+          if (Array.isArray(sub.children) && sub.children.some(child => child?.type === 'project' && String(child.id) === n)) {
+            return false;
+          }
+        }
+      }
+    } catch (e) {}
+    return true;
+  }, []);
+
   const newProjectModalComponent = (
     <Modal
       visible={newProjectModal.visible}
@@ -861,6 +968,7 @@ export default function HomeScreen({ route, navigation }) {
   };
   // Helper to check if folder name is unique
   const isFolderNameUnique = (name) => !hierarchy.some(folder => folder.name.trim().toLowerCase() === name.trim().toLowerCase());
+
   // State for new subfolder modal
   const [newSubModal, setNewSubModal] = useState({ visible: false, parentId: null });
   const [newSubName, setNewSubName] = useState('');
@@ -890,12 +998,292 @@ export default function HomeScreen({ route, navigation }) {
   const [localFallbackExists, setLocalFallbackExists] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
+  const selectedProjectRef = useRef(null);
+
+  // Used to request a specific action when opening a project from the dashboard (e.g. open a draft inline)
+  const [projectSelectedAction, setProjectSelectedAction] = useState(null);
+
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardOverview, setDashboardOverview] = useState({
+    activeProjects: 0,
+    openDeviations: 0,
+    controlsToSign: 0,
+    drafts: 0,
+  });
+  const [dashboardRecent, setDashboardRecent] = useState([]);
+  const [dashboardRecentProjects, setDashboardRecentProjects] = useState([]);
+
+  // Keep ref in sync for popstate handler
+  React.useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
+
+  const findProjectById = React.useCallback((projectId) => {
+    if (!projectId) return null;
+    const targetId = String(projectId);
+    try {
+      const tree = hierarchyRef.current || [];
+      for (const main of tree) {
+        for (const sub of (main.children || [])) {
+          for (const child of (sub.children || [])) {
+            if (child && child.type === 'project' && String(child.id) === targetId) return child;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }, []);
+
+  const formatRelativeTime = React.useCallback((isoLike) => {
+    try {
+      const t = new Date(isoLike || 0).getTime();
+      if (!t) return '';
+      const diffMs = Date.now() - t;
+      const diffSec = Math.max(0, Math.floor(diffMs / 1000));
+      if (diffSec < 60) return 'för nyss';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `för ${diffMin} minut${diffMin === 1 ? '' : 'er'} sedan`;
+      const diffH = Math.floor(diffMin / 60);
+      if (diffH < 24) return `för ${diffH} tim${diffH === 1 ? 'me' : 'mar'} sedan`;
+      const diffD = Math.floor(diffH / 24);
+      if (diffD < 7) return `för ${diffD} dag${diffD === 1 ? '' : 'ar'} sedan`;
+      return new Date(t).toLocaleDateString('sv-SE');
+    } catch (e) {
+      return '';
+    }
+  }, []);
+
+  const computeOpenDeviationsCount = React.useCallback((controls) => {
+    try {
+      let open = 0;
+      for (const item of (controls || [])) {
+        if (!item || item.type !== 'Skyddsrond') continue;
+        const sections = item.checklistSections;
+        if (!Array.isArray(sections)) continue;
+        for (const section of sections) {
+          if (!section || !Array.isArray(section.statuses)) continue;
+          section.statuses.forEach((status, idx) => {
+            if (status !== 'avvikelse') return;
+            const r = section.remediation && section.remediation[idx];
+            const handled = !!(r && r.signature && r.comment);
+            if (!handled) open++;
+          });
+        }
+      }
+      return open;
+    } catch (e) {
+      return 0;
+    }
+  }, []);
+
+  const computeControlsToSign = React.useCallback((drafts) => {
+    try {
+      let count = 0;
+      for (const item of (drafts || [])) {
+        if (!item) continue;
+        const type = String(item.type || '');
+        if (type !== 'Mottagningskontroll' && type !== 'Riskbedömning') continue;
+        const sigs = item.mottagningsSignatures;
+        if (!Array.isArray(sigs) || sigs.length === 0) count++;
+      }
+      return count;
+    } catch (e) {
+      return 0;
+    }
+  }, []);
+
+  const countActiveProjects = React.useCallback(() => {
+    try {
+      let active = 0;
+      const tree = hierarchyRef.current || [];
+      for (const main of tree) {
+        for (const sub of (main.children || [])) {
+          for (const child of (sub.children || [])) {
+            if (child && child.type === 'project') {
+              const status = child.status || 'ongoing';
+              if (status !== 'completed') active++;
+            }
+          }
+        }
+      }
+      return active;
+    } catch (e) {
+      return 0;
+    }
+  }, []);
+
+  const loadDashboard = React.useCallback(async () => {
+    if (Platform.OS !== 'web') return;
+    setDashboardLoading(true);
+    try {
+      const [draftRaw, completedRaw] = await Promise.all([
+        AsyncStorage.getItem('draft_controls'),
+        AsyncStorage.getItem('completed_controls'),
+      ]);
+      const drafts = draftRaw ? (JSON.parse(draftRaw) || []) : [];
+      const completed = completedRaw ? (JSON.parse(completedRaw) || []) : [];
+
+      const activeProjects = countActiveProjects();
+      const openDeviations = computeOpenDeviationsCount(completed);
+      const controlsToSign = computeControlsToSign(drafts);
+
+      const recent = [];
+      const pushRecent = (item, kind) => {
+        if (!item || typeof item !== 'object') return;
+        const ts = item.savedAt || item.updatedAt || item.createdAt || item.date || null;
+        const projectId = item.project?.id || item.projectId || item.project || null;
+        const projObj = projectId ? findProjectById(projectId) : null;
+        const projectName = projObj?.name || item.project?.name || null;
+        const desc = String(item.deliveryDesc || item.materialDesc || item.generalNote || item.description || '').trim();
+        recent.push({
+          kind,
+          type: item.type || kind,
+          ts,
+          projectId: projectId ? String(projectId) : null,
+          projectName,
+          desc,
+          raw: item,
+        });
+      };
+      (completed || []).forEach((c) => pushRecent(c, 'completed'));
+      (drafts || []).forEach((d) => pushRecent(d, 'draft'));
+      recent.sort((a, b) => {
+        const ta = new Date(a.ts || 0).getTime() || 0;
+        const tb = new Date(b.ts || 0).getTime() || 0;
+        return tb - ta;
+      });
+      const top = recent.slice(0, 8);
+
+      // Derive recent projects from recent activity (unique by projectId)
+      const projMap = new Map();
+      for (const r of recent) {
+        if (!r.projectId) continue;
+        const prev = projMap.get(r.projectId);
+        const t = new Date(r.ts || 0).getTime() || 0;
+        if (!prev || t > prev.ts) projMap.set(r.projectId, { ts: t });
+      }
+      const recentProjects = Array.from(projMap.entries())
+        .map(([projectId, meta]) => {
+          const p = findProjectById(projectId);
+          return p ? { project: p, projectId: String(projectId), ts: meta.ts } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .slice(0, 8);
+
+      setDashboardOverview({
+        activeProjects,
+        openDeviations,
+        controlsToSign,
+        drafts: Array.isArray(drafts) ? drafts.length : 0,
+      });
+      setDashboardRecent(top);
+      setDashboardRecentProjects(recentProjects);
+    } catch (e) {
+      setDashboardOverview({ activeProjects: 0, openDeviations: 0, controlsToSign: 0, drafts: 0 });
+      setDashboardRecent([]);
+      setDashboardRecentProjects([]);
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [countActiveProjects, computeControlsToSign, computeOpenDeviationsCount, findProjectById]);
+
+  // Web: keep browser back/forward in sync with selectedProject
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    if (!window.history) return;
+
+    // Ensure we have a stable "home" state
+    try {
+      const st = window.history.state || {};
+      if (!st.dkView) window.history.replaceState({ ...st, dkView: 'home' }, '');
+    } catch (e) {}
+
+    const onPopState = (e) => {
+      try {
+        const st = e?.state || window.history.state || {};
+        if (st && st.dkView === 'project' && st.projectId) {
+          const proj = findProjectById(st.projectId);
+          // Clear any pending dashboard action when navigating with browser back/forward.
+          setProjectSelectedAction(null);
+          if (proj) setSelectedProject({ ...proj });
+          else setSelectedProject(null);
+        } else {
+          setProjectSelectedAction(null);
+          setSelectedProject(null);
+        }
+      } catch (err) {
+        setProjectSelectedAction(null);
+        setSelectedProject(null);
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      try { window.removeEventListener('popstate', onPopState); } catch (e) {}
+    };
+  }, [findProjectById]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    if (!window.history || typeof window.history.pushState !== 'function') return;
+
+    const proj = selectedProject;
+    if (proj && proj.id) {
+      try {
+        const st = window.history.state || {};
+        // Avoid pushing duplicates
+        if (st.dkView === 'project' && String(st.projectId || '') === String(proj.id)) return;
+        window.history.pushState({ ...st, dkView: 'project', projectId: String(proj.id) }, '');
+      } catch (e) {}
+    }
+  }, [selectedProject?.id]);
+
+  const closeSelectedProject = React.useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history) {
+      try {
+        const st = window.history.state || {};
+        // If we are currently on a project history entry, go back to home entry.
+        if (st.dkView === 'project') {
+          setProjectSelectedAction(null);
+          window.history.back();
+          return;
+        }
+      } catch (e) {}
+    }
+    setProjectSelectedAction(null);
+    setSelectedProject(null);
+  }, []);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    // Refresh dashboard when returning to start panel or after sync/hierarchy changes.
+    if (!selectedProject) loadDashboard();
+  }, [selectedProject, syncStatus, hierarchy, loadDashboard]);
 
   // Ensure current user is written to the company members directory (so admin dropdown works)
   React.useEffect(() => {
     if (!companyId) return;
     if (!auth?.currentUser?.uid) return;
-    ensureCurrentUserMemberDoc();
+    // Inline the upsert to avoid any scope issues on native/web builds.
+    (async () => {
+      try {
+        const user = auth?.currentUser;
+        if (!user?.uid) return;
+        const profile = await fetchUserProfile(user.uid).catch(() => null);
+        const displayName = profile?.displayName || profile?.name || (user.email ? String(user.email).split('@')[0] : null);
+        const role = profile?.role || null;
+        await upsertCompanyMember({
+          companyId: routeCompanyId || null,
+          uid: user.uid,
+          displayName,
+          email: user.email || null,
+          role,
+        });
+      } catch (e) {}
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, auth?.currentUser?.uid]);
 
@@ -2307,6 +2695,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                                 onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
                                                 onPress={() => {
                                                   if (Platform.OS === 'web') {
+                                                    setProjectSelectedAction(null);
                                                     setSelectedProject({ ...proj });
                                                   } else {
                                                     navigation.navigate('ProjectDetails', {
@@ -2388,10 +2777,137 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <ScrollView ref={rightPaneScrollRef} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
                 {selectedProject ? (
                   <View style={{ flex: 1 }}>
-                    <ProjectDetails route={{ params: { project: selectedProject, companyId } }} navigation={navigation} inlineClose={() => setSelectedProject(null)} />
+                    <ProjectDetails route={{ params: { project: selectedProject, companyId, selectedAction: projectSelectedAction } }} navigation={navigation} inlineClose={closeSelectedProject} />
                   </View>
                 ) : (
-                  <View style={{ flex: 1 }} />
+                  <View style={{ flex: 1, padding: 18 }}>
+                    <View style={{ width: '100%', maxWidth: 1180, alignSelf: 'flex-end' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                        {/* Left column: Continue */}
+                        <View style={{ flex: 1, minWidth: 420, marginRight: 16 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                            Fortsätt där du slutade
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' }}>
+                            {dashboardLoading ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Laddar…</Text>
+                            ) : (dashboardRecentProjects || []).length === 0 ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Inga senaste projekt ännu.</Text>
+                            ) : (
+                              (dashboardRecentProjects || []).map((entry, idx) => (
+                                <TouchableOpacity
+                                  key={`${entry.projectId}-${idx}`}
+                                  activeOpacity={0.85}
+                                  onPress={() => {
+                                    if (entry?.project) {
+                                      setProjectSelectedAction(null);
+                                      setSelectedProject({ ...entry.project });
+                                    }
+                                  }}
+                                  style={{ paddingVertical: 12, paddingHorizontal: 6, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#eee' }}
+                                >
+                                  <Text style={{ fontSize: 15, color: '#1976D2', fontWeight: '700' }} numberOfLines={1}>
+                                    {entry.project.id} — {entry.project.name}
+                                  </Text>
+                                  <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                    Senast aktivitet: {formatRelativeTime(new Date(entry.ts || 0).toISOString())}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))
+                            )}
+                          </View>
+                        </View>
+
+                        {/* Right column: Overview + Activity */}
+                        <View style={{ width: 420, minWidth: 320 }}>
+                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                            Översikt
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 16, backgroundColor: '#fff', marginBottom: 16 }}>
+                            {[
+                              { key: 'activeProjects', label: 'Pågående projekt', color: '#43A047', value: dashboardOverview.activeProjects },
+                              { key: 'openDeviations', label: 'Öppna avvikelser', color: '#FFD600', value: dashboardOverview.openDeviations },
+                              { key: 'controlsToSign', label: 'Kontroller att signera', color: '#D32F2F', value: dashboardOverview.controlsToSign },
+                              { key: 'drafts', label: 'Sparade utkast', color: '#888', value: dashboardOverview.drafts },
+                            ].map((row, ridx) => (
+                              <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: ridx === 0 ? 0 : 1, borderTopColor: '#eee' }}>
+                                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: row.color, marginRight: 12 }} />
+                                <Text style={{ flex: 1, fontSize: 15, color: '#222' }}>{row.label}</Text>
+                                <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }}>{String(row.value ?? 0)}</Text>
+                              </View>
+                            ))}
+                          </View>
+
+                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                            Senaste aktivitet
+                          </Text>
+                          <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
+                            {dashboardLoading ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Laddar…</Text>
+                            ) : (dashboardRecent || []).length === 0 ? (
+                              <Text style={{ color: '#777', padding: 12 }}>Ingen aktivitet ännu.</Text>
+                            ) : (
+                              (dashboardRecent || []).map((a, idx) => {
+                                const iconName = a.kind === 'draft' ? 'document-text-outline' : 'checkmark-circle';
+                                const iconColor = a.kind === 'draft' ? '#FFD600' : '#43A047';
+                                const subtitle = a.projectName ? `i ${a.projectName}` : (a.projectId ? `i ${a.projectId}` : '');
+                                return (
+                                  <TouchableOpacity
+                                    key={`${a.kind}-${a.ts || 'no-ts'}-${idx}`}
+                                    activeOpacity={0.85}
+                                    onPress={() => {
+                                      if (a.projectId) {
+                                        const p = findProjectById(a.projectId);
+                                        if (p) {
+                                          if (a.kind === 'draft') {
+                                            const raw = a.raw || null;
+                                            const stableId = raw?.id || raw?.draftId || raw?.controlId || raw?.localId || raw?.savedAt || a.ts || Date.now();
+                                            setProjectSelectedAction({
+                                              id: `openDraft:${String(a.projectId)}:${String(stableId)}`,
+                                              kind: 'openDraft',
+                                              type: a.type,
+                                              initialValues: raw || undefined,
+                                            });
+                                            setSelectedProject({ ...p });
+                                            // Clear after it has been delivered to ProjectDetails once.
+                                            setTimeout(() => setProjectSelectedAction(null), 0);
+                                          } else {
+                                            setProjectSelectedAction(null);
+                                            setSelectedProject({ ...p });
+                                          }
+                                        }
+                                      }
+                                    }}
+                                    style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 12, paddingHorizontal: 6, borderTopWidth: idx === 0 ? 0 : 1, borderTopColor: '#eee' }}
+                                  >
+                                    <Ionicons name={iconName} size={20} color={iconColor} style={{ marginTop: 2, marginRight: 12 }} />
+                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                      <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }} numberOfLines={2}>
+                                        {a.kind === 'draft' ? `Utkast sparat: ${a.type}` : `Slutförd: ${a.type}`}
+                                      </Text>
+                                      {subtitle ? (
+                                        <Text style={{ fontSize: 14, color: '#1976D2', marginTop: 2 }} numberOfLines={1}>
+                                          {subtitle}
+                                        </Text>
+                                      ) : null}
+                                      {a.desc ? (
+                                        <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }} numberOfLines={1}>
+                                          {a.desc}
+                                        </Text>
+                                      ) : null}
+                                      <Text style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                        {formatRelativeTime(a.ts)}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
                 )}
               </ScrollView>
               {Platform.OS === 'web' && (
