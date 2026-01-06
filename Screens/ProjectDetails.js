@@ -18,7 +18,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
@@ -167,12 +167,19 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 18, fontWeight: '600', marginBottom: 8 },
   noControls: { fontSize: 16, fontStyle: 'italic', marginBottom: 12 },
   groupContainer: { marginBottom: 18, backgroundColor: '#f7f7f7', borderRadius: 10, padding: 8 },
-  groupHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4 },
-  groupTitle: { fontSize: 16, fontWeight: '700', marginLeft: 8, color: '#263238' },
+  groupHeader: { flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', paddingVertical: 8, paddingHorizontal: 4 },
+  groupTitle: { fontSize: 16, fontWeight: '700', marginLeft: 6, color: '#263238', flexShrink: 1 },
   groupBadge: { backgroundColor: '#1976D2', borderRadius: 12, paddingHorizontal: 8, marginLeft: 8 },
   groupBadgeText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   controlCard: { backgroundColor: '#fff', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: '#e0e0e0', minHeight: 54, flexDirection: 'row', alignItems: 'center' },
-  controlType: { fontSize: 15, color: '#222', flex: 1 },
+  controlCardWeb: { width: '100%', flex: 1, alignSelf: 'stretch', paddingVertical: 4, paddingHorizontal: 10, minHeight: 40, marginVertical: 2 },
+  controlTextContainer: { flexDirection: 'column', flex: 1, minWidth: 0 },
+  controlTextContainerWeb: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 },
+  controlLine: { flexShrink: 1 },
+  controlTitle: { fontSize: 15, color: '#222', fontWeight: 'bold', flexShrink: 1 },
+  controlTitleInlineWeb: { fontSize: 14, color: '#222', fontWeight: '400' },
+  controlSubtitle: { color: '#555', fontSize: 13, marginTop: 4, flexShrink: 1 },
+  controlSubtitleInline: { color: '#555', fontSize: 12, fontWeight: '400' },
   form: { backgroundColor: '#fff', borderRadius: 12, padding: 16, margin: 12 },
   selectedType: { fontWeight: '700', fontSize: 16, marginBottom: 8 },
   infoText: { fontSize: 14, color: '#555', marginBottom: 8 },
@@ -197,7 +204,7 @@ const styles = StyleSheet.create({
   centerOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
 });
 
-export default function ProjectDetails({ route, navigation, inlineClose }) {
+export default function ProjectDetails({ route, navigation, inlineClose, refreshNonce }) {
               const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
@@ -476,6 +483,15 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
       if (selectedAction.kind === 'openDraft' && selectedAction.type) {
         openInlineControl(selectedAction.type, selectedAction.initialValues || undefined);
       }
+      if (selectedAction.kind === 'openControlDetails' && selectedAction.control) {
+        try {
+          navigation && navigation.navigate && navigation.navigate('ControlDetails', {
+            control: selectedAction.control,
+            project,
+            companyId,
+          });
+        } catch (e) {}
+      }
     } catch (e) {}
   }, [selectedAction?.id]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
@@ -595,7 +611,13 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
       return tb - ta;
     });
     setControls(allControls);
-  }, [project?.id]);
+  }, [project?.id, companyId]);
+
+  // Web: allow parent (HomeScreen header) to force-refresh the list.
+  useEffect(() => {
+    if (refreshNonce == null) return;
+    loadControls();
+  }, [refreshNonce, loadControls]);
 
   // Ladda kontroller när sidan visas (fokus)
   React.useEffect(() => {
@@ -1499,38 +1521,49 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
               Riskbedömning: 'Riskbedömningar',
             };
 
-            // Helper: check if all deviations in a Skyddsrond are handled
-            function allSkyddsrondDeviationsHandled(ctrl) {
-              if (!ctrl.checklistSections) return false;
-              let hasDeviation = false;
-              let allHandled = true;
-              ctrl.checklistSections.forEach(section => {
-                if (Array.isArray(section.deviation)) {
-                  section.deviation.forEach((pt, idx) => {
-                    hasDeviation = true;
-                    if (!section.remediation || !section.remediation[idx]) {
-                      allHandled = false;
-                    } else {
-                      const r = section.remediation[idx];
-                      if (!(r && r.signature && r.comment)) {
-                        allHandled = false;
-                      }
-                    }
-                  });
+            // Helper: count open/total deviations in a Skyddsrond.
+            // Supports both newer schema (checklist + remediation keyed by point text)
+            // and legacy schema (checklistSections + remediation indexed by point index).
+            function getSkyddsrondDeviationStats(ctrl) {
+              try {
+                const sections = Array.isArray(ctrl?.checklist)
+                  ? ctrl.checklist
+                  : (Array.isArray(ctrl?.checklistSections) ? ctrl.checklistSections : null);
+                if (!Array.isArray(sections) || sections.length === 0) return { total: 0, open: 0 };
+
+                let total = 0;
+                let open = 0;
+                for (const section of sections) {
+                  if (!section || !Array.isArray(section.statuses)) continue;
+                  const points = Array.isArray(section.points) ? section.points : [];
+                  for (let i = 0; i < section.statuses.length; i++) {
+                    if (section.statuses[i] !== 'avvikelse') continue;
+                    total += 1;
+                    const pt = points[i];
+                    const rem = section.remediation
+                      ? ((pt !== undefined && pt !== null) ? section.remediation[pt] : null) || section.remediation[i]
+                      : null;
+                    if (!rem) open += 1;
+                  }
                 }
-              });
-              if (!hasDeviation) return null; // No deviations
-              return allHandled;
+                return { total, open };
+              } catch (e) {
+                return { total: 0, open: 0 };
+              }
             }
 
             // For group header: are ALL Skyddsrond controls handled?
             return grouped.map(({ type, items }) => {
               const t = type;
+              const typeMeta = (controlTypeOptions || []).find(o => o.type === t) || null;
               let allHandled = true;
               let anyDeviation = false;
+              let anyOpenDeviation = false;
               if (t === 'Skyddsrond') {
-                allHandled = items.length > 0 && items.every(ctrl => allSkyddsrondDeviationsHandled(ctrl) === true);
-                anyDeviation = items.some(ctrl => allSkyddsrondDeviationsHandled(ctrl) !== null);
+                const stats = (items || []).map(ctrl => getSkyddsrondDeviationStats(ctrl));
+                allHandled = stats.length > 0 && stats.every(s => s.total > 0 && s.open === 0);
+                anyDeviation = stats.some(s => s.total > 0);
+                anyOpenDeviation = stats.some(s => s.open > 0);
               }
               const expanded = expandedByType[t] ?? false;
               return (
@@ -1538,16 +1571,32 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                   <TouchableOpacity style={styles.groupHeader} onPress={() => toggleType(t)}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                       <MaterialIcons name={expanded ? 'expand-less' : 'expand-more'} size={22} color="#263238" />
-                      <Text style={styles.groupTitle}>{pluralLabels[t] || t}</Text>
-                      {t === 'Skyddsrond' && (
-                        anyDeviation
-                          ? (allHandled
-                              ? <Ionicons name="shield-checkmark" size={20} color="#43A047" style={{ marginLeft: 8 }} />
-                              : <Ionicons name="alert-circle" size={20} color="#D32F2F" style={{ marginLeft: 8 }} />
-                            )
-                          : <Ionicons name="shield-outline" size={20} color="#888" style={{ marginLeft: 8 }} />
-                      )}
+                      {typeMeta ? (
+                        <Ionicons
+                          name={typeMeta.icon}
+                          size={18}
+                          color={typeMeta.color}
+                          style={{ marginLeft: 8 }}
+                          accessibilityLabel={`${t} ikon`}
+                        />
+                      ) : null}
+                      <Text style={styles.groupTitle} numberOfLines={1} ellipsizeMode="tail">{pluralLabels[t] || t}</Text>
                     </View>
+
+                    {t === 'Skyddsrond' && anyOpenDeviation && (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                          // Expand the group so the problematic rond becomes visible (and highlighted).
+                          setExpandedByType((prev) => ({ ...prev, [t]: true }));
+                        }}
+                        style={{ marginRight: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600' }}
+                        activeOpacity={0.85}
+                        accessibilityLabel="Åtgärda"
+                      >
+                        <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>Åtgärda</Text>
+                      </TouchableOpacity>
+                    )}
                     <View style={styles.groupBadge}><Text style={styles.groupBadgeText}>{items.length}</Text></View>
                   </TouchableOpacity>
                   {expanded ? (
@@ -1556,6 +1605,11 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                       .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
                       .map((item, idx) => {
                         // ...existerande rendering av kontrollkortet...
+                        const isWeb = Platform.OS === 'web';
+                        const leadingIconSize = isWeb ? 20 : 22;
+                        const leadingIconMarginRight = isWeb ? 6 : 8;
+                        const trailingIconPadding = isWeb ? 4 : 6;
+                        const trailingIconMarginLeft = isWeb ? 6 : 8;
                         let subtitle = null;
                         let parsedDate = '';
                         let label = '';
@@ -1603,40 +1657,24 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                             label = `${label} — ${String(item.deliveryDesc).trim()}`;
                           }
                         }
-                        // Kolla om skyddsrond har någon avvikelse (status === 'avvikelse' i checklist)
+                        // Skyddsrond deviation status (open deviations => highlight)
                         let hasDeviation = false;
                         let allHandled = false;
                         if (item.type === 'Skyddsrond') {
-                          // Räkna avvikelser och åtgärdade avvikelser
-                          let totalDeviations = 0;
-                          let handledDeviations = 0;
-                          if (Array.isArray(item.checklistSections)) {
-                            item.checklistSections.forEach(section => {
-                              if (Array.isArray(section.statuses)) {
-                                section.statuses.forEach((status, idx) => {
-                                  if (status === 'avvikelse') {
-                                    totalDeviations++;
-                                    if (section.remediation && section.remediation[idx]) {
-                                      const r = section.remediation[idx];
-                                      if (r && r.signature && r.comment) handledDeviations++;
-                                    }
-                                  }
-                                });
-                              }
-                            });
-                          }
-                          allHandled = totalDeviations > 0 && handledDeviations === totalDeviations;
-                          hasDeviation = totalDeviations > 0 && handledDeviations < totalDeviations;
+                          const stats = getSkyddsrondDeviationStats(item);
+                          allHandled = stats.total > 0 && stats.open === 0;
+                          hasDeviation = stats.open > 0;
                         }
                         return (
-                          <View key={`${item.id || 'noid'}-${item.date || 'nodate'}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View key={`${item.id || 'noid'}-${item.date || 'nodate'}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
                             <TouchableOpacity
                               style={[
                                 styles.controlCard,
+                                (Platform.OS === 'web' ? styles.controlCardWeb : null),
                                 (item.isDraft
                                   ? { backgroundColor: '#fff', borderColor: '#222' }
                                   : item.type === 'Skyddsrond' && hasDeviation
-                                    ? { backgroundColor: '#fff', borderColor: '#D32F2F', borderWidth: 2 }
+                                    ? { backgroundColor: '#FFD600', borderColor: '#D32F2F', borderWidth: 2 }
                                     : item.type === 'Skyddsrond' && allHandled
                                       ? { backgroundColor: '#fff', borderColor: '#43A047', borderWidth: 2 }
                                       : { backgroundColor: '#fff', borderColor: '#e0e0e0' }
@@ -1674,25 +1712,35 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                       else navigation.navigate('ControlForm', { initialValues: item, project });
                                   }
                                 } else {
-                                  navigation.navigate('ControlDetails', { control: item, project });
+                                  navigation.navigate('ControlDetails', { control: item, project, companyId });
                                 }
                               }}
                               onLongPress={item.isDraft ? undefined : () => handleControlLongPress(item)}
                               delayLongPress={item.isDraft ? undefined : 600}
                             >
                               {item.isDraft ? (
-                                <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
-                                  <Circle cx={12} cy={12} r={10} fill="#FFD600" stroke="#111" strokeWidth={1} />
-                                  <Line x1={12} y1={12} x2={12} y2={7} stroke="#111" strokeWidth={1.5} strokeLinecap="round" />
-                                  <Line x1={12} y1={12} x2={16} y2={13} stroke="#111" strokeWidth={1.5} strokeLinecap="round" />
-                                  <Circle cx={12} cy={12} r={1.2} fill="#111" />
-                                </Svg>
+                                <Ionicons name="document-text-outline" size={leadingIconSize} color="#FFD600" style={{ marginRight: leadingIconMarginRight }} />
                               ) : item.type === 'Skyddsrond' ? (
-                                allHandled
-                                  ? <Ionicons name="shield-checkmark" size={22} color="#43A047" style={{ marginRight: 8 }} />
-                                  : <Ionicons name="alert-circle" size={22} color="#D32F2F" style={{ marginRight: 8 }} />
+                                hasDeviation
+                                  ? <Ionicons name="alert-circle" size={leadingIconSize} color="#D32F2F" style={{ marginRight: leadingIconMarginRight }} />
+                                  : (
+                                    <Svg width={leadingIconSize} height={leadingIconSize} viewBox="0 0 24 24" style={{ marginRight: leadingIconMarginRight }}>
+                                      <Circle cx={12} cy={12} r={10} fill="#43A047" stroke="#222" strokeWidth={1} />
+                                      <SvgText
+                                        x="12"
+                                        y="13.5"
+                                        fontSize="16"
+                                        fontWeight="bold"
+                                        fill="#fff"
+                                        textAnchor="middle"
+                                        alignmentBaseline="middle"
+                                      >
+                                        ✓
+                                      </SvgText>
+                                    </Svg>
+                                  )
                               ) : (
-                                <Svg width={22} height={22} viewBox="0 0 24 24" style={{ marginRight: 8 }}>
+                                <Svg width={leadingIconSize} height={leadingIconSize} viewBox="0 0 24 24" style={{ marginRight: leadingIconMarginRight }}>
                                   <Circle cx={12} cy={12} r={10} fill="#43A047" stroke="#222" strokeWidth={1} />
                                   <SvgText
                                     x="12"
@@ -1707,23 +1755,40 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                   </SvgText>
                                 </Svg>
                               )}
-                              <View style={{ flexDirection: 'column', flex: 1 }}>
-                                <Text
-                                  style={[
-                                    styles.controlType,
-                                    { color: '#222', fontWeight: 'bold' }
-                                  ]}
-                                >
-                                  {label}
-                                </Text>
-                                {subtitle ? (
-                                  <Text style={{ color: '#555', fontSize: 13, marginTop: 4 }}>{subtitle}</Text>
-                                ) : null}
+                              <View style={(Platform.OS === 'web') ? styles.controlTextContainerWeb : styles.controlTextContainer}>
+                                {Platform.OS === 'web' ? (
+                                  <Text style={styles.controlLine} numberOfLines={1} ellipsizeMode="tail">
+                                    <Text style={styles.controlTitleInlineWeb}>{label}</Text>
+                                    {subtitle ? <Text style={styles.controlSubtitleInline}> — {subtitle}</Text> : null}
+                                  </Text>
+                                ) : (
+                                  <>
+                                    <Text style={styles.controlTitle} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
+                                    {subtitle ? (
+                                      <Text style={styles.controlSubtitle} numberOfLines={1} ellipsizeMode="tail">{subtitle}</Text>
+                                    ) : null}
+                                  </>
+                                )}
                               </View>
+
+                              {Platform.OS === 'web' && !item.isDraft && item.type === 'Skyddsrond' && hasDeviation && (
+                                <TouchableOpacity
+                                  style={{ marginLeft: trailingIconMarginLeft, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
+                                  activeOpacity={0.85}
+                                  onPress={(e) => {
+                                    try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                                    navigation.navigate('ControlDetails', { control: item, project, companyId });
+                                  }}
+                                  accessibilityLabel="Åtgärda"
+                                >
+                                  <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>Åtgärda</Text>
+                                </TouchableOpacity>
+                              )}
+
                               {/* Skriv ut-ikon (endast för slutförda) */}
                               {!item.isDraft && (
                                 <TouchableOpacity
-                                  style={{ marginLeft: 8, padding: 6 }}
+                                  style={{ marginLeft: trailingIconMarginLeft, padding: trailingIconPadding }}
                                   onPress={async (e) => {
                                     e.stopPropagation && e.stopPropagation();
                                     try {
@@ -1839,19 +1904,19 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
                                   }}
                                   accessibilityLabel="Exportera denna kontroll som PDF"
                                 >
-                                  <Ionicons name="document-outline" size={22} color="#1976D2" />
+                                  <Ionicons name="document-outline" size={leadingIconSize} color="#1976D2" />
                                 </TouchableOpacity>
                               )}
                               {/* Papperskorg-ikon med bekräftelsemodal (både för utkast och slutförda) */}
                               <TouchableOpacity
-                                style={{ marginLeft: 8, padding: 6 }}
+                                style={{ marginLeft: trailingIconMarginLeft, padding: trailingIconPadding }}
                                 onPress={(e) => {
                                   e.stopPropagation && e.stopPropagation();
                                   setDeleteConfirm({ visible: true, control: item });
                                 }}
                                 accessibilityLabel={item.isDraft ? "Radera pågående kontroll" : "Radera denna kontroll"}
                               >
-                                <Ionicons name="trash-outline" size={22} color="#D32F2F" />
+                                <Ionicons name="trash-outline" size={leadingIconSize} color="#D32F2F" />
                               </TouchableOpacity>
 
                               {/* Modal för raderingsbekräftelse (läggs i JSX utanför listan) */}

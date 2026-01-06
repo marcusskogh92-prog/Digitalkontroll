@@ -3,15 +3,17 @@
   "main": "index.js",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
+    "start": "expo start --port 8081",
+    "firebase:deploy:storage": "npx firebase-tools deploy --only storage",
     "admin:provision-company": "node ./scripts/provision-company.js",
     "admin:add-user": "node ./scripts/add-user.js",
     "admin:set-company-claim": "node ./scripts/set-company-claim.js",
     "admin:list-companies": "node ./scripts/list-foretag.js",
+    "admin:import-companies-users": "node ./scripts/import-companies-users.js",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
+    "android": "expo start --android --port 8081",
+    "ios": "expo start --ios --port 8081",
+    "web": "expo start --web --port 8081",
     "lint": "expo lint"
   },
   "dependencies": {

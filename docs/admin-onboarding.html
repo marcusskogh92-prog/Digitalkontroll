@@ -69,7 +69,7 @@ node scripts/list-foretag.js</pre>
   <ul>
     <li><code>foretag/{companyId}</code> (företagsdokument)</li>
     <li><code>foretag/{companyId}/mallar</code> (minst en mall)</li>
-ä    <li>Auth-användare + custom claims: <code>{ companyId, role: "admin", admin: true }</code></li>
+    <li>Auth-användare + custom claims: <code>{ companyId, role: "admin", admin: true }</code></li>
     <li><code>users/{uid}</code> med <code>companyId</code> och roll</li>
   </ul>
 
@@ -137,6 +137,39 @@ node scripts/list-foretag.js</pre>
   <pre>node scripts/set-enabled-control-types.js --serviceAccount=./konton/XXXX.json --company=ACME --types=Arbetsberedning,Egenkontroll,Fuktmätning,Mottagningskontroll,Riskbedömning,Skyddsrond</pre>
 
   <p class="muted">Obs: om du sätter <code>--types=</code> (tom lista) blir det inga valbara kontrolltyper i “Välj kontrolltyp”.</p>
+
+  <h2>5) Företagslogga (rekommenderad placering)</h2>
+  <p>Loggan ska <b>inte</b> ligga som base64 i Firestore. Lägg själva bilden i <b>Firebase Storage</b> och spara bara en URL (eller path) i Firestore.</p>
+  <ul>
+    <li><b>Storage</b>: <code>foretag/{companyId}/branding/logo.png</code></li>
+    <li><b>Firestore</b>: <code>foretag/{companyId}/profil/public.logoUrl</code> (en https-URL till loggan)</li>
+  </ul>
+  <p class="muted">Appen använder <code>profil/public.logoUrl</code> för PDF-export/branding. Eftersom företag sällan byter logga är det helt OK att du lägger in den manuellt vid behov.</p>
+
+  <h2>6) Importera flera företag + användare från Excel (CSV)</h2>
+  <p>Om du vill “städa upp” och lägga in flera företag/användare snabbt är det enklast att exportera från Excel till CSV och köra ett script.</p>
+
+  <p><b>Steg i Excel</b>:</p>
+  <ol>
+    <li>Skapa en tabell med kolumnerna nedan.</li>
+    <li>Exportera som CSV. (I Sverige blir delimiter ofta <code>;</code>.)</li>
+  </ol>
+
+  <p><b>Rekommenderat CSV-format (med header)</b>:</p>
+  <pre>companyId;companyName;email;firstName;lastName;role;admin;password;logoUrl;enabledControlTypes</pre>
+
+  <p><b>Exempel</b>:</p>
+  <pre>ms-bygg;MS Byggsystem;anna@msbygg.se;Anna;Andersson;admin;true;BytMig123!;;Arbetsberedning,Egenkontroll
+ms-bygg;MS Byggsystem;erik@msbygg.se;Erik;Eriksson;user;false;;;Arbetsberedning,Egenkontroll
+demo-service;Demo-service;demo@demo.local;Demo;Admin;admin;true;Demo12345!;;</pre>
+
+  <p><b>Kör importen</b>:</p>
+  <pre>npm run admin:import-companies-users -- --serviceAccount=./konton/XXXX.json --file=./data/import.csv --delimiter=;
+
+# testläge utan att skriva:
+npm run admin:import-companies-users -- --serviceAccount=./konton/XXXX.json --file=./data/import.csv --delimiter=; --dryRun=true</pre>
+
+  <p class="muted">Tips: om du lämnar <code>password</code> tomt så skapas ett slumpat lösenord och skrivs ut i terminalen (spara det).</p>
 
   <h2>Felsökning (snabbt)</h2>
   <ul>

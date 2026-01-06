@@ -109,6 +109,46 @@ export default function HomeScreen({ route, navigation }) {
   // Support/debug tools should not be visible in normal UI.
   // Shown only in development or after explicit admin-unlock.
   const showSupportTools = __DEV__ || showAdminButton;
+
+  // Extra restriction: only show support/debug tools for admins, or for the dedicated demo company.
+  // This keeps normal companies/users clean while still enabling dev workflows.
+  const [authClaims, setAuthClaims] = useState(null);
+
+  React.useEffect(() => {
+    let active = true;
+    async function refreshClaims() {
+      try {
+        const user = auth?.currentUser;
+        if (!user) {
+          if (active) setAuthClaims(null);
+          return;
+        }
+        const tokenRes = await user.getIdTokenResult(false).catch(() => null);
+        if (active) setAuthClaims(tokenRes?.claims || null);
+      } catch (e) {
+        if (active) setAuthClaims(null);
+      }
+    }
+
+    refreshClaims();
+    const unsub = auth?.onAuthStateChanged ? auth.onAuthStateChanged(() => { refreshClaims(); }) : null;
+    return () => {
+      active = false;
+      try { if (typeof unsub === 'function') unsub(); } catch (e) {}
+    };
+  }, []);
+
+  const isAdminUser = !!(authClaims && (authClaims.admin === true || authClaims.role === 'admin'));
+  // IMPORTANT: companyId state is initialized later in this component.
+  // Do not reference it here (TDZ on web). Use claims/route params instead.
+  const debugCompanyId = String(authClaims?.companyId || routeCompanyId || '').trim();
+  const isDemoCompany = debugCompanyId === 'MS Byggsystem DEMO' || debugCompanyId === 'demo-service' || debugCompanyId === 'demo-company';
+  // Only show support tools for:
+  // - Demo company (all users)
+  // - MS Byggsystem admins (dev accounts)
+  // This prevents other-company admins from seeing dev tools.
+  const isMsByggsystemCompany = debugCompanyId === 'MS Byggsystem';
+  const canShowSupportToolsInHeader = !!(showSupportTools && (isDemoCompany || (isMsByggsystemCompany && isAdminUser)));
   
   // Dev-only: promote current user to demo/admin and load test hierarchy
   async function handleMakeDemoAdmin() {
@@ -140,7 +180,7 @@ export default function HomeScreen({ route, navigation }) {
                       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                         {/* Left column: continue */}
                         <View style={{ flex: 2, marginRight: 16, minWidth: 0 }}>
-                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 12 }}>
                             Fortsätt där du slutade
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
@@ -190,7 +230,7 @@ export default function HomeScreen({ route, navigation }) {
 
                         {/* Right column: overview + activity */}
                         <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 12 }}>
                             Översikt
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 16, backgroundColor: '#fff', marginBottom: 16 }}>
@@ -208,7 +248,7 @@ export default function HomeScreen({ route, navigation }) {
                             ))}
                           </View>
 
-                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 }}>
                             Senaste aktivitet
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
@@ -218,8 +258,9 @@ export default function HomeScreen({ route, navigation }) {
                               <Text style={{ color: '#777', padding: 12 }}>Ingen aktivitet ännu.</Text>
                             ) : (
                               (dashboardRecent || []).map((a, idx) => {
-                                const iconName = a.kind === 'draft' ? 'document-text-outline' : 'checkmark-circle';
-                                const iconColor = a.kind === 'draft' ? '#FFD600' : '#43A047';
+                                const hasOpenDeviations = a.kind !== 'draft' && a.type === 'Skyddsrond' && (a.openDeviationsCount || 0) > 0;
+                                const iconName = a.kind === 'draft' ? 'document-text-outline' : (hasOpenDeviations ? 'alert-circle' : 'checkmark-circle');
+                                const iconColor = a.kind === 'draft' ? '#FFD600' : (hasOpenDeviations ? '#D32F2F' : '#43A047');
                                 const subtitle = a.projectName ? `i ${a.projectName}` : (a.projectId ? `i ${a.projectId}` : '');
                                 return (
                                   <TouchableOpacity
@@ -262,6 +303,30 @@ export default function HomeScreen({ route, navigation }) {
                                         {formatRelativeTime(a.ts)}
                                       </Text>
                                     </View>
+
+                                    {Platform.OS === 'web' && hasOpenDeviations && (
+                                      <TouchableOpacity
+                                        onPress={(e) => {
+                                          try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                                          if (!a.projectId) return;
+                                          const p = findProjectById(a.projectId);
+                                          if (!p) return;
+                                          const stableId = a.raw?.id || a.raw?.controlId || a.ts || Date.now();
+                                          setProjectSelectedAction({
+                                            id: `openControlDetails:${String(a.projectId)}:${String(stableId)}`,
+                                            kind: 'openControlDetails',
+                                            control: a.raw,
+                                          });
+                                          setSelectedProject({ ...p });
+                                          setTimeout(() => setProjectSelectedAction(null), 0);
+                                        }}
+                                        style={{ marginLeft: 12, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
+                                        activeOpacity={0.85}
+                                        accessibilityLabel="Åtgärda avvikelse"
+                                      >
+                                        <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>Åtgärda</Text>
+                                      </TouchableOpacity>
+                                    )}
                                   </TouchableOpacity>
                                 );
                               })
@@ -303,6 +368,16 @@ export default function HomeScreen({ route, navigation }) {
   const [companyAdminsLastFetchAt, setCompanyAdminsLastFetchAt] = useState(0);
   const companyAdminsUnsubRef = useRef(null);
   const [companyAdminsPermissionDenied, setCompanyAdminsPermissionDenied] = useState(false);
+
+  const resetProjectFields = React.useCallback(() => {
+    try { setNewProjectName(''); } catch (e) {}
+    try { setNewProjectNumber(''); } catch (e) {}
+    try { setNewProjectResponsible(null); } catch (e) {}
+    try { setResponsiblePickerVisible(false); } catch (e) {}
+    try { setNewProjectKeyboardLockHeight(0); } catch (e) {}
+    // Best-effort: dismiss keyboard on native
+    try { if (Platform.OS !== 'web') Keyboard.dismiss(); } catch (e) {}
+  }, []);
 
   const loadCompanyAdmins = React.useCallback(async ({ force } = { force: false }) => {
     try {
@@ -992,6 +1067,26 @@ export default function HomeScreen({ route, navigation }) {
   const [loggingOut, setLoggingOut] = useState(false);
   // companyId kan komma från route.params eller användarprofil
   const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
+
+  // Persist companyId locally (used as fallback in other screens) and
+  // allow resolving companyId from auth claims when route params are missing.
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const current = String(companyId || '').trim();
+        const fromClaims = String(authClaims?.companyId || '').trim();
+        const cid = current || fromClaims;
+        if (!cid) return;
+        if (!current && fromClaims) {
+          setCompanyId(fromClaims);
+        }
+        const stored = await AsyncStorage.getItem('dk_companyId');
+        if (stored !== cid) {
+          await AsyncStorage.setItem('dk_companyId', cid);
+        }
+      } catch (e) {}
+    })();
+  }, [companyId, authClaims?.companyId]);
   // Laddningsstate för hierarkin
   const [loadingHierarchy, setLoadingHierarchy] = useState(true);
   const [hierarchy, setHierarchy] = useState([]);
@@ -999,6 +1094,7 @@ export default function HomeScreen({ route, navigation }) {
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
   const selectedProjectRef = useRef(null);
+  const [projectControlsRefreshNonce, setProjectControlsRefreshNonce] = useState(0);
 
   // Used to request a specific action when opening a project from the dashboard (e.g. open a draft inline)
   const [projectSelectedAction, setProjectSelectedAction] = useState(null);
@@ -1058,15 +1154,24 @@ export default function HomeScreen({ route, navigation }) {
       let open = 0;
       for (const item of (controls || [])) {
         if (!item || item.type !== 'Skyddsrond') continue;
-        const sections = item.checklistSections;
+        // Saved controls may use different shapes over time:
+        // - Newer: item.checklist (array of sections) with section.remediation keyed by point text
+        // - Older: item.checklistSections with section.remediation indexed by point index
+        const sections = Array.isArray(item.checklistSections)
+          ? item.checklistSections
+          : (Array.isArray(item.checklist) ? item.checklist : null);
         if (!Array.isArray(sections)) continue;
         for (const section of sections) {
           if (!section || !Array.isArray(section.statuses)) continue;
           section.statuses.forEach((status, idx) => {
             if (status !== 'avvikelse') return;
-            const r = section.remediation && section.remediation[idx];
-            const handled = !!(r && r.signature && r.comment);
-            if (!handled) open++;
+            const points = Array.isArray(section.points) ? section.points : [];
+            const pt = points[idx];
+            const rem = section.remediation
+              ? ((pt !== undefined && pt !== null) ? section.remediation[pt] : null) || section.remediation[idx]
+              : null;
+            const handled = !!rem;
+            if (!handled) open += 1;
           });
         }
       }
@@ -1123,30 +1228,89 @@ export default function HomeScreen({ route, navigation }) {
       const drafts = draftRaw ? (JSON.parse(draftRaw) || []) : [];
       const completed = completedRaw ? (JSON.parse(completedRaw) || []) : [];
 
+      // Important: draft/completed controls are stored locally without company-scoping.
+      // Filter them to only include projects that exist in the current company's hierarchy.
+      const allowedProjectIds = new Set();
+      try {
+        const tree = hierarchyRef.current || [];
+        for (const main of tree) {
+          for (const sub of (main.children || [])) {
+            for (const child of (sub.children || [])) {
+              if (child && child.type === 'project' && child.id) allowedProjectIds.add(String(child.id));
+            }
+          }
+        }
+      } catch (e) {}
+
+      const pickProjectId = (item) => {
+        const pid = item?.project?.id || item?.projectId || item?.project || null;
+        return pid ? String(pid) : null;
+      };
+
+      const filteredDrafts = (drafts || []).filter((d) => {
+        const pid = pickProjectId(d);
+        return pid && allowedProjectIds.has(pid);
+      });
+      const filteredCompleted = (completed || []).filter((c) => {
+        const pid = pickProjectId(c);
+        return pid && allowedProjectIds.has(pid);
+      });
+
       const activeProjects = countActiveProjects();
-      const openDeviations = computeOpenDeviationsCount(completed);
-      const controlsToSign = computeControlsToSign(drafts);
+      const openDeviations = computeOpenDeviationsCount(filteredCompleted);
+      const controlsToSign = computeControlsToSign(filteredDrafts);
+
+      const countOpenDeviationsForControl = (control) => {
+        try {
+          if (!control || control.type !== 'Skyddsrond') return 0;
+          const sections = Array.isArray(control.checklistSections)
+            ? control.checklistSections
+            : (Array.isArray(control.checklist) ? control.checklist : null);
+          if (!Array.isArray(sections)) return 0;
+          let open = 0;
+          for (const section of sections) {
+            if (!section || !Array.isArray(section.statuses)) continue;
+            const points = Array.isArray(section.points) ? section.points : [];
+            for (let i = 0; i < section.statuses.length; i++) {
+              if (section.statuses[i] !== 'avvikelse') continue;
+              const pt = points[i];
+              const rem = section.remediation
+                ? ((pt !== undefined && pt !== null) ? section.remediation[pt] : null) || section.remediation[i]
+                : null;
+              if (!rem) open += 1;
+            }
+          }
+          return open;
+        } catch (e) {
+          return 0;
+        }
+      };
 
       const recent = [];
       const pushRecent = (item, kind) => {
         if (!item || typeof item !== 'object') return;
         const ts = item.savedAt || item.updatedAt || item.createdAt || item.date || null;
-        const projectId = item.project?.id || item.projectId || item.project || null;
-        const projObj = projectId ? findProjectById(projectId) : null;
-        const projectName = projObj?.name || item.project?.name || null;
+        const projectId = pickProjectId(item);
+        if (!projectId) return;
+        // Only show activity for projects we know belong to this company.
+        if (!allowedProjectIds.has(projectId)) return;
+        const projObj = findProjectById(projectId);
+        if (!projObj) return;
+        const projectName = projObj?.name || null;
         const desc = String(item.deliveryDesc || item.materialDesc || item.generalNote || item.description || '').trim();
         recent.push({
           kind,
           type: item.type || kind,
           ts,
-          projectId: projectId ? String(projectId) : null,
+          projectId,
           projectName,
           desc,
+          openDeviationsCount: (kind === 'completed' && item.type === 'Skyddsrond') ? countOpenDeviationsForControl(item) : 0,
           raw: item,
         });
       };
-      (completed || []).forEach((c) => pushRecent(c, 'completed'));
-      (drafts || []).forEach((d) => pushRecent(d, 'draft'));
+      (filteredCompleted || []).forEach((c) => pushRecent(c, 'completed'));
+      (filteredDrafts || []).forEach((d) => pushRecent(d, 'draft'));
       recent.sort((a, b) => {
         const ta = new Date(a.ts || 0).getTime() || 0;
         const tb = new Date(b.ts || 0).getTime() || 0;
@@ -1175,7 +1339,7 @@ export default function HomeScreen({ route, navigation }) {
         activeProjects,
         openDeviations,
         controlsToSign,
-        drafts: Array.isArray(drafts) ? drafts.length : 0,
+        drafts: Array.isArray(filteredDrafts) ? filteredDrafts.length : 0,
       });
       setDashboardRecent(top);
       setDashboardRecentProjects(recentProjects);
@@ -2292,7 +2456,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
             </TouchableOpacity>
             <Text style={{ fontSize: 14, color: '#666' }}>Välkommen tillbaka</Text>
-            {__DEV__ && showAdminButton && (
+            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -2304,7 +2468,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>Fyll på testdata</Text>
               </TouchableOpacity>
             )}
-            {__DEV__ && showAdminButton && (
+            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && (
               <TouchableOpacity
                 style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -2315,7 +2479,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>{adminActionRunning ? 'Kör...' : 'Gör mig demo-admin'}</Text>
               </TouchableOpacity>
             )}
-            {showSupportTools && localFallbackExists && (
+            {canShowSupportToolsInHeader && localFallbackExists && (
               <TouchableOpacity
                 style={{ backgroundColor: '#FFB300', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -2419,7 +2583,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#222', fontWeight: '700' }}>Migrera lokal data</Text>
               </TouchableOpacity>
             )}
-            {showSupportTools && (auth && auth.currentUser) && (
+            {canShowSupportToolsInHeader && (auth && auth.currentUser) && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -2453,7 +2617,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Uppdatera token & synka</Text>
               </TouchableOpacity>
             )}
-            {showSupportTools && (
+            {canShowSupportToolsInHeader && (
               <TouchableOpacity
                 style={{ backgroundColor: '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -2471,7 +2635,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#222', fontWeight: '700' }}>Visa auth-info</Text>
               </TouchableOpacity>
             )}
-            {showSupportTools && (
+            {canShowSupportToolsInHeader && (
               <TouchableOpacity
                 style={{ backgroundColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => { await dumpLocalRemoteControls(); }}
@@ -2479,7 +2643,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                 <Text style={{ color: '#222', fontWeight: '700' }}>Debug: visa lokal/moln</Text>
               </TouchableOpacity>
             )}
-            {showSupportTools && (
+            {canShowSupportToolsInHeader && (
               <TouchableOpacity
                 style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => { await showLastFsError(); }}
@@ -2493,6 +2657,36 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               Synk: {syncStatus}
             </Text>
             {null}
+
+            {Platform.OS === 'web' && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minHeight: 28, marginRight: 8, flexDirection: 'row' }}
+                  onPress={() => {
+                    if (selectedProject) closeSelectedProject();
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="home-outline" size={16} color="#222" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 13 }}>Hem</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minHeight: 28, flexDirection: 'row' }}
+                  onPress={() => {
+                    if (selectedProject) {
+                      setProjectControlsRefreshNonce((n) => n + 1);
+                    } else {
+                      try { loadDashboard(); } catch (e) {}
+                    }
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="refresh" size={16} color="#222" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 13 }}>Uppdatera</Text>
+                </TouchableOpacity>
+              </View>
+            )}
  
           <TouchableOpacity
             style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minWidth: 60, minHeight: 28 }}
@@ -2601,7 +2795,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
                               }}
                             >
-                              <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#1976D2" style={{ marginRight: 4 }} />
+                              <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" style={{ marginRight: 4 }} />
                               <Text style={{ fontSize: 15, fontWeight: isHovered ? '700' : '600', color: '#222', marginLeft: 2 }}>{main.name}</Text>
                             </TouchableOpacity>
                               );
@@ -2777,7 +2971,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               <ScrollView ref={rightPaneScrollRef} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
                 {selectedProject ? (
                   <View style={{ flex: 1 }}>
-                    <ProjectDetails route={{ params: { project: selectedProject, companyId, selectedAction: projectSelectedAction } }} navigation={navigation} inlineClose={closeSelectedProject} />
+                    <ProjectDetails route={{ params: { project: selectedProject, companyId, selectedAction: projectSelectedAction } }} navigation={navigation} inlineClose={closeSelectedProject} refreshNonce={projectControlsRefreshNonce} />
                   </View>
                 ) : (
                   <View style={{ flex: 1, padding: 18 }}>
@@ -2785,7 +2979,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
                         {/* Left column: Continue */}
                         <View style={{ flex: 1, minWidth: 420, marginRight: 16 }}>
-                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 }}>
                             Fortsätt där du slutade
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' }}>
@@ -2820,7 +3014,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
 
                         {/* Right column: Overview + Activity */}
                         <View style={{ width: 420, minWidth: 320 }}>
-                          <Text style={{ fontSize: 22, fontWeight: '800', color: '#222', marginBottom: 12 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 12 }}>
                             Översikt
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 16, backgroundColor: '#fff', marginBottom: 16 }}>
@@ -2838,7 +3032,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                             ))}
                           </View>
 
-                          <Text style={{ fontSize: 20, fontWeight: '800', color: '#222', marginBottom: 10 }}>
+                          <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 }}>
                             Senaste aktivitet
                           </Text>
                           <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }}>
@@ -2848,8 +3042,9 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                               <Text style={{ color: '#777', padding: 12 }}>Ingen aktivitet ännu.</Text>
                             ) : (
                               (dashboardRecent || []).map((a, idx) => {
-                                const iconName = a.kind === 'draft' ? 'document-text-outline' : 'checkmark-circle';
-                                const iconColor = a.kind === 'draft' ? '#FFD600' : '#43A047';
+                                const hasOpenDeviations = a.kind !== 'draft' && a.type === 'Skyddsrond' && (a.openDeviationsCount || 0) > 0;
+                                const iconName = a.kind === 'draft' ? 'document-text-outline' : (hasOpenDeviations ? 'alert-circle' : 'checkmark-circle');
+                                const iconColor = a.kind === 'draft' ? '#FFD600' : (hasOpenDeviations ? '#D32F2F' : '#43A047');
                                 const subtitle = a.projectName ? `i ${a.projectName}` : (a.projectId ? `i ${a.projectId}` : '');
                                 return (
                                   <TouchableOpacity
@@ -2899,6 +3094,31 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                         {formatRelativeTime(a.ts)}
                                       </Text>
                                     </View>
+
+                                    {Platform.OS === 'web' && hasOpenDeviations && (
+                                      <TouchableOpacity
+                                        onPress={(e) => {
+                                          try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                                          if (!a.projectId) return;
+                                          const p = findProjectById(a.projectId);
+                                          if (!p) return;
+                                          const raw = a.raw || null;
+                                          const stableId = raw?.id || raw?.controlId || raw?.localId || raw?.savedAt || a.ts || Date.now();
+                                          setProjectSelectedAction({
+                                            id: `openControlDetails:${String(a.projectId)}:${String(stableId)}`,
+                                            kind: 'openControlDetails',
+                                            control: raw || undefined,
+                                          });
+                                          setSelectedProject({ ...p });
+                                          setTimeout(() => setProjectSelectedAction(null), 0);
+                                        }}
+                                        style={{ marginLeft: 12, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
+                                        activeOpacity={0.85}
+                                        accessibilityLabel="Åtgärda avvikelse"
+                                      >
+                                        <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>Åtgärda</Text>
+                                      </TouchableOpacity>
+                                    )}
                                   </TouchableOpacity>
                                 );
                               })
@@ -3183,7 +3403,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 onPress={() => toggleMain(main.id)}
                                 activeOpacity={0.7}
                               >
-                                <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
+                                <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={22} color="#222" />
                                 <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                               </TouchableOpacity>
                               {isMainExpanded(main.id) && (
@@ -3449,7 +3669,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                               if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
                             }}
                           >
-                            <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#1976D2" />
+                            <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={22} color="#222" />
                             <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                           </TouchableOpacity>
                           {/* Visa endast om ingen undermapp är expanderad */}

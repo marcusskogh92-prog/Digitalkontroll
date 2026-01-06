@@ -4,11 +4,12 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
-import { Alert, TextInput } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Platform, TextInput } from 'react-native';
 // import { Ionicons } from '@expo/vector-icons';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import SignatureModal from '../components/SignatureModal';
+import { resolveCompanyLogoUrl } from '../components/firebase';
 
 const CONTROL_TYPE_ICONS = {
   'Arbetsberedning': { icon: 'construct-outline', color: '#1976D2', label: 'Arbetsberedning' },
@@ -20,15 +21,17 @@ const CONTROL_TYPE_ICONS = {
 };
 
 const PRIMARY = '#263238';
+const A4_WEB_MAX_WIDTH = 794; // ~210mm at 96dpi
+const META_ICON_COLOR = '#1976D2';
 
 export default function ControlDetails({ route }) {
+  const { height: windowHeight } = useWindowDimensions();
   // Modal state for åtgärd
-  const [actionModal, setActionModal] = useState({ visible: false, section: '', point: '', img: null, comment: '', signature: '', name: '' });
-  const [_, setForceUpdate] = useState(0); // för att tvinga omrendering
+  const [actionModal, setActionModal] = useState({ visible: false, section: '', point: '', img: null, comment: '', signature: '', name: '', date: '' });
   const navigation = useNavigation();
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const { control, project } = route.params || {};
+  const { control, project, companyId: routeCompanyId } = route.params || {};
   if (!control) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -37,25 +40,157 @@ export default function ControlDetails({ route }) {
     );
   }
 
-  let {
-    type,
-    date,
-    deliveryDesc,
-    description,
-    participants = [],
-    checklist = [],
-    status,
-    savedAt,
-    weather,
-    mottagningsPhotos = [],
-    mottagningsSignatures = [],
-    attachments = []
-  } = control;
-  participants = Array.isArray(participants) ? participants : [];
-  checklist = Array.isArray(checklist) ? checklist : [];
-  attachments = Array.isArray(attachments) ? attachments : [];
-  mottagningsPhotos = Array.isArray(mottagningsPhotos) ? mottagningsPhotos : [];
-  mottagningsSignatures = Array.isArray(mottagningsSignatures) ? mottagningsSignatures : [];
+  const [controlState, setControlState] = useState(control);
+  useEffect(() => {
+    setControlState(control);
+  }, [control?.id]);
+
+  const hasAnyChecklistPoints = (c) => {
+    try {
+      const sections = Array.isArray(c?.checklist)
+        ? c.checklist
+        : (Array.isArray(c?.checklistSections) ? c.checklistSections : []);
+      if (!Array.isArray(sections) || sections.length === 0) return false;
+      for (const sec of sections) {
+        const pts = Array.isArray(sec?.points)
+          ? sec.points
+          : (Array.isArray(sec?.items) ? sec.items : []);
+        if (Array.isArray(pts) && pts.length > 0) return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // If we navigated here with a thin control object (common on web lists), hydrate from AsyncStorage.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const current = (controlState && typeof controlState === 'object') ? controlState : (control || {});
+        if (hasAnyChecklistPoints(current)) return;
+
+        const id = current?.id || control?.id;
+        const projectId = current?.project?.id || project?.id;
+        const type = current?.type;
+        const savedAt = current?.savedAt;
+        const date = current?.date;
+
+        const tryHydrateFromKey = async (key) => {
+          const raw = await AsyncStorage.getItem(key);
+          if (!raw) return null;
+          const arr = JSON.parse(raw);
+          const list = Array.isArray(arr) ? arr : [];
+
+          if (id) {
+            const byId = list.find(x => x && x.id && String(x.id) === String(id));
+            if (byId) return byId;
+          }
+
+          // Best-effort fallback for legacy items without stable id
+          if (projectId && type) {
+            const byMeta = list.find(x => (
+              x
+              && String(x?.project?.id || '') === String(projectId)
+              && String(x?.type || '') === String(type)
+              && (savedAt ? String(x?.savedAt || '') === String(savedAt) : true)
+              && (date ? String(x?.date || '') === String(date) : true)
+            ));
+            if (byMeta) return byMeta;
+          }
+          return null;
+        };
+
+        const found = (await tryHydrateFromKey('completed_controls'))
+          || (await tryHydrateFromKey('draft_controls'))
+          || null;
+
+        if (!found) return;
+        // Only replace if it actually brings more data (especially checklist)
+        if (!hasAnyChecklistPoints(found) && !hasAnyChecklistPoints(current)) return;
+        if (active) setControlState(found);
+      } catch (e) {
+        // ignore hydration errors
+      }
+    })();
+    return () => { active = false; };
+  }, [control?.id, project?.id]);
+
+  const safeControl = (controlState && typeof controlState === 'object') ? controlState : {};
+  const type = safeControl.type;
+  const date = safeControl.date;
+  const deliveryDesc = safeControl.deliveryDesc;
+  const description = safeControl.description;
+  const generalNote = safeControl.generalNote;
+  const materialDesc = safeControl.materialDesc || safeControl.material;
+  const qualityDesc = safeControl.qualityDesc;
+  const coverageDesc = safeControl.coverageDesc;
+  const participants = Array.isArray(safeControl.participants) ? safeControl.participants : [];
+  const checklistRaw = Array.isArray(safeControl.checklist)
+    ? safeControl.checklist
+    : (Array.isArray(safeControl.checklistSections) ? safeControl.checklistSections : []);
+  const status = safeControl.status;
+  const weather = safeControl.weather;
+  const mottagningsPhotos = Array.isArray(safeControl.mottagningsPhotos) ? safeControl.mottagningsPhotos : [];
+  const mottagningsSignatures = Array.isArray(safeControl.mottagningsSignatures) ? safeControl.mottagningsSignatures : [];
+  const attachments = Array.isArray(safeControl.attachments) ? safeControl.attachments : [];
+
+  const [companyLogoUrl, setCompanyLogoUrl] = useState(null);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('dk_companyId');
+        const cid = (
+          routeCompanyId
+          || project?.companyId
+          || safeControl?.companyId
+          || safeControl?.company
+          || stored
+          || ''
+        ).trim();
+        if (!cid) return;
+        const url = await resolveCompanyLogoUrl(cid);
+        if (active) setCompanyLogoUrl(url || null);
+      } catch (e) {}
+    })();
+    return () => { active = false; };
+  }, [routeCompanyId, project?.companyId, project?.id]);
+
+  const formatYmd = (value) => {
+    if (!value) return '-';
+    let v = value;
+    try {
+      // Firestore Timestamp support
+      if (v && typeof v === 'object') {
+        if (typeof v.toDate === 'function') v = v.toDate();
+        else if (typeof v.toMillis === 'function') v = new Date(v.toMillis());
+        else if (typeof v.seconds === 'number') v = new Date(v.seconds * 1000);
+        else if (typeof v._seconds === 'number') v = new Date(v._seconds * 1000);
+        else if (typeof v.nanoseconds === 'number' && typeof v.seconds === 'number') v = new Date(v.seconds * 1000);
+        else if (typeof v._nanoseconds === 'number' && typeof v._seconds === 'number') v = new Date(v._seconds * 1000);
+      }
+    } catch (e) {}
+
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return String(value);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const upsertControlInStorage = async (updated) => {
+    const isDraft = !!updated?.isDraft;
+    const key = isDraft ? 'draft_controls' : 'completed_controls';
+    const raw = await AsyncStorage.getItem(key);
+    const list = raw ? JSON.parse(raw) : [];
+    const arr = Array.isArray(list) ? list : [];
+    const id = updated?.id;
+    if (!id) throw new Error('Kontrollen saknar id');
+    const idx = arr.findIndex(c => c && c.id === id);
+    if (idx !== -1) arr[idx] = updated;
+    else arr.push(updated);
+    await AsyncStorage.setItem(key, JSON.stringify(arr));
+  };
 
   // Format week number
   function getWeek(dateStr) {
@@ -70,138 +205,249 @@ export default function ControlDetails({ route }) {
   const week = getWeek(date);
   // Status text
   const statusText = status === 'UTFÖRD' || status === 'Slutförd' ? 'Slutförd' : 'Pågående';
+  const isCompleted = statusText === 'Slutförd' && !safeControl.isDraft;
+  const participantsLabel = type === 'Mottagningskontroll' ? 'Mottagare' : 'Deltagare';
 
   // Checklist points: group by section, show approved and deviation points with icons
-  // checklistSections ska alltid innehålla remediation-array
-  const checklistSections = (checklist || []).map((section) => {
-    if (!section || !Array.isArray(section.points)) return null;
-    const approved = [];
-    const deviation = [];
-    // Gör remediation till ett objekt per punkt
-    let remediation = section.remediation;
-    if (!remediation || typeof remediation !== 'object') remediation = {};
-    (section.points || []).forEach((pt, idx) => {
-      const status = section.statuses && section.statuses[idx];
-      if (status === 'ok') approved.push(pt);
-      if (status === 'avvikelse') deviation.push(pt);
-    });
-    if (approved.length === 0 && deviation.length === 0) return null;
-    return {
-      label: section.label,
-      approved,
-      deviation,
-      remediation,
+  // checklistSections ska alltid innehålla remediation-objekt
+  const checklistSections = useMemo(() => {
+    const coerceArrayLike = (v) => {
+      if (Array.isArray(v)) return v;
+      if (v && typeof v === 'object') {
+        const keys = Object.keys(v)
+          .filter(k => String(parseInt(k, 10)) === k)
+          .map(k => parseInt(k, 10))
+          .sort((a, b) => a - b);
+        if (!keys.length) return [];
+        const arr = [];
+        keys.forEach(k => { arr[k] = v[k]; });
+        return arr;
+      }
+      return [];
     };
-  }).filter(Boolean);
+
+    const normalizePointText = (pt) => {
+      if (typeof pt === 'string') return pt;
+      if (pt && typeof pt === 'object') return pt.text || pt.label || pt.name || '';
+      return '';
+    };
+
+    const normalizeStatus = (v) => {
+      if (v === 'ok' || v === 'avvikelse' || v === 'ejaktuell') return v;
+      if (v === true) return 'ok';
+      if (v === false) return 'avvikelse';
+      const s = String(v ?? '').trim().toLowerCase();
+      if (!s) return null;
+      if (['ok', 'approved', 'godkänd', 'godkand', 'ja', 'yes', 'true', 'green', 'grön', 'gron'].includes(s)) return 'ok';
+      if (['avvikelse', 'deviation', 'nej', 'no', 'false', 'fail', 'red', 'röd', 'rod', 'anmärkning', 'anmarkning', 'risk'].includes(s)) return 'avvikelse';
+      if (['ejaktuell', 'inte aktuell', 'n/a', 'na'].includes(s)) return 'ejaktuell';
+      return null;
+    };
+
+    const arr = Array.isArray(checklistRaw) ? checklistRaw : [];
+    return arr.map((section) => {
+      if (!section || typeof section !== 'object') return null;
+
+      const label = section.label || section.title || section.name || 'Kontrollpunkter';
+
+      let remediation = section.remediation;
+      if (!remediation || typeof remediation !== 'object') remediation = {};
+
+      const items = [];
+
+      // Legacy/precomputed shape: section.approved / section.deviation
+      const approvedRaw = coerceArrayLike(section.approved ?? section.approvedPoints ?? null);
+      const deviationRaw = coerceArrayLike(section.deviation ?? section.deviationPoints ?? null);
+      if (approvedRaw.length > 0 || deviationRaw.length > 0) {
+        approvedRaw.forEach((pt, i) => {
+          const text = String(normalizePointText(pt) || '').trim();
+          if (text) items.push({ text, idx: i, status: 'ok' });
+        });
+        deviationRaw.forEach((pt, i) => {
+          const text = String(normalizePointText(pt) || '').trim();
+          if (text) items.push({ text, idx: i, status: 'avvikelse' });
+        });
+        if (items.length === 0) return null;
+        return { label, items, remediation };
+      }
+
+      const pointsRaw = coerceArrayLike(section.points ?? section.items ?? []);
+      if (!pointsRaw.length) return null;
+      const statusesRaw = coerceArrayLike(section.statuses ?? section.status ?? []);
+
+      pointsRaw.forEach((pt, idx) => {
+        const text = String(normalizePointText(pt) || '').trim();
+        if (!text) return;
+        const statusFromPoint = (pt && typeof pt === 'object' && pt.status !== undefined) ? pt.status : undefined;
+        const st = normalizeStatus(statusFromPoint !== undefined ? statusFromPoint : statusesRaw[idx]);
+        items.push({ text, idx, status: st });
+      });
+
+      if (items.length === 0) return null;
+      return { label, items, remediation };
+    }).filter(Boolean);
+  }, [checklistRaw]);
 
   // Get icon and label for this control type
   const { icon, color, label } = CONTROL_TYPE_ICONS[type] || { icon: 'alert-circle', color: '#D32F2F', label: type || 'Kontroll' };
 
-  return (
-    <ScrollView style={styles.container}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, justifyContent: 'space-between' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Ionicons name={icon} size={28} color={color} style={{ marginRight: 8 }} />
-          <Text style={styles.title}>{label}</Text>
-        </View>
-        <TouchableOpacity
-          onPress={() => {
-            // Determine which form screen to navigate to based on control type
-            let screen = null;
-            switch (type) {
-              case 'Riskbedömning': screen = 'RiskbedömningScreen'; break;
-              case 'Arbetsberedning': screen = 'ArbetsberedningScreen'; break;
-              case 'Egenkontroll': screen = 'EgenkontrollScreen'; break;
-              case 'Fuktmätning': screen = 'FuktmätningScreen'; break;
-              case 'Mottagningskontroll': screen = 'MottagningskontrollScreen'; break;
-              case 'Skyddsrond': screen = 'SkyddsrondScreen'; break;
-              default: screen = null;
-            }
-            if (screen) {
-              navigation.navigate(screen, { initialValues: control, project });
-            }
-          }}
-          style={{ padding: 6, marginLeft: 8 }}
-          accessibilityLabel="Redigera kontroll"
-        >
-          <Ionicons name="create-outline" size={22} color="#1976D2" />
-        </TouchableOpacity>
-      </View>
-      <View style={styles.divider} />
-      {/* Datum-rubrik med ikon och undertexter */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-        <Ionicons name="calendar-outline" size={20} color="#1976D2" style={{ marginRight: 6 }} />
-        <Text style={styles.sectionTitle}>Datum</Text>
-      </View>
-      <Text style={styles.subInfo}>Skapad: {date ? new Date(date).toISOString().slice(0, 10) : '-'}</Text>
-      <Text style={styles.subInfo}>Status: {statusText}</Text>
-      {savedAt && <Text style={styles.subInfo}>Sparad senast: {new Date(savedAt).toISOString().slice(0, 10)}</Text>}
-      <View style={styles.divider} />
-      {/* Vecka visas ej som rubrik men kan läggas till om önskas */}
+  const pageContent = (
+    <View style={[styles.page, Platform.OS === 'web' ? styles.pageWeb : null]}>
+      <View style={styles.headerCard}>
+        {companyLogoUrl ? (
+            <View style={{ marginBottom: 12, alignItems: 'flex-start', width: '100%' }}>
+            <Image source={{ uri: companyLogoUrl }} style={styles.companyLogo} resizeMode="contain" />
+            <View style={styles.companyLogoDivider} />
+          </View>
+        ) : null}
 
-      {/* Deltagare */}
-      {participants.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Deltagare</Text>
-          {participants.map((p, i) => {
-            let name, company, role;
-            if (typeof p === 'string') {
-              name = p;
-              company = '';
-              role = '';
-            } else if (p && typeof p === 'object') {
-              name = p.name || '';
-              company = p.company || '';
-              role = p.role || '';
-            }
-            return (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                <Ionicons name="person-outline" size={18} color="#1976D2" style={{ marginRight: 6 }} />
-                <Text style={styles.bodyText}>
-                  {name}
-                  {company ? `, ${company}` : ''}
-                  {role ? `, ${role}` : ''}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-      {participants.length > 0 && <View style={styles.divider} />}
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTitleRow}>
+            <Ionicons name={icon} size={28} color={color} style={{ marginRight: 10 }} />
+            <Text style={styles.title}>{label}</Text>
+          </View>
 
-      {/* Väderlek */}
-      {weather && type !== 'Egenkontroll' && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Väderlek</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {(() => {
-              // Match icon to weather string
-              const weatherIcons = {
-                'Soligt': 'sunny',
-                'Delvis molnigt': 'partly-sunny',
-                'Molnigt': 'cloudy',
-                'Regn': 'rainy',
-                'Snö': 'snow',
-                'Åska': 'thunderstorm',
-              };
-              const iconName = weatherIcons[weather];
-              if (iconName) {
-                const cmap = { sunny: '#FFD54F', 'partly-sunny': '#FFB74D', cloudy: '#90A4AE', rainy: '#4FC3F7', snow: '#90CAF9', thunderstorm: '#9575CD' };
-                return <Ionicons name={iconName} size={22} color={cmap[iconName] || '#1976D2'} style={{ marginRight: 8 }} />;
-              }
-              return null;
-            })()}
-            <Text style={styles.bodyText}>{weather}</Text>
+            <View style={[styles.statusPill, isCompleted ? styles.statusPillDone : styles.statusPillOngoing]}>
+              <Text style={[styles.statusPillText, isCompleted ? styles.statusPillTextDone : styles.statusPillTextOngoing]}>{statusText}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                let screen = null;
+                switch (type) {
+                  case 'Riskbedömning': screen = 'RiskbedömningScreen'; break;
+                  case 'Arbetsberedning': screen = 'ArbetsberedningScreen'; break;
+                  case 'Egenkontroll': screen = 'EgenkontrollScreen'; break;
+                  case 'Fuktmätning': screen = 'FuktmätningScreen'; break;
+                  case 'Mottagningskontroll': screen = 'MottagningskontrollScreen'; break;
+                  case 'Skyddsrond': screen = 'SkyddsrondScreen'; break;
+                  default: screen = null;
+                }
+                if (screen) navigation.navigate(screen, { initialValues: safeControl, project });
+              }}
+              style={[styles.headerActionBtn, { marginLeft: 8 }]}
+              accessibilityLabel="Redigera kontroll"
+            >
+              <Ionicons name="create-outline" size={22} color="#1976D2" />
+            </TouchableOpacity>
           </View>
         </View>
-      )}
-      {weather && type !== 'Egenkontroll' && <View style={styles.divider} />}
+
+        {project?.id || project?.name ? (
+          <View style={styles.projectBar}>
+            <Text style={styles.projectBarText} numberOfLines={1} ellipsizeMode="tail">
+              Projekt - {project?.id ? String(project.id).trim() : ''}{project?.id && project?.name ? ' - ' : ''}{project?.name ? String(project.name).trim() : ''}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Overview (matches mock) */}
+      <View style={styles.overviewCard}>
+        <View style={styles.overviewRow}>
+          <Text style={styles.overviewLabel}>Datum för kontroll:</Text>
+          <View style={styles.overviewValueWrap}>
+            <View style={styles.metaIconWrap}>
+              <Ionicons name="calendar-outline" size={16} color={META_ICON_COLOR} />
+            </View>
+            <Text style={styles.overviewValue}>{formatYmd(date)}{week ? `  v.${week}` : ''}</Text>
+          </View>
+        </View>
+        <View style={styles.overviewRowDivider} />
+
+        <View style={styles.overviewRow}>
+          <Text style={styles.overviewLabel}>{participantsLabel}:</Text>
+          <View style={{ flex: 1 }}>
+            {participants.length > 0 ? participants.map((p, i) => {
+              const name = typeof p === 'string' ? p : (p?.name || p?.displayName || '');
+              const company = typeof p === 'object' ? (p?.company || p?.companyName || p?.foretag || p?.['f\u00f6retag'] || '') : '';
+              const role = typeof p === 'object' ? (p?.role || p?.yrkesroll || p?.titel || '') : '';
+              const mobile = typeof p === 'object' ? (p?.mobile || p?.mobil || p?.phone || p?.telefon || p?.tel || '') : '';
+              const details = [name, company, role, mobile].filter(Boolean).join('  |  ');
+              const hasAny = !!(name || company || role || mobile);
+              if (!hasAny) return null;
+              return (
+                <View key={i} style={styles.metaMultiLineRow}>
+                  <View style={styles.metaIconWrap}>
+                    <Ionicons name="person-outline" size={16} color={META_ICON_COLOR} />
+                  </View>
+                  {Platform.OS === 'web' ? (
+                    <View style={styles.participantTableRow}>
+                      <Text style={[styles.overviewValue, styles.participantColName]} numberOfLines={1} ellipsizeMode="tail">{name}</Text>
+                      <Text style={[styles.overviewValue, styles.participantColCompany]} numberOfLines={1} ellipsizeMode="tail">{company}</Text>
+                      <Text style={[styles.overviewValue, styles.participantColRole]} numberOfLines={1} ellipsizeMode="tail">{role}</Text>
+                      <Text style={[styles.overviewValue, styles.participantColMobile]} numberOfLines={1} ellipsizeMode="tail">{mobile}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.overviewValue} numberOfLines={1} ellipsizeMode="tail">{details}</Text>
+                  )}
+                </View>
+              );
+            }) : (
+              <Text style={[styles.overviewValue, { color: '#888' }]}>-</Text>
+            )}
+          </View>
+        </View>
+
+        {weather ? (
+          <>
+            <View style={styles.overviewRowDivider} />
+            <View style={styles.overviewRow}>
+              <Text style={styles.overviewLabel}>Väder:</Text>
+              <View style={styles.overviewValueWrap}>
+                <View style={styles.metaIconWrap}>
+                  <Ionicons name="sunny-outline" size={16} color={META_ICON_COLOR} />
+                </View>
+                <Text style={styles.overviewValue}>{String(weather)}</Text>
+              </View>
+            </View>
+          </>
+        ) : null}
+      </View>
+
+      {/* Deltagare/Väder visas i Översikt-kortet ovan */}
 
       {/* Beskrivning av moment */}
-      {(deliveryDesc || description) && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Beskrivning av moment</Text>
-          <Text style={styles.bodyText}>{deliveryDesc || description}</Text>
+      {((type === 'Mottagningskontroll' && (materialDesc || qualityDesc || coverageDesc || generalNote)) || deliveryDesc || description) && (
+        <View style={styles.card}>
+          {type === 'Mottagningskontroll' ? (
+            <>
+              {materialDesc ? (
+                <View style={styles.overviewRow}>
+                  <Text style={styles.overviewLabel}>Beskrivning:</Text>
+                  <View style={styles.overviewValueWrap}>
+                    <View style={styles.metaIconWrap}>
+                      <Ionicons name="cube-outline" size={16} color={META_ICON_COLOR} />
+                    </View>
+                    <Text style={styles.overviewValue}>{String(materialDesc)}</Text>
+                  </View>
+                </View>
+              ) : null}
+              {qualityDesc ? (
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={styles.noteText}>Kvalité / krav</Text>
+                  <Text style={styles.overviewValue}>{String(qualityDesc)}</Text>
+                </View>
+              ) : null}
+              {coverageDesc ? (
+                <View style={{ marginBottom: 8 }}>
+                  <Text style={styles.noteText}>Omfattning / mängd</Text>
+                  <Text style={styles.overviewValue}>{String(coverageDesc)}</Text>
+                </View>
+              ) : null}
+              {generalNote ? (
+                <View>
+                  <Text style={styles.noteText}>Anteckning</Text>
+                  <Text style={styles.overviewValue}>{String(generalNote)}</Text>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={styles.sectionTitle}>Beskrivning</Text>
+              <Text style={styles.bodyText}>{deliveryDesc || description}</Text>
+            </>
+          )}
         </View>
       )}
 
@@ -209,30 +455,40 @@ export default function ControlDetails({ route }) {
 
       {/* Kontrollpunkter */}
       {checklistSections.length > 0 && (
-        <View style={styles.section}>
+        <View style={styles.card}>
           <Text style={styles.sectionTitle}>Kontrollpunkter</Text>
           {checklistSections.map((section, idx) => (
             <View key={idx} style={{ marginBottom: 8 }}>
-              {idx > 0 && <View style={styles.divider} />}
+              {idx > 0 && <View style={styles.innerDivider} />}
               <Text style={{ fontWeight: '600', fontSize: 15, color: '#444', marginBottom: 2 }}>{section.label}</Text>
-              {section.approved.map((pt, i) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2, flexWrap: 'wrap' }}>
-                  <Ionicons name="checkmark-circle" size={18} color="#388E3C" style={{ marginRight: 6 }} />
-                  <Text style={[styles.bodyText, { flex: 1, flexWrap: 'wrap' }]}>{pt}</Text>
-                </View>
-              ))}
-              {section.deviation.map((pt, i) => {
-                const remediationKey = pt.trim();
-                const remediation = section.remediation && section.remediation[remediationKey] ? section.remediation[remediationKey] : null;
-                const isHandled = !!remediation;
-                if (section.remediation) {
-                  console.log('DEBUG: Render remediation keys:', Object.keys(section.remediation), 'pt:', pt, 'trim:', remediationKey, 'found:', !!remediation);
-                }
+              {(section.items || []).map((item, i) => {
+                const pt = item?.text;
+                const st = item?.status;
+                const remediationKey = String(pt || '').trim();
+                const idxKey = String(item?.idx ?? '');
+                const remediation = (
+                  (section.remediation && section.remediation[remediationKey])
+                  || (section.remediation && idxKey && section.remediation[idxKey])
+                  || null
+                );
+                const isDeviation = st === 'avvikelse';
+                const isHandled = isDeviation && !!remediation;
+
+                const iconName = isDeviation
+                  ? (isHandled ? 'checkmark-circle' : 'alert-circle')
+                  : (st === 'ok' ? 'checkmark-circle' : (st === 'ejaktuell' ? 'remove-circle-outline' : 'ellipse-outline'));
+                const iconColor = isDeviation
+                  ? (isHandled ? '#388E3C' : '#D32F2F')
+                  : (st === 'ok' ? '#388E3C' : (st === 'ejaktuell' ? '#757575' : '#9E9E9E'));
+                const textColor = isDeviation
+                  ? (isHandled ? '#1976D2' : '#D32F2F')
+                  : '#222';
+
                 return (
                   <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2, flexWrap: 'wrap' }}>
-                    <Ionicons name={isHandled ? "checkmark-circle" : "alert-circle"} size={18} color={isHandled ? "#388E3C" : "#D32F2F"} style={{ marginRight: 6 }} />
+                    <Ionicons name={iconName} size={18} color={iconColor} style={{ marginRight: 6, marginTop: 1 }} />
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.bodyText, { color: isHandled ? '#1976D2' : '#D32F2F', flexWrap: 'wrap' }]}>{pt}</Text>
+                      <Text style={[styles.bodyText, { color: textColor, flexWrap: 'wrap' }]}>{pt}</Text>
                       {isHandled && remediation && (
                         <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
                           Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
@@ -252,15 +508,21 @@ export default function ControlDetails({ route }) {
         // Gruppera avvikelser per sektion
         const grouped = {};
         checklistSections.forEach(section => {
-          if (section.deviation && section.deviation.length > 0) {
-            if (!grouped[section.label]) grouped[section.label] = [];
-            section.deviation.forEach((pt) => {
-              grouped[section.label].push({
-                pt,
-                remediation: section.remediation && section.remediation[pt] ? section.remediation[pt] : null
-              });
+          const deviations = (section.items || []).filter(it => it && it.status === 'avvikelse');
+          if (deviations.length === 0) return;
+          if (!grouped[section.label]) grouped[section.label] = [];
+          deviations.forEach((item) => {
+            const pt = item?.text;
+            const idxKey = String(item?.idx ?? '');
+            grouped[section.label].push({
+              pt,
+              remediation: (
+                (section.remediation && section.remediation[String(pt || '').trim()])
+                || (section.remediation && idxKey && section.remediation[idxKey])
+                || null
+              )
             });
-          }
+          });
         });
         const sectionLabels = Object.keys(grouped);
         if (sectionLabels.length === 0) return null;
@@ -268,8 +530,7 @@ export default function ControlDetails({ route }) {
         const isSkyddsrond = type === 'Skyddsrond';
         return (
           <>
-            <View style={styles.divider} />
-            <View style={styles.section}>
+            <View style={styles.card}>
               <Text style={styles.sectionTitle}>Avvikelser/risker:</Text>
               {sectionLabels.map((label, idx) => (
                 <View key={label} style={{ marginBottom: 4 }}>
@@ -312,7 +573,6 @@ export default function ControlDetails({ route }) {
                 </View>
               ))}
             </View>
-            <View style={styles.divider} />
 
             {/* Modal för åtgärd */}
             <Modal
@@ -408,10 +668,6 @@ export default function ControlDetails({ route }) {
                         <TouchableOpacity
                           style={{ backgroundColor: '#1976D2', borderRadius: 50, padding: 10, marginRight: 10 }}
                           onPress={async () => {
-                                                                                Alert.alert('DEBUG', `project.id: ${project?.id}\nproject: ${JSON.stringify(project)}\nAsyncStorage-key: project_${project?.id}`);
-                                                                                console.log('DEBUG: project.id', project?.id, 'project:', project, 'AsyncStorage-key:', `project_${project?.id}`);
-                                                      Alert.alert('DEBUG', 'Spara-knappen trycktes');
-                                                      console.log('DEBUG: Spara-knappen trycktes', actionModal, control, project);
                             // Välj/tar foto
                             const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
                             if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -482,100 +738,47 @@ export default function ControlDetails({ route }) {
                             return;
                           }
                           // Immutabel kopia av checklistan och kontrollen
-                          let newChecklist = Array.isArray(control.checklist) ? control.checklist.map(s => ({ ...s, remediation: { ...(s.remediation || {}) } })) : [];
-                          const sectionIdx = newChecklist.findIndex(s => s.label === actionModal.section);
+                          const hasChecklist = Array.isArray(safeControl.checklist);
+                          const sourceChecklist = hasChecklist
+                            ? safeControl.checklist
+                            : (Array.isArray(safeControl.checklistSections) ? safeControl.checklistSections : []);
+
+                          let newChecklist = Array.isArray(sourceChecklist)
+                            ? sourceChecklist.map(s => ({ ...s, remediation: { ...(s && s.remediation ? s.remediation : {}) } }))
+                            : [];
+
+                          const sectionIdx = newChecklist.findIndex(s => (s && (s.label || s.title)) === actionModal.section);
                           if (sectionIdx !== -1) {
                             // Hitta exakt rätt punkttext (pt) i sektionen, trimma för säker matchning
-                                              const pt = (newChecklist[sectionIdx].points || []).find(p => p.trim() === actionModal.point.trim());
-                                              const remediationKey = (pt || actionModal.point).trim();
-                                              newChecklist[sectionIdx].remediation[remediationKey] = {
-                                                comment: actionModal.comment,
-                                                img: actionModal.img,
-                                                signature: actionModal.signature,
-                                                name: actionModal.name,
-                                                date: new Date().toISOString(),
-                                              };
+                            const pt = (newChecklist[sectionIdx].points || []).find(p => String(p || '').trim() === String(actionModal.point || '').trim());
+                            const remediationKey = String((pt || actionModal.point) || '').trim();
+                            const today = new Date().toISOString().slice(0, 10);
+                            const remediationDate = actionModal.date && /^\d{4}-\d{2}-\d{2}$/.test(actionModal.date) ? actionModal.date : today;
+                            newChecklist[sectionIdx].remediation[remediationKey] = {
+                              comment: actionModal.comment,
+                              img: actionModal.img,
+                              signature: actionModal.signature,
+                              name: actionModal.name,
+                              date: remediationDate,
+                            };
                           } else {
-                            Alert.alert('DEBUG', 'Kunde inte hitta sektionen: ' + actionModal.section);
-                            console.log('DEBUG: Sektion ej hittad', actionModal.section, newChecklist);
+                            Alert.alert('Fel', 'Kunde inte hitta sektionen för åtgärden.');
+                            return;
                           }
-                          const updatedControl = { ...control, checklist: newChecklist };
-                          // Spara till AsyncStorage (uppdatera kontrollen i projektet)
-                          let saveSuccess = false;
+                          const updatedControl = {
+                            ...safeControl,
+                            ...(hasChecklist ? { checklist: newChecklist } : { checklistSections: newChecklist }),
+                            savedAt: new Date().toISOString(),
+                          };
+
                           try {
-                            const projectKey = `project_${project.id}`;
-                            let raw = await AsyncStorage.getItem(projectKey);
-                            let proj = raw ? JSON.parse(raw) : null;
-                            if (!proj) {
-                              // Skapa projektet om det saknas
-                              proj = { ...project, controls: [] };
-                              await AsyncStorage.setItem(projectKey, JSON.stringify(proj));
-                              raw = await AsyncStorage.getItem(projectKey);
-                              proj = raw ? JSON.parse(raw) : null;
-                              Alert.alert('DEBUG', 'Projektet saknades och skapades!');
-                              console.log('DEBUG: Skapade nytt projekt i AsyncStorage', projectKey, proj);
-                            }
-                            if (proj && Array.isArray(proj.controls)) {
-                              let idx = proj.controls.findIndex(c => c.id === control.id);
-                              if (idx !== -1) {
-                                proj.controls[idx] = updatedControl;
-                              } else {
-                                // Lägg till kontrollen om den saknas
-                                proj.controls.push(updatedControl);
-                                Alert.alert('DEBUG', 'Kontrollen saknades och lades till!');
-                                console.log('DEBUG: Lade till kontroll i projekt', updatedControl);
-                              }
-                              await AsyncStorage.setItem(projectKey, JSON.stringify(proj));
-                              saveSuccess = true;
-                              Alert.alert('DEBUG', 'Sparat kontrollen!');
-                              console.log('DEBUG: Kontroll sparad', updatedControl);
-                            } else {
-                              Alert.alert('DEBUG', 'Projekt eller controls-array saknas även efter försök att skapa!');
-                              console.log('DEBUG: Projekt eller controls-array saknas', proj);
-                            }
-                          } catch (e) {
-                            saveSuccess = false;
-                            Alert.alert('DEBUG', 'Fel vid sparande: ' + e.message);
-                            console.log('DEBUG: Fel vid sparande', e);
-                          }
-                          // Uppdatera checklistSections så att UI reflekterar ändringen direkt
-                          if (Array.isArray(updatedControl.checklist)) {
-                            const updatedSections = updatedControl.checklist.map(s => ({
-                              ...s,
-                              remediation: s.remediation || {},
-                              approved: Array.isArray(s.approved) ? s.approved : [],
-                              deviation: Array.isArray(s.deviation) ? s.deviation : [],
-                            }));
-                            setChecklistSections(updatedSections);
-                          }
-                          setActionModal(a => ({ ...a, visible: false }));
-                          setForceUpdate(f => f + 1); // tvinga omrendering
-                          // Navigera alltid tillbaka till projektet
-                          if (saveSuccess) {
-                                // Uppdatera checklistSections så att UI reflekterar ändringen direkt
-                                if (Array.isArray(updatedControl.checklist)) {
-                                  const updatedSections = updatedControl.checklist.map(s => ({
-                                    ...s,
-                                    remediation: s.remediation || {},
-                                    approved: Array.isArray(s.approved) ? s.approved : [],
-                                    deviation: Array.isArray(s.deviation) ? s.deviation : [],
-                                  }));
-                                  setChecklistSections(updatedSections);
-                                }
-                                setActionModal(a => ({ ...a, visible: false }));
-                                setForceUpdate(f => f + 1); // tvinga omrendering
-                                // Navigera alltid tillbaka till projektet
-                                if (saveSuccess) {
-                                  Alert.alert('Åtgärd sparad', 'Din åtgärd har sparats.', [
-                                    { text: 'OK', onPress: () => navigation.navigate('ProjectDetails', { project }) }
-                                  ]);
-                                } else {
-                                  Alert.alert('Fel', 'Kunde inte spara åtgärden. Försök igen.');
-                                }
+                            await upsertControlInStorage(updatedControl);
+                            setControlState(updatedControl);
+                            setActionModal(a => ({ ...a, visible: false }));
                             Alert.alert('Åtgärd sparad', 'Din åtgärd har sparats.', [
-                              { text: 'OK', onPress: () => navigation.navigate('ProjectDetails', { project }) }
+                              { text: 'OK' }
                             ]);
-                          } else {
+                          } catch (e) {
                             Alert.alert('Fel', 'Kunde inte spara åtgärden. Försök igen.');
                           }
                         }}
@@ -602,21 +805,25 @@ export default function ControlDetails({ route }) {
 
       {/* Signaturer */}
       {mottagningsSignatures.length > 0 && (
-        <View style={styles.section}>
+        <View style={styles.card}>
           <Text style={styles.sectionTitle}>Signaturer</Text>
           {mottagningsSignatures.map((s, i) => (
-            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-              <Ionicons name="pencil" size={18} color="#1976D2" style={{ marginRight: 6 }} />
-              <Text style={styles.bodyText}>{s.name || 'Signerad'}</Text>
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <Ionicons name="pencil" size={18} color="#1976D2" style={{ marginRight: 8, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bodyText}>{s?.name || 'Signerad'}</Text>
+                {s?.uri ? (
+                  <Image source={{ uri: s.uri }} style={{ width: 140, height: 52, marginTop: 6, backgroundColor: '#fff', borderRadius: 6, borderWidth: 1, borderColor: '#eee' }} resizeMode="contain" />
+                ) : null}
+              </View>
             </View>
           ))}
         </View>
       )}
-      {mottagningsSignatures.length > 0 && <View style={styles.divider} />}
 
       {/* Bifogade bilder */}
       {mottagningsPhotos.length > 0 && (
-        <View style={styles.section}>
+        <View style={styles.card}>
           <Text style={styles.sectionTitle}>Bifogade bilder</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
             {mottagningsPhotos.map((img, idx) => {
@@ -661,22 +868,155 @@ export default function ControlDetails({ route }) {
           </Modal>
         </View>
       )}
+
+    </View>
+  );
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, styles.webScrollRoot, { height: windowHeight || undefined }]}>
+        <View style={[styles.content, styles.contentWeb]}>
+          {pageContent}
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
+      {pageContent}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  divider: {
-    height: 1,
-    backgroundColor: '#e0e0e0',
-    marginVertical: 16,
-    width: '100%',
-  },
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
-  title: { fontSize: 22, fontWeight: 'bold', color: PRIMARY, marginBottom: 8 },
-  subInfo: { fontSize: 14, color: '#666', marginBottom: 2 },
-  section: { marginTop: 16 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: PRIMARY, marginBottom: 8 },
+  container: { flex: 1, backgroundColor: '#fff' },
+  // RN-web does not reliably apply `overflowY`; use `overflow` to enable scrolling.
+  webScrollRoot: { overflow: 'auto', minHeight: 0 },
+  content: { padding: 16, paddingBottom: 24 },
+  contentWeb: { alignItems: 'flex-start' },
+  page: { width: '100%' },
+  pageWeb: { width: A4_WEB_MAX_WIDTH },
+
+  title: { fontSize: 22, fontWeight: 'bold', color: PRIMARY },
+  projectLine: { fontSize: 14, color: '#666', marginTop: 2 },
+  subInfo: { fontSize: 13, color: '#666', marginTop: 8 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: PRIMARY, marginBottom: 10 },
   bodyText: { fontSize: 15, color: '#222' },
   noteText: { fontSize: 13, color: '#444', marginTop: 2 },
+
+  headerCard: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#fff',
+    marginBottom: 12,
+  },
+  companyLogo: {
+    width: 260,
+    maxWidth: '100%',
+    height: 56,
+  },
+  companyLogoDivider: {
+    height: 1,
+    backgroundColor: '#e6e6e6',
+    marginTop: 10,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
+  headerActionBtn: { padding: 6, marginLeft: 8 },
+
+  projectBar: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#f6f6f6',
+    borderWidth: 1,
+    borderColor: '#ededed',
+  },
+  projectBarText: {
+    fontSize: 13,
+    color: '#333',
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10, justifyContent: 'space-between' },
+  metaItem: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  metaText: { fontSize: 14, color: '#222' },
+
+  statusPill: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1 },
+  statusPillDone: { backgroundColor: '#E8F5E9', borderColor: '#43A047' },
+  statusPillOngoing: { backgroundColor: '#FFF8E1', borderColor: '#FFD600' },
+  statusPillText: { fontSize: 13, fontWeight: '700' },
+  statusPillTextDone: { color: '#2E7D32' },
+  statusPillTextOngoing: { color: '#222' },
+
+  card: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#fff',
+    marginTop: 12,
+  },
+  innerDivider: { height: 1, backgroundColor: '#eee', marginVertical: 10 },
+
+  overviewCard: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#fff',
+    marginBottom: 12,
+  },
+  overviewRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+  },
+  overviewRowDivider: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginVertical: 10,
+  },
+  overviewLabel: {
+    fontSize: 13,
+    color: '#444',
+    fontWeight: '700',
+    width: 145,
+    paddingRight: 10,
+  },
+  overviewValueWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    flex: 1,
+  },
+  metaIconWrap: { width: 22, alignItems: 'center', marginRight: 8 },
+  metaMultiLineRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  participantTableRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 },
+  participantColName: { width: 170, paddingRight: 10 },
+  participantColCompany: { width: 170, paddingRight: 10 },
+  participantColRole: { width: 160, paddingRight: 10 },
+  participantColMobile: { width: 120 },
+  overviewValue: {
+    fontSize: 13,
+    color: '#333',
+    flexShrink: 1,
+  },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', padding: 16 },
+  modalContent: { alignItems: 'center' },
 });

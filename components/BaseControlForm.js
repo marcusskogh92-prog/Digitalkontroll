@@ -8,7 +8,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // import BottomSheet from '@gorhom/bottom-sheet';
-import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View } from 'react-native';
+import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, LayoutAnimation, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useColorScheme, View, useWindowDimensions } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -34,6 +34,7 @@ export default function BaseControlForm({
   initialValues = {},
   hideWeather = false,
 }) {
+  const { height: windowHeight } = useWindowDimensions();
   const onExitRef = useRef(onExit);
   useEffect(() => {
     onExitRef.current = onExit;
@@ -311,9 +312,13 @@ export default function BaseControlForm({
   const route = useRoute();
   const navigation = useNavigation();
   // ...existing code...
+  const participantsLabel = controlType === 'Mottagningskontroll' ? 'Mottagare' : 'Deltagare';
+  const addParticipantsLabel = controlType === 'Mottagningskontroll' ? 'Lägg till mottagare' : 'Lägg till deltagare';
+  const editParticipantsLabel = controlType === 'Mottagningskontroll' ? 'Redigera mottagare' : 'Redigera deltagare';
   const [showBackConfirm, setShowBackConfirm] = useState(false);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [showDraftSavedConfirm, setShowDraftSavedConfirm] = useState(false);
+  const finishingSaveRef = useRef(false);
   // Ref to store blocked navigation event
   const blockedNavEvent = useRef(null);
   // Keep a ref copy of isDirty so the beforeRemove listener can be attached once
@@ -330,7 +335,7 @@ export default function BaseControlForm({
     }
     const missing = [];
     // Date is optional for Mottagningskontroll; do not mark as missing
-    if (!Array.isArray(localParticipants) || localParticipants.length === 0) missing.push('Deltagare');
+    if (!Array.isArray(localParticipants) || localParticipants.length === 0) missing.push(participantsLabel);
     const descLabel = (controlType === 'Skyddsrond') ? 'Omfattning / beskrivning av skyddsrond' : 'Beskriv leverans';
     if (!(controlType === 'Skyddsrond' ? deliveryDesc : materialDesc) || !(controlType === 'Skyddsrond' ? deliveryDesc : materialDesc).trim()) missing.push(descLabel);
     if (Array.isArray(checklist) && checklist.length > 0) {
@@ -348,7 +353,6 @@ export default function BaseControlForm({
       if (scrollRef && scrollRef.current && scrollRef.current.scrollTo) {
         scrollRef.current.scrollTo({ y: 0, animated: true });
       }
-      setTimeout(() => setMissingFields([]), 5000);
     }
   };
 
@@ -771,6 +775,43 @@ export default function BaseControlForm({
   }, [date, initialValues && initialValues.date]);
   const [deliveryDesc, setDeliveryDesc] = useState((initialValues && initialValues.deliveryDesc) || '');
   const [generalNote, setGeneralNote] = useState((initialValues && initialValues.generalNote) || '');
+
+  // Keep missing-field highlights until the user fixes them.
+  // IMPORTANT: This must be declared after the dependent state variables,
+  // otherwise web can crash with "Cannot access '<var>' before initialization".
+  useEffect(() => {
+    if (!Array.isArray(missingFields) || missingFields.length === 0) return;
+
+    const descLabel = (controlType === 'Skyddsrond') ? 'Omfattning / beskrivning av skyddsrond' : 'Beskriv leverans';
+
+    const stillMissing = (label) => {
+      if (label === participantsLabel || label === 'Deltagare') {
+        return !(Array.isArray(localParticipants) && localParticipants.length > 0);
+      }
+      if (label === descLabel) {
+        if (controlType === 'Skyddsrond') {
+          return !(typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0);
+        }
+        // Mottagningskontroll has historically used both fields; accept either.
+        const hasDelivery = typeof deliveryDesc === 'string' && deliveryDesc.trim().length > 0;
+        const hasMaterial = typeof materialDesc === 'string' && materialDesc.trim().length > 0;
+        return !(hasDelivery || hasMaterial);
+      }
+      if (label === 'Kontrollpunkter') {
+        if (!Array.isArray(checklist) || checklist.length === 0) return false;
+        return checklist.some(sec => !(Array.isArray(sec.statuses) && sec.statuses.every(s => !!s)));
+      }
+      if (label === 'Signaturer' || label === 'Signatur') {
+        return !(Array.isArray(mottagningsSignatures) && mottagningsSignatures.length > 0);
+      }
+      return true;
+    };
+
+    const nextMissing = missingFields.filter(stillMissing);
+    if (nextMissing.length !== missingFields.length) {
+      setMissingFields(nextMissing);
+    }
+  }, [missingFields, controlType, localParticipants, deliveryDesc, materialDesc, checklist, mottagningsSignatures]);
 
   // Dirty state: true if any field differs from initial
   const isDirty = useMemo(() => {
@@ -1924,26 +1965,46 @@ export default function BaseControlForm({
 
   // Spara slutförd kontroll och ta bort ev. utkast
   const handleSave = async () => {
-    if (onSave) onSave({
-      id: (initialValues && initialValues.id) ? initialValues.id : (draftId || undefined),
-      date: dateValue,
-      project,
-      ...weatherPayload,
-      byggdel,
-      byggdelTemplate,
-      selectedCategories,
-      participants: localParticipants,
-      materialDesc,
-      qualityDesc,
-      coverageDesc,
-      mottagningsSignatures,
-      mottagningsPhotos,
-      checklist,
-      expandedChecklist,
-      deliveryDesc,
-      generalNote,
-      type: controlType,
-    });
+    if (finishingSaveRef.current) return;
+    finishingSaveRef.current = true;
+
+    const isEditingCompleted = !!(initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed));
+    const resolvedId = (initialValues && initialValues.id)
+      ? initialValues.id
+      : (draftId || uuidv4());
+    // Ensure repeated saves (e.g. accidental double click) target the same record.
+    try {
+      if (!(initialValues && initialValues.id) && !draftId) setDraftId(resolvedId);
+    } catch (e) {}
+
+    try {
+      if (onSave) {
+        await Promise.resolve(onSave({
+          id: resolvedId,
+          date: dateValue,
+          project,
+          ...weatherPayload,
+          byggdel,
+          byggdelTemplate,
+          selectedCategories,
+          participants: localParticipants,
+          materialDesc,
+          qualityDesc,
+          coverageDesc,
+          mottagningsSignatures,
+          mottagningsPhotos,
+          checklist,
+          expandedChecklist,
+          deliveryDesc,
+          generalNote,
+          type: controlType,
+        }));
+      }
+    } catch (e) {
+      finishingSaveRef.current = false;
+      Alert.alert('Kunde inte spara', (e && e.message) ? e.message : String(e));
+      return;
+    }
     // Ta bort ev. utkast för detta projekt+typ
     try {
       const existing = await AsyncStorage.getItem('draft_controls');
@@ -1969,15 +2030,39 @@ export default function BaseControlForm({
     try {
       isDirtyRef.current = false;
     } catch (e) {}
-    // Visa alert innan navigation
+
+    // For "Slutför" on web: show a lightweight confirmation (like "Spara utkast")
+    // and then exit back to the project automatically.
+    if (!isEditingCompleted) {
+      try { setShowFinishConfirm(true); } catch (e) {}
+      setTimeout(() => {
+        try { setShowFinishConfirm(false); } catch (e) {}
+        finishingSaveRef.current = false;
+        try {
+          if (typeof onFinished === 'function') {
+            onFinished();
+            return;
+          }
+          if (typeof onExit === 'function') {
+            onExit();
+            return;
+          }
+          if (navigation && navigation.navigate && project) {
+            navigation.navigate('ProjectDetails', { project });
+          } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
+            navigation.goBack();
+          }
+        } catch (e) {}
+      }, 900);
+      return;
+    }
+
+    // Editing an already completed control: keep the explicit OK flow.
+    finishingSaveRef.current = false;
     setTimeout(() => {
       Alert.alert(
-        (initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))
-          ? 'Sparad'
-          : 'Slutförd',
-        (initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed))
-          ? 'Dina ändringar är sparade i kontrollen.'
-          : 'Din kontroll är slutförd och sparas i projektet.',
+        'Sparad',
+        'Dina ändringar är sparade i kontrollen.',
         [
           {
             text: 'OK',
@@ -2370,7 +2455,14 @@ export default function BaseControlForm({
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      <ScrollView ref={scrollRef} style={{ flex: 1, backgroundColor: '#fff' }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef}
+        style={[
+          { flex: 1, backgroundColor: '#fff' },
+          Platform.OS === 'web' ? { height: windowHeight || undefined, minHeight: 0 } : null,
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
       <View style={{ flex: 1 }}>
                 {/* Förklaring av statusknappar för riskbedömning (legend row removed from top, now only in checklist section header) */}
         {/* Project Info and meta */}
@@ -2426,14 +2518,18 @@ export default function BaseControlForm({
         {/* Soft horizontal divider under date */}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 10, marginBottom: 10 }} />
         {/* Date edit modal */}
-        {showDateModal && (
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
-            <View style={{ height: 120 }} />
-            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 280, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+        <Modal
+          visible={showDateModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowDateModal(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: 280, maxWidth: '90%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
               {/* Close (X) icon in top right */}
-              <TouchableOpacity 
-                onPress={() => setShowDateModal(false)} 
-                style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 4 }} 
+              <TouchableOpacity
+                onPress={() => setShowDateModal(false)}
+                style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, padding: 4 }}
                 accessibilityLabel="Stäng"
                 hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               >
@@ -2512,19 +2608,18 @@ export default function BaseControlForm({
                 </TouchableOpacity>
               </View>
             </View>
-          {/* Divider under participants (should only be in main flow, not modal) */}
           </View>
-        )}
+        </Modal>
         {/* Participants (own row) and Weather (separate row below) */}
         <View style={{ flexDirection: 'column', marginBottom: 2 }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', flex: 1 }}>
               <Ionicons name="person-outline" size={26} color="#1976D2" style={{ marginRight: 10, marginTop: 2 }} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 18, color: (missingFields && missingFields.includes('Deltagare')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>Deltagare</Text>
+                <Text style={{ fontSize: 18, color: (missingFields && (missingFields.includes(participantsLabel) || missingFields.includes('Deltagare'))) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 6, marginTop: 4 }}>{participantsLabel}</Text>
                 <View style={{ paddingVertical: 6 }}>
                   {(Array.isArray(localParticipants) ? localParticipants : []).map((p, idx) => {
-                    const name = (typeof p === 'string') ? p : (p && p.name) ? p.name : `Deltagare ${idx+1}`;
+                    const name = (typeof p === 'string') ? p : (p && p.name) ? p.name : `${participantsLabel} ${idx+1}`;
                     const key = (typeof p === 'object' && p && p.id) ? `participant-${p.id}` : `participant-${idx}-${name}`;
                     return (
                       <View key={key} style={{ backgroundColor: '#f5f5f5', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
@@ -2541,7 +2636,7 @@ export default function BaseControlForm({
                 </View>
               </View>
             </View>
-            <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel="Lägg till deltagare">
+            <TouchableOpacity onPress={() => { setParticipantName(''); setParticipantCompany(''); setParticipantRole(''); setParticipantPhone(''); setEditParticipantIndex(null); setShowAddParticipantModal(true); }} style={{ padding: 4, marginLeft: 8 }} accessibilityLabel={addParticipantsLabel}>
               <Ionicons name="add-circle-outline" size={26} color="#1976D2" />
             </TouchableOpacity>
           </View>
@@ -4119,7 +4214,7 @@ export default function BaseControlForm({
                   >
                     <Ionicons name="close" size={22} color="#888" />
                   </TouchableOpacity>
-                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>{editParticipantIndex !== null ? 'Redigera deltagare' : 'Lägg till deltagare'}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, textAlign: 'center' }}>{editParticipantIndex !== null ? editParticipantsLabel : addParticipantsLabel}</Text>
                   <TextInput
                     value={participantName}
                     onChangeText={setParticipantName}
@@ -4352,16 +4447,65 @@ export default function BaseControlForm({
             // Check if any point in this section is not filled in
             const sectionStatuses = checklist[sectionIdx]?.statuses || [];
             const anyMissing = section.points.some((_, idx) => !sectionStatuses[idx]);
-            const sectionHeaderBg = anyMissing ? '#FFE5E5' : '#e9ecef';
-            const sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
+            let sectionHeaderBg = anyMissing ? '#FFE5E5' : '#e9ecef';
+            let sectionHeaderText = anyMissing ? '#D32F2F' : '#222';
             // Ikonlogik: visa fotoikon om något foto finns, varning om någon avvikelse, grön check om alla är ifyllda (oavsett status)
             const allFilled = section.points.every((_, idx) => !!sectionStatuses[idx]);
             // Only consider unhandled avvikelser as active warnings
             const hasAvvikelse = (sectionStatuses || []).some((s, si) => s === 'avvikelse' && !(section.remediation && section.remediation[(section.points || [])[si]]));
+
+            // Web: make sections with unhandled deviations stand out in yellow
+            if (Platform.OS === 'web' && !anyMissing && hasAvvikelse) {
+              sectionHeaderBg = '#FFD600';
+              sectionHeaderText = '#222';
+            }
+
             const photos = checklist[sectionIdx]?.photos || [];
             const hasPhoto = photos.some(photoArr => Array.isArray(photoArr) && photoArr.length > 0);
+            // Web-only: show a small thumbnail preview in the row when photos exist
+            let sectionPhotoItems = [];
+            let sectionThumbIndex = 0;
+            let sectionThumbUri = null;
+            if (hasPhoto) {
+              try {
+                const out = [];
+                const outer = Array.isArray(photos) ? photos : [];
+                for (const arr of outer) {
+                  const inner = Array.isArray(arr) ? arr : (arr ? [arr] : []);
+                  for (const item of inner) {
+                    const uri = (item && typeof item === 'object' && item.uri) ? item.uri : item;
+                    if (uri) out.push(item);
+                  }
+                }
+                sectionPhotoItems = out;
+                if (out.length > 0) {
+                  sectionThumbIndex = out.length - 1;
+                  const thumbItem = out[sectionThumbIndex];
+                  sectionThumbUri = (thumbItem && typeof thumbItem === 'object' && thumbItem.uri) ? thumbItem.uri : thumbItem;
+                }
+              } catch (e) {
+                sectionPhotoItems = [];
+                sectionThumbIndex = 0;
+                sectionThumbUri = null;
+              }
+            }
             // Show green check if all filled, regardless of status
             const showGreenCheck = allFilled;
+
+            // Web-only helper: find the first unhandled deviation in this section
+            const firstUnhandledDeviationIdx = (() => {
+              try {
+                const pts = Array.isArray(section.points) ? section.points : [];
+                for (let i = 0; i < pts.length; i++) {
+                  if ((sectionStatuses || [])[i] !== 'avvikelse') continue;
+                  const pt = pts[i];
+                  const rem = section.remediation && section.remediation[pt];
+                  if (!rem) return i;
+                }
+              } catch (e) {}
+              return -1;
+            })();
+
             return (
                 <View key={section.id ? `section-${section.id}` : btoa(unescape(encodeURIComponent(section.label))) + '-' + sectionIdx} style={{ marginBottom: 10, backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' }}>
                 <TouchableOpacity
@@ -4388,6 +4532,21 @@ export default function BaseControlForm({
                       const notRelevantCount = (sectionStatuses || []).filter(s => s === 'ejaktuell').length;
                       const total = (section.points || []).length || 0;
                       const filledCount = okCount + deviationCount + notRelevantCount;
+
+                      // Web: always show labels + counts (even when 0)
+                      if (Platform.OS === 'web') {
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+                            <Ionicons name="checkmark-circle" size={18} color="#43A047" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 12, color: '#43A047', marginRight: 10 }}>{`Godkänd ${okCount}`}</Text>
+                            <Ionicons name="alert-circle" size={18} color="#D32F2F" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 12, color: '#D32F2F', marginRight: 10 }}>{`Avvikelse ${deviationCount}`}</Text>
+                            <Ionicons name="remove-circle" size={18} color="#607D8B" style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 12, color: '#607D8B' }}>{`Ej aktuell ${notRelevantCount}`}</Text>
+                          </View>
+                        );
+                      }
+
                       if (filledCount === 0) {
                         // Show legend only if nothing is filled
                         return (
@@ -4401,7 +4560,7 @@ export default function BaseControlForm({
                           </View>
                         );
                       } else {
-                        // Show only icon and count for each status
+                        // Native: compact icon + count only
                         return (
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                             <Ionicons name="checkmark-circle" size={18} color="#43A047" style={{ marginRight: 2 }} />
@@ -4418,6 +4577,47 @@ export default function BaseControlForm({
                     })()}
                   </View>
                   {/* Camera / check icons */}
+                  {Platform.OS === 'web' && controlType === 'Skyddsrond' && hasAvvikelse && firstUnhandledDeviationIdx >= 0 && (
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                        try { setExpandedChecklist([sectionIdx]); } catch (err) {}
+                        try {
+                          setRemediationModal({
+                            visible: true,
+                            sectionIdx,
+                            pointIdx: firstUnhandledDeviationIdx,
+                            comment: '',
+                            name: '',
+                            date: '',
+                            infoMode: false,
+                          });
+                        } catch (err) {}
+                      }}
+                      style={{ marginLeft: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600' }}
+                      activeOpacity={0.85}
+                      accessibilityLabel={`Åtgärda avvikelse i ${section.label}`}
+                    >
+                      <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>Åtgärda</Text>
+                    </TouchableOpacity>
+                  )}
+                  {Platform.OS === 'web' && sectionThumbUri && sectionPhotoItems.length > 0 && (
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                        setPhotoModal({ visible: true, uris: sectionPhotoItems, index: sectionThumbIndex });
+                      }}
+                      style={{ marginLeft: 8 }}
+                      activeOpacity={0.8}
+                      accessibilityLabel={`Visa bilder ${section.label}`}
+                    >
+                      <Image
+                        source={{ uri: sectionThumbUri }}
+                        style={{ width: 28, height: 28, borderRadius: 4, backgroundColor: '#eee' }}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                  )}
                   {hasPhoto && (
                     <Ionicons name="camera" size={20} color="#1976D2" style={{ marginLeft: 8 }} />
                   )}
@@ -4571,26 +4771,45 @@ export default function BaseControlForm({
                                 När en åtgärd sparas lagras remediation-info och avvikelsen
                                 betraktas som handlad (visas ej som aktiv varning i header),
                                 men vi sparar åtgärden för spårbarhet. */}
-                            {controlType === 'Skyddsrond' && section.statuses[pointIdx] === 'avvikelse' && !isHandled && (
-                              <TouchableOpacity
-                                onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false })}
-                                style={{ marginLeft: 8, backgroundColor: '#FFC107', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
-                              >
-                                <Text style={{ color: '#222', fontSize: 13 }}>Åtgärda</Text>
-                              </TouchableOpacity>
-                            )}
-                            {controlType === 'Skyddsrond' && section.statuses[pointIdx] === 'avvikelse' && isHandled && (
-                              <>
+                            {controlType === 'Skyddsrond' && isDeviation && (
+                              isHandled ? (
+                                <>
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      try {
+                                        setRemediationModal({
+                                          visible: true,
+                                          sectionIdx,
+                                          pointIdx,
+                                          comment: remediation && remediation.comment ? remediation.comment : '',
+                                          name: remediation && remediation.name ? remediation.name : '',
+                                          date: remediation && remediation.date ? remediation.date : '',
+                                          infoMode: true,
+                                        });
+                                      } catch (e) {}
+                                    }}
+                                    style={{ marginLeft: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#E8F5E9' }}
+                                    accessibilityLabel={`Visa åtgärdsinfo för ${pointText}`}
+                                  >
+                                    <Text style={{ color: '#388E3C', fontSize: 13, fontWeight: '600' }}>Info</Text>
+                                  </TouchableOpacity>
+                                  <Text style={{ marginLeft: 8, color: '#388E3C', fontSize: 12 }}>
+                                    Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
+                                  </Text>
+                                </>
+                              ) : (
                                 <TouchableOpacity
-                                  onPress={() => setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: remediation.comment, name: remediation.name, date: remediation.date, infoMode: true })}
-                                  style={{ marginLeft: 8, backgroundColor: '#E0E0E0', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}
+                                  onPress={() => {
+                                    try {
+                                      setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false });
+                                    } catch (e) {}
+                                  }}
+                                  style={{ marginLeft: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 0, backgroundColor: '#FFD600' }}
+                                  accessibilityLabel={`Åtgärda avvikelse för ${pointText}`}
                                 >
-                                  <Text style={{ color: '#222', fontSize: 13 }}>Info</Text>
+                                  <Text style={{ color: '#222', fontSize: 13, fontWeight: '700' }}>Åtgärda</Text>
                                 </TouchableOpacity>
-                                <Text style={{ marginLeft: 8, color: '#388E3C', fontSize: 12 }}>
-                                  Åtgärdad {remediation.date ? remediation.date.slice(0, 10) : ''} av {remediation.name || ''}
-                                </Text>
-                              </>
+                              )
                             )}
                           </View>
                           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 6, marginBottom: 6 }} />
@@ -4766,14 +4985,14 @@ export default function BaseControlForm({
         <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
           <View style={{ height: 1, backgroundColor: '#e0e0e0', width: '100%', marginTop: 8, marginBottom: 12 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <Text style={{ fontSize: 15, color: (missingFields && missingFields.includes('Signaturer')) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 8 }}>Signaturer</Text>
+            <Text style={{ fontSize: 15, color: (missingFields && (missingFields.includes('Signaturer') || missingFields.includes('Signatur'))) ? '#D32F2F' : '#222', fontWeight: '600', marginBottom: 8 }}>Signaturer</Text>
             <TouchableOpacity onPress={() => setShowAddSignerModal(true)} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
               <Text style={{ color: '#1976D2' }}>Lägg till signerare</Text>
             </TouchableOpacity>
           </View>
           {localParticipants && localParticipants.length > 0 ? (
             localParticipants.map((p, pIdx) => {
-              const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${pIdx+1}`);
+              const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `${participantsLabel} ${pIdx+1}`);
               const existing = (mottagningsSignatures || []).find(s => s.name === name);
               return (
                 <View key={`sig-${pIdx}-${name}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -4880,15 +5099,23 @@ export default function BaseControlForm({
               Alert.alert('Kan inte slutföra', 'Följande saknas: ' + missing.join(', '));
               return;
             }
+
+            // For Skyddsrond + Mottagningskontroll: show a clear popup of missing fields
+            // instead of doing nothing when canFinish is false (especially important on web).
+            if (!canFinish && (controlType === 'Skyddsrond' || controlType === 'Mottagningskontroll')) {
+              handleAttemptFinish();
+              return;
+            }
+
             if (canFinish) {
               handleAttemptFinish();
             }
           }}
-          style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0, opacity: canFinish ? 1 : 0.5 }}
+          style={{ flex: 1, alignItems: 'center', marginRight: 8, backgroundColor: 'transparent', paddingVertical: 14, paddingHorizontal: 0, opacity: canFinish ? 1 : 0.55 }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="checkmark-circle" size={18} color={canFinish ? '#1976D2' : '#AAA'} style={{ marginRight: 8 }} />
-            <Text style={{ color: canFinish ? '#1976D2' : '#AAA', fontWeight: 'bold', fontSize: 16 }}>
+            <Ionicons name="checkmark-circle" size={18} color={(canFinish || (Platform.OS === 'web' && (controlType === 'Skyddsrond' || controlType === 'Mottagningskontroll'))) ? '#1976D2' : '#AAA'} style={{ marginRight: 8 }} />
+            <Text style={{ color: (canFinish || (Platform.OS === 'web' && (controlType === 'Skyddsrond' || controlType === 'Mottagningskontroll'))) ? '#1976D2' : '#AAA', fontWeight: 'bold', fontSize: 16 }}>
               {((initialValues && (initialValues.status === 'UTFÖRD' || initialValues.completed)) ? 'Spara' : 'Slutför')}
             </Text>
           </View>
@@ -4984,7 +5211,7 @@ export default function BaseControlForm({
                       setMottagningsSignatures(prev => [...(prev || []), { name: 'Signerad', strokes: strokesToSave }]);
                     } else if (typeof signatureForIndex === 'number') {
                       const p = localParticipants[signatureForIndex];
-                      const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `Deltagare ${signatureForIndex+1}`);
+                      const name = (typeof p === 'object' && p !== null) ? (p.name || `${p.company || ''}`) : (p || `${participantsLabel} ${signatureForIndex+1}`);
                       setMottagningsSignatures(prev => {
                         const others = (prev || []).filter(s => s.name !== name);
                         return [...others, { name, strokes: strokesToSave }];

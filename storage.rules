@@ -1,0 +1,24 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default: deny everything unless explicitly allowed below.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Branding/logo assets.
+    // You stated it's OK if the company logo is publicly readable.
+    // This enables reading logo files stored under these common prefixes.
+    match /foretag/{companyId}/branding/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.token.companyId == companyId;
+      allow write: if false;
+    }
+
+    // Legacy/older convention currently used in your bucket.
+    // Example: gs://.../Foretag/Wilzensbygg/wilzensbygg.logga.jpg
+    match /Foretag/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}

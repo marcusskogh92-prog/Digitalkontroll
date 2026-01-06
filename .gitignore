@@ -56,6 +56,9 @@ Thumbs.db
 # Service account keys (do not commit)
 /konton/*.json
 
+# Local onboarding imports (may contain real emails/passwords)
+/data/import*.csv
+
 # TypeScript
 *.tsbuildinfo
 

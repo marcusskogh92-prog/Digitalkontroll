@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
 import { Alert } from 'react-native';
 
 // Firebase-konfiguration för DigitalKontroll
@@ -20,6 +21,9 @@ const firebaseConfig = {
 
 // Initiera Firebase
 const app = initializeApp(firebaseConfig);
+
+// Storage (for branding assets like company logos)
+export const storage = getStorage(app);
 
 // Initiera autentisering & Firestore
 // Use React Native AsyncStorage for Auth persistence when possible
@@ -169,6 +173,53 @@ export async function fetchCompanyProfile(companyId) {
     if (snap.exists()) return snap.data();
   } catch (e) {}
   return null;
+}
+
+// Resolve the company logo URL from profile.public.logoUrl.
+// Supports both https(s) URLs and gs:// storage URLs.
+export async function resolveCompanyLogoUrl(companyId) {
+  if (!companyId) return null;
+  const profile = await fetchCompanyProfile(companyId);
+  const logoUrl = profile?.logoUrl || null;
+  if (!logoUrl) return null;
+
+  // If a gs:// URL is stored, convert it to an HTTPS download URL.
+  if (typeof logoUrl === 'string' && logoUrl.trim().toLowerCase().startsWith('gs://')) {
+    try {
+      const raw = logoUrl.trim();
+      const match = raw.match(/^gs:\/\/([^\/]+)\/(.+)$/i);
+      const bucket = match && match[1] ? String(match[1]) : '';
+      const fullPath = match && match[2] ? String(match[2]) : '';
+      if (!fullPath) return null;
+
+      // Some environments are picky about ref-from-gs:// URLs. Use bucket+path explicitly.
+      // Also handle common mismatch between provided bucket domains.
+      const bucketCandidates = [];
+      if (bucket) {
+        bucketCandidates.push(bucket);
+        if (bucket.toLowerCase().endsWith('.firebasestorage.app')) {
+          bucketCandidates.push(bucket.replace(/\.firebasestorage\.app$/i, '.appspot.com'));
+        }
+      }
+
+      for (const b of bucketCandidates.length > 0 ? bucketCandidates : ['']) {
+        try {
+          const st = b ? getStorage(app, `gs://${b}`) : storage;
+          const r = storageRef(st, fullPath);
+          const https = await getDownloadURL(r);
+          if (https) return https;
+        } catch (inner) {
+          // fall through and try other bucket candidates
+        }
+      }
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  return logoUrl;
 }
 
 export async function saveCompanyProfile(companyId, profile) {

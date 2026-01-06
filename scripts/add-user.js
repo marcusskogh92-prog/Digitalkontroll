@@ -58,6 +58,10 @@ async function main() {
   const role = (args.role || 'user').trim();
   const isAdmin = toBool(args.admin, role === 'admin');
   const password = (args.password && String(args.password).trim()) || randomPassword();
+  const firstName = (args.firstName || args.firstname || '').trim();
+  const lastName = (args.lastName || args.lastname || '').trim();
+  const displayNameArg = (args.displayName || args.displayname || '').trim();
+  const desiredDisplayName = displayNameArg || [firstName, lastName].filter(Boolean).join(' ').trim();
 
   const saPath = path.resolve(serviceAccount);
   if (!fs.existsSync(saPath)) {
@@ -82,21 +86,35 @@ async function main() {
         email,
         password,
         emailVerified: true,
-        displayName: email.split('@')[0]
+        displayName: desiredDisplayName || email.split('@')[0]
       });
       console.log('Created user:', userRecord.uid);
       console.log('Password (new user):', password);
     }
 
-    const claims = { companyId: company, admin: isAdmin };
+    // Best-effort: update displayName if we have a better one
+    if (desiredDisplayName && desiredDisplayName !== userRecord.displayName) {
+      try {
+        await auth.updateUser(userRecord.uid, { displayName: desiredDisplayName });
+        userRecord = await auth.getUser(userRecord.uid);
+        console.log('Updated displayName:', userRecord.displayName);
+      } catch (e) {
+        console.warn('Could not update displayName:', e?.message || e);
+      }
+    }
+
+    const effectiveRole = isAdmin ? 'admin' : role;
+    const claims = { companyId: company, admin: isAdmin, role: effectiveRole };
     await auth.setCustomUserClaims(userRecord.uid, claims);
     console.log('Set custom claims:', claims);
 
     await db.collection('users').doc(userRecord.uid).set({
       companyId: company,
-      role: isAdmin ? 'admin' : role,
+      role: effectiveRole,
       email,
       displayName: userRecord.displayName || email.split('@')[0],
+      firstName: firstName || null,
+      lastName: lastName || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -105,9 +123,11 @@ async function main() {
     await db.collection('foretag').doc(company).collection('members').doc(userRecord.uid).set({
       uid: userRecord.uid,
       companyId: company,
-      role: isAdmin ? 'admin' : role,
+      role: effectiveRole,
       email,
       displayName: userRecord.displayName || email.split('@')[0],
+      firstName: firstName || null,
+      lastName: lastName || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
