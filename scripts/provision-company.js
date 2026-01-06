@@ -58,6 +58,16 @@ async function main() {
       }
       await auth.setCustomUserClaims(userRecord.uid, { admin: true, role: 'admin', companyId: company });
       await db.collection('users').doc(userRecord.uid).set({ companyId: company, role: 'admin', email: adminEmail, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      // Also write to company-scoped members directory for in-app dropdowns (ansvarig)
+      await companyRef.collection('members').doc(userRecord.uid).set({
+        uid: userRecord.uid,
+        companyId: company,
+        role: 'admin',
+        email: adminEmail,
+        displayName: userRecord.displayName || adminEmail.split('@')[0],
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
       console.log('Provisioned admin user and claims. Password (if created):', adminPassword);
     }
 

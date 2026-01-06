@@ -80,6 +80,17 @@ async function main() {
       console.log('Created foretag/{company}');
     }
 
+    // Seed company members directory
+    await companyRef.collection('members').doc(userRecord.uid).set({
+      uid: userRecord.uid,
+      companyId: company,
+      role: 'admin',
+      displayName: userRecord.displayName || 'Demo Admin',
+      email: userRecord.email,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
     // Seed a simple mall-template collection
     const templatesRef = companyRef.collection('mallar');
     const templatesSnap = await templatesRef.limit(1).get();

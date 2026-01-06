@@ -3,7 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
-import { auth, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile } from '../components/firebase';
+import { auth, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import ProjectDetails from './ProjectDetails';
@@ -169,7 +170,31 @@ export default function HomeScreen({ route, navigation }) {
   const resetProjectFields = () => {
     setNewProjectName("");
     setNewProjectNumber("");
+    setNewProjectResponsible(null);
   };
+
+  const didUpsertMemberKeyRef = useRef('');
+
+  async function ensureCurrentUserMemberDoc() {
+    try {
+      const uid = auth?.currentUser?.uid;
+      if (!uid || !companyId) return;
+
+      const key = `${companyId}::${uid}`;
+      if (didUpsertMemberKeyRef.current === key) return;
+
+      // Prefer role/displayName from user profile if present
+      const profile = await fetchUserProfile(uid).catch(() => null);
+      const role = profile?.role || null;
+      const email = profile?.email || auth?.currentUser?.email || null;
+      const displayName = profile?.displayName || auth?.currentUser?.displayName || (email ? String(email).split('@')[0] : null);
+
+      const ok = await upsertCompanyMember({ companyId, uid, role, email, displayName });
+      if (ok) didUpsertMemberKeyRef.current = key;
+    } catch (e) {
+      // ignore
+    }
+  }
 
   // Kontrollera om projektnummer är unikt i hela hierarkin
   function isProjectNumberUnique(num) {
@@ -198,6 +223,111 @@ export default function HomeScreen({ route, navigation }) {
   const [newProjectModal, setNewProjectModal] = useState({ visible: false, parentSubId: null });
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectNumber, setNewProjectNumber] = useState("");
+  const [newProjectResponsible, setNewProjectResponsible] = useState(null);
+  const [responsiblePickerVisible, setResponsiblePickerVisible] = useState(false);
+  const [companyAdmins, setCompanyAdmins] = useState([]);
+  const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
+  const [newProjectKeyboardLockHeight, setNewProjectKeyboardLockHeight] = useState(0);
+  const [companyAdminsLastFetchAt, setCompanyAdminsLastFetchAt] = useState(0);
+  const companyAdminsUnsubRef = useRef(null);
+  const [companyAdminsPermissionDenied, setCompanyAdminsPermissionDenied] = useState(false);
+
+  const loadCompanyAdmins = React.useCallback(async ({ force } = { force: false }) => {
+    try {
+      if (!companyId) return;
+      if (loadingCompanyAdmins && !force) return;
+      setLoadingCompanyAdmins(true);
+      setCompanyAdminsPermissionDenied(false);
+      // Ensure at least the current user is present in members directory
+      await ensureCurrentUserMemberDoc();
+      const admins = await fetchCompanyMembers(companyId, { role: 'admin' });
+      setCompanyAdmins(Array.isArray(admins) ? admins : []);
+      setCompanyAdminsLastFetchAt(Date.now());
+    } catch (e) {
+      const msg = String(e?.message || e || '').toLowerCase();
+      if (e?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
+      setCompanyAdmins([]);
+    } finally {
+      setLoadingCompanyAdmins(false);
+    }
+  }, [companyId, loadingCompanyAdmins]);
+
+  // If the create-project modal opens before companyId is ready, onShow can early-return.
+  // This effect ensures admins are fetched as soon as companyId is available while the modal is open.
+  React.useEffect(() => {
+    if (!newProjectModal?.visible) return;
+    if (!companyId) return;
+    // Avoid refetch loop; only fetch if we have nothing yet.
+    if (companyAdmins && companyAdmins.length > 0) return;
+    if (loadingCompanyAdmins) return;
+    loadCompanyAdmins({ force: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newProjectModal?.visible, companyId]);
+
+  // While the ansvarig picker is open, subscribe to admins in realtime.
+  // This avoids the common "empty cache" problem on fresh logins.
+  React.useEffect(() => {
+    if (!responsiblePickerVisible) {
+      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch (e) {}
+      companyAdminsUnsubRef.current = null;
+      return;
+    }
+    if (!companyId) return;
+
+    setLoadingCompanyAdmins(true);
+    setCompanyAdminsPermissionDenied(false);
+    try {
+      if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current();
+    } catch (e) {}
+    companyAdminsUnsubRef.current = subscribeCompanyMembers(companyId, {
+      role: 'admin',
+      onData: (admins) => {
+        setCompanyAdmins(Array.isArray(admins) ? admins : []);
+        setCompanyAdminsLastFetchAt(Date.now());
+        setLoadingCompanyAdmins(false);
+      },
+      onError: (err) => {
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (err?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
+        setLoadingCompanyAdmins(false);
+      }
+    });
+
+    return () => {
+      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch (e) {}
+      companyAdminsUnsubRef.current = null;
+    };
+  }, [responsiblePickerVisible, companyId]);
+
+  // Track native keyboard height for the create-project modal.
+  // We keep this separate from the search modal keyboard handling to avoid stale/reset values.
+  const [nativeKeyboardHeight, setNativeKeyboardHeight] = useState(0);
+  const nativeKeyboardHeightRef = useRef(0);
+
+  React.useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subs = [];
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      nativeKeyboardHeightRef.current = h;
+      setNativeKeyboardHeight(h);
+    };
+    const onHide = () => {
+      nativeKeyboardHeightRef.current = 0;
+      setNativeKeyboardHeight(0);
+    };
+
+    subs.push(Keyboard.addListener('keyboardWillShow', onShow));
+    subs.push(Keyboard.addListener('keyboardWillHide', onHide));
+    subs.push(Keyboard.addListener('keyboardDidShow', onShow));
+    subs.push(Keyboard.addListener('keyboardDidHide', onHide));
+
+    return () => {
+      for (const s of subs) {
+        try { s.remove(); } catch (e) {}
+      }
+    };
+  }, []);
 
   // Modal för nytt projekt i undermapp (läggs utanför return)
   // State for project selection modal (for creating controls)
@@ -207,20 +337,252 @@ export default function HomeScreen({ route, navigation }) {
       visible={newProjectModal.visible}
       transparent
       animationType="fade"
+      onShow={async () => {
+        // Fetch admins when the modal opens
+        await loadCompanyAdmins({ force: false });
+      }}
       onRequestClose={() => {
         setNewProjectModal({ visible: false, parentSubId: null });
         resetProjectFields();
+        setNewProjectKeyboardLockHeight(0);
       }}
     >
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <Pressable
-          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
-          onPress={() => {
-            setNewProjectModal({ visible: false, parentSubId: null });
-            resetProjectFields();
-          }}
-        />
-        <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 20, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+      {Platform.OS === 'web' ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Pressable
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
+            onPress={() => {
+              setNewProjectModal({ visible: false, parentSubId: null });
+              resetProjectFields();
+            }}
+          />
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 20, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
+              onPress={() => {
+                setNewProjectModal({ visible: false, parentSubId: null });
+                resetProjectFields();
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="close" size={26} color="#222" />
+            </TouchableOpacity>
+
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center', marginTop: 6 }}>Skapa nytt projekt</Text>
+
+            <TextInput
+              value={newProjectNumber}
+              onChangeText={(v) => {
+                // RN-web can sometimes deliver an event object; normalize to string to avoid crashes.
+                const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
+                setNewProjectNumber(String(next));
+              }}
+              placeholder="Projektnummer..."
+              placeholderTextColor="#888"
+              style={{
+                borderWidth: 1,
+                borderColor: String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) ? '#D32F2F' : '#e0e0e0',
+                borderRadius: 8,
+                padding: 10,
+                fontSize: 16,
+                marginBottom: 10,
+                backgroundColor: '#fafafa',
+                color: !isProjectNumberUnique(newProjectNumber) && String(newProjectNumber ?? '').trim() !== '' ? '#D32F2F' : '#222'
+              }}
+              autoFocus
+              keyboardType="default"
+            />
+            {String(newProjectNumber ?? '').trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 6 }}>
+                <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>Projektnummer används redan.</Text>
+              </View>
+            )}
+
+            <TextInput
+              value={newProjectName}
+              onChangeText={(v) => {
+                const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
+                setNewProjectName(String(next));
+              }}
+              placeholder="Projektnamn..."
+              placeholderTextColor="#888"
+              style={{
+                borderWidth: 1,
+                borderColor: String(newProjectName ?? '').trim() === '' ? '#D32F2F' : '#e0e0e0',
+                borderRadius: 8,
+                padding: 10,
+                fontSize: 16,
+                marginBottom: 12,
+                backgroundColor: '#fafafa',
+                color: '#222'
+              }}
+              keyboardType="default"
+            />
+
+            {/* Ansvarig (required) */}
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+              Ansvarig
+            </Text>
+            <TouchableOpacity
+              style={{
+                borderWidth: 1,
+                borderColor: newProjectResponsible ? '#e0e0e0' : '#D32F2F',
+                borderRadius: 8,
+                paddingVertical: 10,
+                paddingHorizontal: 10,
+                marginBottom: 12,
+                backgroundColor: '#fafafa',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+              onPress={() => setResponsiblePickerVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 16, color: newProjectResponsible ? '#222' : '#888' }} numberOfLines={1}>
+                {newProjectResponsible ? formatPersonName(newProjectResponsible) : 'Välj ansvarig...'}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color="#222" />
+            </TouchableOpacity>
+
+            {!newProjectResponsible && (
+              <Text style={{ color: '#D32F2F', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
+                Du måste välja ansvarig.
+              </Text>
+            )}
+
+            <Modal
+              visible={responsiblePickerVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setResponsiblePickerVisible(false)}
+            >
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <Pressable
+                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
+                  onPress={() => setResponsiblePickerVisible(false)}
+                />
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                    Välj ansvarig
+                  </Text>
+                  {loadingCompanyAdmins ? (
+                    <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 8 }}>
+                      Laddar...
+                    </Text>
+                  ) : (companyAdmins.length === 0 ? (
+                    <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                      Inga admins hittades i företaget.
+                    </Text>
+                  ) : (
+                    <ScrollView style={{ maxHeight: 420 }}>
+                      {companyAdmins.map((m) => (
+                        <TouchableOpacity
+                          key={m.id || m.uid || m.email}
+                          style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                          onPress={() => {
+                            setNewProjectResponsible({
+                              uid: m.uid || m.id,
+                              displayName: m.displayName || null,
+                              email: m.email || null,
+                              role: m.role || null,
+                            });
+                            setResponsiblePickerVisible(false);
+                          }}
+                        >
+                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                            {formatPersonName(m)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  ))}
+
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                    onPress={() => setResponsiblePickerVisible(false)}
+                  >
+                    <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#1976D2',
+                  borderRadius: 8,
+                  paddingVertical: 12,
+                  alignItems: 'center',
+                  flex: 1,
+                  marginRight: 8,
+                  opacity: (String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) || !newProjectResponsible) ? 0.5 : 1
+                }}
+                disabled={String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) || !newProjectResponsible}
+                onPress={() => {
+                  // Insert new project into selected subfolder
+                  setHierarchy(prev => prev.map(main => ({
+                    ...main,
+                    children: main.children.map(sub =>
+                      sub.id === newProjectModal.parentSubId
+                        ? {
+                            ...sub,
+                            children: [
+                              ...(sub.children || []),
+                              {
+                                id: String(newProjectNumber ?? '').trim(),
+                                name: String(newProjectName ?? '').trim(),
+                                type: 'project',
+                                status: 'ongoing',
+                                ansvarig: formatPersonName(newProjectResponsible),
+                                ansvarigId: newProjectResponsible?.uid || null,
+                                createdAt: new Date().toISOString(),
+                                createdBy: auth?.currentUser?.email || ''
+                              }
+                            ]
+                          }
+                        : sub
+                    )
+                  })));
+                  setNewProjectModal({ visible: false, parentSubId: null });
+                  resetProjectFields();
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Skapa</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
+                onPress={() => {
+                  setNewProjectModal({ visible: false, parentSubId: null });
+                  resetProjectFields();
+                }}
+              >
+                <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      ) : (
+        (() => {
+          const effectiveKb = responsiblePickerVisible
+            ? Math.max(nativeKeyboardHeight || 0, newProjectKeyboardLockHeight || 0)
+            : (nativeKeyboardHeight || 0);
+          // Lift the modal above the keyboard. Keep a small margin so it doesn't over-shoot.
+          const lift = Math.max(0, effectiveKb - 12);
+          return (
+            <View style={{ flex: 1, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 16 + lift }}>
+            <Pressable
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
+              onPress={() => {
+                setNewProjectModal({ visible: false, parentSubId: null });
+                resetProjectFields();
+                setNewProjectKeyboardLockHeight(0);
+              }}
+            />
+            <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 20, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
           <TouchableOpacity
             style={{ position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 6 }}
             onPress={() => {
@@ -284,6 +646,119 @@ export default function HomeScreen({ route, navigation }) {
             keyboardType="default"
           />
 
+          {/* Ansvarig (required) */}
+          <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+            Ansvarig
+          </Text>
+          <TouchableOpacity
+            style={{
+              borderWidth: 1,
+              borderColor: newProjectResponsible ? '#e0e0e0' : '#D32F2F',
+              borderRadius: 8,
+              paddingVertical: 10,
+              paddingHorizontal: 10,
+              marginBottom: 12,
+              backgroundColor: '#fafafa',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}
+            onPress={() => {
+              // Opening the picker dismisses the keyboard on iOS/Android.
+              // Lock the current keyboard height so this modal doesn't jump down.
+              setNewProjectKeyboardLockHeight(nativeKeyboardHeightRef.current || nativeKeyboardHeight || 0);
+              try { Keyboard.dismiss(); } catch (e) {}
+              // If admins weren't loaded yet (or modal opened too early), fetch now.
+              if ((!companyAdmins || companyAdmins.length === 0) && !loadingCompanyAdmins) {
+                loadCompanyAdmins({ force: true });
+              }
+              setResponsiblePickerVisible(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 16, color: newProjectResponsible ? '#222' : '#888' }} numberOfLines={1}>
+              {newProjectResponsible ? formatPersonName(newProjectResponsible) : 'Välj ansvarig...'}
+            </Text>
+            <Ionicons name="chevron-down" size={18} color="#222" />
+          </TouchableOpacity>
+
+          {!newProjectResponsible && (
+            <Text style={{ color: '#D32F2F', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
+              Du måste välja ansvarig.
+            </Text>
+          )}
+
+          <Modal
+            visible={responsiblePickerVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => {
+              setResponsiblePickerVisible(false);
+              setNewProjectKeyboardLockHeight(0);
+            }}
+          >
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <Pressable
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
+                onPress={() => {
+                  setResponsiblePickerVisible(false);
+                  setNewProjectKeyboardLockHeight(0);
+                }}
+              />
+              <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                  Välj ansvarig
+                </Text>
+                {loadingCompanyAdmins ? (
+                  <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 8 }}>
+                    Laddar...
+                  </Text>
+                ) : companyAdminsPermissionDenied ? (
+                  <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                    Saknar behörighet att läsa admins i företaget. Logga ut/in eller kontakta admin.
+                  </Text>
+                ) : companyAdmins.length === 0 ? (
+                  <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                    Inga admins hittades i företaget. Om du nyss lades till, logga ut/in och försök igen.
+                  </Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 420 }}>
+                    {companyAdmins.map((m) => (
+                      <TouchableOpacity
+                        key={m.id || m.uid || m.email}
+                        style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                        onPress={() => {
+                          setNewProjectResponsible({
+                            uid: m.uid || m.id,
+                            displayName: m.displayName || null,
+                            email: m.email || null,
+                            role: m.role || null,
+                          });
+                          setResponsiblePickerVisible(false);
+                          setNewProjectKeyboardLockHeight(0);
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                          {formatPersonName(m)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+
+                <TouchableOpacity
+                  style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                  onPress={() => {
+                    setResponsiblePickerVisible(false);
+                    setNewProjectKeyboardLockHeight(0);
+                  }}
+                >
+                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <TouchableOpacity
               style={{
@@ -293,9 +768,9 @@ export default function HomeScreen({ route, navigation }) {
                 alignItems: 'center',
                 flex: 1,
                 marginRight: 8,
-                opacity: (String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber)) ? 0.5 : 1
+                opacity: (String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) || !newProjectResponsible) ? 0.5 : 1
               }}
-              disabled={String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber)}
+              disabled={String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) || !newProjectResponsible}
               onPress={() => {
                 // Insert new project into selected subfolder
                 setHierarchy(prev => prev.map(main => ({
@@ -311,7 +786,10 @@ export default function HomeScreen({ route, navigation }) {
                               name: String(newProjectName ?? '').trim(),
                               type: 'project',
                               status: 'ongoing',
-                              createdAt: new Date().toISOString()
+                              ansvarig: formatPersonName(newProjectResponsible),
+                              ansvarigId: newProjectResponsible?.uid || null,
+                              createdAt: new Date().toISOString(),
+                              createdBy: auth?.currentUser?.email || ''
                             }
                           ]
                         }
@@ -336,7 +814,10 @@ export default function HomeScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+            </View>
+          );
+        })()
+      )}
     </Modal>
   );
     // Ref for main folder long press timers
@@ -409,6 +890,14 @@ export default function HomeScreen({ route, navigation }) {
   const [localFallbackExists, setLocalFallbackExists] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
+
+  // Ensure current user is written to the company members directory (so admin dropdown works)
+  React.useEffect(() => {
+    if (!companyId) return;
+    if (!auth?.currentUser?.uid) return;
+    ensureCurrentUserMemberDoc();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, auth?.currentUser?.uid]);
 
   // Keep ref in sync for early-defined helpers/modals
   React.useEffect(() => {
@@ -513,7 +1002,9 @@ export default function HomeScreen({ route, navigation }) {
       if (rawArr) {
         let parsedArr = null;
         try { parsedArr = JSON.parse(rawArr); } catch (e) { parsedArr = [rawArr]; }
-        return Alert.alert('Senaste FS-fel', JSON.stringify(parsedArr, null, 2).slice(0,2000));
+        // Show the most recent entry first (arrays can get huge)
+        const last = Array.isArray(parsedArr) ? parsedArr[parsedArr.length - 1] : parsedArr;
+        return Alert.alert('Senaste FS-fel', JSON.stringify(last, null, 2).slice(0,2000));
       }
       // Fallback to single-entry key for older records
       const raw = await AsyncStorage.getItem('dk_last_fs_error');

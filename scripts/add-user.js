@@ -101,6 +101,17 @@ async function main() {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
+    // Also write to company-scoped members directory for in-app dropdowns (ansvarig)
+    await db.collection('foretag').doc(company).collection('members').doc(userRecord.uid).set({
+      uid: userRecord.uid,
+      companyId: company,
+      role: isAdmin ? 'admin' : role,
+      email,
+      displayName: userRecord.displayName || email.split('@')[0],
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
     console.log('Wrote users/{uid} document');
     console.log('Done.');
     process.exit(0);

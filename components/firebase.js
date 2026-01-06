@@ -4,7 +4,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getFirestore, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, onSnapshot, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { Alert } from 'react-native';
 
 // Firebase-konfiguration för DigitalKontroll
@@ -54,9 +54,15 @@ async function getAuthDebugSnapshot() {
 }
 
 async function resolveCompanyId(preferredCompanyId, payload) {
-  // Firestore rules are enforced using auth token claims.
-  // To avoid permission-denied due to mismatched local/profile values,
-  // always prefer the authenticated user's companyId claim when available.
+  // Prefer explicit override first.
+  // In onboarding / role changes it's common that custom claims are stale until
+  // the client refreshes its token; using the override avoids querying the wrong company.
+  if (preferredCompanyId) return preferredCompanyId;
+
+  // Next prefer payload-provided companyId.
+  if (payload && payload.companyId) return payload.companyId;
+
+  // Finally fall back to authenticated user's companyId claim when available.
   try {
     const user = auth && auth.currentUser;
     if (user && user.getIdTokenResult) {
@@ -66,11 +72,6 @@ async function resolveCompanyId(preferredCompanyId, payload) {
     }
   } catch (e) {}
 
-  // Explicit override (only used when no claim is available)
-  if (preferredCompanyId) return preferredCompanyId;
-
-  // Payload-provided companyId (only used when no claim is available)
-  if (payload && payload.companyId) return payload.companyId;
   try {
     const stored = await AsyncStorage.getItem('dk_companyId');
     if (stored) return stored;
@@ -190,6 +191,164 @@ export async function fetchUserProfile(uid) {
     if (snap.exists()) return snap.data();
   } catch (e) {}
   return null;
+}
+
+// Company member directory (scoped under foretag/{companyId}/members/{uid})
+// Used for listing admins and other roles inside a company.
+export async function upsertCompanyMember({ companyId: companyIdOverride, uid, displayName, email, role }) {
+  try {
+    if (!uid) return false;
+    const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+    if (!companyId) return false;
+    const ref = doc(db, 'foretag', companyId, 'members', uid);
+    await setDoc(ref, {
+      uid,
+      companyId,
+      displayName: displayName || null,
+      email: email || null,
+      role: role || null,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
+  async function attemptRead({ forceTokenRefresh } = { forceTokenRefresh: false }) {
+    if (forceTokenRefresh) {
+      try {
+        if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
+      } catch (e) {}
+    }
+
+    const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+    if (!companyId) return { ok: true, out: [], err: null, permissionDenied: false, companyId: null };
+
+    try {
+      const baseRef = collection(db, 'foretag', companyId, 'members');
+      const q = role ? query(baseRef, where('role', '==', role)) : query(baseRef);
+      // Prefer server to avoid stale/empty cache on fresh logins.
+      let snap;
+      try {
+        snap = await getDocsFromServer(q);
+      } catch (er) {
+        snap = await getDocs(q);
+      }
+      const out = [];
+      snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+      out.sort((a, b) => String(a.displayName || a.email || '').localeCompare(String(b.displayName || b.email || ''), undefined, { sensitivity: 'base' }));
+      return {
+        ok: true,
+        out,
+        err: null,
+        permissionDenied: false,
+        companyId,
+        meta: {
+          size: snap?.size ?? out.length,
+          fromCache: snap?.metadata?.fromCache ?? null,
+        }
+      };
+    } catch (e) {
+      const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
+      return { ok: false, out: [], err: e, permissionDenied, companyId, meta: null };
+    }
+  }
+
+  try {
+    const first = await attemptRead({ forceTokenRefresh: false });
+    if (first.ok) return first.out;
+
+    if (first.permissionDenied) {
+      const second = await attemptRead({ forceTokenRefresh: true });
+      if (second.ok) return second.out;
+
+      // Persist debug info so we can inspect on the client via existing debug UI.
+      try {
+        const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+        let arr = rawArr ? JSON.parse(rawArr) : [];
+        const debug = await getAuthDebugSnapshot();
+        const entry = {
+          fn: 'fetchCompanyMembers',
+          code: second.err?.code || first.err?.code || null,
+          err: (second.err && second.err.message) ? second.err.message : ((first.err && first.err.message) ? first.err.message : String(second.err || first.err)),
+          ts: new Date().toISOString(),
+          role: role || null,
+          resolvedCompanyId: second.companyId || first.companyId || null,
+          auth: debug,
+        };
+        arr.push(entry);
+        await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
+        await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
+      } catch (er) {}
+
+      return [];
+    }
+
+    // Log any non-permission errors too (e.g. failed-precondition, offline, etc)
+    try {
+      const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
+      let arr = rawArr ? JSON.parse(rawArr) : [];
+      const debug = await getAuthDebugSnapshot();
+      const entry = {
+        fn: 'fetchCompanyMembers',
+        code: first.err?.code || null,
+        err: (first.err && first.err.message) ? first.err.message : String(first.err),
+        ts: new Date().toISOString(),
+        role: role || null,
+        resolvedCompanyId: first.companyId || null,
+        meta: first.meta || null,
+        auth: debug,
+      };
+      arr.push(entry);
+      await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
+      await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
+    } catch (er) {}
+
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// Realtime subscription for company members (used for ansvarig picker).
+// Returns an unsubscribe function.
+export function subscribeCompanyMembers(companyIdOverride, { role, onData, onError } = {}) {
+  let unsub = null;
+  (async () => {
+    try {
+      const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+      if (!companyId) {
+        try { if (typeof onData === 'function') onData([], { size: 0, fromCache: null, companyId: null }); } catch (e) {}
+        return;
+      }
+      const baseRef = collection(db, 'foretag', companyId, 'members');
+      const q = role ? query(baseRef, where('role', '==', role)) : query(baseRef);
+      unsub = onSnapshot(
+        q,
+        (snap) => {
+          const out = [];
+          snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+          out.sort((a, b) => String(a.displayName || a.email || '').localeCompare(String(b.displayName || b.email || ''), undefined, { sensitivity: 'base' }));
+          try {
+            if (typeof onData === 'function') {
+              onData(out, { size: snap.size, fromCache: snap.metadata?.fromCache ?? null, companyId });
+            }
+          } catch (e) {}
+        },
+        (err) => {
+          try { if (typeof onError === 'function') onError(err); } catch (e) {}
+        }
+      );
+    } catch (e) {
+      try { if (typeof onError === 'function') onError(e); } catch (er) {}
+    }
+  })();
+
+  return () => {
+    try { if (typeof unsub === 'function') unsub(); } catch (e) {}
+  };
 }
 
 // Save or update a user's profile document (client-side safe helper)

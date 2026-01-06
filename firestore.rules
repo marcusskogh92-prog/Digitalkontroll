@@ -44,6 +44,16 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Company members directory (company-scoped)
+    // Used for listing admins/roles in the app without enabling cross-company user queries.
+    match /foretag/{company}/members/{uid} {
+      allow read: if isCompanyMember(company);
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && isCompanyMember(company);
+      allow delete: if false;
+    }
+
     // Allow users to read/write their own profile doc
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;

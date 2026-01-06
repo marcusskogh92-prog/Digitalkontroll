@@ -5,7 +5,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Image,
     KeyboardAvoidingView,
@@ -19,11 +19,12 @@ import {
     View
 } from 'react-native';
 import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
+import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 
 // Utility: read a file URI as base64 if possible
 async function readUriAsBase64(uri) {
@@ -443,6 +444,49 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
     const scrollRef = useRef(null);
   // Destructure navigation params
   const { project, companyId, initialCreator, selectedAction } = route.params || {};
+  const [adminPickerVisible, setAdminPickerVisible] = useState(false);
+  const [companyAdmins, setCompanyAdmins] = useState([]);
+  const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
+  const [companyAdminsError, setCompanyAdminsError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAdmins = async () => {
+      if (!adminPickerVisible) return;
+      if (!companyId) {
+        setCompanyAdmins([]);
+        setCompanyAdminsError('Saknar företag (companyId).');
+        return;
+      }
+
+      setLoadingCompanyAdmins(true);
+      setCompanyAdminsError(null);
+      try {
+        const members = await fetchCompanyMembers(companyId);
+        const admins = (Array.isArray(members) ? members : [])
+          .filter(m => String(m?.role || '').toLowerCase() === 'admin')
+          .slice()
+          .sort((a, b) => formatPersonName(a).localeCompare(formatPersonName(b), 'sv'));
+
+        if (!cancelled) setCompanyAdmins(admins);
+      } catch (e) {
+        if (!cancelled) {
+          setCompanyAdmins([]);
+          const msg = e?.code === 'permission-denied'
+            ? 'Behörighet saknas för att läsa admins.'
+            : 'Kunde inte ladda admins.';
+          setCompanyAdminsError(msg);
+        }
+      } finally {
+        if (!cancelled) setLoadingCompanyAdmins(false);
+      }
+    };
+
+    loadAdmins();
+    return () => {
+      cancelled = true;
+    };
+  }, [adminPickerVisible, companyId]);
   // Defensive check: If project is undefined or null, show fallback UI
   if (!project || typeof project !== 'object' || !project.id) {
     return (
@@ -542,13 +586,20 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
     loadControls();
     return unsubscribe;
   }, [navigation, loadControls]);
-  const [editableProject, setEditableProject] = useState(project);
+  const normalizeProject = (p) => {
+    if (!p || typeof p !== 'object') return p;
+    const formatted = formatPersonName(p.ansvarig || '');
+    if (!formatted || formatted === p.ansvarig) return p;
+    return { ...p, ansvarig: formatted };
+  };
+
+  const [editableProject, setEditableProject] = useState(() => normalizeProject(project));
     // Store original id for update (keep up to date when route.project changes)
     const [originalProjectId, setOriginalProjectId] = useState(project?.id || null);
 
   // Update editableProject when parent passes a new project (e.g., selecting another project inline)
   React.useEffect(() => {
-    setEditableProject(project);
+    setEditableProject(normalizeProject(project));
     setOriginalProjectId(project?.id || null);
   }, [project?.id]);
   const [showControlPicker, setShowControlPicker] = useState(false);
@@ -736,7 +787,7 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
               <Text style={{ fontSize: 15, color: '#555' }}>
                 <Text style={{ fontWeight: '700' }}>Ansvarig:</Text> {editableProject?.ansvarig
-                  ? <Text>{editableProject.ansvarig}</Text>
+                  ? <Text>{formatPersonName(editableProject.ansvarig)}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Saknas</Text>}
               </Text>
               <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
@@ -867,13 +918,88 @@ export default function ProjectDetails({ route, navigation, inlineClose }) {
               </View>
               <View style={{ marginBottom: 14 }}>
                 <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Ansvarig</Text>
-                <TextInput
-                  style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
-                  value={editableProject?.ansvarig || ''}
-                  onChangeText={v => setEditableProject(p => ({ ...p, ansvarig: v }))}
-                  placeholder="Ange ansvarig"
-                  placeholderTextColor="#bbb"
-                />
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setAdminPickerVisible(true)}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#e0e0e0',
+                    borderRadius: 8,
+                    padding: 10,
+                    backgroundColor: '#fff',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                  }}
+                >
+                  <Text
+                    style={{ fontSize: 15, color: editableProject?.ansvarig ? '#222' : '#bbb', flex: 1 }}
+                    numberOfLines={1}
+                  >
+                    {editableProject?.ansvarig ? formatPersonName(editableProject.ansvarig) : 'Välj ansvarig...'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={18} color="#888" />
+                </TouchableOpacity>
+
+                <Modal
+                  visible={adminPickerVisible}
+                  transparent
+                  animationType="fade"
+                  onRequestClose={() => setAdminPickerVisible(false)}
+                >
+                  <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
+                    <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', minWidth: 300, maxWidth: 380 }}>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 10, textAlign: 'center' }}>
+                        Välj ansvarig
+                      </Text>
+
+                      {loadingCompanyAdmins ? (
+                        <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 8 }}>
+                          Laddar...
+                        </Text>
+                      ) : (companyAdminsError ? (
+                        <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                          {companyAdminsError}
+                        </Text>
+                      ) : (companyAdmins.length === 0 ? (
+                        <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                          Inga admins hittades i företaget.
+                        </Text>
+                      ) : (
+                        <ScrollView style={{ maxHeight: 420 }}>
+                          {companyAdmins.map((m) => (
+                            <TouchableOpacity
+                              key={m.id || m.uid || m.email}
+                              style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                              onPress={() => {
+                                const uid = m.uid || m.id || null;
+                                const name = formatPersonName(m);
+                                setEditableProject(p => ({
+                                  ...(p || {}),
+                                  ansvarig: name,
+                                  ansvarigId: uid,
+                                }));
+                                setAdminPickerVisible(false);
+                              }}
+                            >
+                              <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                                {formatPersonName(m)}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      )))}
+
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                        onPress={() => setAdminPickerVisible(false)}
+                      >
+                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </Modal>
               </View>
               <View style={{ marginBottom: 14 }}>
                 <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Status</Text>
