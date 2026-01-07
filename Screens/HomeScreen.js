@@ -17,18 +17,9 @@ let portalRootId = 'dk-header-portal';
 let appVersion = '1.0.0';
 try {
   // require package.json at runtime for web/native dev builds
-   
   const pkg = require('../package.json');
   if (pkg && pkg.version) appVersion = String(pkg.version);
-    } catch (e) {
-      Alert.alert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (e?.message || String(e)));
-    }
-
-function getFirstName(email) {
-  if (!email) return '';
-  const localPart = email.split('@')[0];
-  return localPart.split('.')[0].charAt(0).toUpperCase() + localPart.split('.')[0].slice(1);
-}
+} catch (_e) {}
 
 function isValidIsoDateYmd(value) {
   const v = String(value || '').trim();
@@ -137,7 +128,7 @@ export default function HomeScreen({ route, navigation }) {
     }));
   };
   // Admin unlock (tap title 5 times)
-  const [adminTapCount, setAdminTapCount] = useState(0);
+  const [, setAdminTapCount] = useState(0);
   const [showAdminButton, setShowAdminButton] = useState(false);
   const [adminActionRunning, setAdminActionRunning] = useState(false);
   function handleAdminTitlePress() {
@@ -241,7 +232,7 @@ export default function HomeScreen({ route, navigation }) {
   const [companyAdmins, setCompanyAdmins] = useState([]);
   const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
   const [newProjectKeyboardLockHeight, setNewProjectKeyboardLockHeight] = useState(0);
-  const [companyAdminsLastFetchAt, setCompanyAdminsLastFetchAt] = useState(0);
+  const [, setCompanyAdminsLastFetchAt] = useState(0);
   const companyAdminsUnsubRef = useRef(null);
   const [companyAdminsPermissionDenied, setCompanyAdminsPermissionDenied] = useState(false);
 
@@ -1126,9 +1117,10 @@ export default function HomeScreen({ route, navigation }) {
         // State for new main folder modal
         const [newFolderModalVisible, setNewFolderModalVisible] = useState(false);
       // State for edit modal (main or sub group)
-      const [editModal, setEditModal] = useState({ visible: false, type: '', id: null, name: '' });
+      const [, setEditModal] = useState({ visible: false, type: '', id: null, name: '' });
     // Helper to count ongoing and completed projects
-    function countProjectStatus(tree) {
+    // eslint-disable-next-line no-unused-vars
+    function _countProjectStatus(tree) {
       let ongoing = 0;
       let completed = 0;
       if (!Array.isArray(tree)) return { ongoing, completed };
@@ -1149,6 +1141,7 @@ export default function HomeScreen({ route, navigation }) {
       return { ongoing, completed };
     }
   // Helper to remove last main folder
+  // eslint-disable-next-line no-unused-vars
   const removeLastMainFolder = () => {
     setHierarchy(prev => prev.length > 0 ? prev.slice(0, -1) : prev);
   };
@@ -1159,7 +1152,8 @@ export default function HomeScreen({ route, navigation }) {
   const [newSubModal, setNewSubModal] = useState({ visible: false, parentId: null });
   const [newSubName, setNewSubName] = useState('');
   // Helper to count all projects in the hierarchy
-  function countProjects(tree) {
+  // eslint-disable-next-line no-unused-vars
+  function _countProjects(tree) {
     let count = 0;
     if (!Array.isArray(tree)) return count;
     tree.forEach(main => {
@@ -1174,8 +1168,8 @@ export default function HomeScreen({ route, navigation }) {
     return count;
   }
   const email = route?.params?.email || '';
-  const firstName = getFirstName(email);
-  const [loggingOut, setLoggingOut] = useState(false);
+  const firstName = formatPersonName(email);
+  const [, setLoggingOut] = useState(false);
   // companyId kan komma från route.params eller användarprofil
   const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
 
@@ -1752,7 +1746,7 @@ export default function HomeScreen({ route, navigation }) {
         window.history.pushState({ ...st, dkView: 'project', projectId: String(proj.id) }, '');
       } catch(_e) {}
     }
-  }, [selectedProject?.id]);
+  }, [selectedProject]);
 
   const closeSelectedProject = React.useCallback(() => {
     // UX requirement: the in-app back button should always leave the project
@@ -1819,7 +1813,7 @@ export default function HomeScreen({ route, navigation }) {
     })();
 
     return () => { cancelled = true; };
-  }, [companyId, routeCompanyId, authClaims?.companyId, auth?.currentUser?.uid, auth?.currentUser?.email]);
+  }, [companyId, routeCompanyId, authClaims?.companyId]);
 
   // Ensure current user is written to the company members directory (so admin dropdown works)
   React.useEffect(() => {
@@ -1906,7 +1900,7 @@ export default function HomeScreen({ route, navigation }) {
         try {
           const raw = await AsyncStorage.getItem(k);
           data[k] = raw ? JSON.parse(raw) : null;
-        } catch(e) { data[k] = null; }
+        } catch(_e) { data[k] = null; }
       }
       // Build summary
       const summary = {
@@ -1947,7 +1941,7 @@ export default function HomeScreen({ route, navigation }) {
       const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
       if (rawArr) {
         let parsedArr = null;
-        try { parsedArr = JSON.parse(rawArr); } catch(e) { parsedArr = [rawArr]; }
+          try { parsedArr = JSON.parse(rawArr); } catch(_e) { parsedArr = [rawArr]; }
         // Show the most recent entry first (arrays can get huge)
         const last = Array.isArray(parsedArr) ? parsedArr[parsedArr.length - 1] : parsedArr;
         return Alert.alert('Senaste FS-fel', JSON.stringify(last, null, 2).slice(0,2000));
@@ -1956,7 +1950,7 @@ export default function HomeScreen({ route, navigation }) {
       const raw = await AsyncStorage.getItem('dk_last_fs_error');
       if (!raw) return Alert.alert('Senaste FS-fel', 'Ingen fel-logg hittades.');
       let parsed = null;
-      try { parsed = JSON.parse(raw); } catch(e) { parsed = { raw }; }
+      try { parsed = JSON.parse(raw); } catch(_e) { parsed = { raw }; }
       Alert.alert('Senaste FS-fel', JSON.stringify(parsed, null, 2).slice(0,2000));
     } catch(_e) {
       Alert.alert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (_e?.message || _e));
@@ -1965,7 +1959,7 @@ export default function HomeScreen({ route, navigation }) {
   
 
   // start background sync hook
-  const bg = useBackgroundSync(companyId, { onStatus: (s) => setSyncStatus(s) });
+  useBackgroundSync(companyId, { onStatus: (s) => setSyncStatus(s) });
   const didInitialLoadRef = React.useRef(false);
 
   // Left column resizer state (default 320)
@@ -2043,9 +2037,9 @@ export default function HomeScreen({ route, navigation }) {
             } else {
               setHierarchy([]);
             }
-          } catch(e) {
-            setHierarchy([]);
-          }
+          } catch(_e) {
+              setHierarchy([]);
+            }
         }
         setLoadingHierarchy(false);
         // mark that initial load completed to avoid initial empty save overwriting server
@@ -2064,7 +2058,7 @@ export default function HomeScreen({ route, navigation }) {
         if ((completed && completed !== '[]') || (drafts && drafts !== '[]')) {
           setLocalFallbackExists(true);
         }
-      } catch(e) {
+      } catch(_e) {
         // ignore
       }
     })();
@@ -2092,7 +2086,7 @@ export default function HomeScreen({ route, navigation }) {
             await refreshLocalFallbackFlag();
           } catch(_e) {}
         }
-      } catch(e) {
+      } catch(_e) {
         try {
           await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
           setLocalFallbackExists(true);
@@ -2131,19 +2125,19 @@ export default function HomeScreen({ route, navigation }) {
       return !!route.params.headerSearchOpen;
     }
     return !!headerProjectQuery;
-  }, [route?.params?.headerSearchOpen, headerProjectQuery]);
+  }, [route?.params, headerProjectQuery]);
   const headerSearchWidth = React.useMemo(() => {
     const w = Number(route?.params?.headerSearchWidth || 0);
     return Number.isFinite(w) && w > 0 ? w : null;
-  }, [route?.params?.headerSearchWidth]);
+  }, [route?.params]);
   const headerSearchBottom = React.useMemo(() => {
     const b = Number(route?.params?.headerSearchBottom || 0);
     return Number.isFinite(b) && b > 0 ? b : 71;
-  }, [route?.params?.headerSearchBottom]);
+  }, [route?.params]);
   const headerSearchLeft = React.useMemo(() => {
     const l = Number(route?.params?.headerSearchLeft || 0);
     return Number.isFinite(l) ? l : null;
-  }, [route?.params?.headerSearchLeft]);
+  }, [route?.params]);
   const headerProjectMatches = React.useMemo(() => {
     if (!headerProjectQuery) return [];
     const q = headerProjectQuery.toLowerCase();
@@ -2595,7 +2589,7 @@ export default function HomeScreen({ route, navigation }) {
           break;
       }
     }
-  }, [contextMenu.target, deleteMainFolderGuarded, deleteSubFolder, renameMainFolderWeb, renameSubFolderWeb, requestProjectSwitch]);
+  }, [contextMenu.target, deleteMainFolderGuarded, deleteSubFolder, renameMainFolderWeb, renameSubFolderWeb, requestProjectSwitch, copyProjectWeb, deleteProject, renameProjectWeb]);
 
   function toggleExpand(level, id, parentArr = hierarchy) {
     return parentArr.map(item => {
@@ -2609,35 +2603,37 @@ export default function HomeScreen({ route, navigation }) {
   }
 
   // Stil för återanvändning
-const kontrollKnappStil = { backgroundColor: '#fff', borderRadius: 16, marginBottom: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2, minHeight: 56, maxWidth: 240, width: '90%', paddingLeft: 14, paddingRight: 10, overflow: 'hidden', borderWidth: 2, borderColor: '#222' };
-const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 };
+// eslint-disable-next-line no-unused-vars
+const _kontrollKnappStil = { backgroundColor: '#fff', borderRadius: 16, marginBottom: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2, minHeight: 56, maxWidth: 240, width: '90%', paddingLeft: 14, paddingRight: 10, overflow: 'hidden', borderWidth: 2, borderColor: '#222' };
+// eslint-disable-next-line no-unused-vars
+const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 };
 
     // Dashboard: gemensamma stilar (återanvänd befintliga färger)
-    const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
-    const dashboardColumnsStyle = { flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' };
-    const dashboardSectionTitleStyle = { fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 };
-    const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
-    const dashboardCardDenseStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' };
-    const dashboardEmptyTextStyle = { color: '#777', padding: 12 };
-    const dashboardMetaTextStyle = { fontSize: 12, color: '#888', marginTop: 4 };
-    const dashboardLinkTitleStyle = { fontSize: 15, color: '#1976D2', fontWeight: '400' };
-    const dashboardListItemStyle = (idx) => ({
+    const dashboardContainerStyle = React.useMemo(() => ({ width: '100%', maxWidth: 1180, alignSelf: 'center' }), []);
+    const dashboardColumnsStyle = React.useMemo(() => ({ flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' }), []);
+    const dashboardSectionTitleStyle = React.useMemo(() => ({ fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 }), []);
+    const dashboardCardStyle = React.useMemo(() => ({ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' }), []);
+    const dashboardCardDenseStyle = React.useMemo(() => ({ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 10, backgroundColor: '#fff' }), []);
+    const dashboardEmptyTextStyle = React.useMemo(() => ({ color: '#777', padding: 12 }), []);
+    const dashboardMetaTextStyle = React.useMemo(() => ({ fontSize: 12, color: '#888', marginTop: 4 }), []);
+    const dashboardLinkTitleStyle = React.useMemo(() => ({ fontSize: 15, color: '#1976D2', fontWeight: '400' }), []);
+    const dashboardListItemStyle = React.useCallback((idx) => ({
       paddingVertical: 12,
       paddingHorizontal: 6,
       borderTopWidth: idx === 0 ? 0 : 1,
       borderTopColor: '#eee',
-    });
-    const dashboardStatRowStyle = (idx) => ({
+    }), []);
+    const dashboardStatRowStyle = React.useCallback((idx) => ({
       flexDirection: 'row',
       alignItems: 'center',
       paddingVertical: 10,
       borderTopWidth: idx === 0 ? 0 : 1,
       borderTopColor: '#eee',
-    });
-    const dashboardStatDotStyle = (color) => ({ width: 10, height: 10, borderRadius: 5, backgroundColor: color, marginRight: 12 });
-    const dashboardStatLabelStyle = { flex: 1, fontSize: 15, color: '#222' };
-    const dashboardStatValueStyle = { fontSize: 16, fontWeight: '700', color: '#222' };
-    const dashboardActivityTitleStyle = { fontSize: 15, color: '#222', fontWeight: '600' };
+    }), []);
+    const dashboardStatDotStyle = React.useCallback((color) => ({ width: 10, height: 10, borderRadius: 5, backgroundColor: color, marginRight: 12 }), []);
+    const dashboardStatLabelStyle = React.useMemo(() => ({ flex: 1, fontSize: 15, color: '#222' }), []);
+    const dashboardStatValueStyle = React.useMemo(() => ({ fontSize: 16, fontWeight: '700', color: '#222' }), []);
+    const dashboardActivityTitleStyle = React.useMemo(() => ({ fontSize: 15, color: '#222', fontWeight: '600' }), []);
 
     const ActivityPanel = React.useCallback(() => {
       return (
@@ -2754,18 +2750,17 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
     function SelectProjectModal() {
       const [expandedMain, setExpandedMain] = useState([]);
       const [expandedSub, setExpandedSub] = useState([]);
-      const [quickAddModal, setQuickAddModal] = useState({ visible: false, parentSubId: null });
-      const [quickAddName, setQuickAddName] = useState("");
-      const [quickAddNumber, setQuickAddNumber] = useState("");
-      const [showProjectCreated, setShowProjectCreated] = useState(false);
+      // Quick-add project state (currently unused)
       const isMainExpanded = id => expandedMain[0] === id;
       const isSubExpanded = id => expandedSub.includes(id);
       const toggleMain = id => setExpandedMain(exp => exp[0] === id ? [] : [id]);
       const toggleSub = id => setExpandedSub(exp => exp.includes(id) ? exp.filter(e => e !== id) : [...exp, id]);
 
+      // Reset expanded state when project selector modal opens
+      const modalVisible = !!selectProjectModal?.visible;
       React.useEffect(() => {
-        if (selectProjectModal.visible) setExpandedMain([]);
-      }, [selectProjectModal.visible]);
+        if (modalVisible) setExpandedMain([]);
+      }, [modalVisible]);
 
       return (
         <Modal
@@ -3303,7 +3298,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                       document.body.appendChild(portalRoot);
                     }
                     return createPortal(Dropdown, portalRoot);
-                  } catch(e) {
+                  } catch(_e) {
                     return Dropdown;
                   }
                 }
@@ -3388,7 +3383,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 } else {
                                   successMsgs.push('Hierarki misslyckades');
                                 }
-                              } catch(e) {
+                              } catch(_e) {
                                 successMsgs.push('Hierarki-fel');
                               }
                             }
@@ -3411,7 +3406,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 } else {
                                   successMsgs.push('Inga utförda kontroller migrerade');
                                 }
-                              } catch(e) {
+                              } catch(_e) {
                                 successMsgs.push('Backup/migrering av utförda kontroller misslyckades');
                               }
                             }
@@ -3433,20 +3428,20 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                 } else {
                                   successMsgs.push('Inga utkast migrerade');
                                 }
-                              } catch(e) {
+                              } catch(_e) {
                                 successMsgs.push('Backup/migrering av utkast misslyckades');
                               }
                             }
 
                             Alert.alert('Migrering klar', successMsgs.join('\n'));
                             await refreshLocalFallbackFlag();
-                          } catch(e) {
-                            Alert.alert('Fel', 'Kunde inte migrera: ' + (e?.message || 'okänt fel'));
+                          } catch(_e) {
+                            Alert.alert('Fel', 'Kunde inte migrera: ' + (_e?.message || 'okänt fel'));
                           }
                         }}
                       ],
                     );
-                  } catch(e) {
+                  } catch(_e) {
                     Alert.alert('Fel', 'Kunde inte läsa lokal data.');
                   }
                 }}
@@ -3480,8 +3475,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     } else {
                       Alert.alert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
                     }
-                  } catch(e) {
-                    Alert.alert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (e?.message || e));
+                  } catch(_e) {
+                    Alert.alert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (_e?.message || _e));
                   }
                 }}
               >
@@ -3498,8 +3493,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     const claims = tokenRes?.claims || {};
                     const stored = await AsyncStorage.getItem('dk_companyId');
                     Alert.alert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
-                  } catch(e) {
-                    Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (e?.message || e));
+                  } catch(_e) {
+                    Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (_e?.message || _e));
                   }
                 }}
               >
@@ -3828,7 +3823,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                   );
 
                   return createPortal(FooterBox, footerRoot);
-                } catch(e) {
+                } catch(_e) {
                   return (
                     <View style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 9999, pointerEvents: 'auto', backgroundColor: 'rgba(255,255,255,0.95)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e6e6e6', elevation: 8 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
