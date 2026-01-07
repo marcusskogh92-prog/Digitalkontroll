@@ -30,7 +30,7 @@ export default function LoginScreen() {
           setEmail(saved);
           setRememberMe(true);
         }
-      } catch (e) {}
+      } catch(e) {}
     })();
   }, []);
 
@@ -63,7 +63,7 @@ export default function LoginScreen() {
         const t0 = Date.now();
         try {
           // Start profile fetch but navigate immediately for speed
-          const profilePromise = fetchUserProfile(user.uid).catch(() => null);
+          const profilePromise = fetchUserProfile(user.uid).catch((e) => null);
           navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email: user.email || '' } } ] });
           const profile = await profilePromise;
           const companyId = profile?.companyId || null;
@@ -73,7 +73,7 @@ export default function LoginScreen() {
             navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email: user.email || '', companyId } } ] });
           }
           console.log('[Login] Auto redirect total ms:', Date.now() - t0);
-        } catch (e) {
+        } catch(e) {
           console.log('[Login] Auto redirect error', e?.code || e?.message);
         } finally {
           setAutoHandled(true);
@@ -100,14 +100,14 @@ export default function LoginScreen() {
         } else {
           await AsyncStorage.removeItem('dk_saved_email');
         }
-      } catch (e) {}
+      } catch(e) {}
 
       // Refresh ID token to pick up any custom claims, then fetch and update companyId
       try {
         if (cred && cred.user) {
           await auth.currentUser.getIdToken(true);
         }
-      } catch (e) {
+      } catch(e) {
         console.log('[Login] Token refresh failed', e?.message || e);
       }
       fetchUserProfile(cred.user.uid)
@@ -120,7 +120,7 @@ export default function LoginScreen() {
           console.log('[Login] Profile async ms:', Date.now() - t0);
         })
         .catch((e) => console.log('[Login] Profile error', e?.code || e?.message));
-    } catch (err) {
+    } catch(e) {
       let message = 'Fel e-post eller lösenord';
       if (err?.code) {
         switch (err.code) {
@@ -145,7 +145,7 @@ export default function LoginScreen() {
       }
       setError(message);
       // focus email field when login fails
-      try { emailRef.current?.focus(); } catch (e) {}
+      try { emailRef.current?.focus(); } catch(e) {}
     } finally {
       setLoading(false);
     }
@@ -158,7 +158,7 @@ export default function LoginScreen() {
       <View style={{ flex: 1 }}>
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ImageBackground
-            source={require('../assets/images/inlogg.app.png')}
+            source={require('../assets/images/inlogg.webb.png')}
             style={styles.bg}
             imageStyle={styles.bgImage}
             resizeMode="cover"
@@ -219,11 +219,11 @@ export default function LoginScreen() {
               ) : null}
             </View>
 
-            <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8 }}>
-              <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: '#222', marginRight: 8, alignItems: 'center', justifyContent: 'center' }}>
-                {rememberMe ? <View style={{ width: 12, height: 12, backgroundColor: '#1976D2' }} /> : null}
+            <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={styles.rememberRow}>
+              <View style={styles.rememberBox}>
+                {rememberMe ? <View style={styles.rememberFill} /> : null}
               </View>
-              <Text style={{ color: '#222', fontWeight: '600' }}>Kom ihåg mig</Text>
+              <Text style={styles.rememberText}>Kom ihåg mig</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
@@ -303,11 +303,11 @@ export default function LoginScreen() {
           ) : null}
         </View>
 
-        <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 8 }}>
-          <View style={{ width: 20, height: 20, borderWidth: 1, borderColor: '#222', marginRight: 8, alignItems: 'center', justifyContent: 'center' }}>
-            {rememberMe ? <View style={{ width: 12, height: 12, backgroundColor: '#1976D2' }} /> : null}
+        <TouchableOpacity onPress={() => setRememberMe(v => !v)} style={styles.rememberRow}>
+          <View style={styles.rememberBox}>
+            {rememberMe ? <View style={styles.rememberFill} /> : null}
           </View>
-          <Text style={{ color: '#222', fontWeight: '600' }}>Kom ihåg mig</Text>
+          <Text style={styles.rememberText}>Kom ihåg mig</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={[styles.button, (loading || !isFormValid) && styles.buttonDisabled]} onPress={loading || !isFormValid ? undefined : handleLogin} disabled={loading || !isFormValid}>
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.6)',
   },
   contentWrapper: {
     width: '100%',
@@ -380,6 +380,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 4,
     marginLeft: 4,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.85)',
   },
   input: {
     width: '100%',
@@ -399,6 +404,11 @@ const styles = StyleSheet.create({
     color: '#263238',
     fontSize: 14,
     fontWeight: '600',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.85)',
   },
   logo: {
     width: 200,
@@ -453,9 +463,39 @@ const styles = StyleSheet.create({
     color: '#d32f2f',
     fontSize: 13,
   },
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  rememberBox: {
+    width: 20,
+    height: 20,
+    borderWidth: 1,
+    borderColor: '#222',
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  rememberFill: {
+    width: 12,
+    height: 12,
+    backgroundColor: '#1976D2',
+  },
+  rememberText: {
+    color: '#222',
+    fontWeight: '600',
+  },
   link: {
     color: '#263238',
     fontSize: 16,
     marginTop: 8,
   },
 });
+

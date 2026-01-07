@@ -29,7 +29,7 @@ async function main() {
   admin.initializeApp({ credential: admin.credential.cert(sa) });
   const auth = admin.auth();
   try {
-    const user = await auth.getUserByEmail(email).catch(() => null);
+    const user = await auth.getUserByEmail(email).catch((e) => null);
     if (!user) {
       console.error('User not found:', email);
       process.exit(1);
@@ -45,3 +45,4 @@ async function main() {
 }
 
 main();
+

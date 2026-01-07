@@ -58,7 +58,7 @@ export default function ControlDetails({ route }) {
         if (Array.isArray(pts) && pts.length > 0) return true;
       }
       return false;
-    } catch (e) {
+    } catch(_e {
       return false;
     }
   };
@@ -110,7 +110,7 @@ export default function ControlDetails({ route }) {
         // Only replace if it actually brings more data (especially checklist)
         if (!hasAnyChecklistPoints(found) && !hasAnyChecklistPoints(current)) return;
         if (active) setControlState(found);
-      } catch (e) {
+      } catch(_e {
         // ignore hydration errors
       }
     })();
@@ -153,7 +153,7 @@ export default function ControlDetails({ route }) {
         if (!cid) return;
         const url = await resolveCompanyLogoUrl(cid);
         if (active) setCompanyLogoUrl(url || null);
-      } catch (e) {}
+      } catch(_e {}
     })();
     return () => { active = false; };
   }, [routeCompanyId, project?.companyId, project?.id]);
@@ -171,7 +171,7 @@ export default function ControlDetails({ route }) {
         else if (typeof v.nanoseconds === 'number' && typeof v.seconds === 'number') v = new Date(v.seconds * 1000);
         else if (typeof v._nanoseconds === 'number' && typeof v._seconds === 'number') v = new Date(v._seconds * 1000);
       }
-    } catch (e) {}
+    } catch(_e {}
 
     const d = new Date(v);
     if (isNaN(d.getTime())) return String(value);
@@ -778,7 +778,7 @@ export default function ControlDetails({ route }) {
                             Alert.alert('Åtgärd sparad', 'Din åtgärd har sparats.', [
                               { text: 'OK' }
                             ]);
-                          } catch (e) {
+                          } catch(_e {
                             Alert.alert('Fel', 'Kunde inte spara åtgärden. Försök igen.');
                           }
                         }}

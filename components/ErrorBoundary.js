@@ -22,7 +22,7 @@ export default class ErrorBoundary extends React.Component {
         };
         const errorToShow = err || new Error(String(meta.message || 'Uncaught error'));
         this.setState({ error: errorToShow, info: null, meta });
-        // eslint-disable-next-line no-console
+         
         console.error('[window.onerror]', err || meta);
       } catch {}
     };
@@ -33,7 +33,7 @@ export default class ErrorBoundary extends React.Component {
         const err = reason instanceof Error ? reason : new Error(String(reason ?? 'Unhandled promise rejection'));
         const meta = { type: 'unhandledrejection', reason: String(reason ?? '') };
         this.setState({ error: err, info: null, meta });
-        // eslint-disable-next-line no-console
+         
         console.error('[unhandledrejection]', err);
       } catch {}
     };
@@ -55,7 +55,7 @@ export default class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     this.setState({ error, info, meta: { type: 'react.errorboundary' } });
     try {
-      // eslint-disable-next-line no-console
+       
       console.error('[ErrorBoundary]', error, info);
     } catch {}
   }

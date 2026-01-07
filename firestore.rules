@@ -54,6 +54,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Company activity feed (company-scoped)
+    // Used by dashboard "Senaste aktivitet" (e.g. login events)
+    match /foretag/{company}/activity/{eventId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Allow users to read/write their own profile doc
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;

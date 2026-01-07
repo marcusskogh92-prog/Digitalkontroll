@@ -43,8 +43,8 @@ export default function ArbetsberedningScreen({ date, participants = [], project
       };
       // Central helper handles permission-denied and local fallback.
       await saveControlToFirestore(completed);
-    } catch (e) {
-      alert('Kunde inte spara kontrollen: ' + e.message);
+    } catch(_e {
+      alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };
 

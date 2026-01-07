@@ -189,7 +189,7 @@ export function buildMottagningsPdfHtml({ control, project, company }) {
         </div>
       `;
     }
-  } catch (e) {
+  } catch(e) {
     deviationSummaryHtml = '';
   }
 

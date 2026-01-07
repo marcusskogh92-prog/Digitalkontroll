@@ -27,7 +27,7 @@ export default function FuktmätningScreen({ date, participants = [], project: p
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch (e) {
+      } catch (_e) {
         const existing = await AsyncStorage.getItem('completed_controls');
         let arr = [];
         if (existing) arr = JSON.parse(existing);
@@ -41,10 +41,10 @@ export default function FuktmätningScreen({ date, participants = [], project: p
           drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Fuktmätning' && d.id === completed.id));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch (e) {}
+      } catch (_e) {}
       alert('Kontrollen har sparats som utförd!');
-    } catch (e) {
-      alert('Kunde inte spara kontrollen: ' + e.message);
+      } catch (e) {
+      alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };
 

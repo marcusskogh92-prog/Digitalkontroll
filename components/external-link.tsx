@@ -12,7 +12,7 @@ export function ExternalLink({ href, children, style }: Props) {
         // prefer in-app browser when available
         try {
           await openBrowserAsync(href);
-        } catch (e) {
+        } catch(e) {
           await Linking.openURL(href);
         }
       }

@@ -11,8 +11,10 @@ import {
     KeyboardAvoidingView,
     Modal,
     Platform,
+    Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     TouchableOpacity,
@@ -24,6 +26,7 @@ import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
 
 import ArbetsberedningScreen from './ArbetsberedningScreen';
+import ControlDetails from './ControlDetails';
 import EgenkontrollScreen from './EgenkontrollScreen';
 import FuktmätningScreen from './FuktmätningScreen';
 import MottagningskontrollScreen from './MottagningskontrollScreen';
@@ -31,6 +34,7 @@ import RiskbedömningScreen from './RiskbedömningScreen';
 import SkyddsrondScreen from './SkyddsrondScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '../components/HeaderComponents';
 import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 
 // Utility: read a file URI as base64 if possible
@@ -44,7 +48,7 @@ async function readUriAsBase64(uri) {
     }
     const b = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
     return b;
-  } catch (e) {
+  } catch(e) {
     console.warn('[PDF] readUriAsBase64 failed for', uri, e);
     return null;
   }
@@ -68,9 +72,9 @@ async function toDataUri(uri) {
           const b2 = await readUriAsBase64(dl.uri);
           if (b2) return 'data:image/jpeg;base64,' + b2;
         }
-      } catch (e) {}
+      } catch(e) {}
     }
-  } catch (e) {
+  } catch(e) {
     console.warn('[PDF] toDataUri failed for', uri, e);
   }
   return uri;
@@ -96,7 +100,7 @@ async function embedImagesInControl(ctrl) {
             const src = p.uri || p;
             const d = await toDataUri(src);
             return Object.assign({}, p, { uri: d || src });
-          } catch (e) { return p; }
+          } catch(e) { return p; }
         }));
         c[field] = mapped;
       }
@@ -112,7 +116,7 @@ async function embedImagesInControl(ctrl) {
             return Object.assign({}, s, { uri: d || s.uri });
           }
           return s;
-        } catch (e) { return s; }
+        } catch(e) { return s; }
       }));
       c.mottagningsSignatures = sigs;
     }
@@ -133,20 +137,20 @@ async function embedImagesInControl(ctrl) {
                   const src = it.uri || it;
                   const d = await toDataUri(src);
                   return (typeof it === 'string') ? (d || src) : Object.assign({}, it, { uri: d || src });
-                } catch (e) { return it; }
+                } catch(e) { return it; }
               }));
             }
             try {
               const src = entry.uri || entry;
               const d = await toDataUri(src);
               return (typeof entry === 'string') ? (d || src) : Object.assign({}, entry, { uri: d || src });
-            } catch (e) { return entry; }
+            } catch(e) { return entry; }
           }));
           c.checklist[si].photos = newPhotos;
         }
       }
     }
-  } catch (e) {
+  } catch(e) {
     console.warn('[PDF] embedImagesInControl failed', e);
   }
   return c;
@@ -160,6 +164,21 @@ function getWeekAndYear(dateInput) {
   const week1 = new Date(d.getFullYear(), 0, 4);
   const weekNo = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
   return { week: weekNo, year: d.getFullYear() };
+}
+
+function isValidIsoDateYmd(value) {
+  const v = String(value || '').trim();
+  if (!v) return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [yStr, mStr, dStr] = v.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr);
+  const d = Number(dStr);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && (dt.getUTCMonth() + 1) === m && dt.getUTCDate() === d;
 }
 
 const styles = StyleSheet.create({
@@ -208,18 +227,23 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
-          // Sätt navigationstitel och bild i headern
+          // Sätt navigationstitel och header-komponenter så sökrutan finns i projektvyn också
           React.useEffect(() => {
     navigation.setOptions({
-      headerTitle: () => (
-        <Image
-          source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
-          style={{ width: 150, height: 80, resizeMode: 'contain' }}
-        />
+      headerTitle: () => <HomeHeaderSearch navigation={navigation} route={navigation.getState?.().routes?.find(r => r.name === 'ProjectDetails') || { params: route?.params }} />,
+      headerLeft: () => (
+        <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
+          <DigitalKontrollHeaderLogo />
+        </View>
+      ),
+      headerRight: () => (
+        <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center' }}>
+          <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
+        </View>
       ),
       headerBackTitle: '',
     });
-  }, [navigation]);
+  }, [navigation, route]);
     // State för att låsa upp skapad-datum
     const [canEditCreated, setCanEditCreated] = useState(false);
         const handlePreviewPdf = async () => {
@@ -234,7 +258,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               try {
                 profile = await fetchCompanyProfile(companyId);
                 if (profile) setCompanyProfile(profile);
-              } catch (e) {}
+              } catch(e) {}
             }
             const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
             const companyLogoFromProfile = profile?.logoUrl || null;
@@ -264,13 +288,13 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     logoBase64 = await readUriAsBase64(local);
                     if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                   }
-                } catch (e) {
+                } catch(e) {
                   // ignore
                 }
               } else {
                 logoForPrint = 'data:image/png;base64,' + logoBase64;
               }
-            } catch (e) { console.warn('[PDF] logo base64 conversion failed', e); }
+            } catch(e) { console.warn('[PDF] logo base64 conversion failed', e); }
 
             // Build HTML safely and log length to aid debugging blank PDFs
             let html;
@@ -306,7 +330,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               } else {
                 throw new Error('printToFileAsync returned no uri');
               }
-            } catch (err) {
+            } catch(e) {
               console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', err);
               try {
                 let html2 = null;
@@ -333,7 +357,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 }
               } catch (err2) { throw err2; }
             }
-          } catch (e) {
+          } catch(e) {
             console.error('[PDF] Preview error:', e);
             setNotice({ visible: true, text: 'Kunde inte förhandsvisa PDF' });
             setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
@@ -354,7 +378,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             try {
               profile = await fetchCompanyProfile(companyId);
               if (profile) setCompanyProfile(profile);
-            } catch (e) {}
+            } catch(e) {}
           }
           const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
           const companyLogoFromProfile = profile?.logoUrl || null;
@@ -381,11 +405,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   logoBase64 = await readUriAsBase64(local);
                   if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                 }
-              } catch (e) {}
+              } catch(e) {}
             } else {
               logoForPrint = 'data:image/png;base64,' + logoBase64;
             }
-          } catch (e) { console.warn('[PDF] logo base64 conversion failed', e); }
+          } catch(e) { console.warn('[PDF] logo base64 conversion failed', e); }
 
           // Bygg HTML för export (alla eller filtrerat) — säkrare bygg och logg
           let html;
@@ -417,7 +441,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             } else {
               throw new Error('printToFileAsync returned no uri');
             }
-          } catch (err) {
+          } catch(e) {
             console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
             try {
               let html2 = null;
@@ -446,7 +470,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
           setNotice({ visible: true, text: 'PDF genererad' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
-        } catch (e) {
+        } catch(e) {
           console.error('[PDF] Export error:', e);
           setNotice({ visible: true, text: 'Kunde inte exportera PDF' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
@@ -461,14 +485,29 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [inlineControl, setInlineControl] = useState(null);
   const openInlineControl = (type, initialValues) => {
     if (!type) return;
-    setInlineControl({ type, initialValues: initialValues || undefined });
+    // Freeze the project snapshot at time of opening so the form can't "jump"
+    // if parent selection changes.
+    setInlineControl({ type, initialValues: initialValues || undefined, projectSnapshot: project || null });
     try {
       if (scrollRef?.current && typeof scrollRef.current.scrollTo === 'function') {
         scrollRef.current.scrollTo({ y: 0, animated: false });
       }
-    } catch (e) {}
+    } catch(e) {}
   };
   const closeInlineControl = () => setInlineControl(null);
+
+  // Inform parent (HomeScreen) when an inline FORM is open on web.
+  // This is used to lock the project tree so the user can't switch projects mid-control.
+  useEffect(() => {
+    try {
+      const isWeb = Platform.OS === 'web';
+      const isInlineFormOpen = isWeb && !!(inlineControl && inlineControl.type && inlineControl.type !== 'ControlDetails');
+      const cb = route?.params?.onInlineLockChange;
+      // Backwards-compatible: allow both prop injection patterns
+      // 1) route.params.onInlineLockChange (if parent can't pass real props)
+      if (typeof cb === 'function') cb(isInlineFormOpen);
+    } catch(e) {}
+  }, [inlineControl?.type]);
 
   // When HomeScreen passes a selectedAction (e.g. open a draft from the dashboard),
   // process it once and open the corresponding inline control.
@@ -484,15 +523,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         openInlineControl(selectedAction.type, selectedAction.initialValues || undefined);
       }
       if (selectedAction.kind === 'openControlDetails' && selectedAction.control) {
-        try {
-          navigation && navigation.navigate && navigation.navigate('ControlDetails', {
-            control: selectedAction.control,
-            project,
-            companyId,
-          });
-        } catch (e) {}
+        try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch(e) {}
       }
-    } catch (e) {}
+    } catch(e) {}
   }, [selectedAction?.id]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
   const [companyAdmins, setCompanyAdmins] = useState([]);
@@ -519,7 +552,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           .sort((a, b) => formatPersonName(a).localeCompare(formatPersonName(b), 'sv'));
 
         if (!cancelled) setCompanyAdmins(admins);
-      } catch (e) {
+      } catch(e) {
         if (!cancelled) {
           setCompanyAdmins([]);
           const msg = e?.code === 'permission-denied'
@@ -591,7 +624,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch (e) { /* ignore Firestore errors - we already have local fallback */ }
+    } catch(e) { /* ignore Firestore errors - we already have local fallback */ }
 
     // Fetch remote drafts too so a draft created in app can be finished on web
     try {
@@ -603,7 +636,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch (e) { /* ignore */ }
+    } catch(e) { /* ignore */ }
     // Sort controls by date (prefer date || savedAt || createdAt) descending
     allControls.sort((a,b) => {
       const ta = new Date(a.date || a.savedAt || a.createdAt || 0).getTime() || 0;
@@ -654,6 +687,83 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const [companyLogoUri, setCompanyLogoUri] = useState(null);
   const [companyProfile, setCompanyProfile] = useState(null);
+  const [skyddsrondWeeksPickerVisible, setSkyddsrondWeeksPickerVisible] = useState(false);
+
+  const skyddsrondInfo = React.useMemo(() => {
+    const enabled = editableProject?.skyddsrondEnabled !== false;
+    const intervalWeeksRaw = Number(editableProject?.skyddsrondIntervalWeeks);
+    const intervalDaysRaw = Number(editableProject?.skyddsrondIntervalDays);
+    const intervalDays = (Number.isFinite(intervalWeeksRaw) && intervalWeeksRaw > 0)
+      ? (intervalWeeksRaw * 7)
+      : (Number.isFinite(intervalDaysRaw) && intervalDaysRaw > 0 ? intervalDaysRaw : 14);
+    const intervalWeeks = Math.max(1, Math.min(4, Math.round(intervalDays / 7) || 2));
+
+    const MS_DAY = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const toMs = (v) => {
+      try {
+        if (!v) return 0;
+        if (typeof v === 'number') return v;
+        const t = new Date(v).getTime();
+        return Number.isFinite(t) ? t : 0;
+      } catch(e) {
+        return 0;
+      }
+    };
+
+    let lastMs = 0;
+    try {
+      (controls || []).forEach((c) => {
+        if (!c || c.isDraft) return;
+        if (c.type !== 'Skyddsrond') return;
+        const ts = toMs(c.date || c.savedAt || c.updatedAt || c.createdAt || null);
+        if (ts > lastMs) lastMs = ts;
+      });
+    } catch(e) {}
+
+    const createdMs = toMs(editableProject?.createdAt || null);
+    const firstDueMs = toMs(editableProject?.skyddsrondFirstDueDate || null);
+    const baselineMs = lastMs || createdMs || now;
+    const nextDueMs = lastMs
+      ? (baselineMs + intervalDays * MS_DAY)
+      : (firstDueMs || (baselineMs + intervalDays * MS_DAY));
+
+    const overdue = now > nextDueMs;
+    const daysUntil = Math.ceil((nextDueMs - now) / MS_DAY);
+    const soon = !overdue && Number.isFinite(daysUntil) && daysUntil <= 3;
+
+    const fmt = (ms) => {
+      try {
+        if (!ms) return '—';
+        return new Date(ms).toLocaleDateString('sv-SE');
+      } catch(e) {
+        return '—';
+      }
+    };
+
+    if (!enabled) {
+      return {
+        enabled: false,
+        intervalWeeks,
+        intervalDays,
+        lastLabel: lastMs ? fmt(lastMs) : 'Ingen registrerad',
+        nextLabel: fmt(nextDueMs),
+        overdue: false,
+        soon: false,
+      };
+    }
+
+    return {
+      enabled: true,
+      intervalWeeks,
+      intervalDays,
+      lastLabel: lastMs ? fmt(lastMs) : 'Ingen registrerad',
+      nextLabel: fmt(nextDueMs),
+      overdue,
+      soon,
+    };
+  }, [controls, editableProject?.createdAt, editableProject?.skyddsrondEnabled, editableProject?.skyddsrondIntervalWeeks, editableProject?.skyddsrondIntervalDays, editableProject?.skyddsrondFirstDueDate]);
 
   const controlTypeOptions = React.useMemo(() => {
     const all = [
@@ -689,7 +799,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     }
     fetchCompanyProfile(companyId)
       .then((p) => { if (active) setCompanyProfile(p || null); })
-      .catch(() => { /* ignore */ });
+      .catch((e) => { /* ignore */ });
     return () => { active = false; };
   }, [companyId]);
 
@@ -722,7 +832,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
 
       // Best-effort: delete remote draft too
-      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch (e) {}
+      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch(e) {}
     } else {
       // Remove from completed_controls
       const completedRaw = await AsyncStorage.getItem('completed_controls');
@@ -733,7 +843,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('completed_controls', JSON.stringify(completed));
 
       // Best-effort: delete remote control too
-      try { await deleteControlFromFirestore(control.id, companyId); } catch (e) {}
+      try { await deleteControlFromFirestore(control.id, companyId); } catch(e) {}
     }
   };
 
@@ -762,8 +872,76 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
 
   // Web: keep header/tree and render control forms inside the right pane
   if (Platform.OS === 'web' && inlineControl && inlineControl.type) {
+    const isInlineFormOpen = !!(inlineControl && inlineControl.type && inlineControl.type !== 'ControlDetails');
+
+    const handleInlineBack = () => {
+      // For forms: always route through the BaseControlForm exit-confirm flow
+      // so the user doesn't accidentally leave without saving/finishing.
+      if (isInlineFormOpen) {
+        try {
+          if (typeof window !== 'undefined' && window.dispatchEvent) {
+            window.dispatchEvent(new CustomEvent('dkInlineAttemptExit', { detail: { reason: 'headerBack' } }));
+            return;
+          }
+        } catch(e) {}
+      }
+
+      // For non-form inline views (e.g. ControlDetails), just go back to the project page.
+      closeInlineControl();
+    };
+
+    const getInlineHeaderMeta = () => {
+      const explicitType = String(inlineControl?.type || '').trim();
+      const detailsType = String(inlineControl?.initialValues?.control?.type || '').trim();
+      const type = (explicitType === 'ControlDetails' ? detailsType : explicitType) || explicitType;
+      const map = {
+        Arbetsberedning: { icon: 'construct-outline', color: '#1976D2', label: 'Arbetsberedning' },
+        Egenkontroll: { icon: 'checkmark-done-outline', color: '#388E3C', label: 'Egenkontroll' },
+        Fuktmätning: { icon: 'water-outline', color: '#0288D1', label: 'Fuktmätning' },
+        Mottagningskontroll: { icon: 'checkbox-outline', color: '#7B1FA2', label: 'Mottagningskontroll' },
+        Riskbedömning: { icon: 'warning-outline', color: '#FFD600', label: 'Riskbedömning' },
+        Skyddsrond: { icon: 'shield-half-outline', color: '#388E3C', label: 'Skyddsrond' },
+      };
+
+      const meta = map[type] || null;
+      if (meta) return meta;
+      if (type) return { icon: null, color: '#1976D2', label: type };
+      return { icon: null, color: '#1976D2', label: 'Kontrolldetaljer' };
+    };
+
+    const wrapInlineControlWithBack = (child) => (
+      <View style={{ flex: 1 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 10, flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            onPress={handleInlineBack}
+            accessibilityLabel="Tillbaka"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ width: 36, height: 32, justifyContent: 'center', alignItems: 'flex-start', marginRight: 10 }}
+          >
+            <Ionicons name="chevron-back" size={22} color="#1976D2" />
+          </TouchableOpacity>
+
+          {(() => {
+            const meta = getInlineHeaderMeta();
+            return (
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, height: 32 }}>
+                {meta?.icon ? (
+                  <Ionicons name={meta.icon} size={18} color={meta.color} style={{ marginRight: 8 }} />
+                ) : null}
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1}>
+                  {meta?.label || ''}
+                </Text>
+              </View>
+            );
+          })()}
+        </View>
+        {child}
+      </View>
+    );
+
+    const effectiveProject = inlineControl?.projectSnapshot || project;
     const commonProps = {
-      project,
+      project: effectiveProject,
       initialValues: inlineControl.initialValues,
       onExit: closeInlineControl,
       onFinished: () => {
@@ -774,17 +952,29 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
 
     switch (inlineControl.type) {
       case 'Arbetsberedning':
-        return <ArbetsberedningScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<ArbetsberedningScreen {...commonProps} />);
       case 'Riskbedömning':
-        return <RiskbedömningScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<RiskbedömningScreen {...commonProps} />);
       case 'Fuktmätning':
-        return <FuktmätningScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<FuktmätningScreen {...commonProps} />);
       case 'Egenkontroll':
-        return <EgenkontrollScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<EgenkontrollScreen {...commonProps} />);
       case 'Mottagningskontroll':
-        return <MottagningskontrollScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<MottagningskontrollScreen {...commonProps} />);
       case 'Skyddsrond':
-        return <SkyddsrondScreen {...commonProps} />;
+        return wrapInlineControlWithBack(<SkyddsrondScreen {...commonProps} />);
+      case 'ControlDetails':
+        return wrapInlineControlWithBack(
+          <ControlDetails
+            route={{
+              params: {
+                control: inlineControl?.initialValues?.control,
+                project: effectiveProject,
+                companyId,
+              },
+            }}
+          />
+        );
       default:
         return (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
@@ -920,6 +1110,26 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 <Text style={{ fontWeight: '700' }}>Fastighetsbeteckning:</Text> {editableProject?.fastighetsbeteckning
                   ? <Text>{editableProject.fastighetsbeteckning}</Text>
                   : <Text style={{ color: '#D32F2F', fontStyle: 'italic' }}>Valfritt</Text>}
+              </Text>
+              <View style={{ height: 1, backgroundColor: '#e0e0e0', marginVertical: 6 }} />
+              <Text style={{ fontSize: 15, color: '#555' }}>
+                <Text style={{ fontWeight: '700' }}>Skyddsronder:</Text>{' '}
+                {skyddsrondInfo.enabled
+                  ? (
+                    <>
+                      var {skyddsrondInfo.intervalWeeks} veckor. Senaste: {skyddsrondInfo.lastLabel}. Nästa senast:{' '}
+                      <Text
+                        style={{
+                          color: skyddsrondInfo.overdue ? '#D32F2F' : (skyddsrondInfo.soon ? '#FFD600' : '#555'),
+                          fontWeight: (skyddsrondInfo.overdue || skyddsrondInfo.soon) ? '700' : '400',
+                        }}
+                      >
+                        {skyddsrondInfo.nextLabel}
+                      </Text>
+                    </>
+                  )
+                  : <Text>Inaktiverad</Text>
+                }
               </Text>
             </View>
           </View>
@@ -1155,7 +1365,113 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   placeholderTextColor="#bbb"
                 />
               </View>
+
+              <View style={{ marginBottom: 14 }}>
+                <Text style={{ fontSize: 15, color: '#888', marginBottom: 6 }}>Skyddsronder</Text>
+                {(() => {
+                  const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                  const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                  const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                  return (
+                    <View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <Text style={{ fontSize: 15, color: '#222' }}>Aktiva</Text>
+                        <Switch
+                          value={editableProject?.skyddsrondEnabled !== false}
+                          onValueChange={(v) => setEditableProject(p => ({ ...p, skyddsrondEnabled: !!v }))}
+                        />
+                      </View>
+
+                      <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Veckor mellan skyddsronder</Text>
+                      <TouchableOpacity
+                        style={{
+                          borderWidth: 1,
+                          borderColor: '#e0e0e0',
+                          borderRadius: 8,
+                          paddingVertical: 10,
+                          paddingHorizontal: 10,
+                          backgroundColor: '#fff',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          opacity: (editableProject?.skyddsrondEnabled !== false) ? 1 : 0.5,
+                        }}
+                        disabled={editableProject?.skyddsrondEnabled === false}
+                        onPress={() => setSkyddsrondWeeksPickerVisible(true)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={{ fontSize: 15, color: '#222' }}>
+                          {String(editableProject?.skyddsrondIntervalWeeks || 2)}
+                        </Text>
+                        <Ionicons name="chevron-down" size={18} color="#222" />
+                      </TouchableOpacity>
+
+                      <Text style={{ fontSize: 15, color: '#888', marginBottom: 4, marginTop: 10 }}>Första skyddsrond senast</Text>
+                      <TextInput
+                        style={{
+                          borderWidth: 1,
+                          borderColor: (isEnabled && !isFirstDueValid) ? '#D32F2F' : '#e0e0e0',
+                          borderRadius: 8,
+                          padding: 10,
+                          fontSize: 15,
+                          backgroundColor: '#fff',
+                          opacity: (editableProject?.skyddsrondEnabled !== false) ? 1 : 0.5,
+                        }}
+                        value={String(editableProject?.skyddsrondFirstDueDate || '')}
+                        editable={editableProject?.skyddsrondEnabled !== false}
+                        onChangeText={v => setEditableProject(p => ({ ...p, skyddsrondFirstDueDate: v }))}
+                        placeholder="YYYY-MM-DD"
+                        placeholderTextColor="#bbb"
+                      />
+
+                      {isEnabled && !isFirstDueValid && (
+                        <Text style={{ color: '#D32F2F', fontSize: 13, marginTop: 6 }}>
+                          Du måste fylla i datum (YYYY-MM-DD).
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })()}
+              </View>
             </ScrollView>
+
+            <Modal
+              visible={skyddsrondWeeksPickerVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setSkyddsrondWeeksPickerVisible(false)}
+            >
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.30)' }}>
+                <Pressable
+                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                  onPress={() => setSkyddsrondWeeksPickerVisible(false)}
+                />
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                    Veckor mellan skyddsronder
+                  </Text>
+                  {[1, 2, 3, 4].map((w) => (
+                    <TouchableOpacity
+                      key={String(w)}
+                      style={{ paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}
+                      onPress={() => {
+                        setEditableProject(p => ({ ...p, skyddsrondIntervalWeeks: w }));
+                        setSkyddsrondWeeksPickerVisible(false);
+                      }}
+                    >
+                      <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{w}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                    onPress={() => setSkyddsrondWeeksPickerVisible(false)}
+                  >
+                    <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+
             <TouchableOpacity
               style={{
                 backgroundColor: 'transparent',
@@ -1176,13 +1492,34 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 marginTop: 8,
                 marginBottom: 2,
                 overflow: 'hidden',
+                opacity: (() => {
+                  const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                  const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                  const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                  return isFirstDueValid ? 1 : 0.5;
+                })(),
               }}
               activeOpacity={0.85}
+              disabled={(() => {
+                const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                return !isFirstDueValid;
+              })()}
               onPress={() => {
+                const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                if (!isFirstDueValid) return;
+
+                const sanitizedProject = {
+                  ...editableProject,
+                  skyddsrondFirstDueDate: isEnabled ? (firstDueTrim || null) : null,
+                };
                 if (typeof navigation?.setParams === 'function') {
-                  navigation.setParams({ project: editableProject });
+                  navigation.setParams({ project: sanitizedProject });
                 }
-                emitProjectUpdated({ ...editableProject, originalId: originalProjectId });
+                emitProjectUpdated({ ...sanitizedProject, originalId: originalProjectId });
                 setEditingInfo(false);
               }}
             >
@@ -1547,7 +1884,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   }
                 }
                 return { total, open };
-              } catch (e) {
+              } catch(e) {
                 return { total: 0, open: 0 };
               }
             }
@@ -1586,7 +1923,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     {t === 'Skyddsrond' && anyOpenDeviation && (
                       <TouchableOpacity
                         onPress={(e) => {
-                          try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                          try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
                           // Expand the group so the problematic rond becomes visible (and highlighted).
                           setExpandedByType((prev) => ({ ...prev, [t]: true }));
                         }}
@@ -1635,7 +1972,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                             try {
                               const d = new Date(v);
                               if (!isNaN(d)) return d.toLocaleDateString('sv-SE');
-                            } catch (e) {}
+                            } catch(e) {}
                             return null;
                           };
                           parsedDate = tryParse(item.date) || tryParse(item.dateValue) || tryParse(item.savedAt) || tryParse(item.createdAt) || tryParse(item.created) || '';
@@ -1712,7 +2049,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                       else navigation.navigate('ControlForm', { initialValues: item, project });
                                   }
                                 } else {
-                                  navigation.navigate('ControlDetails', { control: item, project, companyId });
+                                  if (Platform.OS === 'web') {
+                                    openInlineControl('ControlDetails', { control: item });
+                                  } else {
+                                    navigation.navigate('ControlDetails', { control: item, project, companyId });
+                                  }
                                 }
                               }}
                               onLongPress={item.isDraft ? undefined : () => handleControlLongPress(item)}
@@ -1776,7 +2117,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                   style={{ marginLeft: trailingIconMarginLeft, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
                                   activeOpacity={0.85}
                                   onPress={(e) => {
-                                    try { e && e.stopPropagation && e.stopPropagation(); } catch (err) {}
+                                    try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
                                     navigation.navigate('ControlDetails', { control: item, project, companyId });
                                   }}
                                   accessibilityLabel="Åtgärda"
@@ -1802,7 +2143,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                           try {
                                             profile = await fetchCompanyProfile(companyId);
                                             if (profile) setCompanyProfile(profile);
-                                          } catch (e) {}
+                                          } catch(e) {}
                                         }
                                         const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
                                         const companyLogoFromProfile = profile?.logoUrl || null;
@@ -1813,7 +2154,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                             const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
                                             const dl = await FileSystem.downloadAsync(logoForPrint, dest);
                                             if (dl?.uri) logoForPrint = dl.uri;
-                                          } catch (e) { console.warn('[PDF] download logo failed', e); }
+                                          } catch(e) { console.warn('[PDF] download logo failed', e); }
                                         }
                                         let logoBase64 = null;
                                         try {
@@ -1827,11 +2168,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                                 logoBase64 = await readUriAsBase64(local);
                                                 if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                                               }
-                                            } catch (e) { /* ignore */ }
+                                            } catch(e) { /* ignore */ }
                                           } else {
                                             logoForPrint = 'data:image/png;base64,' + logoBase64;
                                           }
-                                        } catch (e) { console.warn('[PDF] logo base64 convert failed', e); }
+                                        } catch(e) { console.warn('[PDF] logo base64 convert failed', e); }
 
                                         let html;
                                         // Embed images for this item before building HTML
@@ -1869,7 +2210,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                         } else {
                                           throw new Error('printToFileAsync returned no uri');
                                         }
-                                      } catch (err) {
+                                      } catch(e) {
                                         console.warn('[PDF] single-item PDF generation failed, retrying without logo', err);
                                         try {
                                           let html2;
@@ -2124,6 +2465,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     </ScrollView>
   );
 }
+
 
 
 

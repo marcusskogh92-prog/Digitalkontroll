@@ -30,7 +30,7 @@ export default function MottagningskontrollScreen({
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch (e) {
+      } catch(e) {
         const completedRaw = await AsyncStorage.getItem('completed_controls');
         let completedList = completedRaw ? JSON.parse(completedRaw) : [];
         // Remove all previous versions (by id if present, else by project+type+savedAt)
@@ -58,8 +58,8 @@ export default function MottagningskontrollScreen({
           drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Mottagningskontroll' && (d.id === data.id || d.id === controlId)));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch (e) {}
-    } catch (e) {
+      } catch(e) {}
+    } catch(e) {
       // Hantera fel
     }
   };
@@ -70,7 +70,7 @@ export default function MottagningskontrollScreen({
       try {
         const ok = await saveDraftToFirestore(draft);
         if (!ok) throw new Error('Firestore draft save failed');
-      } catch (e) {
+      } catch(e) {
         let arr = [];
         const existing = await AsyncStorage.getItem('draft_controls');
         if (existing) arr = JSON.parse(existing);
@@ -85,7 +85,7 @@ export default function MottagningskontrollScreen({
         }
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
-    } catch (e) {
+    } catch(e) {
       // Hantera fel
     }
   };

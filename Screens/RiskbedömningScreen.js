@@ -51,7 +51,7 @@ export default function RiskbedömningScreen({ date, participants = [], project:
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch (e) {
+      } catch (_e) {
         const completedRaw = await AsyncStorage.getItem('completed_controls');
         const completedList = completedRaw ? JSON.parse(completedRaw) : [];
         completedList.push(completed);
@@ -65,8 +65,8 @@ export default function RiskbedömningScreen({ date, participants = [], project:
           drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Riskbedömning' && d.id === completed.id));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch (e) {}
-    } catch (e) {
+      } catch (_e) {}
+    } catch (_e) {
       // Hantera fel
     }
   };
@@ -77,7 +77,7 @@ export default function RiskbedömningScreen({ date, participants = [], project:
       try {
         const ok = await saveDraftToFirestore(draft);
         if (!ok) throw new Error('Firestore draft save failed');
-      } catch (e) {
+      } catch (_e) {
         let arr = [];
         const existing = await AsyncStorage.getItem('draft_controls');
         if (existing) arr = JSON.parse(existing);
@@ -92,7 +92,7 @@ export default function RiskbedömningScreen({ date, participants = [], project:
         }
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
-    } catch (e) {
+    } catch (_e) {
       // Hantera fel
     }
   };

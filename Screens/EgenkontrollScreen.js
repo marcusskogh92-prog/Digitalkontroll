@@ -34,7 +34,7 @@ export default function EgenkontrollScreen({
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch (e) {
+      } catch(_e {
         const existing = await AsyncStorage.getItem('completed_controls');
         let arr = [];
         if (existing) arr = JSON.parse(existing);
@@ -48,10 +48,10 @@ export default function EgenkontrollScreen({
           drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Egenkontroll' && d.id === completed.id));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch (e) {}
+      } catch(_e {}
       alert('Kontrollen har sparats som utförd!');
-    } catch (e) {
-      alert('Kunde inte spara kontrollen: ' + e.message);
+      } catch(_e {
+      alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };
 
