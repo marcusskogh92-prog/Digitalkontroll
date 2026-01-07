@@ -9,7 +9,7 @@ import useBackgroundSync from '../hooks/useBackgroundSync';
 import ProjectDetails from './ProjectDetails';
 let createPortal = null;
 if (Platform.OS === 'web') {
-  try { createPortal = require('react-dom').createPortal; } catch(e) { createPortal = null; }
+  try { createPortal = require('react-dom').createPortal; } catch(_e) { createPortal = null; }
 }
 let portalRootId = 'dk-header-portal';
 
@@ -63,7 +63,7 @@ export default function HomeScreen({ route, navigation }) {
     try {
       if (typeof node.scrollToEnd === 'function') node.scrollToEnd({ animated: true });
       else if (typeof node.scrollTo === 'function') node.scrollTo({ y: 1e9, animated: true });
-    } catch(e) {}
+    } catch(_e) {}
   };
 
   // companyId state is declared later in this component; referencing it early can crash on web.
@@ -169,7 +169,7 @@ export default function HomeScreen({ route, navigation }) {
         }
         const tokenRes = await user.getIdTokenResult(false).catch((e) => null);
         if (active) setAuthClaims(tokenRes?.claims || null);
-      } catch(e) {
+      } catch(_e) {
         if (active) setAuthClaims(null);
       }
     }
@@ -178,7 +178,7 @@ export default function HomeScreen({ route, navigation }) {
     const unsub = auth?.onAuthStateChanged ? auth.onAuthStateChanged(() => { refreshClaims(); }) : null;
     return () => {
       active = false;
-      try { if (typeof unsub === 'function') unsub(); } catch(e) {}
+      try { if (typeof unsub === 'function') unsub(); } catch(_e) {}
     };
   }, []);
 
@@ -214,7 +214,7 @@ export default function HomeScreen({ route, navigation }) {
         setCompanyId(demoCompanyId);
         setHierarchy(collapseHierarchy(testHierarchy));
       }
-    } catch(e) {
+    } catch(_e) {
       console.log('[Home] make demo admin error', _e?.message || _e);
     } finally {
       setAdminActionRunning(false);
@@ -255,17 +255,17 @@ export default function HomeScreen({ route, navigation }) {
     || (newProjectSkyddsrondFirstDueTrim !== '' && isValidIsoDateYmd(newProjectSkyddsrondFirstDueTrim));
 
   const resetProjectFields = React.useCallback(() => {
-    try { setNewProjectName(''); } catch(e) {}
-    try { setNewProjectNumber(''); } catch(e) {}
-    try { setNewProjectResponsible(null); } catch(e) {}
-    try { setResponsiblePickerVisible(false); } catch(e) {}
-    try { setNewProjectKeyboardLockHeight(0); } catch(e) {}
-    try { setNewProjectSkyddsrondEnabled(true); } catch(e) {}
-    try { setNewProjectSkyddsrondWeeks(2); } catch(e) {}
-    try { setNewProjectSkyddsrondFirstDueDate(''); } catch(e) {}
-    try { setSkyddsrondWeeksPickerVisible(false); } catch(e) {}
+    try { setNewProjectName(''); } catch(_e) {}
+    try { setNewProjectNumber(''); } catch(_e) {}
+    try { setNewProjectResponsible(null); } catch(_e) {}
+    try { setResponsiblePickerVisible(false); } catch(_e) {}
+    try { setNewProjectKeyboardLockHeight(0); } catch(_e) {}
+    try { setNewProjectSkyddsrondEnabled(true); } catch(_e) {}
+    try { setNewProjectSkyddsrondWeeks(2); } catch(_e) {}
+    try { setNewProjectSkyddsrondFirstDueDate(''); } catch(_e) {}
+    try { setSkyddsrondWeeksPickerVisible(false); } catch(_e) {}
     // Best-effort: dismiss keyboard on native
-    try { if (Platform.OS !== 'web') Keyboard.dismiss(); } catch(e) {}
+    try { if (Platform.OS !== 'web') Keyboard.dismiss(); } catch(_e) {}
   }, []);
 
   const loadCompanyAdmins = React.useCallback(async ({ force } = { force: false }) => {
@@ -290,11 +290,11 @@ export default function HomeScreen({ route, navigation }) {
             role,
           });
         }
-      } catch(e) {}
+      } catch(_e) {}
       const admins = await fetchCompanyMembers(routeCompanyId, { role: 'admin' });
       setCompanyAdmins(Array.isArray(admins) ? admins : []);
       setCompanyAdminsLastFetchAt(Date.now());
-    } catch(e) {
+    } catch(_e) {
       const msg = String(_e?.message || _e || '').toLowerCase();
       if (_e?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
       setCompanyAdmins([]);
@@ -319,7 +319,7 @@ export default function HomeScreen({ route, navigation }) {
   // This avoids the common "empty cache" problem on fresh logins.
   React.useEffect(() => {
     if (!responsiblePickerVisible) {
-      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch(e) {}
+      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch(_e) {}
       companyAdminsUnsubRef.current = null;
       return;
     }
@@ -329,7 +329,7 @@ export default function HomeScreen({ route, navigation }) {
     setCompanyAdminsPermissionDenied(false);
     try {
       if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current();
-    } catch(e) {}
+    } catch(_e) {}
     companyAdminsUnsubRef.current = subscribeCompanyMembers(routeCompanyId, {
       role: 'admin',
       onData: (admins) => {
@@ -345,7 +345,7 @@ export default function HomeScreen({ route, navigation }) {
     });
 
     return () => {
-      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch(e) {}
+      try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch(_e) {}
       companyAdminsUnsubRef.current = null;
     };
   }, [responsiblePickerVisible, routeCompanyId]);
@@ -375,7 +375,7 @@ export default function HomeScreen({ route, navigation }) {
 
     return () => {
       for (const s of subs) {
-        try { s.remove(); } catch(e) {}
+        try { s.remove(); } catch(_e) {}
       }
     };
   }, []);
@@ -399,7 +399,7 @@ export default function HomeScreen({ route, navigation }) {
           }
         }
       }
-    } catch(e) {}
+    } catch(_e) {}
     return true;
   }, []);
 
@@ -849,7 +849,7 @@ export default function HomeScreen({ route, navigation }) {
               // Opening the picker dismisses the keyboard on iOS/Android.
               // Lock the current keyboard height so this modal doesn't jump down.
               setNewProjectKeyboardLockHeight(nativeKeyboardHeightRef.current || nativeKeyboardHeight || 0);
-              try { Keyboard.dismiss(); } catch(e) {}
+              try { Keyboard.dismiss(); } catch(_e) {}
               // If admins weren't loaded yet (or modal opened too early), fetch now.
               if ((!companyAdmins || companyAdmins.length === 0) && !loadingCompanyAdmins) {
                 loadCompanyAdmins({ force: true });
@@ -1195,7 +1195,7 @@ export default function HomeScreen({ route, navigation }) {
         if (stored !== cid) {
           await AsyncStorage.setItem('dk_companyId', cid);
         }
-      } catch(e) {}
+      } catch(_e) {}
     })();
   }, [companyId, authClaims?.companyId]);
   // Laddningsstate för hierarkin
@@ -1283,7 +1283,7 @@ export default function HomeScreen({ route, navigation }) {
       };
       try {
         window.dispatchEvent(new CustomEvent('dkInlineAttemptExit'));
-      } catch(e) {
+      } catch(_e) {
         // Fallback: if event dispatch fails, proceed immediately.
         if (selectedActionProvided) setProjectSelectedAction(opts.selectedAction);
         setSelectedProject(nextProject);
@@ -1309,14 +1309,14 @@ export default function HomeScreen({ route, navigation }) {
       if (!pending) return;
       if (decision !== 'draft' && decision !== 'abort') return;
 
-      try { setProjectSelectedAction(pending.selectedAction ?? null); } catch(e) {}
+      try { setProjectSelectedAction(pending.selectedAction ?? null); } catch(_e) {}
       setSelectedProject({ ...pending.project });
       if (pending.clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
     };
 
     window.addEventListener('dkInlineExitDecision', onDecision);
     return () => {
-      try { window.removeEventListener('dkInlineExitDecision', onDecision); } catch(e) {}
+      try { window.removeEventListener('dkInlineExitDecision', onDecision); } catch(_e) {}
     };
   }, []);
 
@@ -1332,7 +1332,7 @@ export default function HomeScreen({ route, navigation }) {
           }
         }
       }
-    } catch(e) {}
+    } catch(_e) {}
     return null;
   }, []);
 
@@ -1344,7 +1344,7 @@ export default function HomeScreen({ route, navigation }) {
       if (typeof value?.toDate === 'function') return value.toDate().getTime() || 0;
       if (typeof value?.seconds === 'number') return (value.seconds * 1000) + (typeof value.nanoseconds === 'number' ? Math.floor(value.nanoseconds / 1e6) : 0);
       return new Date(value).getTime() || 0;
-    } catch(e) {
+    } catch(_e) {
       return 0;
     }
   }, []);
@@ -1363,7 +1363,7 @@ export default function HomeScreen({ route, navigation }) {
       const diffD = Math.floor(diffH / 24);
       if (diffD < 7) return `för ${diffD} dag${diffD === 1 ? '' : 'ar'} sedan`;
       return new Date(t).toLocaleDateString('sv-SE');
-    } catch(e) {
+    } catch(_e) {
       return '';
     }
   }, [toTsMs]);
@@ -1395,7 +1395,7 @@ export default function HomeScreen({ route, navigation }) {
         }
       }
       return open;
-    } catch(e) {
+    } catch(_e) {
       return 0;
     }
   }, []);
@@ -1411,7 +1411,7 @@ export default function HomeScreen({ route, navigation }) {
         if (!Array.isArray(sigs) || sigs.length === 0) count++;
       }
       return count;
-    } catch(e) {
+    } catch(_e) {
       return 0;
     }
   }, []);
@@ -1431,7 +1431,7 @@ export default function HomeScreen({ route, navigation }) {
         }
       }
       return active;
-    } catch(e) {
+    } catch(_e) {
       return 0;
     }
   }, []);
@@ -1458,7 +1458,7 @@ export default function HomeScreen({ route, navigation }) {
             }
           }
         }
-      } catch(e) {}
+      } catch(_e) {}
 
       const pickProjectId = (item) => {
         const pid = item?.project?.id || item?.projectId || item?.project || null;
@@ -1475,7 +1475,7 @@ export default function HomeScreen({ route, navigation }) {
       });
 
       // Store lists for dashboard drill-down
-      try { setDashboardDraftItems(Array.isArray(filteredDrafts) ? filteredDrafts : []); } catch(e) {}
+      try { setDashboardDraftItems(Array.isArray(filteredDrafts) ? filteredDrafts : []); } catch(_e) {}
 
       try {
         const activeList = [];
@@ -1491,8 +1491,8 @@ export default function HomeScreen({ route, navigation }) {
           }
         }
         setDashboardActiveProjectsList(activeList);
-      } catch(e) {
-        try { setDashboardActiveProjectsList([]); } catch(e) {}
+      } catch(_e) {
+        try { setDashboardActiveProjectsList([]); } catch(_e) {}
       }
 
       try {
@@ -1504,8 +1504,8 @@ export default function HomeScreen({ route, navigation }) {
           return !Array.isArray(sigs) || sigs.length === 0;
         });
         setDashboardControlsToSignItems(needSign);
-      } catch(e) {
-        try { setDashboardControlsToSignItems([]); } catch(e) {}
+      } catch(_e) {
+        try { setDashboardControlsToSignItems([]); } catch(_e) {}
       }
 
       const activeProjects = countActiveProjects();
@@ -1527,7 +1527,7 @@ export default function HomeScreen({ route, navigation }) {
           const prev = lastSkyddsrondByProject.get(pid) || 0;
           if (ts > prev) lastSkyddsrondByProject.set(pid, ts);
         });
-      } catch(e) {}
+      } catch(_e) {}
 
       let skyddsrondOverdue = 0;
       let skyddsrondDueSoon = 0;
@@ -1568,13 +1568,13 @@ export default function HomeScreen({ route, navigation }) {
             }
           }
         }
-      } catch(e) {}
+      } catch(_e) {}
 
       try {
         upcomingSkyddsrond.sort((a, b) => Number(a?.nextDueMs || 0) - Number(b?.nextDueMs || 0));
         setDashboardUpcomingSkyddsrondItems(upcomingSkyddsrond);
-      } catch(e) {
-        try { setDashboardUpcomingSkyddsrondItems([]); } catch(e) {}
+      } catch(_e) {
+        try { setDashboardUpcomingSkyddsrondItems([]); } catch(_e) {}
       }
 
       const countOpenDeviationsForControl = (control) => {
@@ -1598,7 +1598,7 @@ export default function HomeScreen({ route, navigation }) {
             }
           }
           return open;
-        } catch(e) {
+        } catch(_e) {
           return 0;
         }
       };
@@ -1609,8 +1609,8 @@ export default function HomeScreen({ route, navigation }) {
           .map((c) => ({ control: c, openCount: countOpenDeviationsForControl(c) }))
           .filter((x) => (x.openCount || 0) > 0);
         setDashboardOpenDeviationItems(openDevItems);
-      } catch(e) {
-        try { setDashboardOpenDeviationItems([]); } catch(e) {}
+      } catch(_e) {
+        try { setDashboardOpenDeviationItems([]); } catch(_e) {}
       }
 
       const recent = [];
@@ -1659,7 +1659,7 @@ export default function HomeScreen({ route, navigation }) {
             raw: ev,
           });
         });
-      } catch(e) {}
+      } catch(_e) {}
       recent.sort((a, b) => {
         return toTsMs(b.ts) - toTsMs(a.ts);
       });
@@ -1692,7 +1692,7 @@ export default function HomeScreen({ route, navigation }) {
       });
       setDashboardRecent(top);
       setDashboardRecentProjects(recentProjects);
-    } catch(e) {
+    } catch(_e) {
       setDashboardOverview({ activeProjects: 0, openDeviations: 0, skyddsrondOverdue: 0, skyddsrondDueSoon: 0, controlsToSign: 0, drafts: 0 });
       setDashboardRecent([]);
       setDashboardRecentProjects([]);
@@ -1711,7 +1711,7 @@ export default function HomeScreen({ route, navigation }) {
     try {
       const st = window.history.state || {};
       if (!st.dkView) window.history.replaceState({ ...st, dkView: 'home' }, '');
-    } catch(e) {}
+    } catch(_e) {}
 
     const onPopState = (e) => {
       try {
@@ -1726,7 +1726,7 @@ export default function HomeScreen({ route, navigation }) {
           setProjectSelectedAction(null);
           setSelectedProject(null);
         }
-      } catch(e) {
+      } catch(_e) {
         setProjectSelectedAction(null);
         setSelectedProject(null);
       }
@@ -1734,7 +1734,7 @@ export default function HomeScreen({ route, navigation }) {
 
     window.addEventListener('popstate', onPopState);
     return () => {
-      try { window.removeEventListener('popstate', onPopState); } catch(e) {}
+      try { window.removeEventListener('popstate', onPopState); } catch(_e) {}
     };
   }, [findProjectById]);
 
@@ -1750,7 +1750,7 @@ export default function HomeScreen({ route, navigation }) {
         // Avoid pushing duplicates
         if (st.dkView === 'project' && String(st.projectId || '') === String(proj.id)) return;
         window.history.pushState({ ...st, dkView: 'project', projectId: String(proj.id) }, '');
-      } catch(e) {}
+      } catch(_e) {}
     }
   }, [selectedProject?.id]);
 
@@ -1761,7 +1761,7 @@ export default function HomeScreen({ route, navigation }) {
       try {
         const st = window.history.state || {};
         window.history.replaceState({ ...st, dkView: 'home', projectId: null }, '');
-      } catch(e) {}
+      } catch(_e) {}
     }
     setProjectSelectedAction(null);
     setSelectedProject(null);
@@ -1780,12 +1780,12 @@ export default function HomeScreen({ route, navigation }) {
     const unsub = subscribeCompanyActivity(cid, {
       limitCount: 25,
       onData: (items) => {
-        try { setCompanyActivity(Array.isArray(items) ? items : []); } catch(e) {}
+        try { setCompanyActivity(Array.isArray(items) ? items : []); } catch(_e) {}
       },
       onError: () => {},
     });
     return () => {
-      try { if (typeof unsub === 'function') unsub(); } catch(e) {}
+      try { if (typeof unsub === 'function') unsub(); } catch(_e) {}
     };
   }, [companyId, routeCompanyId, authClaims?.companyId]);
 
@@ -1815,7 +1815,7 @@ export default function HomeScreen({ route, navigation }) {
         if (!ok) return;
         if (cancelled) return;
         await AsyncStorage.setItem(throttleKey, new Date().toISOString());
-      } catch(e) {}
+      } catch(_e) {}
     })();
 
     return () => { cancelled = true; };
@@ -1840,7 +1840,7 @@ export default function HomeScreen({ route, navigation }) {
           email: user.email || null,
           role,
         });
-      } catch(e) {}
+      } catch(_e) {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, auth?.currentUser?.uid]);
@@ -1894,7 +1894,7 @@ export default function HomeScreen({ route, navigation }) {
       ]);
       const exists = !!((h && h !== '[]') || (c && c !== '[]') || (d && d !== '[]'));
       setLocalFallbackExists(exists);
-    } catch(e) {}
+    } catch(_e) {}
   }
   
   // Debug helper: dump local AsyncStorage keys and compare with Firestore counts
@@ -1928,14 +1928,14 @@ export default function HomeScreen({ route, navigation }) {
         try {
           const remote = await fetchControlsForProject(pid, companyId).catch((e) => []);
           remoteInfo[pid] = { remote_count: Array.isArray(remote) ? remote.length : 0, sample_ids: (remote || []).slice(0,5).map(r => r.id) };
-        } catch(e) {
+        } catch(_e) {
           remoteInfo[pid] = { remote_count: -1, error: String(_e) };
         }
       }
       const final = { summary, remote: remoteInfo, sample_local_completed: (data.completed_controls || []).slice(0,5).map(c => ({ id: c.id, projectId: c.project?.id })) };
-      try { console.log('[dumpLocalRemoteControls] full dump', final); } catch(e) {}
+      try { console.log('[dumpLocalRemoteControls] full dump', final); } catch(_e) {}
       Alert.alert('Debug: lokal vs moln', JSON.stringify(final, null, 2).slice(0,1000));
-    } catch(e) {
+    } catch(_e) {
       Alert.alert('Debug-fel', String(_e));
     }
   }
@@ -1958,7 +1958,7 @@ export default function HomeScreen({ route, navigation }) {
       let parsed = null;
       try { parsed = JSON.parse(raw); } catch(e) { parsed = { raw }; }
       Alert.alert('Senaste FS-fel', JSON.stringify(parsed, null, 2).slice(0,2000));
-    } catch(e) {
+    } catch(_e) {
       Alert.alert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (_e?.message || _e));
     }
   }
@@ -2010,7 +2010,7 @@ export default function HomeScreen({ route, navigation }) {
             cid = stored;
             setCompanyId(cid);
           }
-        } catch(e) {}
+        } catch(_e) {}
       }
       if (cid) {
         setLoadingHierarchy(true);
@@ -2031,12 +2031,12 @@ export default function HomeScreen({ route, navigation }) {
                   const pushedRes = await saveHierarchy(cid, parsed);
                   const pushed = pushedRes === true || (pushedRes && pushedRes.ok === true);
                   if (pushed) {
-                    try { await AsyncStorage.removeItem('hierarchy_local'); } catch(e) {}
+                    try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
                     await refreshLocalFallbackFlag();
                   } else {
-                    try { console.error('[Home] push local fallback error', pushedRes && pushedRes.error ? pushedRes.error : pushedRes); } catch(e) {}
+                    try { console.error('[Home] push local fallback error', pushedRes && pushedRes.error ? pushedRes.error : pushedRes); } catch(_e) {}
                   }
-                } catch(e) {}
+                } catch(_e) {}
               } else {
                 setHierarchy([]);
               }
@@ -2084,19 +2084,19 @@ export default function HomeScreen({ route, navigation }) {
           try {
             await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
             setLocalFallbackExists(true);
-          } catch(e) {}
+          } catch(_e) {}
         } else {
           // On successful cloud save, also clear local fallback
             try {
             await AsyncStorage.removeItem('hierarchy_local');
             await refreshLocalFallbackFlag();
-          } catch(e) {}
+          } catch(_e) {}
         }
       } catch(e) {
         try {
           await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
           setLocalFallbackExists(true);
-        } catch(e) {}
+        } catch(_e) {}
       }
     })();
      
@@ -2194,7 +2194,7 @@ export default function HomeScreen({ route, navigation }) {
 
     return () => {
       for (const s of subs) {
-        try { s.remove(); } catch(e) {}
+        try { s.remove(); } catch(_e) {}
       }
     };
   }, []);
@@ -2233,7 +2233,7 @@ export default function HomeScreen({ route, navigation }) {
 
   const openContextMenu = React.useCallback((e, target) => {
     if (Platform.OS !== 'web') return;
-    try { e?.preventDefault?.(); } catch(e) {}
+    try { e?.preventDefault?.(); } catch(_e) {}
     const { x, y } = getContextCoords(e);
     setContextMenu({ visible: true, x, y, target });
   }, [getContextCoords]);
@@ -2710,7 +2710,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                     {Platform.OS === 'web' && hasOpenDeviations && (
                       <TouchableOpacity
                         onPress={(e) => {
-                          try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
+                          try { e && e.stopPropagation && e.stopPropagation(); } catch(_e) {}
                           if (!a.projectId) return;
                           const p = findProjectById(a.projectId);
                           if (!p) return;
@@ -3272,7 +3272,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                             activeOpacity={0.8}
                             onPress={() => {
                                 // Switch project inline and close the header dropdown (keep the query text).
-                                try { navigation?.setParams?.({ headerSearchOpen: false }); } catch(e) {}
+                                try { navigation?.setParams?.({ headerSearchOpen: false }); } catch(_e) {}
                                 requestProjectSwitch(proj, { selectedAction: null });
                               }}
                           >
@@ -3403,7 +3403,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                   try {
                                     const ok = await saveControlToFirestore(ctl);
                                     if (ok) okCount++;
-                                  } catch(e) {}
+                                  } catch(_e) {}
                                 }
                                 if (okCount > 0) {
                                   await AsyncStorage.removeItem('completed_controls');
@@ -3425,7 +3425,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                                   try {
                                     const ok = await saveDraftToFirestore(d);
                                     if (ok) okDrafts++;
-                                  } catch(e) {}
+                                  } catch(_e) {}
                                 }
                                 if (okDrafts > 0) {
                                   await AsyncStorage.removeItem('draft_controls');
@@ -3528,7 +3528,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
             style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 3, paddingHorizontal: 8, alignItems: 'center', minWidth: 60, minHeight: 28 }}
             onPress={async () => {
               setLoggingOut(true);
-              try { await AsyncStorage.removeItem('dk_companyId'); } catch(e) {}
+              try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
               await auth.signOut();
               setLoggingOut(false);
               navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
@@ -3571,7 +3571,7 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                       if (selectedProject) {
                         setProjectControlsRefreshNonce((n) => n + 1);
                       } else {
-                        try { loadDashboard(); } catch(e) {}
+                        try { loadDashboard(); } catch(_e) {}
                       }
                     }}
                     activeOpacity={0.7}
@@ -4659,231 +4659,8 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
               </View>
             </Modal>
             {/* Modal för att välja projekt till kontroll */}
-            {/* Välj projekt-modal med exakt samma struktur och stil som projektlistan */}
-            {(() => {
-              const [expandedMain, setExpandedMain] = React.useState([]);
-              const [expandedSub, setExpandedSub] = React.useState([]);
-              const [quickAddModal, setQuickAddModal] = React.useState({ visible: false, parentSubId: null });
-              const [quickAddName, setQuickAddName] = React.useState("");
-              const [quickAddNumber, setQuickAddNumber] = React.useState("");
-              const [showProjectCreated, setShowProjectCreated] = React.useState(false);
-              // Endast en huvudmapp expanderad åt gången
-              const isMainExpanded = id => expandedMain[0] === id;
-              const isSubExpanded = id => expandedSub.includes(id);
-              const toggleMain = id => setExpandedMain(exp => exp[0] === id ? [] : [id]);
-              const toggleSub = id => setExpandedSub(exp => exp.includes(id) ? exp.filter(e => e !== id) : [...exp, id]);
-              // Stäng alla huvudmappar när modal öppnas
-              React.useEffect(() => {
-                if (selectProjectModal.visible) setExpandedMain([]);
-              }, [selectProjectModal.visible]);
-              return (
-                <Modal
-                  visible={selectProjectModal.visible}
-                  transparent
-                  animationType="fade"
-                  onRequestClose={() => setSelectProjectModal({ visible: false, type: null })}
-                >
-                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Pressable
-                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
-                      onPress={() => setSelectProjectModal({ visible: false, type: null })}
-                    />
-                    <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 360, maxHeight: 540 }}>
-                      {selectProjectModal.type && (
-                        <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 6, color: '#222', textAlign: 'center' }}>
-                          {selectProjectModal.type}
-                        </Text>
-                      )}
-                      <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj projekt</Text>
-                      <View style={{ position: 'relative', marginBottom: 14 }}>
-                        <TextInput
-                          value={searchText}
-                          onChangeText={setSearchText}
-                          placeholder="Sök projektnamn eller nummer..."
-                          style={{
-                            borderWidth: 1,
-                            borderColor: '#222',
-                            borderRadius: 16,
-                            padding: 10,
-                            fontSize: 16,
-                            backgroundColor: '#fff',
-                            color: '#222',
-                            paddingRight: 38 // plats för knappen
-                          }}
-                          autoCorrect={false}
-                          autoCapitalize="none"
-                        />
-                        {/* Autocomplete-lista */}
-                        {searchText.trim().length > 0 && (
-                          <View style={{ position: 'absolute', top: 44, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0', zIndex: 10, maxHeight: 180 }}>
-                            <ScrollView keyboardShouldPersistTaps="handled">
-                              {hierarchy.flatMap(main =>
-                                main.children.flatMap(sub =>
-                                  (sub.children || [])
-                                    .filter(child => child.type === 'project' &&
-                                      (
-                                        child.id.toLowerCase().includes(searchText.toLowerCase()) ||
-                                        child.name.toLowerCase().includes(searchText.toLowerCase())
-                                      )
-                                    )
-                                    .map(proj => (
-                                      <TouchableOpacity
-                                        key={proj.id}
-                                        style={{ padding: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
-                                        onPress={() => {
-                                          setSelectProjectModal({ visible: false, type: null });
-                                          // Route each control type to its dedicated screen
-                                          switch (selectProjectModal.type) {
-                                            case 'Arbetsberedning':
-                                              navigation.navigate('ArbetsberedningScreen', { project: proj });
-                                              break;
-                                            case 'Riskbedömning':
-                                              navigation.navigate('RiskbedömningScreen', { project: proj });
-                                              break;
-                                            case 'Fuktmätning':
-                                              navigation.navigate('FuktmätningScreen', { project: proj });
-                                              break;
-                                            case 'Egenkontroll':
-                                              navigation.navigate('EgenkontrollScreen', { project: proj });
-                                              break;
-                                            case 'Mottagningskontroll':
-                                              navigation.navigate('MottagningskontrollScreen', { project: proj });
-                                              break;
-                                            case 'Skyddsrond':
-                                              navigation.navigate('SkyddsrondScreen', { project: proj });
-                                              break;
-                                            default:
-                                              navigation.navigate('ControlForm', {
-                                                project: proj,
-                                                controlType: selectProjectModal.type
-                                              });
-                                          }
-                                        }}
-                                      >
-                                        <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: (proj.status || 'ongoing') === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                        <Text style={{ fontSize: 14, color: '#1976D2', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} - {proj.name}</Text>
-                                      </TouchableOpacity>
-                                    ))
-                                )
-                              )}
-                            </ScrollView>
-                          </View>
-                        )}
-                      </View>
-                      <ScrollView style={{ maxHeight: 370 }}>
-                        {[...hierarchy]
-                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                          .filter(main =>
-                            main.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                            main.children.some(sub =>
-                              sub.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                              (sub.children || []).some(child =>
-                                child.type === 'project' &&
-                                (
-                                  child.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                                  child.id.toLowerCase().includes(searchText.toLowerCase())
-                                )
-                              )
-                            )
-                          )
-                          .map(main => (
-                            <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 3, padding: 6, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
-                              <TouchableOpacity
-                                style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                                onPress={() => toggleMain(main.id)}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={22} color="#222" />
-                                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
-                              </TouchableOpacity>
-                              {isMainExpanded(main.id) && (
-                                !main.children || main.children.length === 0 ? (
-                                  <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
-                                    Inga undermappar skapade
-                                  </Text>
-                                ) : (
-                                  [...main.children]
-                                    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                    .filter(sub =>
-                                      sub.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                                      (sub.children || []).some(child =>
-                                        child.type === 'project' &&
-                                        (
-                                          child.name.toLowerCase().includes(searchText.toLowerCase()) ||
-                                          child.id.toLowerCase().includes(searchText.toLowerCase())
-                                        )
-                                      )
-                                    )
-                                    .map(sub => {
-                                  const projects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
-                                  return (
-                                    <View key={sub.id} style={{ backgroundColor: '#F3F3F3', borderRadius: 12, marginVertical: 1, marginLeft: 12, padding: 5, borderLeftWidth: 3, borderLeftColor: '#bbb' }}>
-                                      <TouchableOpacity
-                                        style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                                        onPress={() => toggleSub(sub.id)}
-                                        activeOpacity={0.7}
-                                      >
-                                        <Ionicons name={isSubExpanded(sub.id) ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
-                                        <Text style={{ fontSize: 15, fontWeight: '600', color: '#222', marginLeft: 8 }}>{sub.name}</Text>
-                                      </TouchableOpacity>
-                                      {isSubExpanded(sub.id) && (
-                                        projects.length === 0 ? (
-                                          <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
-                                            Inga projekt skapade
-                                          </Text>
-                                        ) : (
-                                          projects
-                                            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                            .map((proj) => (
-                                              <TouchableOpacity
-                                                key={proj.id}
-                                                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3, marginLeft: 14, backgroundColor: '#e3f2fd', borderRadius: 8, marginVertical: 2, paddingHorizontal: 6 }}
-                                                onPress={() => {
-                                                  if (Platform.OS === 'web') {
-                                                    setSelectedProject({ ...proj });
-                                                  } else {
-                                                    navigation.navigate('ProjectDetails', {
-                                                      project: {
-                                                        id: proj.id,
-                                                        name: proj.name,
-                                                        ansvarig: proj.ansvarig || '',
-                                                        adress: proj.adress || '',
-                                                        fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                                                        client: proj.client || '',
-                                                        status: proj.status || 'ongoing',
-                                                        createdAt: proj.createdAt || '',
-                                                        createdBy: proj.createdBy || ''
-                                                      },
-                                                      companyId
-                                                    });
-                                                  }
-                                                }}
-                                              >
-                                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                                <Text style={{ fontSize: 14, color: '#1976D2', marginLeft: 4, marginRight: 8, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} — {proj.name}</Text>
-                                              </TouchableOpacity>
-                                            ))
-                                        )
-                                      )}
-                                    </View>
-                                  );
-                                    })
-                                )
-                              )}
-                            </View>
-                          ))}
-                      </ScrollView>
-                      <TouchableOpacity
-                        style={{ marginTop: 16, alignSelf: 'center' }}
-                        onPress={() => setSelectProjectModal({ visible: false, type: null })}
-                      >
-                        <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </Modal>
-              );
-            })()}
+            {/* Select project modal (render component instead of inlining hooks in a callback) */}
+            <SelectProjectModal />
             {/* Utförda kontroller header removed from main screen; it's shown inside project details only */}
           </View>
           {/* Projektträd */}
@@ -5004,11 +4781,11 @@ const kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lette
                           setLocalFallbackExists(true);
                           Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
                         } else {
-                          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(e) {}
+                          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
                           await refreshLocalFallbackFlag();
                       }
-                    } catch(e) {
-                      try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy)); } catch(e) {}
+                    } catch(_e) {
+                      try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy)); } catch(_e) {}
                       Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
                     }
                   }}
