@@ -92,7 +92,7 @@ export default function CameraCapture() {
           if (returnKey) {
             try {
               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
-            } catch(e) {}
+            } catch(_e {}
             try {
               (async () => {
                 try {
