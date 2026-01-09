@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
 import { Image, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import { auth, fetchUserProfile, signInEmailPassword } from '../components/firebase';
+import { auth, fetchCompanyProfile, fetchUserProfile, signInEmailPassword } from '../components/firebase';
 
 export default function LoginScreen() {
   const navigation = useNavigation();
@@ -20,6 +20,30 @@ export default function LoginScreen() {
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
   const [rememberMe, setRememberMe] = useState(false);
+
+  const isCompanyEnabled = (profile) => {
+    if (!profile) return true;
+    if (profile.deleted) return false;
+    if (typeof profile.enabled === 'boolean') return profile.enabled;
+    if (typeof profile.active === 'boolean') return profile.active;
+    return true;
+  };
+
+  const checkCompanyAccessForUser = async (user) => {
+    try {
+      if (!user) return { allowed: false, companyId: null };
+      const profile = await fetchUserProfile(user.uid).catch(() => null);
+      const companyId = profile?.companyId || null;
+      if (!companyId) return { allowed: true, companyId: null };
+      const companyProfile = await fetchCompanyProfile(companyId).catch(() => null);
+      const enabled = isCompanyEnabled(companyProfile || {});
+      return { allowed: !!enabled, companyId };
+    } catch (e) {
+      // Vid fel, tillåt inloggning men logga till konsol
+      console.log('[Login] checkCompanyAccessForUser error', e?.message || e);
+      return { allowed: true, companyId: null };
+    }
+  };
 
   // Load saved email if user previously chose to be remembered
   useEffect(() => {
@@ -62,16 +86,19 @@ export default function LoginScreen() {
       if (user && !autoHandled) {
         const t0 = Date.now();
         try {
-          // Start profile fetch but navigate immediately for speed
-          const profilePromise = fetchUserProfile(user.uid).catch((e) => null);
-          navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email: user.email || '' } } ] });
-          const profile = await profilePromise;
-          const companyId = profile?.companyId || null;
-          if (companyId) {
-            await AsyncStorage.setItem('dk_companyId', companyId);
-            // Update route params with companyId without adding a back entry
-            navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email: user.email || '', companyId } } ] });
+          const { allowed, companyId } = await checkCompanyAccessForUser(user);
+          if (!allowed) {
+            try { await auth.signOut(); } catch (e) {}
+            try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+            setError('Företaget är pausat. Kontakta administratören.');
+            return;
           }
+          const params = { email: user.email || '' };
+          if (companyId) {
+            try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+            params.companyId = companyId;
+          }
+          navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
           console.log('[Login] Auto redirect total ms:', Date.now() - t0);
         } catch(e) {
           console.log('[Login] Auto redirect error', e?.code || e?.message);
@@ -90,9 +117,8 @@ export default function LoginScreen() {
       const cred = await signInEmailPassword(email.trim(), password);
       console.log('[Login] Auth ms:', Date.now() - t0);
       setError('');
-      setAutoHandled(true); // Prevent onAuthStateChanged duplicate navigation
-      // Navigate immediately (without waiting for profile)
-      navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email } } ] });
+      // Förhindra dubbelnavigering från onAuthStateChanged tills vi har hanterat företagsstatus
+      setAutoHandled(true);
       // Persist remembered email preference
       try {
         if (rememberMe) {
@@ -110,20 +136,27 @@ export default function LoginScreen() {
       } catch(e) {
         console.log('[Login] Token refresh failed', e?.message || e);
       }
-      fetchUserProfile(cred.user.uid)
-        .then(async (profile) => {
-          const companyId = profile?.companyId || null;
-          if (companyId) {
-            await AsyncStorage.setItem('dk_companyId', companyId);
-            navigation.reset({ index: 0, routes: [ { name: 'Home', params: { email, companyId } } ] });
-          }
-          console.log('[Login] Profile async ms:', Date.now() - t0);
-        })
-        .catch((e) => console.log('[Login] Profile error', e?.code || e?.message));
+      const { allowed, companyId } = await checkCompanyAccessForUser(cred.user);
+      if (!allowed) {
+        try { await auth.signOut(); } catch (e) {}
+        try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+        setError('Företaget är pausat. Kontakta administratören.');
+        // Tillåt auto-redirect att köras igen om användaren loggar in på annat företag
+        setAutoHandled(false);
+        return;
+      }
+
+      const params = { email };
+      if (companyId) {
+        try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+        params.companyId = companyId;
+      }
+      navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
+      console.log('[Login] Profile+company check ms:', Date.now() - t0);
     } catch(e) {
       let message = 'Fel e-post eller lösenord';
-      if (err?.code) {
-        switch (err.code) {
+      if (e?.code) {
+        switch (e.code) {
           case 'auth/invalid-email':
             message = 'Ogiltig e-postadress';
             break;

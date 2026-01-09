@@ -3,9 +3,9 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
-import { connectAuthEmulator, getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
-import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
+import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
 import { Alert, Platform } from 'react-native';
 
@@ -68,7 +68,9 @@ try {
 }
 export const functionsClient = _functionsClient;
 
+// Emulator connection disabled - using production Firebase
 // If running in a browser on localhost, connect the Functions client to the emulator
+/*
 try {
   if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
     try {
@@ -100,12 +102,15 @@ try {
     } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
   }
 } catch(e) {}
+*/
 
 // Callable wrappers
-export async function createUserRemote({ companyId, email, displayName }) {
+export async function createUserRemote({ companyId, email, displayName, role }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'createUser');
-  const res = await fn({ companyId, email, displayName });
+  const payload = { companyId, email, displayName };
+  if (role !== undefined) payload.role = role;
+  const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
 
@@ -146,6 +151,16 @@ export async function setSuperadminRemote({ email, uid }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'setSuperadmin');
   const res = await fn({ email, uid });
+  return res && res.data ? res.data : res;
+}
+
+export async function setCompanyStatusRemote({ companyId, enabled, deleted }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyStatus');
+  const payload = { companyId };
+  if (enabled !== undefined) payload.enabled = enabled;
+  if (deleted !== undefined) payload.deleted = deleted;
+  const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
 
@@ -290,28 +305,36 @@ export async function fetchCompanyProfile(companyId) {
 // Fetch a flat list of companies (foretag). Returns array of { id, profile }
 export async function fetchCompanies() {
   try {
-    const baseRef = collection(db, 'foretag');
+    // Firestore rules do not allow listing /foretag docs directly, but
+    // profiles under /foretag/{company}/profil/{docId} are world-readable.
+    // Use a collection group on "profil" and then map each "public" doc
+    // back to its company id.
+    const baseRef = collectionGroup(db, 'profil');
     const snap = await getDocs(baseRef);
-    const ids = [];
-    snap.forEach(d => ids.push(d.id));
-    // Fetch profiles in parallel
-    const out = await Promise.all(ids.map(async (id) => {
+    const out = [];
+
+    snap.forEach((d) => {
       try {
-        const pref = doc(db, 'foretag', id, 'profil', 'public');
-        const ps = await getDoc(pref);
-        return { id, profile: ps.exists() ? ps.data() : null };
-      } catch(e) {
-        return { id, profile: null };
+        if (!d || d.id !== 'public') return; // only use the public profile docs
+        const profilCol = d.ref.parent; // .../foretag/{company}/profil
+        const companyDoc = profilCol && profilCol.parent; // .../foretag/{company}
+        const companyId = companyDoc && companyDoc.id ? companyDoc.id : null;
+        if (!companyId) return;
+        out.push({ id: companyId, profile: d.data() || null });
+      } catch (e) {
+        // Ignore individual mapping errors; continue with others
       }
-    }));
+    });
+
     // Sort by display name if available, otherwise by id
     out.sort((a, b) => {
       const an = String((a.profile && (a.profile.companyName || a.profile.name)) || a.id || '').toLowerCase();
       const bn = String((b.profile && (b.profile.companyName || b.profile.name)) || b.id || '').toLowerCase();
       return an.localeCompare(bn, undefined, { sensitivity: 'base' });
     });
+
     return out;
-  } catch(e) {
+  } catch (e) {
     return [];
   }
 }

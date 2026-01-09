@@ -13,7 +13,7 @@ export default function HeaderUserMenuConditional() {
     (async () => {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
-        if (email === 'marcus.skogh@msbyggsystem.se') {
+        if (email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se') {
           if (mounted) setAllowed(true);
           return;
         }

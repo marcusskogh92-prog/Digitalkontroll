@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export default function UserEditModal({ visible, member, companyId, onClose, onSave, saving, isNew }) {
+export default function UserEditModal({ visible, member, companyId, onClose, onSave, saving, isNew, errorMessage }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -8,7 +8,10 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   const [role, setRole] = useState('user'); // 'admin' | 'user'
   const [showPassword, setShowPassword] = useState(false);
 
-  const emailIsValid = (email || '').trim().length > 0 && (email || '').includes('@');
+  const isMsBygg = String(companyId || '').trim() === 'MS Byggsystem';
+
+  const rawEmail = String(email || '').trim();
+  const emailIsValid = rawEmail.length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail);
   const requiredFilledForCreate = () => {
     if (!isNew) return true;
     return String(firstName || '').trim().length > 0
@@ -24,6 +27,16 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   const passwordMissing = isNew && String(password || '').length === 0;
   const roleMissing = isNew && String(role || '').length === 0;
 
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=';
+    let out = '';
+    for (let i = 0; i < 12; i += 1) {
+      out += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setPassword(out);
+    setShowPassword(true);
+  };
+
   useEffect(() => {
     if (!visible) return;
     const dn = String(member?.displayName || '').trim();
@@ -31,8 +44,10 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
     setFirstName(parts.slice(0, parts.length - 1).join(' ') || (member?.firstName || ''));
     setLastName(parts.length > 1 ? parts.slice(-1).join(' ') : (member?.lastName || ''));
     setEmail(isNew ? '' : (member?.email || ''));
-    const adminGuess = !!(member && (member.isAdmin || member.admin || member.role === 'admin' || member.access === 'admin'));
-    setRole(adminGuess ? 'admin' : 'user');
+    const isSuperMember = !!(member && (member.role === 'superadmin' || member.superadmin));
+    const adminGuess = !!(member && (member.isAdmin || member.admin || member.role === 'admin' || member.access === 'admin' || isSuperMember));
+    if (isSuperMember && isMsBygg) setRole('superadmin');
+    else setRole(adminGuess ? 'admin' : 'user');
     setPassword('');
   }, [visible, member]);
 
@@ -68,6 +83,11 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
             aria-required={isNew}
             style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${emailMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
           />
+          {emailMissing && rawEmail.length > 0 ? (
+            <div style={{ color: '#e53935', fontSize: 12, marginTop: 4 }}>
+              Ogiltig e-postadress. Använd formatet namn@foretag.se
+            </div>
+          ) : null}
         </div>
 
         <div style={{ marginBottom: 8 }}>
@@ -88,6 +108,15 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
             >
               {showPassword ? 'Dölj' : 'Visa'}
             </button>
+            {!isNew && (
+              <button
+                type="button"
+                onClick={generateTempPassword}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976D2', background: '#E3F2FD', cursor: 'pointer', color: '#1976D2', fontSize: 12 }}
+              >
+                Nytt lösenord
+              </button>
+            )}
           </div>
         </div>
 
@@ -99,10 +128,17 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
             aria-required={isNew}
             style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${roleMissing ? '#e53935' : '#ddd'}` }}
           >
+            {isMsBygg && <option value="superadmin">Superadmin</option>}
             <option value="admin">Admin</option>
             <option value="user">Användare</option>
           </select>
         </div>
+
+        {errorMessage ? (
+          <div style={{ color: '#D32F2F', fontSize: 12, marginBottom: 8 }}>
+            {errorMessage}
+          </div>
+        ) : null}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button

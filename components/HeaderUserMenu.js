@@ -18,6 +18,7 @@ export default function HeaderUserMenu() {
   const btnRef = useRef(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
+  const [roleLabel, setRoleLabel] = useState('');
 
   const openMenu = () => {
     try {
@@ -44,7 +45,7 @@ export default function HeaderUserMenu() {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
         if (!active) return;
-        setIsOwner(email === 'marcus.skogh@msbyggsystem.se');
+        setIsOwner(email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se');
         // Try to read claims and local fallback for companyId
         let tokenRes = null;
         try { tokenRes = await auth.currentUser?.getIdTokenResult(true).catch(() => null); } catch(_e) { tokenRes = null; }
@@ -56,6 +57,17 @@ export default function HeaderUserMenu() {
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
         if (!active) return;
         setIsMsAdmin(adminClaim && companyId === 'MS Byggsystem');
+
+        // Beräkna rolltext för headern
+        const emailLower = email;
+        const isEmailSuperadmin = emailLower === 'marcus@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.com' || emailLower === 'marcus.skogh@msbyggsystem';
+        const isSuperadmin = !!(claims.superadmin === true || claims.role === 'superadmin' || isEmailSuperadmin);
+        const isAdmin = !!(claims.admin === true || claims.role === 'admin');
+        let label = '';
+        if (isSuperadmin) label = 'Superadmin';
+        else if (isAdmin) label = 'Admin';
+        else label = 'Användare';
+        if (active) setRoleLabel(label);
       } catch(_e) {}
     })();
     return () => { active = false; };
@@ -90,7 +102,12 @@ export default function HeaderUserMenu() {
         <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#4caf50', alignItems: 'center', justifyContent: 'center' }}>
           <Ionicons name="person" size={16} color="#fff" />
         </View>
-        <Text style={{ fontSize: 16, color: '#263238', fontWeight: '600' }}>{displayName}</Text>
+        <View style={{ flexDirection: 'column' }}>
+          <Text style={{ fontSize: 16, color: '#263238', fontWeight: '600' }}>{displayName}</Text>
+          {!!roleLabel && (
+            <Text style={{ fontSize: 12, color: '#607D8B', marginTop: 2 }}>{roleLabel}</Text>
+          )}
+        </View>
         <Ionicons name="chevron-down" size={14} color="#666" style={{ marginLeft: 6, transform: [{ rotate: (menuVisible ? '180deg' : '0deg') }] }} />
       </TouchableOpacity>
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {

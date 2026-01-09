@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Alert, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
-import { adminFetchCompanyMembers, auth, createUserRemote, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, saveCompanyProfile, saveUserProfile, updateUserRemote } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, deleteUserRemote, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, saveUserProfile, setCompanyStatusRemote, updateUserRemote } from './firebase';
 import UserEditModal from './UserEditModal';
 
 
@@ -23,16 +23,25 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [membersByCompany, setMembersByCompany] = useState({});
   const [hoveredCompany, setHoveredCompany] = useState(null);
   const [hoveredUser, setHoveredUser] = useState(null);
+  const [userContextMenu, setUserContextMenu] = useState(null); // { companyId, member, x, y }
   const [expandedMemberRoles, setExpandedMemberRoles] = useState({});
   const [editingUser, setEditingUser] = useState(null);
   const [savingUser, setSavingUser] = useState(false);
+  const [editingUserError, setEditingUserError] = useState('');
   const [contextMenuVisible, setContextMenuVisible] = useState(false);
   const [contextMenuX, setContextMenuX] = useState(0);
   const [contextMenuY, setContextMenuY] = useState(0);
   const [contextMenuCompany, setContextMenuCompany] = useState(null);
   const [memberFetchErrors, setMemberFetchErrors] = useState({});
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
-  const [hoveredIcon, setHoveredIcon] = useState(null);
+  const [spinHome, setSpinHome] = useState(0);
+  const [spinAdd, setSpinAdd] = useState(0);
+  const [spinRefresh, setSpinRefresh] = useState(0);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addCompanyName, setAddCompanyName] = useState('');
+  const [addCompanyId, setAddCompanyId] = useState('');
+  const [addCompanySaving, setAddCompanySaving] = useState(false);
+  const [addCompanyError, setAddCompanyError] = useState('');
   const [toast, setToast] = useState({ visible: false, message: '' });
 
   const showToast = (msg, timeout = 3000) => {
@@ -58,8 +67,37 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
   const isAdmin = (m) => {
     if (!m) return false;
-    return !!(m.isAdmin || m.admin || m.role === 'admin' || (m.customClaims && m.customClaims.admin) || (m.claims && m.claims.admin) || (m.access === 'admin'));
+    return !!(
+      m.isAdmin ||
+      m.admin ||
+      m.role === 'admin' ||
+      m.role === 'superadmin' ||
+      (m.customClaims && m.customClaims.admin) ||
+      (m.claims && m.claims.admin) ||
+      (m.access === 'admin')
+    );
   };
+
+  const isCompanyEnabled = (company) => {
+    try {
+      const profile = company && company.profile ? company.profile : {};
+      if (profile.deleted) return false;
+      if (typeof profile.enabled === 'boolean') return profile.enabled;
+      if (typeof profile.active === 'boolean') return profile.active;
+      // Default: företag utan explicit flagga räknas som aktiva
+      return true;
+    } catch (e) {
+      return true;
+    }
+  };
+
+  const visibleCompanies = (Array.isArray(companies) ? companies : []).filter((c) => {
+    try {
+      return !(c && c.profile && c.profile.deleted);
+    } catch (e) {
+      return true;
+    }
+  });
 
   // Ange ditt företags-ID här (eller hämta dynamiskt från inloggning)
   // Prefer prop, otherwise try web localStorage (dk_companyId), fallback to 'testdemo' for demos.
@@ -125,8 +163,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         const isGlobalAdmin = !!(claims.admin === true || claims.role === 'admin' || claims.superadmin === true);
         const userEmail = (user && user.email) ? String(user.email).toLowerCase() : '';
         // Allowlist override: allow specific known superadmin emails to see all members
-        const isEmailSuperadmin = userEmail === 'marcus.skogh@msbyggsystem' || userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.com';
+        const isEmailSuperadmin = userEmail === 'marcus@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.com' || userEmail === 'marcus.skogh@msbyggsystem';
         const effectiveGlobalAdmin = isGlobalAdmin || isEmailSuperadmin;
+        try { setEffectiveGlobalAdmin(!!effectiveGlobalAdmin); } catch (_) {}
         if (!effectiveGlobalAdmin) return;
         // Fetch members for each company in parallel (but limit concurrency to avoid bursts)
         const results = await Promise.all(companies.map(async (c) => {
@@ -138,8 +177,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 const mems = r && (r.members || r.data && r.data.members) ? (r.members || r.data && r.data.members) : [];
                 return { id: c.id, members: Array.isArray(mems) ? mems : [] };
               } catch(e) {
-                // record the error for debugging and fall back to client fetch
-                setMemberFetchErrors(prev => ({ ...prev, [c.id]: String(e?.message || e) }));
+                // record non-generic errors for debugging and fall back to client fetch
+                try {
+                  const raw = String(e && e.message ? e.message : (e || ''));
+                  if (raw && raw.trim().toLowerCase() !== 'internal') {
+                    setMemberFetchErrors(prev => ({ ...prev, [c.id]: raw }));
+                  }
+                } catch (_) {}
               }
             }
             try {
@@ -197,68 +241,87 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     } catch (e) {}
   };
 
-  const handleAddCompany = async () => {
+  const handleAddCompany = () => {
     try {
-      if (typeof window !== 'undefined') {
-        // Ask for a company name first and suggest a safe slug for the company ID
-        const name = (window.prompt('Ange företagsnamn (valfritt)', '') || '').trim();
-        const suggestedId = name ? slugify(name) : '';
-        const id = (window.prompt('Ange företags-ID (kort identifierare)', suggestedId) || '').trim();
-        if (!id) return showToast('Avbröts: inget företags-ID angivet');
-        // Optimistic UI: add placeholder immediately
-        const prev = Array.isArray(companies) ? companies : [];
-        setCompanies(prev.concat([{ id, profile: { companyName: name || id } }]));
-        showToast('Skapar företag...');
+      setAddCompanyError('');
+      setAddCompanyName('');
+      setAddCompanyId('');
+      setAddDialogOpen(true);
+    } catch (_) {}
+  };
 
-        // Ensure token/claims are fresh before attempting writes that depend on claims
-        try {
-          if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
-            await auth.currentUser.getIdToken(true);
-          }
-        } catch (e) {
-          // Non-fatal: continue but warn user
-          showToast('Kunde inte uppdatera autentiseringstoken, försök logga ut/in om fel uppstår');
-        }
-
-        // Prefer server-side provisioning (callable) because Firestore rules restrict
-        // client-side creation of company profiles to superadmins / MS Byggsystem admins.
-        try {
-          console.log('[debug] calling provisionCompanyRemote', { id, name });
-          const p = await provisionCompanyRemote({ companyId: id, companyName: name || id });
-          console.log('[debug] provisionCompanyRemote result', p);
-          if (!p || !p.ok) {
-            showToast('Företaget skapades men provisioning kunde inte slutföras automatiskt');
-          }
-        } catch (e) {
-          console.error('[debug] provisionCompanyRemote threw', e);
-          const code = e && e.code ? e.code : (String(e || '').toLowerCase().includes('permission') ? 'permission-denied' : null);
-          if (code === 'permission-denied') {
-            showToast('Ingen behörighet: endast superadmin eller MS Byggsystem-admin kan skapa företag');
-            // revert optimistic add
-            setCompanies(prev);
-            return;
-          }
-          // If provisioning callable isn't available or failed for other reasons,
-          // fall back to client-side write attempt so developer environments without
-          // functions can still create a company (may be blocked by rules).
-          try {
-            console.log('[debug] fallback: saving profile to Firestore', { id, name });
-            const ok = await saveCompanyProfile(id, { companyName: name || id, createdAt: new Date().toISOString(), enabled: true });
-            if (!ok) throw new Error('Client save returned falsy');
-            console.log('[debug] fallback saveCompanyProfile succeeded', { id });
-          } catch (err) {
-            console.error('[debug] fallback saveCompanyProfile threw', err);
-            showToast('Kunde inte spara företag till Firebase: ' + String(err?.message || err));
-            setCompanies(prev);
-            return;
-          }
-        }
-        // Refresh companies list
-        try { const items = await fetchCompanies(); if (Array.isArray(items)) setCompanies(items); } catch(_) {}
-        showToast('Företaget skapades');
+  const handleConfirmAddCompany = async () => {
+    if (addCompanySaving) return;
+    try {
+      if (typeof window === 'undefined') return;
+      const name = String(addCompanyName || '').trim();
+      let id = String(addCompanyId || '').trim();
+      if (!id && name) {
+        id = slugify(name);
       }
+      if (!id) {
+        setAddCompanyError('Ange ett företags-ID');
+        return;
+      }
+      setAddCompanyError('');
+      setAddCompanySaving(true);
+
+      const prev = Array.isArray(companies) ? companies : [];
+      // Optimistic UI: add placeholder immediately
+      setCompanies(prev.concat([{ id, profile: { companyName: name || id } }]));
+
+      // Ensure token/claims are fresh before attempting writes that depend on claims
+      try {
+        if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
+          await auth.currentUser.getIdToken(true);
+        }
+      } catch (e) {
+        // Non-fatal: continue but visa info i dialogen
+        setAddCompanyError('Kunde inte uppdatera autentiseringstoken, försök logga ut/in om fel uppstår.');
+      }
+
+      // Prefer server-side provisioning (callable) because Firestore rules restrict
+      // client-side creation of company profiles to superadmins / MS Byggsystem admins.
+      try {
+        console.log('[debug] calling provisionCompanyRemote', { id, name });
+        const p = await provisionCompanyRemote({ companyId: id, companyName: name || id });
+        console.log('[debug] provisionCompanyRemote result', p);
+        if (!p || !p.ok) {
+          setAddCompanyError('Serverfel: provisioning kunde inte slutföras automatiskt. Kontrollera loggar för provisionCompany.');
+          setCompanies(prev);
+          setAddCompanySaving(false);
+          return;
+        }
+      } catch (e) {
+        console.error('[debug] provisionCompanyRemote threw', e);
+        const rawCode = e && e.code ? String(e.code) : '';
+        const normCode = rawCode.startsWith('functions/') ? rawCode.slice('functions/'.length) : (rawCode || null);
+        const rawMsg = e && e.message ? String(e.message) : String(e || '');
+        let cleanMsg = rawMsg.replace(/^functions\.https\.HttpsError:\s*/i, '');
+        if (!cleanMsg) cleanMsg = 'Okänt fel från servern.';
+
+        if (normCode === 'permission-denied' || rawMsg.toLowerCase().includes('permission')) {
+          setAddCompanyError('Ingen behörighet att skapa företag (permission-denied). Be en superadmin kontrollera dina rättigheter.');
+        } else if (normCode === 'unauthenticated' || rawMsg.toLowerCase().includes('unauthenticated')) {
+          setAddCompanyError('Du är utloggad eller din session har gått ut. Försök logga ut och in igen.');
+        } else {
+          setAddCompanyError(`Serverfel från provisionCompany (${normCode || 'okänt fel'}): ${cleanMsg}`);
+        }
+        // revert optimistic add
+        setCompanies(prev);
+        setAddCompanySaving(false);
+        return;
+      }
+      // Refresh companies list
+      try {
+        const items = await fetchCompanies();
+        if (Array.isArray(items)) setCompanies(items);
+      } catch (_) {}
+      setAddDialogOpen(false);
     } catch (e) {
-      showToast('Fel vid skapande: ' + String(e?.message || e));
+      setAddCompanyError('Fel vid skapande: ' + String(e?.message || e));
+    } finally {
+      setAddCompanySaving(false);
     }
   };
 
@@ -331,53 +394,140 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   };
 
   return (
-    <div style={{ width: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative' }}>
+    <div style={{ width: 'max-content', minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative' }}>
+      {addDialogOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.35)',
+            zIndex: 50,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+          onClick={() => { if (!addCompanySaving) setAddDialogOpen(false); }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              padding: 16,
+              width: 280,
+              maxWidth: '90vw',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+              fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif'
+            }}
+          >
+            <h4 style={{ margin: 0, marginBottom: 8, fontSize: 16, fontWeight: 700, color: '#222' }}>Nytt företag</h4>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 13, marginBottom: 4, display: 'block', color: '#444' }}>Företagsnamn (valfritt)</label>
+              <input
+                type="text"
+                value={addCompanyName}
+                onChange={(e) => setAddCompanyName(e.target.value)}
+                placeholder="Företagsnamn"
+                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 13, marginBottom: 4, display: 'block', color: '#444' }}>Företags-ID (kort identifierare)</label>
+              <input
+                type="text"
+                value={addCompanyId}
+                onChange={(e) => setAddCompanyId(e.target.value)}
+                placeholder={addCompanyName ? slugify(addCompanyName) : 'foretags-id (får ej vara mellanrum)'}
+                style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }}
+              />
+            </div>
+            {addCompanyError ? (
+              <div style={{ color: '#D32F2F', fontSize: 12, marginBottom: 8 }}>{addCompanyError}</div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4, gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => { if (!addCompanySaving) setAddDialogOpen(false); }}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #ccc',
+                  backgroundColor: '#fff',
+                  fontSize: 14,
+                  cursor: 'pointer'
+                }}
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAddCompany}
+                disabled={addCompanySaving}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #1976D2',
+                  backgroundColor: addCompanySaving ? '#90CAF9' : '#1976D2',
+                  color: '#fff',
+                  fontSize: 14,
+                  cursor: addCompanySaving ? 'default' : 'pointer'
+                }}
+              >
+                {addCompanySaving ? 'Skapar...' : 'Skapa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
         {companiesMode ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
             <TouchableOpacity
               style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={handleGoHome}
+              onPress={() => {
+                setSpinHome(n => n + 1);
+                handleGoHome();
+              }}
               accessibilityLabel="Hem"
-              onMouseEnter={() => setHoveredIcon('home')}
-              onMouseLeave={() => setHoveredIcon(null)}
             >
-              <Ionicons name="home-outline" size={18} color="#1976D2" />
+              <Ionicons
+                name="home-outline"
+                size={18}
+                color="#1976D2"
+                style={{
+                  transform: `rotate(${spinHome * 360}deg)`,
+                  transition: 'transform 0.4s ease'
+                }}
+              />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={handleAddCompany}
-              accessibilityLabel="Lägg till företag"
-              onMouseEnter={() => setHoveredIcon('add')}
-              onMouseLeave={() => setHoveredIcon(null)}
-            >
-              <Ionicons name="add-circle-outline" size={18} color="#1976D2" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={handleHardRefresh}
+              onPress={() => {
+                setSpinRefresh(n => n + 1);
+                handleHardRefresh();
+              }}
               accessibilityLabel="Uppdatera"
-              onMouseEnter={() => setHoveredIcon('refresh')}
-              onMouseLeave={() => setHoveredIcon(null)}
             >
-              <Ionicons name="refresh" size={18} color="#1976D2" />
+              <Ionicons
+                name="refresh"
+                size={18}
+                color="#1976D2"
+                style={{
+                  transform: `rotate(${spinRefresh * 360}deg)`,
+                  transition: 'transform 0.4s ease'
+                }}
+              />
             </TouchableOpacity>
-
-            {hoveredIcon ? (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6 }}>
-                <div style={{ background: '#222', color: '#fff', padding: '6px 8px', borderRadius: 6, fontSize: 12, whiteSpace: 'nowrap' }}>
-                  {hoveredIcon === 'home' ? 'Hem' : (hoveredIcon === 'add' ? 'Lägg till företag' : 'Uppdatera (hård)')}
-                </div>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
-        {/* Toast/snackbar */}
-        {toast.visible ? (
+        {/* Toast/snackbar (döljs när dialogen för nytt företag är öppen) */}
+        {toast.visible && !addDialogOpen ? (
           <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '8px 12px', borderRadius: 6, fontSize: 13, zIndex: 40 }}>
             {toast.message}
           </div>
@@ -412,18 +562,20 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
       {companiesMode ? (<>
         <ul style={{ listStyle: 'none', padding: 0 }}>
-          {companies.filter(c => {
+          {visibleCompanies.filter(c => {
             const q = search.toLowerCase();
             const name = String((c.profile && (c.profile.companyName || c.profile.name)) || '').toLowerCase();
-            return q === '' || name.includes(q) || String(c.id || '').toLowerCase().includes(q);
+              return q === '' || name.includes(q) || String(c.id || '').toLowerCase().includes(q);
           }).length === 0 && (
             <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga företag hittades.</li>
           )}
-              {companies.filter(c => {
-                const q = search.toLowerCase();
+              {visibleCompanies.filter(c => {
+                 const q = search.toLowerCase();
                 const name = String((c.profile && (c.profile.companyName || c.profile.name)) || '').toLowerCase();
                 return q === '' || name.includes(q) || String(c.id || '').toLowerCase().includes(q);
-              }).map(company => (
+              }).map(company => {
+                const companyEnabled = isCompanyEnabled(company);
+                return (
                 <li key={company.id}>
                   <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
                     <div
@@ -445,34 +597,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         borderWidth: 1,
                         borderStyle: 'solid',
                         borderColor: hoveredCompany === company.id ? '#1976D2' : 'transparent',
-                        transition: 'background 0.15s, border 0.15s'
+                        transition: 'background 0.15s, border 0.15s',
                       }}
                     >
-                      <button
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          padding: 0,
-                          cursor: 'pointer',
-                          color: '#222',
-                          fontSize: 18,
-                          fontWeight: 700,
-                          marginRight: 6,
-                          display: 'inline-block',
-                          transform: expandedCompanies[company.id] ? 'rotate(90deg)' : 'none',
-                          transition: 'transform 0.15s'
-                        }}
-                        onClick={async () => {
-                          setExpandedCompanies(prev => ({ ...prev, [company.id]: !prev[company.id] }));
-                          if (showMembers && !membersByCompany[company.id]) {
-                            try {
-                              const members = await fetchCompanyMembers(company.id).catch(() => []);
-                              setMembersByCompany(prev => ({ ...prev, [company.id]: members }));
-                            } catch (e) { setMembersByCompany(prev => ({ ...prev, [company.id]: [] })); }
-                          }
-                        }}
-                      >&gt;</button>
-
                       <button
                         style={{
                         background: 'none',
@@ -487,13 +614,99 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         display: 'flex',
                         alignItems: 'center',
                         width: '100%',
-                        justifyContent: 'flex-start',
+                        justifyContent: 'space-between',
+                        whiteSpace: 'nowrap',
                       }}
-                        onClick={() => onSelectProject && onSelectProject({ companyId: company.id, profile: company.profile })}
+                        onClick={async () => {
+                          setExpandedCompanies(prev => ({ ...prev, [company.id]: !prev[company.id] }));
+                          if (showMembers && !membersByCompany[company.id]) {
+                            // Try admin callable first (works across companies as superadmin), then fallback to client fetch
+                            let loaded = false;
+                            try {
+                              const r = await adminFetchCompanyMembers(company.id);
+                              const mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+                              if (Array.isArray(mems)) {
+                                setMembersByCompany(prev => ({ ...prev, [company.id]: mems }));
+                                loaded = true;
+                              }
+                            } catch (e) {
+                              try {
+                                const raw = String(e && e.message ? e.message : (e || ''));
+                                if (raw && raw.trim().toLowerCase() !== 'internal') {
+                                  setMemberFetchErrors(prev => ({ ...prev, [company.id]: raw }));
+                                }
+                              } catch (_) {}
+                            }
+                            if (!loaded) {
+                              try {
+                                const members = await fetchCompanyMembers(company.id).catch(() => []);
+                                setMembersByCompany(prev => ({ ...prev, [company.id]: members }));
+                              } catch (e) {
+                                setMembersByCompany(prev => ({ ...prev, [company.id]: [] }));
+                              }
+                            }
+                          }
+                          if (onSelectProject) {
+                            onSelectProject({ companyId: company.id, profile: company.profile });
+                          }
+                        }}
                       >
-                        <span style={{ fontWeight: hoveredCompany === company.id ? '700' : '600' }}>
+                        <span style={{ fontWeight: hoveredCompany === company.id ? '700' : '600', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <Ionicons
+                            name="briefcase"
+                            size={16}
+                            color="#555"
+                            style={{
+                              transform: expandedCompanies[company.id] ? 'rotate(360deg)' : 'rotate(0deg)',
+                              transition: 'transform 0.4s ease'
+                            }}
+                          />
                           {(company.profile && (company.profile.companyName || company.profile.name)) || company.id}
-                          {((membersByCompany && membersByCompany[company.id]) ? ` (${(membersByCompany[company.id] || []).length})` : '')}
+                          {(() => {
+                            const mems = membersByCompany && membersByCompany[company.id] ? (membersByCompany[company.id] || []) : null;
+                            if (!mems) return '';
+                            const used = mems.length;
+                            let limit = null;
+                            if (company.profile && company.profile.userLimit !== undefined && company.profile.userLimit !== null && company.profile.userLimit !== '') {
+                              try {
+                                const raw = String(company.profile.userLimit).trim();
+                                const m = raw.match(/-?\d+/);
+                                if (m && m[0]) {
+                                  const n = parseInt(m[0], 10);
+                                  if (!Number.isNaN(n) && Number.isFinite(n)) limit = n;
+                                }
+                              } catch (_) {}
+                            }
+                            // Pragmatisk fallback: visa standard 10 licenser om inget annat hittas
+                            if (limit === null) {
+                              limit = 10;
+                            }
+                            if (typeof limit === 'number') return ` (${used}/${limit})`;
+                            return ` (${used})`;
+                          })()}
+                        </span>
+                        <span
+                          style={{
+                            marginLeft: 12,
+                            padding: '2px 10px',
+                            minWidth: 40,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                          }}
+                          title={companyEnabled ? 'Aktivt' : 'Pausat'}
+                        >
+                          <span
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: 999,
+                              backgroundColor: companyEnabled ? '#4CAF50' : '#E53935',
+                              border: '1px solid rgba(0,0,0,0.08)',
+                              boxSizing: 'border-box',
+                              display: 'inline-block',
+                            }}
+                          />
                         </span>
                       </button>
                     </div>
@@ -503,10 +716,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                       y={contextMenuY}
                       onClose={() => setContextMenuVisible(false)}
                       items={(() => {
-                        const enabled = !!(company.profile && (company.profile.enabled || company.profile.active));
+                        const enabled = companyEnabled;
                         return [
-                          { key: 'addUser', label: 'Lägg till användare' },
-                          { key: 'toggleActive', label: enabled ? 'Avaktivera företag' : 'Aktivera företag', danger: enabled },
+                          { key: 'addUser', label: 'Lägg till användare', icon: '➕' },
+                          { key: 'activate', label: 'Aktivera företag', icon: '▶️', disabled: enabled },
+                          { key: 'pause', label: 'Pausa företag', icon: '⏸️', disabled: !enabled },
+                          { key: 'deleteCompany', label: 'Radera företag', icon: '🗑️', danger: true },
                         ];
                       })()}
                       onSelect={async (item) => {
@@ -517,20 +732,48 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           setEditingUser({ companyId: compId, member: {}, create: true });
                           setContextMenuVisible(false);
                           return;
-                        } else if (item.key === 'toggleActive') {
-                          const enabled = !!(contextMenuCompany.profile && (contextMenuCompany.profile.enabled || contextMenuCompany.profile.active));
-                          const want = !enabled;
-                          const conf = (typeof window !== 'undefined') ? window.confirm((want ? 'Aktivera' : 'Avaktivera') + ' företaget ' + compId + '?') : true;
+                        } else if (item.key === 'activate' || item.key === 'pause') {
+                          const wantEnable = item.key === 'activate';
+                          const label = wantEnable ? 'aktivera' : 'pausa';
+                          const conf = (typeof window !== 'undefined') ? window.confirm(label.charAt(0).toUpperCase() + label.slice(1) + ' företaget ' + compId + '?') : true;
                           if (!conf) return;
                           try {
-                            await saveCompanyProfile(compId, { enabled: want });
-                            try { Alert.alert('Ok', `Företaget ${want ? 'aktiverades' : 'avaktiverades'}.`); } catch(e) { try { window.alert('Ok'); } catch(_) {} }
+                            const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable });
+                            const ok = !!(res && (res.ok === true || res.success === true));
+                            if (!ok) {
+                              showToast('Kunde inte ändra företagsstatus (servern avvisade ändringen).');
+                              return;
+                            }
+                            try { Alert.alert('Ok', `Företaget ${wantEnable ? 'aktiverades' : 'pausades'}.`); } catch(e) { try { window.alert('Ok'); } catch(_) {} }
                             try {
                               const updated = await fetchCompanyProfile(compId);
                               setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
                             } catch(e) {}
                           } catch (e) {
-                            try { Alert.alert('Fel', 'Kunde inte ändra status: ' + String(e?.message || e)); } catch(_) { try { window.alert('Kunde inte ändra status'); } catch(__) {} }
+                            const rawCode = e && e.code ? String(e.code) : '';
+                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                            showToast('Kunde inte ändra företagsstatus: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte ändra status: ' + combined); } catch(_) { try { window.alert('Kunde inte ändra status'); } catch(__) {} }
+                          }
+                        } else if (item.key === 'deleteCompany') {
+                          const conf = (typeof window !== 'undefined') ? window.confirm('Radera företaget ' + compId + '? Detta tar inte bort historik, men döljer företaget i listan.') : true;
+                          if (!conf) return;
+                          try {
+                            const res = await setCompanyStatusRemote({ companyId: compId, deleted: true, enabled: false });
+                            const ok = !!(res && (res.ok === true || res.success === true));
+                            if (!ok) {
+                              showToast('Kunde inte radera företaget (servern avvisade ändringen).');
+                              return;
+                            }
+                            setCompanies(prev => (Array.isArray(prev) ? prev.filter(c => c.id !== compId) : prev));
+                            try { Alert.alert('Borttaget', 'Företaget har dolts från listan.'); } catch(e) { try { window.alert('Företaget har dolts från listan.'); } catch(_) {} }
+                          } catch (e) {
+                            const rawCode = e && e.code ? String(e.code) : '';
+                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                            showToast('Kunde inte radera företaget: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch(_) { try { window.alert('Kunde inte radera företaget.'); } catch(__) {} }
                           }
                         }
                       }}
@@ -538,11 +781,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
                     {showMembers && expandedCompanies[company.id] && (
                       <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 6 }}>
-                        {(membersByCompany[company.id] || []).length === 0 && (
-                          <li style={{ color: '#888', fontSize: 13 }}>Inga användare hittades.</li>
-                        )}
                         {(() => {
                           const members = (membersByCompany[company.id] || []);
+                          if (!members.length) {
+                            return (
+                              <li style={{ color: '#D32F2F', fontSize: 13 }}>Inga användare skapade än.</li>
+                            );
+                          }
                           const admins = members.filter(isAdmin);
                           const usersList = members.filter(m => !isAdmin(m));
                           const roleState = expandedMemberRoles[company.id] || {};
@@ -553,8 +798,18 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   onClick={() => setExpandedMemberRoles(prev => ({ ...prev, [company.id]: { ...(prev[company.id] || {}), admin: !prev[company.id]?.admin } }))}
                                   style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 0' }}
                                 >
-                                      <span style={{ color: '#222', fontSize: 15, fontWeight: 600, marginRight: 6, display: 'inline-block', transform: roleState.admin ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>&gt;</span>
-                                      <span style={{ fontWeight: 700, fontSize: 14 }}>Admin ({admins.length})</span>
+                                  <span style={{ fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                    <Ionicons
+                                      name="shield-checkmark"
+                                      size={14}
+                                      color="#1976D2"
+                                      style={{
+                                        transform: roleState.admin ? 'rotate(360deg)' : 'rotate(0deg)',
+                                        transition: 'transform 0.4s ease'
+                                      }}
+                                    />
+                                    Admin ({admins.length})
+                                  </span>
                                 </div>
                                 {roleState.admin && (
                                   <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
@@ -567,6 +822,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                           <div
                                             onMouseEnter={() => setHoveredUser(`${company.id}:${memKey}`)}
                                             onMouseLeave={() => setHoveredUser(null)}
+                                            onContextMenu={(e) => {
+                                              try { e.preventDefault(); } catch(_) {}
+                                              const x = (e && e.clientX) ? e.clientX : 60;
+                                              const y = (e && e.clientY) ? e.clientY : 60;
+                                              setUserContextMenu({ companyId: company.id, member: m, x, y });
+                                            }}
                                             onClick={() => {
                                               // open edit form
                                               setEditingUser({ companyId: company.id, member: m });
@@ -576,13 +837,15 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                               color: '#333',
                                               display: 'block',
                                               borderRadius: 4,
-                                              padding: isHoveredUser ? '2px 4px' : '4px 0',
+                                              padding: '4px 4px',
+                                              paddingLeft: 24,
                                               background: isHoveredUser ? '#eee' : 'transparent',
                                               borderWidth: 1,
                                               borderStyle: 'solid',
                                               borderColor: isHoveredUser ? '#1976D2' : 'transparent',
                                               transition: 'background 0.15s, border 0.15s',
-                                              cursor: 'pointer'
+                                              cursor: 'pointer',
+                                              whiteSpace: 'nowrap',
                                             }}
                                           >
                                             <span style={{ fontWeight: isHoveredUser ? '700' : '400' }}>{m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || m.uid || m.id}</span>
@@ -599,8 +862,18 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   onClick={() => setExpandedMemberRoles(prev => ({ ...prev, [company.id]: { ...(prev[company.id] || {}), users: !prev[company.id]?.users } }))}
                                   style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 0' }}
                                 >
-                                  <span style={{ color: '#222', fontSize: 15, fontWeight: 600, marginRight: 6, display: 'inline-block', transform: roleState.users ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>&gt;</span>
-                                  <span style={{ fontWeight: 700, fontSize: 14 }}>Användare ({usersList.length})</span>
+                                  <span style={{ fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                    <Ionicons
+                                      name="person"
+                                      size={14}
+                                      color="#555"
+                                      style={{
+                                        transform: roleState.users ? 'rotate(360deg)' : 'rotate(0deg)',
+                                        transition: 'transform 0.4s ease'
+                                      }}
+                                    />
+                                    Användare ({usersList.length})
+                                  </span>
                                 </div>
                                 {roleState.users && (
                                   <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
@@ -613,6 +886,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                           <div
                                             onMouseEnter={() => setHoveredUser(`${company.id}:${memKey}`)}
                                             onMouseLeave={() => setHoveredUser(null)}
+                                            onContextMenu={(e) => {
+                                              try { e.preventDefault(); } catch(_) {}
+                                              const x = (e && e.clientX) ? e.clientX : 60;
+                                              const y = (e && e.clientY) ? e.clientY : 60;
+                                              setUserContextMenu({ companyId: company.id, member: m, x, y });
+                                            }}
                                             onClick={() => {
                                               setEditingUser({ companyId: company.id, member: m });
                                             }}
@@ -621,13 +900,15 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                               color: '#333',
                                               display: 'block',
                                               borderRadius: 4,
-                                              padding: isHoveredUser ? '2px 4px' : '4px 0',
+                                              padding: '4px 4px',
+                                              paddingLeft: 24,
                                               background: isHoveredUser ? '#eee' : 'transparent',
                                               borderWidth: 1,
                                               borderStyle: 'solid',
                                               borderColor: isHoveredUser ? '#1976D2' : 'transparent',
                                               transition: 'background 0.15s, border 0.15s',
-                                              cursor: 'pointer'
+                                              cursor: 'pointer',
+                                              whiteSpace: 'nowrap',
                                             }}
                                           >
                                             <span style={{ fontWeight: isHoveredUser ? '700' : '400' }}>{m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || m.uid || m.id}</span>
@@ -645,8 +926,47 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                     )}
                   </div>
                 </li>
-              ))}
+                );
+              })}
         </ul>
+      {userContextMenu && (
+        <ContextMenu
+          visible={!!userContextMenu}
+          x={userContextMenu.x}
+          y={userContextMenu.y}
+          onClose={() => setUserContextMenu(null)}
+          items={[{ key: 'delete', label: 'Ta bort användare', danger: true, icon: '🗑️' }]}
+          onSelect={async (item) => {
+            if (!userContextMenu || item.key !== 'delete') return;
+            const compId = userContextMenu.companyId;
+            const member = userContextMenu.member || {};
+            const uid = member.uid || member.id;
+            if (!uid || !compId) return;
+            const name = member.displayName || `${member.firstName || ''} ${member.lastName || ''}`.trim() || member.email || uid;
+            const confirmed = (typeof window !== 'undefined') ? window.confirm(`Ta bort användaren ${name} från ${compId}? Detta tar även bort Auth-kontot.`) : true;
+            if (!confirmed) return;
+            try {
+              await deleteUserRemote({ companyId: compId, uid });
+              try {
+                let mems = [];
+                try {
+                  const r = await adminFetchCompanyMembers(compId);
+                  mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+                } catch(e) {
+                  try { mems = await fetchCompanyMembers(compId); } catch(_) { mems = []; }
+                }
+                setMembersByCompany(prev => ({ ...prev, [compId]: mems }));
+              } catch(_) {}
+              try { Alert.alert('Borttagen', 'Användaren har tagits bort.'); } catch(e) { try { window.alert('Användaren har tagits bort.'); } catch(_) {} }
+            } catch (e) {
+              console.warn('delete user failed', e);
+              try { Alert.alert('Fel', 'Kunde inte ta bort användaren: ' + String(e?.message || e)); } catch(_) { try { window.alert('Kunde inte ta bort användaren.'); } catch(__) {} }
+            } finally {
+              setUserContextMenu(null);
+            }
+          }}
+        />
+      )}
       <UserEditModal
         visible={!!editingUser}
         member={editingUser?.member}
@@ -654,16 +974,29 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         isNew={!!editingUser?.create}
         onClose={() => setEditingUser(null)}
         saving={savingUser}
+        errorMessage={editingUserError}
         onSave={async ({ firstName, lastName, email, role, password }) => {
           if (!editingUser) return;
           const displayName = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim() || (email ? email.split('@')[0] : '');
+          setEditingUserError('');
           setSavingUser(true);
           try {
             if (editingUser.create) {
               // Create new user via callable
-              const createRes = await createUserRemote({ companyId: editingUser.companyId, email: String(email || '').trim().toLowerCase(), displayName });
-              const newUid = createRes && (createRes.uid || createRes.data && createRes.data.uid) ? (createRes.uid || (createRes.data && createRes.data.uid)) : null;
+              const createRes = await createUserRemote({ companyId: editingUser.companyId, email: String(email || '').trim().toLowerCase(), displayName, role: role || 'user' });
+              const newUid = createRes && (createRes.uid || (createRes.data && createRes.data.uid)) ? (createRes.uid || (createRes.data && createRes.data.uid)) : null;
               const tempPassword = createRes && (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) ? (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) : null;
+              if (!newUid) {
+                // No uid returned => treat as error and surface any message
+                const rawMsg = createRes && (createRes.message || createRes.error || createRes.code) ? String(createRes.message || createRes.error || createRes.code) : 'Okänt fel vid skapande av användare.';
+                setEditingUserError('Kunde inte skapa användare: ' + rawMsg);
+                try {
+                  Alert.alert('Fel', 'Kunde inte skapa användare: ' + rawMsg);
+                } catch (_) {
+                  try { window.alert('Kunde inte skapa användare: ' + rawMsg); } catch(__) {}
+                }
+                return;
+              }
               if (newUid) {
                 // If role or password specified different from default, call updateUserRemote to set them
                 const needRoleChange = role && role !== 'user';
@@ -673,7 +1006,16 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 }
                 // update client-side users doc
                 try { await saveUserProfile(newUid, { displayName, email, firstName, lastName }); } catch(e) {}
-                try { const mems = await fetchCompanyMembers(editingUser.companyId); setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems })); } catch(e) {}
+                try {
+                  let mems = [];
+                  try {
+                    const r = await adminFetchCompanyMembers(editingUser.companyId);
+                    mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+                  } catch(e) {
+                    try { mems = await fetchCompanyMembers(editingUser.companyId); } catch(_) { mems = []; }
+                  }
+                  setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems }));
+                } catch(e) {}
               }
               setEditingUser(null);
               try { Alert.alert('Ok', `Användare skapad. Temporärt lösenord: ${tempPassword || ''}`); } catch(e) { try { window.alert('Användare skapad.'); } catch(_) {} }
@@ -690,7 +1032,16 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                     await auth.currentUser.getIdToken(true);
                   }
                 } catch(e) { /* non-blocking */ }
-                try { const mems = await fetchCompanyMembers(editingUser.companyId); setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems })); } catch (_e) {}
+                try {
+                  let mems = [];
+                  try {
+                    const r = await adminFetchCompanyMembers(editingUser.companyId);
+                    mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+                  } catch(e) {
+                    try { mems = await fetchCompanyMembers(editingUser.companyId); } catch(_) { mems = []; }
+                  }
+                  setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems }));
+                } catch (_e) {}
                 setEditingUser(null);
                 try { Alert.alert('Sparat', 'Användaren uppdaterades. Behörighet och uppgifter är sparade.'); } catch(e) { try { window.alert('Användaren uppdaterades.'); } catch(_) {} }
               } catch (e) {
@@ -699,6 +1050,29 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             }
           } catch (e) {
             console.warn('User save error', e);
+            try {
+              const code = e && e.code ? String(e.code) : '';
+              // För callable functions hamnar vårt meddelande ofta i `details`
+              const details = (e && (e.details || e.data)) || '';
+              const msgText = e && e.message ? String(e.message) : '';
+              let detailText = '';
+              if (typeof details === 'string') detailText = details;
+              else if (details) {
+                try { detailText = JSON.stringify(details); } catch (_) { detailText = String(details); }
+              }
+              let combined = '';
+              if (code) combined += code;
+              if (detailText) combined += (combined ? ' — ' : '') + detailText;
+              if (!combined && msgText) combined = msgText;
+              if (!combined) combined = 'Okänt fel från servern.';
+              const finalMsg = 'Kunde inte spara användare: ' + combined;
+              setEditingUserError(finalMsg);
+              Alert.alert('Fel', finalMsg);
+            } catch (_alertErr) {
+              const fallbackMsg = 'Kunde inte spara användare: ' + String(e && e.message ? e.message : e);
+              setEditingUserError(fallbackMsg);
+              try { window.alert(fallbackMsg); } catch (_) {}
+            }
           } finally { setSavingUser(false); }
         }}
       />

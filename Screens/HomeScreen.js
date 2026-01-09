@@ -1199,11 +1199,11 @@ export default function HomeScreen({ route, navigation }) {
   const userBtnRef = useRef(null);
   const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
-  const isSuperAdmin = ((auth && auth.currentUser && String(auth.currentUser.email || '').toLowerCase() === 'marcus.skogh@msbyggsystem.se') || !!authClaims?.globalAdmin);
+  const isSuperAdmin = ((auth && auth.currentUser && ['marcus@msbyggsystem.se', 'marcus.skogh@msbyggsystem.se'].includes(String(auth.currentUser.email || '').toLowerCase())) || !!authClaims?.globalAdmin);
 
   const currentEmailLower = String(auth?.currentUser?.email || '').toLowerCase();
   const isMsAdminClaim = !!(authClaims && (authClaims.admin === true || authClaims.role === 'admin'));
-  const allowedTools = currentEmailLower === 'marcus.skogh@msbyggsystem.se' || (String(authClaims?.companyId || '').trim() === 'MS Byggsystem' && isMsAdminClaim);
+  const allowedTools = (currentEmailLower === 'marcus@msbyggsystem.se' || currentEmailLower === 'marcus.skogh@msbyggsystem.se') || (String(authClaims?.companyId || '').trim() === 'MS Byggsystem' && isMsAdminClaim);
 
   const openUserMenu = () => {
     try {

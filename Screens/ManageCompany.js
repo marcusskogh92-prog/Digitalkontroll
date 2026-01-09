@@ -59,7 +59,7 @@ export default function ManageCompany({ navigation }) {
     (async () => {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
-        if (email === 'marcus.skogh@msbyggsystem.se') {
+        if (email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se') {
           if (mounted) setAllowedTools(true);
           return;
         }
@@ -227,15 +227,6 @@ export default function ManageCompany({ navigation }) {
 
                   <View style={{ paddingTop: 12 }}>
                     <Text style={{ color: '#666', fontSize: 13 }}>Obs: detta uppdaterar endast företagsprofil i Firestore (`foretag/{companyId}/profil/public`). För att koppla användare till Auth krävs server‑funktioner (Cloud Functions) som skapar/ta bort Auth‑konton.</Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={{ width: 220, minWidth: 200 }}>
-                <View style={[dashboardCardStyle, { padding: 8, marginBottom: 16 }]}>
-                  <Text style={dashboardSectionTitleStyle}>Företagsinformation</Text>
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={{ color: '#777' }}>Företagsinformation och metadata visas här.</Text>
                   </View>
                 </View>
               </View>

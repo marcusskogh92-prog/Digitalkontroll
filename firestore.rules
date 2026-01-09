@@ -44,6 +44,13 @@ service cloud.firestore {
       allow update, delete: if isCompanyMember(company);
     }
 
+    // Allow collection group queries on any "profil" subcollection (used to list companies
+    // by reading their public profiles). Read-only; writes are still governed by the more
+    // specific /foretag/{company}/profil/{docId} rule above.
+    match /{path=**}/profil/{docId} {
+      allow read: if true;
+    }
+
     // Byggdel mall-register (company-scoped)
     match /foretag/{company}/byggdel_mallar/{mallId} {
       allow read, write: if isCompanyMember(company);

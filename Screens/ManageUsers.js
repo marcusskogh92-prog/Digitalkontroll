@@ -43,7 +43,24 @@ export default function ManageUsers({ route, navigation }) {
     } catch (_e) {}
   }, [companyId]);
 
-  const seatsLeft = (profile && typeof profile.userLimit === 'number') ? Math.max(0, (profile.userLimit || 0) - (Array.isArray(members) ? members.length : 0)) : null;
+  let userLimitNumber = null;
+  if (profile && profile.userLimit !== undefined && profile.userLimit !== null && profile.userLimit !== '') {
+    try {
+      const raw = String(profile.userLimit).trim();
+      const m = raw.match(/-?\d+/);
+      if (m && m[0]) {
+        const n = parseInt(m[0], 10);
+        if (!Number.isNaN(n) && Number.isFinite(n)) userLimitNumber = n;
+      }
+    } catch (_) {}
+  }
+
+  // Pragmatic fallback: MS Byggsystem standard 10 licenser om inget annat hittas
+  if (userLimitNumber === null && companyId === 'MS Byggsystem') {
+    userLimitNumber = 10;
+  }
+
+  const seatsLeft = (userLimitNumber !== null) ? Math.max(0, userLimitNumber - (Array.isArray(members) ? members.length : 0)) : null;
 
   const handleAdd = async () => {
     if (!newEmail) return Alert.alert('Fel', 'Ange e-post');
@@ -86,7 +103,7 @@ export default function ManageUsers({ route, navigation }) {
         <View style={{ backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden' }}>
           <View style={{ padding: 16 }}>
             <View style={{ marginTop: 8 }}>
-              <Text>{profile ? `Platser: ${profile.userLimit || '—'} — Användare: ${members.length}` : 'Läser profil...'}</Text>
+              <Text>{profile ? `Platser: ${userLimitNumber !== null ? userLimitNumber : '—'} — Användare: ${members.length}` : 'Läser profil...'}</Text>
             </View>
             {seatsLeft !== null ? <View style={{ marginTop: 6 }}><Text style={{ color: seatsLeft > 0 ? '#2E7D32' : '#D32F2F' }}>{`Platser kvar: ${seatsLeft}`}</Text></View> : null}
 
@@ -123,7 +140,7 @@ export default function ManageUsers({ route, navigation }) {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={{ padding: 16 }}>
         <Text style={{ fontSize: 18, fontWeight: '700' }}>Hantera användare</Text>
-        <Text style={{ marginTop: 8 }}>{profile ? `Platser: ${profile.userLimit || '—'} — Användare: ${members.length}` : 'Läser profil...'}</Text>
+        <Text style={{ marginTop: 8 }}>{profile ? `Platser: ${userLimitNumber !== null ? userLimitNumber : '—'} — Användare: ${members.length}` : 'Läser profil...'}</Text>
         {seatsLeft !== null ? <Text style={{ marginTop: 6, color: seatsLeft > 0 ? '#2E7D32' : '#D32F2F' }}>{`Platser kvar: ${seatsLeft}`}</Text> : null}
 
         <View style={{ marginTop: 12 }}>

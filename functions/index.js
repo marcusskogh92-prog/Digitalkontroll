@@ -34,7 +34,9 @@ async function provisionCompanyImpl(data, context) {
   const callerCompanyId = token.companyId || null;
   const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
   const allowedMsCompanyId = 'MS Byggsystem';
-  if (!isSuperadmin && !(callerCompanyId === allowedMsCompanyId && callerIsCompanyAdmin)) {
+  const callerEmailLower = callerEmail ? String(callerEmail).toLowerCase() : '';
+  const isEmailSuperadmin = callerEmailLower === 'marcus@msbyggsystem.se' || callerEmailLower === 'marcus.skogh@msbyggsystem.se' || callerEmailLower === 'marcus.skogh@msbyggsystem';
+  if (!isSuperadmin && !(callerCompanyId === allowedMsCompanyId && callerIsCompanyAdmin) && !isEmailSuperadmin) {
     throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller MS Byggsystem-admin kan skapa företag');
   }
   const callerUid = context.auth.uid;
@@ -57,47 +59,20 @@ async function provisionCompanyImpl(data, context) {
     const mallarRef = firestore.doc(`foretag/${companyId}/mallar/defaults`);
     await mallarRef.set({ createdAt: admin.firestore.FieldValue.serverTimestamp(), templates: [] }, { merge: true });
 
-    // 4) Add caller as member and ensure users/{uid} exists
-    let callerUser = null;
-    try { callerUser = await admin.auth().getUser(callerUid); } catch (e) { callerUser = null; }
-
-    const memberRef = firestore.doc(`foretag/${companyId}/members/${callerUid}`);
-    await memberRef.set({
-      uid: callerUid,
-      companyId,
-      displayName: callerUser && callerUser.displayName ? callerUser.displayName : null,
-      email: callerUser && callerUser.email ? callerUser.email : null,
-      role: 'admin',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    const userDocRef = firestore.doc(`users/${callerUid}`);
-    await userDocRef.set({ uid: callerUid, companyId, email: callerUser && callerUser.email ? callerUser.email : null, displayName: callerUser && callerUser.displayName ? callerUser.displayName : null }, { merge: true });
-
-    // 5) Set custom claims for the caller (grant admin role for this company)
-    try {
-      // Merge existing custom claims so we don't wipe e.g. superadmin flag
-      let existingClaims = {};
-      try {
-        const existingUser = await admin.auth().getUser(callerUid);
-        existingClaims = existingUser.customClaims || {};
-      } catch (e) { existingClaims = {}; }
-      const claims = Object.assign({}, existingClaims, { companyId, role: 'admin', admin: true });
-      // If caller was previously a global superadmin, keep that flag
-      if (existingClaims.superadmin) claims.superadmin = true;
-      // If caller belongs to MS Byggsystem and is admin, ensure superadmin
-      if (claims.companyId === 'MS Byggsystem' && claims.role === 'admin') claims.superadmin = true;
-      await admin.auth().setCustomUserClaims(callerUid, claims);
-    } catch (e) {
-      // Non-fatal: claim setting may fail if not permitted, but provisioning still succeeded.
-      console.warn('Could not set custom claims:', e?.message || e);
-    }
+    // 4) Do NOT automatically add the caller as a member or change their
+    //    custom claims. Superadmins/MS Byggsystem-admins manage the new
+    //    company's users via the separate user management functions instead.
 
     return { ok: true, companyId, uid: callerUid };
   } catch (err) {
     console.error('provisionCompany failed', err);
-    throw new functions.https.HttpsError('internal', String(err?.message || err));
+    // If this is already an HttpsError, propagate as-is so the client
+    // sees the real error code (e.g. permission-denied, unauthenticated).
+    if (err instanceof functions.https.HttpsError) {
+      throw err;
+    }
+    const code = (err && typeof err.code === 'string' && err.code) ? err.code : 'internal';
+    throw new functions.https.HttpsError(code, String(err?.message || err));
   }
 }
 
@@ -153,17 +128,28 @@ exports.createUser = functions.https.onCall(async (data, context) => {
 
     const role = (data && data.role) || 'user';
 
-    const userRecord = await admin.auth().createUser({
-      email,
-      password: tempPassword,
-      displayName,
-    });
+    let userRecord = null;
+    try {
+      userRecord = await admin.auth().createUser({
+        email,
+        password: tempPassword,
+        displayName,
+      });
+    } catch (createErr) {
+      // Om kontot redan finns, återanvänd befintlig användare istället för att kasta fel.
+      if (createErr && createErr.code === 'auth/email-already-exists') {
+        userRecord = await admin.auth().getUserByEmail(email);
+      } else {
+        throw createErr;
+      }
+    }
 
     // Set custom claims so client and other functions can resolve company membership
     try {
-      const claims = { companyId, admin: role === 'admin', role };
-      // If company is MS Byggsystem and role is admin, grant superadmin
-      if (companyId === 'MS Byggsystem' && role === 'admin') claims.superadmin = true;
+      const isAdminRole = role === 'admin' || role === 'superadmin';
+      const claims = { companyId, admin: isAdminRole, role };
+      // If company is MS Byggsystem and role is admin/superadmin, grant superadmin
+      if (companyId === 'MS Byggsystem' && isAdminRole) claims.superadmin = true;
       await admin.auth().setCustomUserClaims(userRecord.uid, claims);
     } catch (e) {
       console.warn('Could not set custom claims for new user:', e?.message || e);
@@ -195,11 +181,39 @@ exports.createUser = functions.https.onCall(async (data, context) => {
     return { ok: true, uid: userRecord.uid, tempPassword };
   } catch (err) {
     console.error('createUser error', err);
-    const msg = err && err.message ? String(err.message) : String(err);
-    if (err && err.code && err.code.startsWith('functions.https')) {
-      throw err; // already thrown HttpsError
+
+    const rawCode = (err && typeof err.code === 'string') ? err.code : '';
+    const msg = err && err.message ? String(err.message) : String(err || '');
+    const baseMessage = `[createUser:${rawCode || 'unknown'}] ${msg || 'Okänt fel'}`;
+
+    // Om det redan är en HttpsError, behåll koden men berika med mer info
+    if (err instanceof functions.https.HttpsError) {
+      const effectiveCode = err.code || 'internal';
+      throw new functions.https.HttpsError(effectiveCode, baseMessage);
     }
-    throw new functions.https.HttpsError('internal', msg);
+
+    // Vanliga fel från Firebase Auth – mappa till mer begripliga HttpsErrors
+    if (rawCode === 'auth/email-already-exists') {
+      throw new functions.https.HttpsError(
+        'already-exists',
+        'Det finns redan ett konto med denna e-postadress.'
+      );
+    }
+    if (rawCode === 'auth/invalid-email') {
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        'Ogiltig e-postadress. Kontrollera stavningen och försök igen.'
+      );
+    }
+    if (rawCode === 'auth/invalid-password') {
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        'Lösenordet uppfyller inte säkerhetskraven.'
+      );
+    }
+
+    // Fallback: skicka tillbaka intern-kod med mer detaljerad text
+    throw new functions.https.HttpsError('internal', baseMessage);
   }
 });
 
@@ -317,10 +331,11 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
           // Merge with existing claims to avoid wiping unrelated flags (like superadmin)
           let existing = {};
           try { const urec = await admin.auth().getUser(uid); existing = urec.customClaims || {}; } catch(e) { existing = {}; }
-          const claims = Object.assign({}, existing, { role: role, admin: role === 'admin' });
+          const isAdminRole = role === 'admin' || role === 'superadmin';
+          const claims = Object.assign({}, existing, { role, admin: isAdminRole });
           claims.companyId = companyId;
-          // Enforce MS Byggsystem => admin implies superadmin
-          if (companyId === 'MS Byggsystem' && role === 'admin') claims.superadmin = true;
+          // Enforce MS Byggsystem => admin/superadmin implies superadmin claim
+          if (companyId === 'MS Byggsystem' && isAdminRole) claims.superadmin = true;
           else if (claims.superadmin && companyId !== 'MS Byggsystem') delete claims.superadmin;
           await admin.auth().setCustomUserClaims(uid, claims);
         } catch (e) {
@@ -362,7 +377,7 @@ exports.adminFetchCompanyMembers = functions.https.onCall(async (data, context) 
   if (!context.auth && !runningInEmulator) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   // Allow if caller is admin according to token, or if email matches known superadmin(s)
   const userEmail = (context.auth && context.auth.token && context.auth.token.email) ? String(context.auth.token.email).toLowerCase() : '';
-  const isSuperadminEmail = userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem';
+  const isSuperadminEmail = userEmail === 'marcus@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem';
   const isAdminCall = callerIsAdmin(context) || isSuperadminEmail;
   if (!isAdminCall && !runningInEmulator) throw new functions.https.HttpsError('permission-denied', 'Caller must be an admin');
 
@@ -370,13 +385,101 @@ exports.adminFetchCompanyMembers = functions.https.onCall(async (data, context) 
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
 
   try {
+    const out = [];
+
+    // Primary source: company-scoped members directory
     const membersRef = db.collection(`foretag/${companyId}/members`);
     const snap = await membersRef.get();
-    const out = [];
     snap.forEach(d => out.push(Object.assign({ id: d.id }, d.data())));
+
+    // Fallback: if no members docs exist yet, look in global users collection
+    if (out.length === 0) {
+      try {
+        const usersRef = db.collection('users').where('companyId', '==', companyId);
+        const usnap = await usersRef.get();
+        usnap.forEach(d => {
+          const data = d.data() || {};
+          out.push({
+            id: d.id,
+            uid: d.id,
+            companyId,
+            displayName: data.displayName || null,
+            email: data.email || null,
+            role: data.role || null,
+          });
+        });
+      } catch (e) {
+        console.warn('adminFetchCompanyMembers fallback users query failed for company', companyId, e && e.message ? e.message : e);
+      }
+    }
+
     return { ok: true, members: out };
   } catch (err) {
     console.error('adminFetchCompanyMembers error', err);
     throw new functions.https.HttpsError('internal', err && err.message ? String(err.message) : String(err));
   }
+});
+
+// Update company status (enabled/paused/deleted) in profile.public.
+// Only allowed for superadmins, MS Byggsystem-admins, or known superadmin emails.
+exports.setCompanyStatus = functions.https.onCall(async (data, context) => {
+  if (!context || !context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const token = context.auth.token || {};
+  const callerEmail = token.email ? String(token.email).toLowerCase() : '';
+  const isSuperadmin = !!token.superadmin || token.role === 'superadmin';
+  const callerCompanyId = token.companyId || null;
+  const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
+  const isEmailSuperadmin = callerEmail === 'marcus@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem';
+
+  if (!isSuperadmin && !(callerCompanyId === 'MS Byggsystem' && callerIsCompanyAdmin) && !isEmailSuperadmin) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller MS Byggsystem-admin kan ändra företagsstatus');
+  }
+
+  const companyId = data && data.companyId ? String(data.companyId).trim() : null;
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  const update = {};
+  if (Object.prototype.hasOwnProperty.call(data || {}, 'enabled')) {
+    update.enabled = !!data.enabled;
+  }
+  if (Object.prototype.hasOwnProperty.call(data || {}, 'deleted')) {
+    update.deleted = !!data.deleted;
+    if (update.deleted && !Object.prototype.hasOwnProperty.call(update, 'enabled')) {
+      update.enabled = false;
+    }
+  }
+
+  if (Object.keys(update).length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'No status fields provided to update');
+  }
+
+  try {
+    const profRef = db.doc(`foretag/${companyId}/profil/public`);
+    await profRef.set(update, { merge: true });
+  } catch (err) {
+    console.error('setCompanyStatus profile write error', { companyId, update, err: err && err.message ? err.message : err });
+    throw new functions.https.HttpsError(
+      'internal',
+      `[profile-write] companyId=${companyId}, update=${JSON.stringify(update)}: ${err && err.message ? String(err.message) : String(err)}`
+    );
+  }
+
+  try {
+    await db.collection(`foretag/${companyId}/activity`).add({
+      type: 'setCompanyStatus',
+      actorUid: context.auth.uid || null,
+      update,
+      ts: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('setCompanyStatus activity log failed', { companyId, update, err: e && e.message ? e.message : e });
+    // non-blocking: do not fail the function if logging fails
+  }
+
+  return { ok: true };
 });
