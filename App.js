@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import HeaderUserMenuConditional from './components/HeaderUserMenuConditional';
 
 // Importera skärmar
 import ArbetsberedningScreen from './Screens/ArbetsberedningScreen';
@@ -18,6 +19,8 @@ import EgenkontrollScreen from './Screens/EgenkontrollScreen';
 import FuktmätningScreen from './Screens/FuktmätningScreen';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
+import ManageCompany from './Screens/ManageCompany';
+import ManageUsers from './Screens/ManageUsers';
 import MottagningskontrollScreen from './Screens/MottagningskontrollScreen';
 import ProjectDetails from './Screens/ProjectDetails';
 import RiskbedömningScreen from './Screens/RiskbedömningScreen';
@@ -64,25 +67,37 @@ export default function App() {
                 headerTintColor: '#000',
                 headerTitleStyle: { fontWeight: 'bold', color: '#000', fontFamily: 'Inter_700Bold' },
                 headerTitleAlign: 'center',
-                headerTitleContainerStyle: { flex: 1, paddingLeft: 0, paddingRight: 0 },
+                headerTitleContainerStyle: Platform.OS === 'web'
+                  ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
+                  : { flex: 1, paddingLeft: 0, paddingRight: 0 },
                 headerTitle: () => <HomeHeaderSearch navigation={navigation} route={route} />,
                 headerLeft: () => (
                   <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
                     <DigitalKontrollHeaderLogo />
                   </View>
                 ),
-                headerLeftContainerStyle: { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
+                headerLeftContainerStyle: Platform.OS === 'web'
+                  ? { position: 'absolute', left: 20, top: 0, height: '100%', justifyContent: 'center', paddingLeft: 0, zIndex: 20 }
+                  : { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
                 headerRight: () => (
-                  <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center' }}>
+                  <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
+                    {/* Persistent user menu (web) - hide on Home, Home renders it inline next to Verktyg */}
+                    {Platform.OS === 'web' && route?.name !== 'Home' ? (
+                      <View style={{ marginLeft: 12 }}>
+                        <HeaderUserMenuConditional />
+                      </View>
+                    ) : null}
                   </View>
                 ),
-                headerRightContainerStyle: { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
+                headerRightContainerStyle: Platform.OS === 'web'
+                  ? { position: 'absolute', right: 20, top: 0, height: '100%', justifyContent: 'center', paddingRight: 0 }
+                  : { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
                 headerBackTitleVisible: false,
               });
             }}
           >
-            <Stack.Screen name="Login" component={LoginScreen} options={{ title: 'Logga in' }} />
+            <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
             <Stack.Screen 
               name="Home" 
               component={HomeScreen} 
@@ -92,20 +107,26 @@ export default function App() {
                 return ({
                   headerStyle: { backgroundColor: '#FFFFFF', height: 96, paddingLeft: 0, paddingRight: 0, zIndex: 10, overflow: 'visible' },
                 headerTitleAlign: 'center',
-                headerTitleContainerStyle: { flex: 1, paddingLeft: 0, paddingRight: 0 },
+                headerTitleContainerStyle: Platform.OS === 'web'
+                  ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
+                  : { flex: 1, paddingLeft: 0, paddingRight: 0 },
                 headerTitle: () => <HomeHeaderSearch navigation={navigation} route={route} />,
                 headerLeft: () => (
                   <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
                     <DigitalKontrollHeaderLogo />
                   </View>
                 ),
-                headerLeftContainerStyle: { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
+                  headerLeftContainerStyle: Platform.OS === 'web'
+                    ? { position: 'absolute', left: 20, top: 0, height: '100%', justifyContent: 'center', paddingLeft: 0, zIndex: 20 }
+                    : { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
                 headerRight: () => (
-                  <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center' }}>
+                  <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
                   </View>
                 ),
-                headerRightContainerStyle: { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
+                  headerRightContainerStyle: Platform.OS === 'web'
+                    ? { position: 'absolute', right: 20, top: 0, height: '100%', justifyContent: 'center', paddingRight: 0 }
+                    : { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
                 headerBackTitleVisible: false,
                 });
               }}
@@ -188,6 +209,36 @@ export default function App() {
               ),
             })} />
             <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
+            <Stack.Screen name="ManageCompany" component={ManageCompany} options={({ navigation }) => ({
+              title: 'Hantera företag',
+              headerBackTitleVisible: false,
+              headerBackTitle: '',
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.goBack()}
+                  accessibilityLabel="Tillbaka"
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                >
+                  <Ionicons name="chevron-back" size={30} color="#000" />
+                </TouchableOpacity>
+              ),
+            })} />
+            <Stack.Screen name="ManageUsers" component={ManageUsers} options={({ navigation }) => ({
+              title: 'Hantera användare',
+              headerBackTitleVisible: false,
+              headerBackTitle: '',
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.goBack()}
+                  accessibilityLabel="Tillbaka"
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                >
+                  <Ionicons name="chevron-back" size={30} color="#000" />
+                </TouchableOpacity>
+              ),
+            })} />
             <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={({ navigation }) => ({
               headerBackTitleVisible: false,
               headerBackTitle: '',

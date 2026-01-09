@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore } from '../components/firebase';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 
 const LABELS = {
   title: 'Egenkontroll',
@@ -34,7 +35,7 @@ export default function EgenkontrollScreen({
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch(_e {
+      } catch(_e) {
         const existing = await AsyncStorage.getItem('completed_controls');
         let arr = [];
         if (existing) arr = JSON.parse(existing);
@@ -42,15 +43,28 @@ export default function EgenkontrollScreen({
         await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
       }
       try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
+      try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
         if (draftRaw) {
           let drafts = JSON.parse(draftRaw) || [];
           drafts = drafts.filter(d => !(d.project?.id === project?.id && d.type === 'Egenkontroll' && d.id === completed.id));
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch(_e {}
+      } catch(_e) {}
       alert('Kontrollen har sparats som utförd!');
-      } catch(_e {
+      } catch(e) {
       alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };

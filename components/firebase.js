@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
 import { Alert } from 'react-native';
 
@@ -36,6 +37,48 @@ try {
 }
 export const auth = _auth;
 export const db = getFirestore(app);
+// Functions client
+let _functionsClient = null;
+try {
+  _functionsClient = getFunctions(app);
+} catch (e) {
+  _functionsClient = null;
+}
+export const functionsClient = _functionsClient;
+
+// Callable wrappers
+export async function createUserRemote({ companyId, email, displayName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'createUser');
+  const res = await fn({ companyId, email, displayName });
+  return res && res.data ? res.data : res;
+}
+
+export async function deleteUserRemote({ companyId, uid }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'deleteUser');
+  const res = await fn({ companyId, uid });
+  return res && res.data ? res.data : res;
+}
+
+export async function updateUserRemote({ companyId, uid, displayName, email, role, password }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'updateUser');
+  const payload = { companyId, uid };
+  if (displayName !== undefined) payload.displayName = displayName;
+  if (email !== undefined) payload.email = email;
+  if (role !== undefined) payload.role = role;
+  if (password !== undefined) payload.password = password;
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function adminFetchCompanyMembers(companyId) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'adminFetchCompanyMembers');
+  const res = await fn({ companyId });
+  return res && res.data ? res.data : res;
+}
 
 async function getAuthDebugSnapshot() {
   const snap = {
@@ -173,6 +216,35 @@ export async function fetchCompanyProfile(companyId) {
     if (snap.exists()) return snap.data();
   } catch(e) {}
   return null;
+}
+
+// Fetch a flat list of companies (foretag). Returns array of { id, profile }
+export async function fetchCompanies() {
+  try {
+    const baseRef = collection(db, 'foretag');
+    const snap = await getDocs(baseRef);
+    const ids = [];
+    snap.forEach(d => ids.push(d.id));
+    // Fetch profiles in parallel
+    const out = await Promise.all(ids.map(async (id) => {
+      try {
+        const pref = doc(db, 'foretag', id, 'profil', 'public');
+        const ps = await getDoc(pref);
+        return { id, profile: ps.exists() ? ps.data() : null };
+      } catch(e) {
+        return { id, profile: null };
+      }
+    }));
+    // Sort by display name if available, otherwise by id
+    out.sort((a, b) => {
+      const an = String((a.profile && (a.profile.companyName || a.profile.name)) || a.id || '').toLowerCase();
+      const bn = String((b.profile && (b.profile.companyName || b.profile.name)) || b.id || '').toLowerCase();
+      return an.localeCompare(bn, undefined, { sensitivity: 'base' });
+    });
+    return out;
+  } catch(e) {
+    return [];
+  }
 }
 
 // Resolve the company logo URL from profile.public.logoUrl.

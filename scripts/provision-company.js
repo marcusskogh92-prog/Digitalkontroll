@@ -31,6 +31,7 @@ async function main() {
   admin.initializeApp({ credential: admin.credential.cert(sa) });
   const db = admin.firestore();
   const auth = admin.auth();
+  const formatPersonName = require('./lib/formatPersonName');
 
   const company = args.company;
   if (!company) { console.error('--company is required'); process.exit(1); }
@@ -53,7 +54,7 @@ async function main() {
     if (adminEmail) {
       let userRecord;
       try { userRecord = await auth.getUserByEmail(adminEmail); console.log('Admin user exists:', userRecord.uid); } catch(e) {
-        userRecord = await auth.createUser({ email: adminEmail, password: adminPassword, displayName: adminEmail.split('@')[0] });
+        userRecord = await auth.createUser({ email: adminEmail, password: adminPassword, displayName: formatPersonName(adminEmail.split('@')[0]) });
         console.log('Created admin user:', userRecord.uid);
       }
       await auth.setCustomUserClaims(userRecord.uid, { admin: true, role: 'admin', companyId: company });
@@ -64,7 +65,7 @@ async function main() {
         companyId: company,
         role: 'admin',
         email: adminEmail,
-        displayName: userRecord.displayName || adminEmail.split('@')[0],
+        displayName: userRecord.displayName || formatPersonName(adminEmail.split('@')[0]),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });

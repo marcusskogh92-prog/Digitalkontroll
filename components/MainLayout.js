@@ -1,11 +1,18 @@
 import ProjectSidebar from './ProjectSidebar';
 
-const MainLayout = ({ children, onSelectProject }) => {
+const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle, sidebarSearchPlaceholder, sidebarCompaniesMode, sidebarShowMembers = false, topBar = null }) => {
+  const topBarHeight = topBar ? 96 : 0;
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#f4f6fa' }}>
-      <ProjectSidebar onSelectProject={onSelectProject} />
-      <div style={{ flex: 1, padding: 32, overflow: 'auto' }}>
-        {children}
+    <div style={{ minHeight: '100vh', background: '#f4f6fa', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif' }}>
+      {topBar ? <div style={{ width: '100%', borderBottom: '1px solid #e6e6e6', background: '#fff' }}>{topBar}</div> : null}
+      <div style={{ display: 'flex', minHeight: `calc(100vh - ${topBarHeight}px)` }}>
+        <ProjectSidebar onSelectProject={onSelectProject} title={sidebarTitle} searchPlaceholder={sidebarSearchPlaceholder} companiesMode={sidebarCompaniesMode} showMembers={sidebarShowMembers} />
+        <div style={{ flex: 1, padding: 32, overflow: 'auto' }}>
+          {children}
+        </div>
+        {rightPanel ? (
+          <div style={{ width: 340, borderLeft: '1px solid #e6e6e6', background: '#f7fafc', padding: 16 }}>{rightPanel}</div>
+        ) : null}
       </div>
     </div>
   );

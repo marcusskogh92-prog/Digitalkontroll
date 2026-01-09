@@ -1,7 +1,8 @@
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore } from '../components/firebase';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 
 const LABELS = {
   title: 'Arbetsberedning',
@@ -43,7 +44,20 @@ export default function ArbetsberedningScreen({ date, participants = [], project
       };
       // Central helper handles permission-denied and local fallback.
       await saveControlToFirestore(completed);
-    } catch(_e {
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
+    } catch(e) {
       alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };

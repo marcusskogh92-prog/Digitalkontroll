@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore } from '../components/firebase';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 
 const LABELS = {
   title: 'Fuktmätning',
@@ -34,6 +35,19 @@ export default function FuktmätningScreen({ date, participants = [], project: p
         arr.push(completed);
         await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
       }
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
         if (draftRaw) {

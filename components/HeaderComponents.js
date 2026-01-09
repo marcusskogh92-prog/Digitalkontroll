@@ -13,7 +13,13 @@ export function CompanyHeaderLogo({ companyId }) {
     (async () => {
       try {
         const stored = await AsyncStorage.getItem('dk_companyId');
-        const cid = String(companyId || '').trim() || String(stored || '').trim();
+        let cid = String(companyId || '').trim() || String(stored || '').trim();
+        // On web also try window.localStorage in case AsyncStorage isn't populated
+        try {
+          if ((!cid || cid === '') && typeof window !== 'undefined' && window.localStorage) {
+            cid = String(window.localStorage.getItem('dk_companyId') || '').trim();
+          }
+        } catch (_e) {}
         if (!cid) {
           if (active) setLogoUrl(null);
           return;
@@ -58,6 +64,22 @@ export function HomeHeaderSearch({ navigation, route }) {
   const [isFocused, setIsFocused] = React.useState(false);
   const containerRef = React.useRef(null);
   const [measuredWidth, setMeasuredWidth] = React.useState(null);
+
+  // Determine whether header search dropdown is considered open.
+  // Prefer explicit route param when present, otherwise fall back to query presence.
+  const headerSearchOpen = React.useMemo(() => {
+    if (Object.prototype.hasOwnProperty.call(route?.params || {}, 'headerSearchOpen')) {
+      return !!route.params.headerSearchOpen;
+    }
+    return !!query;
+  }, [route?.params?.headerSearchOpen, query]);
+
+  const headerSearchKeepConnected = React.useMemo(() => {
+    if (Object.prototype.hasOwnProperty.call(route?.params || {}, 'headerSearchKeepConnected')) {
+      return !!route.params.headerSearchKeepConnected;
+    }
+    return false;
+  }, [route?.params?.headerSearchKeepConnected]);
 
   React.useEffect(() => {
     if (measuredWidth && navigation?.setParams) {
@@ -113,20 +135,20 @@ export function HomeHeaderSearch({ navigation, route }) {
       style={{ width: '100%', maxWidth: 720, minWidth: 260 }}
     >
       <View
-        style={{
-          height: 46,
-          borderWidth: 1,
-          borderColor: isFocused ? '#666' : '#e0e0e0',
-          borderTopLeftRadius: 16,
-          borderTopRightRadius: 16,
-          borderBottomLeftRadius: query?.trim()?.length ? 0 : 16,
-          borderBottomRightRadius: query?.trim()?.length ? 0 : 16,
-          borderBottomWidth: query?.trim()?.length ? 0 : 1,
-          backgroundColor: '#fff',
-          paddingHorizontal: 14,
-          flexDirection: 'row',
-          alignItems: 'center',
-        }}
+          style={{
+            height: 46,
+            borderWidth: 1,
+            borderColor: (isFocused || headerSearchKeepConnected) ? '#666' : '#e0e0e0',
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            borderBottomLeftRadius: (headerSearchOpen || headerSearchKeepConnected) ? 0 : 16,
+            borderBottomRightRadius: (headerSearchOpen || headerSearchKeepConnected) ? 0 : 16,
+            borderBottomWidth: (headerSearchOpen || headerSearchKeepConnected) ? 0 : 1,
+            backgroundColor: '#fff',
+            paddingHorizontal: 14,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
       >
         <TouchableOpacity
           onPress={submitSearch}
@@ -159,8 +181,14 @@ export function HomeHeaderSearch({ navigation, route }) {
           }}
           returnKeyType="search"
           onSubmitEditing={submitSearch}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          onFocus={() => {
+            setIsFocused(true);
+            try { navigation?.setParams?.({ headerSearchOpen: true, headerSearchKeepConnected: false }); } catch (_e) {}
+          }}
+          onBlur={() => {
+            setIsFocused(false);
+            try { navigation?.setParams?.({ headerSearchOpen: false }); } catch (_e) {}
+          }}
           autoCorrect={false}
           autoCapitalize="none"
         />

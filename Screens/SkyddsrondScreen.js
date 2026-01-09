@@ -2,7 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore } from '../components/firebase';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 // Skyddsrond checklist config: sections with control points
 const SKYDDSROND_CHECKLIST = [
   {
@@ -161,6 +162,20 @@ export default function SkyddsrondScreen({
         arr.push(completed);
       }
       await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+      // Log activity (best-effort)
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
       // Remove any matching drafts for this project+type
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
@@ -185,7 +200,29 @@ export default function SkyddsrondScreen({
     // Persistence is handled centrally in BaseControlForm.saveDraftControl().
     // This screen should not write to AsyncStorage to avoid overwriting richer
     // draft objects maintained by the form (which include photos, participants).
-    // ...existing code...
+    try {
+      const draft = {
+        ...data,
+        project: data.project || project,
+        status: 'UTKAST',
+        savedAt: new Date().toISOString(),
+        type: 'Skyddsrond',
+        id: data.id || require('uuid').v4(),
+      };
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: draft.type || 'Kontroll',
+          kind: 'draft',
+          projectId: draft.project?.id || null,
+          projectName: draft.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
+    } catch(e) {}
   };
 
   const WEATHER_OPTIONS = [

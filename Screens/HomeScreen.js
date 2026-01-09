@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
+import HeaderDisplayName from '../components/HeaderDisplayName';
+import HeaderUserMenu from '../components/HeaderUserMenu';
 import { auth, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import useBackgroundSync from '../hooks/useBackgroundSync';
@@ -16,24 +18,10 @@ let portalRootId = 'dk-header-portal';
 // App version (displayed in sidebar)
 let appVersion = '1.0.0';
 try {
-  // require package.json at runtime for web/native dev builds
   const pkg = require('../package.json');
   if (pkg && pkg.version) appVersion = String(pkg.version);
-} catch (_e) {}
-
-function isValidIsoDateYmd(value) {
-  const v = String(value || '').trim();
-  if (!v) return true;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
-  const [yStr, mStr, dStr] = v.split('-');
-  const y = Number(yStr);
-  const m = Number(mStr);
-  const d = Number(dStr);
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false;
-  if (m < 1 || m > 12) return false;
-  if (d < 1 || d > 31) return false;
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && (dt.getUTCMonth() + 1) === m && dt.getUTCDate() === d;
+} catch (e) {
+  try { Alert.alert('Fel', 'Kunde inte läsa package.json: ' + (e?.message || String(e))); } catch(_e) {}
 }
 
 export default function HomeScreen({ route, navigation }) {
@@ -43,6 +31,32 @@ export default function HomeScreen({ route, navigation }) {
   const rightPaneScrollRef = useRef(null);
   const activityScrollRef = useRef(null);
   const hierarchyRef = useRef([]);
+  
+  // Close header search on Escape key (web)
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const keyHandler = (e) => {
+      try {
+        if (e && (e.key === 'Escape' || e.key === 'Esc')) {
+          try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: true }); } catch(_e) {}
+        }
+      } catch(_e) {}
+    };
+
+    const closeOnScrollOrResize = () => {
+      try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {}
+    };
+
+    try { window.addEventListener('keydown', keyHandler); } catch(_e) {}
+    try { window.addEventListener('scroll', closeOnScrollOrResize, { passive: true }); } catch(_e) {}
+    try { window.addEventListener('resize', closeOnScrollOrResize); } catch(_e) {}
+
+    return () => {
+      try { window.removeEventListener('keydown', keyHandler); } catch(_e) {}
+      try { window.removeEventListener('scroll', closeOnScrollOrResize); } catch(_e) {}
+      try { window.removeEventListener('resize', closeOnScrollOrResize); } catch(_e) {}
+    };
+  }, [navigation]);
 
   const webPaneHeight = Platform.OS === 'web'
     ? Math.max(240, (windowHeight || 800) - (headerHeight || 140))
@@ -131,6 +145,7 @@ export default function HomeScreen({ route, navigation }) {
   const [, setAdminTapCount] = useState(0);
   const [showAdminButton, setShowAdminButton] = useState(false);
   const [adminActionRunning, setAdminActionRunning] = useState(false);
+  const [supportMenuOpen, setSupportMenuOpen] = useState(false);
   function handleAdminTitlePress() {
     setAdminTapCount(c => {
       if (c >= 4) {
@@ -1169,6 +1184,28 @@ export default function HomeScreen({ route, navigation }) {
   }
   const email = route?.params?.email || '';
   const firstName = formatPersonName(email);
+  const userBtnRef = useRef(null);
+  const [userMenuVisible, setUserMenuVisible] = useState(false);
+  const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
+  const isSuperAdmin = ((auth && auth.currentUser && String(auth.currentUser.email || '').toLowerCase() === 'marcus.skogh@msbyggsystem.se') || !!authClaims?.globalAdmin);
+
+  const currentEmailLower = String(auth?.currentUser?.email || '').toLowerCase();
+  const isMsAdminClaim = !!(authClaims && (authClaims.admin === true || authClaims.role === 'admin'));
+  const allowedTools = currentEmailLower === 'marcus.skogh@msbyggsystem.se' || (String(authClaims?.companyId || '').trim() === 'MS Byggsystem' && isMsAdminClaim);
+
+  const openUserMenu = () => {
+    try {
+      const node = userBtnRef.current;
+      if (node && typeof node.measureInWindow === 'function') {
+        node.measureInWindow((x, y, w, h) => {
+          setMenuPos({ x: Math.max(8, x), y: y + (h || 36) + 6 });
+          setUserMenuVisible(true);
+        });
+        return;
+      }
+    } catch (_e) {}
+    setUserMenuVisible(true);
+  };
   const [, setLoggingOut] = useState(false);
   // companyId kan komma från route.params eller användarprofil
   const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
@@ -1636,11 +1673,20 @@ export default function HomeScreen({ route, navigation }) {
       // Merge in company activity (e.g. login events). These may not have a projectId.
       try {
         const events = Array.isArray(companyActivity) ? companyActivity : [];
-        events.forEach((ev) => {
-          if (!ev || typeof ev !== 'object') return;
-          const eventType = String(ev.type || '').toLowerCase();
-          if (eventType !== 'login') return;
-          const who = String(ev.displayName || ev.email || ev.uid || '').trim();
+        // Collect login events, sort newest first, and dedupe by user identifier
+        const loginEvents = (events || []).filter(ev => ev && typeof ev === 'object' && String(ev.type || '').toLowerCase() === 'login').slice().sort((a, b) => {
+          const ta = toTsMs(a.ts || a.createdAt || a.updatedAt || 0);
+          const tb = toTsMs(b.ts || b.createdAt || b.updatedAt || 0);
+          return tb - ta;
+        });
+        const seen = new Set();
+        for (const ev of loginEvents) {
+          if (!ev || typeof ev !== 'object') continue;
+          const idKey = String(ev.uid || ev.email || ev.displayName || '').trim().toLowerCase();
+          const key = idKey || '__noid';
+          if (seen.has(key)) continue; // already added a recent login for this identity
+          seen.add(key);
+          const who = formatPersonName(ev.displayName || ev.email || ev.uid || '');
           recent.push({
             kind: 'company',
             type: 'login',
@@ -1652,7 +1698,7 @@ export default function HomeScreen({ route, navigation }) {
             actorEmail: ev.email || null,
             raw: ev,
           });
-        });
+        }
       } catch(_e) {}
       recent.sort((a, b) => {
         return toTsMs(b.ts) - toTsMs(a.ts);
@@ -1968,6 +2014,12 @@ export default function HomeScreen({ route, navigation }) {
   useEffect(() => { leftWidthRef.current = leftWidth; }, [leftWidth]);
   const initialLeftRef = useRef(0);
 
+  // Right column resizer state (default 420)
+  const [rightWidth, setRightWidth] = useState(420);
+  const rightWidthRef = useRef(rightWidth);
+  useEffect(() => { rightWidthRef.current = rightWidth; }, [rightWidth]);
+  const initialRightRef = useRef(0);
+
   // PanResponder for resizing the left column (works on web + native)
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: (evt, gestureState) => true,
@@ -1978,6 +2030,22 @@ export default function HomeScreen({ route, navigation }) {
       const dx = gestureState.dx || 0;
       const newWidth = Math.max(240, Math.min(800, initialLeftRef.current + dx));
       setLeftWidth(newWidth);
+    },
+    onPanResponderRelease: () => {},
+    onPanResponderTerminate: () => {},
+  })).current;
+
+  // PanResponder for resizing the right column (works on web + native)
+  const panResponderRight = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: (evt, gestureState) => true,
+    onPanResponderGrant: () => {
+      initialRightRef.current = rightWidthRef.current;
+    },
+    onPanResponderMove: (evt, gestureState) => {
+      const dx = gestureState.dx || 0;
+      // Dragging the left edge: moving right (dx>0) should decrease width, moving left (dx<0) should increase
+      const newWidth = Math.max(340, Math.min(520, initialRightRef.current - dx));
+      setRightWidth(newWidth);
     },
     onPanResponderRelease: () => {},
     onPanResponderTerminate: () => {},
@@ -2651,7 +2719,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 const iconName = isLogin ? 'log-in-outline' : (a.kind === 'draft' ? 'document-text-outline' : (hasOpenDeviations ? 'alert-circle' : 'checkmark-circle'));
                 const iconColor = isLogin ? '#1976D2' : (a.kind === 'draft' ? '#FFD600' : (hasOpenDeviations ? '#D32F2F' : '#43A047'));
                 const subtitle = !isLogin ? (a.projectName ? `i ${a.projectName}` : (a.projectId ? `i ${a.projectId}` : '')) : '';
-                const who = String(a.actorName || a.actorEmail || '').trim();
+                const who = formatPersonName(a.actorName || a.actorEmail || a.actor || a.email || a.uid || '');
                 const title = isLogin
                   ? (who ? `Loggade in: ${who}` : 'Loggade in')
                   : (a.kind === 'draft' ? `Utkast sparat: ${a.type}` : `Slutförd: ${a.type}`);
@@ -2688,19 +2756,28 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       <Text style={dashboardActivityTitleStyle} numberOfLines={2}>
                         {title}
                       </Text>
-                      {subtitle ? (
+                      { (a.projectId || a.projectName) ? (
                         <Text style={{ fontSize: 14, color: '#1976D2', marginTop: 2 }} numberOfLines={1}>
-                          {subtitle}
+                          {a.projectId ? String(a.projectId) : ''}{(a.projectId && a.projectName) ? ' - ' : ''}{a.projectName ? String(a.projectName) : ''}
                         </Text>
                       ) : null}
-                      {a.desc ? (
+                      {a.desc && (!isLogin || a.desc !== title) ? (
                         <Text style={{ fontSize: 13, color: '#666', marginTop: 2 }} numberOfLines={1}>
                           {a.desc}
                         </Text>
                       ) : null}
-                      <Text style={dashboardMetaTextStyle}>
-                        {formatRelativeTime(a.ts)}
-                      </Text>
+                      {
+                        // Show actor + relative time for non-login activities when available
+                        (!isLogin && who) ? (
+                          <Text style={dashboardMetaTextStyle} numberOfLines={1}>
+                            {`Av: ${who} ${formatRelativeTime(a.ts)}`}
+                          </Text>
+                        ) : (
+                          <Text style={dashboardMetaTextStyle}>
+                            {formatRelativeTime(a.ts)}
+                          </Text>
+                        )
+                      }
                     </View>
 
                     {Platform.OS === 'web' && hasOpenDeviations && (
@@ -3220,7 +3297,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
 
             {headerProjectQuery && headerSearchOpen ? (
               (() => {
-                const Dropdown = (
+                const innerDropdown = (
                   <View
                     pointerEvents="auto"
                     style={{
@@ -3267,7 +3344,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                             activeOpacity={0.8}
                             onPress={() => {
                                 // Switch project inline and close the header dropdown (keep the query text).
-                                try { navigation?.setParams?.({ headerSearchOpen: false }); } catch(_e) {}
+                                try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {}
                                 requestProjectSwitch(proj, { selectedAction: null });
                               }}
                           >
@@ -3288,6 +3365,18 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   </View>
                 );
 
+                const PortalContent = (
+                  <>
+                    <View
+                      // backdrop to capture outside clicks and close the dropdown
+                      onStartShouldSetResponder={() => true}
+                      onResponderRelease={() => { try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {} }}
+                      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99998, backgroundColor: 'rgba(0,0,0,0)' }}
+                    />
+                    {innerDropdown}
+                  </>
+                );
+
                 if (Platform.OS === 'web' && createPortal && typeof document !== 'undefined') {
                   try {
                     let portalRoot = document.getElementById(portalRootId);
@@ -3297,12 +3386,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       portalRoot.style.position = 'relative';
                       document.body.appendChild(portalRoot);
                     }
-                    return createPortal(Dropdown, portalRoot);
+                    return createPortal(PortalContent, portalRoot);
                   } catch(_e) {
-                    return Dropdown;
+                    return PortalContent;
                   }
                 }
-                return Dropdown;
+                return innerDropdown;
               })()
             ) : null}
 
@@ -3318,11 +3407,95 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#F7FAFC', borderBottomWidth: 1, borderColor: '#e6e6e6' }}
         >
           <View>
-            <TouchableOpacity onPress={handleAdminTitlePress} activeOpacity={0.7}>
-              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#263238' }}>Hej, {firstName || 'Användare'}!</Text>
-            </TouchableOpacity>
-            <Text style={{ fontSize: 14, color: '#666' }}>Vad vill du göra idag?</Text>
-            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && (
+              {/* User button: icon + full name, opens dropdown */}
+            {/* User button: icon + full name, opens dropdown */}
+            {Platform.OS !== 'web' ? (() => {
+              let displayName = '';
+              if (route?.params?.displayName) displayName = route.params.displayName;
+              else if (auth?.currentUser) {
+                const user = auth.currentUser;
+                if (user.displayName && String(user.displayName).trim().includes(' ')) {
+                  displayName = String(user.displayName).trim();
+                } else {
+                  displayName = formatPersonName(user) || (user.displayName ? String(user.displayName).trim() : '');
+                }
+              }
+              displayName = displayName || firstName || 'Användare';
+              const _nameSeed = String(displayName || '').trim();
+              const initials = (_nameSeed.split(/\s+/).filter(Boolean).slice(0,2).map(n => (n[0] || '').toUpperCase()).join('')) || (auth?.currentUser?.email ? String(auth.currentUser.email || '')[0].toUpperCase() : 'A');
+              const _hash = Array.from(_nameSeed).reduce((s, c) => (s * 31 + c.charCodeAt(0)) | 0, 0);
+              const _colors = ['#F44336','#E91E63','#9C27B0','#3F51B5','#2196F3','#03A9F4','#009688','#4CAF50','#FF9800','#FFC107'];
+              const avatarBg = _colors[Math.abs(_hash) % _colors.length];
+              const menuItems = [
+                { key: 'manage_users', label: 'Hantera användare', icon: <Ionicons name="person-add" size={16} color="#1976D2" /> },
+                { key: 'create_templates', label: 'Skapa mallar', icon: <Ionicons name="add-circle" size={16} color="#43A047" /> },
+                { key: 'edit_templates', label: 'Ändra mallar', icon: <Ionicons name="pencil" size={16} color="#FB8C00" /> },
+              ];
+              if (isSuperAdmin) {
+                // Put company management first for superadmins
+                menuItems.unshift({ key: 'manage_company', label: 'Hantera företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+              }
+
+              return (
+                <>
+                  <TouchableOpacity
+                    ref={userBtnRef}
+                    onPress={() => { try { openUserMenu(); } catch(_e) {} }}
+                    activeOpacity={0.8}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                  >
+                    <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="person" size={16} color="#fff" />
+                    </View>
+                    <Text style={{ fontSize: 16, color: '#263238', fontWeight: '600' }}>{displayName}</Text>
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color="#666"
+                      style={{ marginLeft: 6, transform: [{ rotate: (userMenuVisible ? '180deg' : '0deg') }] }}
+                    />
+                  </TouchableOpacity>
+                  <ContextMenu
+                    visible={userMenuVisible}
+                    x={menuPos.x}
+                    y={menuPos.y}
+                    items={menuItems}
+                    onClose={() => setUserMenuVisible(false)}
+                    onSelect={(it) => {
+                      try {
+                        setUserMenuVisible(false);
+                        if (it && it.key === 'manage_company') {
+                          try { navigation.navigate('ManageCompany'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna Hantera företag'); }
+                          return;
+                        }
+                        if (it && it.key === 'manage_users') {
+                          try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) { Alert.alert('Valt', it.label); }
+                          return;
+                        }
+                        // Default: show label as feedback
+                        Alert.alert('Valt', it.label);
+                      } catch(_e) {}
+                    }}
+                  />
+                </>
+              );
+            })() : null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8, marginLeft: 8 }}>
+              {Platform.OS === 'web' ? (
+                <View style={{ marginRight: 6 }}>
+                  {allowedTools ? <HeaderUserMenu /> : <HeaderDisplayName />}
+                </View>
+              ) : null}
+              {allowedTools ? (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
+                  onPress={() => setSupportMenuOpen(s => !s)}
+                >
+                  <Text style={{ color: '#222', fontWeight: '700' }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -3334,7 +3507,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>Fyll på testdata</Text>
               </TouchableOpacity>
             )}
-            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && (
+            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -3345,7 +3518,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>{adminActionRunning ? 'Kör...' : 'Gör mig demo-admin'}</Text>
               </TouchableOpacity>
             )}
-            {canShowSupportToolsInHeader && localFallbackExists && (
+            {canShowSupportToolsInHeader && supportMenuOpen && localFallbackExists && (
               <TouchableOpacity
                 style={{ backgroundColor: '#FFB300', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -3449,7 +3622,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#222', fontWeight: '700' }}>Migrera lokal data</Text>
               </TouchableOpacity>
             )}
-            {canShowSupportToolsInHeader && (auth && auth.currentUser) && (
+            {canShowSupportToolsInHeader && supportMenuOpen && (auth && auth.currentUser) && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -3483,7 +3656,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Uppdatera token & synka</Text>
               </TouchableOpacity>
             )}
-            {canShowSupportToolsInHeader && (
+            {canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#eee', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
@@ -3501,7 +3674,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#222', fontWeight: '700' }}>Visa auth-info</Text>
               </TouchableOpacity>
             )}
-            {canShowSupportToolsInHeader && (
+            {canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#ddd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => { await dumpLocalRemoteControls(); }}
@@ -3509,7 +3682,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#222', fontWeight: '700' }}>Debug: visa lokal/moln</Text>
               </TouchableOpacity>
             )}
-            {canShowSupportToolsInHeader && (
+            {canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#f5f5f5', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => { await showLastFsError(); }}
@@ -4227,17 +4400,14 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   </View>
 
                   {/* Persistent right side: activity */}
-                  <View
-                    style={{
-                      width: 420,
-                      minWidth: 340,
-                      maxWidth: 520,
-                      padding: 18,
-                      borderLeftWidth: 1,
-                      borderLeftColor: '#e6e6e6',
-                      backgroundColor: '#F7FAFC',
-                    }}
-                  >
+                  <View style={{ width: rightWidth, minWidth: 340, maxWidth: 520, padding: 18, borderLeftWidth: 1, borderLeftColor: '#e6e6e6', backgroundColor: '#F7FAFC', position: 'relative' }}>
+                    {/* Divider for visual separation */}
+                    <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, backgroundColor: '#e6e6e6' }} />
+                    {/* Draggable handle - sits above the left divider of the right panel */}
+                    <View
+                      {...(panResponderRight && panResponderRight.panHandlers)}
+                      style={Platform.OS === 'web' ? { position: 'absolute', left: -8, top: 0, bottom: 0, width: 16, cursor: 'col-resize', zIndex: 9 } : { position: 'absolute', left: -12, top: 0, bottom: 0, width: 24, zIndex: 9 }}
+                    />
                     <ScrollView ref={activityScrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }}>
                       <ActivityPanel />
                     </ScrollView>
@@ -5023,7 +5193,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       setNewSubName('');
                       setNewSubModal({ visible: false, parentId: null });
                     }
-                  }}
+                   }}
                   disabled={isDisabled}
                 >
                   <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>

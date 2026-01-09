@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
-import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
+import { auth, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 
 const LABELS = {
   title: 'Mottagningskontroll',
@@ -50,6 +51,20 @@ export default function MottagningskontrollScreen({
         filteredControls.push(completed);
         await AsyncStorage.setItem('completed_controls', JSON.stringify(filteredControls));
       }
+      // Log activity (best-effort) with actor name
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
       // Remove matching draft if exists
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
@@ -85,6 +100,20 @@ export default function MottagningskontrollScreen({
         }
         await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
       }
+      // Log draft saved activity
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: draft.type || 'Kontroll',
+          kind: 'draft',
+          projectId: draft.project?.id || null,
+          projectName: draft.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
     } catch(e) {
       // Hantera fel
     }

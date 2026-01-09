@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const admin = require('firebase-admin');
+const formatPersonName = require('./lib/formatPersonName');
 
 function parseArgs() {
   const args = {};
@@ -61,7 +62,7 @@ async function main() {
   const firstName = (args.firstName || args.firstname || '').trim();
   const lastName = (args.lastName || args.lastname || '').trim();
   const displayNameArg = (args.displayName || args.displayname || '').trim();
-  const desiredDisplayName = displayNameArg || [firstName, lastName].filter(Boolean).join(' ').trim();
+  const desiredDisplayName = formatPersonName(displayNameArg || [firstName, lastName].filter(Boolean).join(' ').trim());
 
   const saPath = path.resolve(serviceAccount);
   if (!fs.existsSync(saPath)) {
@@ -86,7 +87,7 @@ async function main() {
         email,
         password,
         emailVerified: true,
-        displayName: desiredDisplayName || email.split('@')[0]
+        displayName: desiredDisplayName || formatPersonName(email.split('@')[0])
       });
       console.log('Created user:', userRecord.uid);
       console.log('Password (new user):', password);
@@ -112,7 +113,7 @@ async function main() {
       companyId: company,
       role: effectiveRole,
       email,
-      displayName: userRecord.displayName || email.split('@')[0],
+      displayName: userRecord.displayName || formatPersonName(email.split('@')[0]),
       firstName: firstName || null,
       lastName: lastName || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -125,7 +126,7 @@ async function main() {
       companyId: company,
       role: effectiveRole,
       email,
-      displayName: userRecord.displayName || email.split('@')[0],
+      displayName: userRecord.displayName || formatPersonName(email.split('@')[0]),
       firstName: firstName || null,
       lastName: lastName || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),

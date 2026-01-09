@@ -89,10 +89,10 @@ export default function CameraCapture() {
             project,
           };
           const returnKey = route.params?.returnKey;
-          if (returnKey) {
+            if (returnKey) {
             try {
               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
-            } catch(_e {}
+            } catch(_e) {}
             try {
               (async () => {
                 try {
@@ -100,10 +100,10 @@ export default function CameraCapture() {
                   const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
                   pending.push(payload.cameraResult);
                   await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
-                } catch(_e {}
+                } catch(_e) {}
               })();
             } catch(e) {}
-            setTimeout(() => { try { navigation.goBack(); } catch(_e {} }, 300);
+            setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
           } else {
             try {
               const state = navigation.getState && navigation.getState();
@@ -113,7 +113,7 @@ export default function CameraCapture() {
                 if (prevRoute && prevRoute.key) {
                   try {
                     navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
-                  } catch(_e {}
+                  } catch(_e) {}
                   try {
                     (async () => {
                       const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');

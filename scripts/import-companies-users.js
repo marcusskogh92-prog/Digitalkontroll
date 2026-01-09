@@ -187,7 +187,8 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
 
   const firstName = (rowData.firstName || '').trim();
   const lastName = (rowData.lastName || '').trim();
-  const displayName = (rowData.displayName || '').trim() || [firstName, lastName].filter(Boolean).join(' ').trim();
+  const formatPersonName = require('./lib/formatPersonName');
+  const displayName = formatPersonName((rowData.displayName || '').trim() || [firstName, lastName].filter(Boolean).join(' ').trim());
 
   const roleRaw = (rowData.role || 'user').trim().toLowerCase();
   const isAdmin = toBool(rowData.admin, roleRaw === 'admin');
@@ -206,7 +207,7 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
         email,
         password,
         emailVerified: true,
-        displayName: displayName || email.split('@')[0],
+        displayName: displayName || formatPersonName(email.split('@')[0]),
       });
       created = true;
       createdPasswords.push({ email, password, companyId });
@@ -229,7 +230,7 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
         companyId,
         role: effectiveRole,
         email,
-        displayName: userRecord.displayName || displayName || email.split('@')[0],
+        displayName: userRecord.displayName || displayName || formatPersonName(email.split('@')[0]),
         firstName: firstName || null,
         lastName: lastName || null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -244,7 +245,7 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
         companyId,
         role: effectiveRole,
         email,
-        displayName: userRecord.displayName || displayName || email.split('@')[0],
+        displayName: userRecord.displayName || displayName || formatPersonName(email.split('@')[0]),
         firstName: firstName || null,
         lastName: lastName || null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),

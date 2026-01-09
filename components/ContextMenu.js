@@ -1,3 +1,4 @@
+import React from 'react';
 import { Modal, Pressable, Text, TouchableOpacity, View } from 'react-native';
 
 // Cross-platform safe context menu.
@@ -54,11 +55,11 @@ export default function ContextMenu({ visible, x, y, items = [], onSelect, onClo
                   backgroundColor: item.danger ? '#fff0f0' : '#fff',
                 }}
               >
-                {item.icon ? (
-                  <Text style={{ width: 22, marginRight: 10, fontSize: 18 }}>{item.icon}</Text>
-                ) : (
-                  <View style={{ width: 22, marginRight: 10 }} />
-                )}
+                <View style={{ width: 22, marginRight: 10, alignItems: 'center', justifyContent: 'center' }}>
+                  {item.icon ? (
+                    (React.isValidElement(item.icon) ? item.icon : <Text style={{ fontSize: 18 }}>{String(item.icon)}</Text>)
+                  ) : null}
+                </View>
                 <Text style={{ fontSize: 15, color: '#222' }}>{item.label}</Text>
               </TouchableOpacity>
             );

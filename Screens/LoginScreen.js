@@ -157,13 +157,13 @@ export default function LoginScreen() {
     return (
       <View style={{ flex: 1 }}>
         <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <ImageBackground
+            <ImageBackground
             source={require('../assets/images/inlogg.webb.png')}
             style={styles.bg}
-            imageStyle={styles.bgImage}
-            resizeMode="cover"
+            imageStyle={styles.bgImageWeb}
+              resizeMode="cover"
           >
-          <View style={styles.overlay} />
+          <View style={styles.overlayWeb} />
           <View style={styles.contentWrapper}>
             <Image
               source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
@@ -343,6 +343,18 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: 'transparent',
+  },
+  bgImageWeb: {
+    width: '100%',
+    height: '100%'
+  },
+  overlayWeb: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.28)'
   },
   overlay: {
     position: 'absolute',
