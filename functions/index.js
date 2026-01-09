@@ -361,7 +361,9 @@ exports.adminFetchCompanyMembers = functions.https.onCall(async (data, context) 
   const runningInEmulator = !!process.env.FUNCTIONS_EMULATOR || !!process.env.FIREBASE_EMULATOR_HUB;
   if (!context.auth && !runningInEmulator) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   // Allow if caller is admin according to token, or if email matches known superadmin(s)
-  const isAdminCall = callerIsAdmin(context) || (context.auth && context.auth.token && (context.auth.token.email || '').toLowerCase() === 'marcus.skogh@msbyggsystem');
+  const userEmail = (context.auth && context.auth.token && context.auth.token.email) ? String(context.auth.token.email).toLowerCase() : '';
+  const isSuperadminEmail = userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem';
+  const isAdminCall = callerIsAdmin(context) || isSuperadminEmail;
   if (!isAdminCall && !runningInEmulator) throw new functions.https.HttpsError('permission-denied', 'Caller must be an admin');
 
   const companyId = (data && data.companyId) || null;

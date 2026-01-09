@@ -3,15 +3,18 @@
   "description": "Cloud Functions for Digitalkontroll",
   "private": true,
   "engines": {
-    "node": "18"
+    "node": "20"
   },
   "scripts": {
     "serve": "firebase emulators:start --only functions,firestore,auth",
-    "deploy": "firebase deploy --only functions:provisionCompany"
+    "deploy": "firebase deploy --only functions"
   },
   "dependencies": {
     "firebase-admin": "^11.11.0",
     "firebase-functions": "^5.1.0",
-    "firebase-tools": "^15.2.1"
+    "firebase-tools": "^15.2.1",
+    "@types/markdown-it": "^14.1.2",
+    "markdown-it": "^14.1.0",
+    "picomatch": "^4.0.3"
   }
 }
