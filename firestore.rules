@@ -31,7 +31,17 @@ service cloud.firestore {
     // Company profile (public by convention)
     match /foretag/{company}/profil/{docId} {
       allow read: if true;
-      allow write: if isCompanyMember(company);
+      // Only allow creation of a new company profile by callers that are authorized to create companies.
+      // This requires either a superadmin claim or being an admin in MS Byggsystem.
+      allow create: if request.auth != null && !exists(/databases/$(database)/documents/foretag/$(company)/profil/$(docId))
+        && request.resource.data.companyName is string
+        && (
+          // superadmin claim
+          (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+          // or admin inside MS Byggsystem
+          || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+        );
+      allow update, delete: if isCompanyMember(company);
     }
 
     // Byggdel mall-register (company-scoped)

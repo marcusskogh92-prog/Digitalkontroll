@@ -3,11 +3,11 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
-import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { connectAuthEmulator, getAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { addDoc, collection, connectFirestoreEmulator, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 // Firebase-konfiguration för DigitalKontroll
 const firebaseConfig = {
@@ -27,13 +27,35 @@ const app = initializeApp(firebaseConfig);
 export const storage = getStorage(app);
 
 // Initiera autentisering & Firestore
-// Use React Native AsyncStorage for Auth persistence when possible
-let _auth;
-try {
-  _auth = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
-} catch(e) {
-  // Fallback to default (web) auth for environments where initializeAuth isn't available
-  _auth = getAuth(app);
+// Prefer web `getAuth` by default; attempt to enable React Native persistence
+// only on native platforms via dynamic import to avoid bundling native-only
+// exports into the web build (which causes compile errors).
+let _auth = getAuth(app);
+if (Platform && Platform.OS && Platform.OS !== 'web') {
+  try {
+    // Try synchronous require first (works in many native packagers).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const rnAuth = require('firebase/auth');
+      if (rnAuth && typeof rnAuth.initializeAuth === 'function' && typeof rnAuth.getReactNativePersistence === 'function') {
+        _auth = rnAuth.initializeAuth(app, { persistence: rnAuth.getReactNativePersistence(AsyncStorage) });
+      }
+    } catch (reqErr) {
+      // Fall back to dynamic import for environments that support it.
+      (async () => {
+        try {
+          const rnAuth = await import('firebase/auth');
+          if (rnAuth && typeof rnAuth.initializeAuth === 'function' && typeof rnAuth.getReactNativePersistence === 'function') {
+            _auth = rnAuth.initializeAuth(app, { persistence: rnAuth.getReactNativePersistence(AsyncStorage) });
+          }
+        } catch (e) {
+          // No-op: leave default web auth instance
+        }
+      })();
+    }
+  } catch (e) {
+    // leave default web auth instance
+  }
 }
 export const auth = _auth;
 export const db = getFirestore(app);
@@ -45,6 +67,39 @@ try {
   _functionsClient = null;
 }
 export const functionsClient = _functionsClient;
+
+// If running in a browser on localhost, connect the Functions client to the emulator
+try {
+  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      if (functionsClient && typeof connectFunctionsEmulator === 'function') {
+        // default emulator port used by firebase emulators: 5001
+        connectFunctionsEmulator(functionsClient, 'localhost', 5001);
+        console.log('[firebase] connected functions client to emulator at localhost:5001');
+      }
+    } catch (e) { console.warn('[firebase] could not connect functions emulator', e); }
+  }
+} catch(e) {}
+
+// Also connect Firestore and Auth clients to local emulators when running on localhost
+try {
+  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      if (typeof connectFirestoreEmulator === 'function' && db) {
+        // Firestore emulator in this project configured to 8085
+        connectFirestoreEmulator(db, 'localhost', 8085);
+        console.log('[firebase] connected firestore client to emulator at localhost:8085');
+      }
+    } catch (e) { console.warn('[firebase] could not connect firestore emulator', e); }
+    try {
+      if (typeof connectAuthEmulator === 'function' && auth) {
+        // Auth emulator default port 9099
+        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch(e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
+        console.log('[firebase] connected auth client to emulator at http://localhost:9099');
+      }
+    } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
+  }
+} catch(e) {}
 
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName }) {
@@ -77,6 +132,20 @@ export async function adminFetchCompanyMembers(companyId) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'adminFetchCompanyMembers');
   const res = await fn({ companyId });
+  return res && res.data ? res.data : res;
+}
+
+export async function provisionCompanyRemote({ companyId, companyName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'provisionCompany');
+  const res = await fn({ companyId, companyName });
+  return res && res.data ? res.data : res;
+}
+
+export async function setSuperadminRemote({ email, uid }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setSuperadmin');
+  const res = await fn({ email, uid });
   return res && res.data ? res.data : res;
 }
 

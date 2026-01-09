@@ -1,10 +1,11 @@
 
 
 
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
-import { adminFetchCompanyMembers, auth, createUserRemote, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, saveCompanyProfile, saveUserProfile, updateUserRemote } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, saveCompanyProfile, saveUserProfile, updateUserRemote } from './firebase';
 import UserEditModal from './UserEditModal';
 
 
@@ -31,6 +32,29 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [contextMenuCompany, setContextMenuCompany] = useState(null);
   const [memberFetchErrors, setMemberFetchErrors] = useState({});
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
+  const [hoveredIcon, setHoveredIcon] = useState(null);
+  const [toast, setToast] = useState({ visible: false, message: '' });
+
+  const showToast = (msg, timeout = 3000) => {
+    try {
+      setToast({ visible: true, message: msg });
+      setTimeout(() => setToast({ visible: false, message: '' }), timeout);
+    } catch (e) {}
+  };
+
+  function slugify(s) {
+    try {
+      return String(s || '')
+        .normalize('NFKD')
+        .replace(/\p{Diacritic}/gu, '')
+        .replace(/[^a-zA-Z0-9\s-]/g, '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '-');
+    } catch (e) {
+      return String(s || '').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    }
+  }
 
   const isAdmin = (m) => {
     if (!m) return false;
@@ -163,9 +187,201 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     );
   }
 
+  const handleGoHome = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        // Try SPA navigation first
+        try { window.history.pushState(null, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); return; } catch(_) {}
+        window.location.href = '/';
+      }
+    } catch (e) {}
+  };
+
+  const handleAddCompany = async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        // Ask for a company name first and suggest a safe slug for the company ID
+        const name = (window.prompt('Ange företagsnamn (valfritt)', '') || '').trim();
+        const suggestedId = name ? slugify(name) : '';
+        const id = (window.prompt('Ange företags-ID (kort identifierare)', suggestedId) || '').trim();
+        if (!id) return showToast('Avbröts: inget företags-ID angivet');
+        // Optimistic UI: add placeholder immediately
+        const prev = Array.isArray(companies) ? companies : [];
+        setCompanies(prev.concat([{ id, profile: { companyName: name || id } }]));
+        showToast('Skapar företag...');
+
+        // Ensure token/claims are fresh before attempting writes that depend on claims
+        try {
+          if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
+            await auth.currentUser.getIdToken(true);
+          }
+        } catch (e) {
+          // Non-fatal: continue but warn user
+          showToast('Kunde inte uppdatera autentiseringstoken, försök logga ut/in om fel uppstår');
+        }
+
+        // Prefer server-side provisioning (callable) because Firestore rules restrict
+        // client-side creation of company profiles to superadmins / MS Byggsystem admins.
+        try {
+          console.log('[debug] calling provisionCompanyRemote', { id, name });
+          const p = await provisionCompanyRemote({ companyId: id, companyName: name || id });
+          console.log('[debug] provisionCompanyRemote result', p);
+          if (!p || !p.ok) {
+            showToast('Företaget skapades men provisioning kunde inte slutföras automatiskt');
+          }
+        } catch (e) {
+          console.error('[debug] provisionCompanyRemote threw', e);
+          const code = e && e.code ? e.code : (String(e || '').toLowerCase().includes('permission') ? 'permission-denied' : null);
+          if (code === 'permission-denied') {
+            showToast('Ingen behörighet: endast superadmin eller MS Byggsystem-admin kan skapa företag');
+            // revert optimistic add
+            setCompanies(prev);
+            return;
+          }
+          // If provisioning callable isn't available or failed for other reasons,
+          // fall back to client-side write attempt so developer environments without
+          // functions can still create a company (may be blocked by rules).
+          try {
+            console.log('[debug] fallback: saving profile to Firestore', { id, name });
+            const ok = await saveCompanyProfile(id, { companyName: name || id, createdAt: new Date().toISOString(), enabled: true });
+            if (!ok) throw new Error('Client save returned falsy');
+            console.log('[debug] fallback saveCompanyProfile succeeded', { id });
+          } catch (err) {
+            console.error('[debug] fallback saveCompanyProfile threw', err);
+            showToast('Kunde inte spara företag till Firebase: ' + String(err?.message || err));
+            setCompanies(prev);
+            return;
+          }
+        }
+        // Refresh companies list
+        try { const items = await fetchCompanies(); if (Array.isArray(items)) setCompanies(items); } catch(_) {}
+        showToast('Företaget skapades');
+      }
+    } catch (e) {
+      showToast('Fel vid skapande: ' + String(e?.message || e));
+    }
+  };
+
+  const handleHardRefresh = () => {
+    // Do an in-app refresh without toggling `loading` (so the sidebar/list stays visible).
+    (async () => {
+      try {
+        if (companiesMode) {
+          const prev = Array.isArray(companies) ? companies : [];
+          const items = await fetchCompanies();
+          if (Array.isArray(items) && items.length > 0) {
+            setCompanies(items);
+          } else {
+            // keep previous companies if fetch returned empty — avoid wiping the UI
+            showToast('Uppdateringen gav inga nya företag.');
+            setCompanies(prev);
+          }
+
+          // If we show members and some companies are expanded, refresh those member lists
+          if (showMembers && expandedCompanies) {
+            Object.keys(expandedCompanies).forEach(async (compId) => {
+              if (expandedCompanies[compId]) {
+                try {
+                  const mems = await fetchCompanyMembers(compId).catch(() => []);
+                  setMembersByCompany(prevState => ({ ...prevState, [compId]: mems }));
+                } catch (_) {}
+              }
+            });
+          }
+          return;
+        }
+
+        // Project mode: re-fetch hierarchy for current companyId without hiding UI
+        const prevH = Array.isArray(hierarchy) ? hierarchy : [];
+        const items = await fetchHierarchy(companyId);
+        if (Array.isArray(items) && items.length > 0) setHierarchy(items);
+        else {
+          showToast('Uppdateringen gav inga nya projekt.');
+          setHierarchy(prevH);
+        }
+        return;
+      } catch (e) {
+        // Fallback: cache-busting reload on same path
+        try {
+          if (typeof window !== 'undefined') {
+            try { window.location.reload(); } catch(_) {}
+            try {
+              const path = window.location.pathname + (window.location.search || '');
+              const sep = path.includes('?') ? '&' : '?';
+              window.location.href = path + sep + '_cb=' + Date.now();
+            } catch(_) {}
+          }
+        } catch (_) {}
+      }
+    })();
+  };
+
+  const handleShowAuthDebug = async () => {
+    try {
+      const user = auth && auth.currentUser ? auth.currentUser : null;
+      let claims = null;
+      if (user && user.getIdTokenResult) {
+        try { const t = await user.getIdTokenResult(false); claims = t.claims; } catch(e) { claims = { error: String(e?.message || e) }; }
+      }
+      const out = { user: user ? { uid: user.uid, email: user.email, displayName: user.displayName } : null, claims };
+      alert('Auth debug:\n' + JSON.stringify(out, null, 2));
+    } catch (e) {
+      alert('Auth debug failed: ' + String(e?.message || e));
+    }
+  };
+
   return (
-    <div style={{ width: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif' }}>
-      <h3 style={{ marginTop: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20, marginBottom: 10 }}>{title}</h3>
+    <div style={{ width: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+        {companiesMode ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
+            <TouchableOpacity
+              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+              onPress={handleGoHome}
+              accessibilityLabel="Hem"
+              onMouseEnter={() => setHoveredIcon('home')}
+              onMouseLeave={() => setHoveredIcon(null)}
+            >
+              <Ionicons name="home-outline" size={18} color="#1976D2" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+              onPress={handleAddCompany}
+              accessibilityLabel="Lägg till företag"
+              onMouseEnter={() => setHoveredIcon('add')}
+              onMouseLeave={() => setHoveredIcon(null)}
+            >
+              <Ionicons name="add-circle-outline" size={18} color="#1976D2" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+              onPress={handleHardRefresh}
+              accessibilityLabel="Uppdatera"
+              onMouseEnter={() => setHoveredIcon('refresh')}
+              onMouseLeave={() => setHoveredIcon(null)}
+            >
+              <Ionicons name="refresh" size={18} color="#1976D2" />
+            </TouchableOpacity>
+
+            {hoveredIcon ? (
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6 }}>
+                <div style={{ background: '#222', color: '#fff', padding: '6px 8px', borderRadius: 6, fontSize: 12, whiteSpace: 'nowrap' }}>
+                  {hoveredIcon === 'home' ? 'Hem' : (hoveredIcon === 'add' ? 'Lägg till företag' : 'Uppdatera (hård)')}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+        {/* Toast/snackbar */}
+        {toast.visible ? (
+          <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '8px 12px', borderRadius: 6, fontSize: 13, zIndex: 40 }}>
+            {toast.message}
+          </div>
+        ) : null}
       <input
         type="text"
         placeholder={searchPlaceholder}
@@ -186,7 +402,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       {companiesMode ? (
         <div style={{ marginTop: 8, marginBottom: 8 }}>
           <button
-            onClick={() => onSelectProject && onSelectProject({ createNew: true })}
+            onClick={handleAddCompany}
             style={{ background: '#fff', border: '1px solid #1976d2', color: '#1976d2', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}
           >
             + Lägg till företag

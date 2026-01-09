@@ -24,6 +24,18 @@ try {
   try { Alert.alert('Fel', 'Kunde inte läsa package.json: ' + (e?.message || String(e))); } catch(_e) {}
 }
 
+// showAlert: use Alert.alert on native, fallback to window.alert on web so support buttons work in browser
+function showAlert(title, message, buttons) {
+  try {
+    if (Platform && Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
+      const msg = (typeof message === 'string') ? message : (message && typeof message === 'object' ? JSON.stringify(message, null, 2) : String(message));
+      try { window.alert(String(title || '') + '\n\n' + msg); } catch(e) { /* ignore */ }
+      return;
+    }
+  } catch(e) {}
+  try { if (buttons) Alert.alert(title || '', message || '', buttons); else Alert.alert(title || '', message || ''); } catch(e) {}
+}
+
 export default function HomeScreen({ route, navigation }) {
   const { height: windowHeight } = useWindowDimensions();
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -1974,9 +1986,9 @@ export default function HomeScreen({ route, navigation }) {
       }
       const final = { summary, remote: remoteInfo, sample_local_completed: (data.completed_controls || []).slice(0,5).map(c => ({ id: c.id, projectId: c.project?.id })) };
       try { console.log('[dumpLocalRemoteControls] full dump', final); } catch(_e) {}
-      Alert.alert('Debug: lokal vs moln', JSON.stringify(final, null, 2).slice(0,1000));
+      showAlert('Debug: lokal vs moln', JSON.stringify(final, null, 2).slice(0,1000));
     } catch(_e) {
-      Alert.alert('Debug-fel', String(_e));
+      showAlert('Debug-fel', String(_e));
     }
   }
 
@@ -1990,16 +2002,16 @@ export default function HomeScreen({ route, navigation }) {
           try { parsedArr = JSON.parse(rawArr); } catch(_e) { parsedArr = [rawArr]; }
         // Show the most recent entry first (arrays can get huge)
         const last = Array.isArray(parsedArr) ? parsedArr[parsedArr.length - 1] : parsedArr;
-        return Alert.alert('Senaste FS-fel', JSON.stringify(last, null, 2).slice(0,2000));
+        return showAlert('Senaste FS-fel', JSON.stringify(last, null, 2).slice(0,2000));
       }
       // Fallback to single-entry key for older records
       const raw = await AsyncStorage.getItem('dk_last_fs_error');
-      if (!raw) return Alert.alert('Senaste FS-fel', 'Ingen fel-logg hittades.');
+      if (!raw) return showAlert('Senaste FS-fel', 'Ingen fel-logg hittades.');
       let parsed = null;
       try { parsed = JSON.parse(raw); } catch(_e) { parsed = { raw }; }
-      Alert.alert('Senaste FS-fel', JSON.stringify(parsed, null, 2).slice(0,2000));
+      showAlert('Senaste FS-fel', JSON.stringify(parsed, null, 2).slice(0,2000));
     } catch(_e) {
-      Alert.alert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (_e?.message || _e));
+      showAlert('Fel', 'Kunde inte läsa dk_last_fs_error: ' + (_e?.message || _e));
     }
   }
   
@@ -3629,27 +3641,27 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   try {
                     // Force refresh token
                     await auth.currentUser.getIdToken(true);
-                    Alert.alert('Token uppdaterad', 'ID-token uppdaterad. Försöker migrera lokal data...');
+                    showAlert('Token uppdaterad', 'ID-token uppdaterad. Försöker migrera lokal data...');
                     // attempt migration if local data exists
                     const raw = await AsyncStorage.getItem('hierarchy_local');
                     if (!raw) {
-                      Alert.alert('Ingen lokal data', 'Inget att migrera.');
+                      showAlert('Ingen lokal data', 'Inget att migrera.');
                       await refreshLocalFallbackFlag();
                       return;
                     }
                     const parsed = JSON.parse(raw);
                     const res = await saveHierarchy(companyId, parsed);
                     const ok = res === true || (res && res.ok === true);
-                    if (ok) {
+                      if (ok) {
                       await AsyncStorage.removeItem('hierarchy_local');
                       await refreshLocalFallbackFlag();
                       setHierarchy(parsed);
-                      Alert.alert('Klar', 'Lokal hierarki migrerad till molnet.');
+                      showAlert('Klar', 'Lokal hierarki migrerad till molnet.');
                     } else {
-                      Alert.alert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
+                      showAlert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
                     }
                   } catch(_e) {
-                    Alert.alert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (_e?.message || _e));
+                    showAlert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (_e?.message || _e));
                   }
                 }}
               >
@@ -3665,9 +3677,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     const tokenRes = user ? await auth.currentUser.getIdTokenResult(true).catch((e) => null) : null;
                     const claims = tokenRes?.claims || {};
                     const stored = await AsyncStorage.getItem('dk_companyId');
-                    Alert.alert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
+                    showAlert('Auth info', `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`);
                   } catch(_e) {
-                    Alert.alert('Fel', 'Kunde inte läsa auth info: ' + (_e?.message || _e));
+                    showAlert('Fel', 'Kunde inte läsa auth info: ' + (_e?.message || _e));
                   }
                 }}
               >

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -24,6 +23,10 @@ import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
+// Note: `expo-file-system` is used only on native; avoid static top-level import
+// so web builds don't attempt to resolve native-only exports. Load dynamically
+// inside functions when needed.
+let FileSystem = null;
 
 import ArbetsberedningScreen from './ArbetsberedningScreen';
 import ControlDetails from './ControlDetails';
@@ -41,12 +44,22 @@ import { deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompa
 async function readUriAsBase64(uri) {
   if (!uri) return null;
   try {
+    // Dynamically load FileSystem only when running in an environment that supports it
+    if (!FileSystem) {
+      try {
+        FileSystem = await import('expo-file-system');
+      } catch (e) {
+        FileSystem = null;
+      }
+    }
     // If already a data URI, strip prefix and return raw base64
     if (typeof uri === 'string' && uri.startsWith('data:')) {
       const parts = uri.split(',');
       return parts[1] || null;
     }
-    const b = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    const encodingOption = (FileSystem && FileSystem.EncodingType && FileSystem.EncodingType.Base64) ? FileSystem.EncodingType.Base64 : 'base64';
+    if (!FileSystem || typeof FileSystem.readAsStringAsync !== 'function') return null;
+    const b = await FileSystem.readAsStringAsync(uri, { encoding: encodingOption });
     return b;
   } catch(e) {
     console.warn('[PDF] readUriAsBase64 failed for', uri, e);
@@ -65,12 +78,19 @@ async function toDataUri(uri) {
     // If http(s), try download to cache and read
     if (/^https?:\/\//i.test(uri)) {
       try {
+        // Ensure FileSystem is available
+        if (!FileSystem) {
+          try { FileSystem = await import('expo-file-system'); } catch(e) { FileSystem = null; }
+        }
         const fileName = 'pdf-img-' + (Math.random().toString(36).slice(2, 9)) + '.jpg';
-        const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-        const dl = await FileSystem.downloadAsync(uri, dest);
-        if (dl && dl.uri) {
-          const b2 = await readUriAsBase64(dl.uri);
-          if (b2) return 'data:image/jpeg;base64,' + b2;
+        const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
+        if (baseDir && FileSystem && typeof FileSystem.downloadAsync === 'function') {
+          const dest = baseDir + fileName;
+          const dl = await FileSystem.downloadAsync(uri, dest);
+          if (dl && dl.uri) {
+            const b2 = await readUriAsBase64(dl.uri);
+            if (b2) return 'data:image/jpeg;base64,' + b2;
+          }
         }
       } catch(e) {}
     }
@@ -268,9 +288,12 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
               try {
                 const fileName = 'company-logo.preview.png';
-                const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-                const dl = await FileSystem.downloadAsync(logoForPrint, dest);
-                if (dl?.uri) logoForPrint = dl.uri;
+                const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
+                if (baseDir) {
+                  const dest = baseDir + fileName;
+                  const dl = await FileSystem.downloadAsync(logoForPrint, dest);
+                  if (dl?.uri) logoForPrint = dl.uri;
+                }
               } catch {}
             }
 
@@ -386,10 +409,13 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           let logoForPrint = companyLogoFromProfile || companyLogoUri || null;
           if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
             try {
-              const fileName = 'company-logo.export.png';
-              const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-              const dl = await FileSystem.downloadAsync(logoForPrint, dest);
-              if (dl?.uri) logoForPrint = dl.uri;
+                const fileName = 'company-logo.export.png';
+              const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
+              if (baseDir) {
+                const dest = baseDir + fileName;
+                const dl = await FileSystem.downloadAsync(logoForPrint, dest);
+                if (dl?.uri) logoForPrint = dl.uri;
+              }
             } catch {}
           }
           // Try to convert logo to base64 for embedding
@@ -2151,9 +2177,12 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                         if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
                                           try {
                                             const fileName = 'company-logo.single.png';
-                                            const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + fileName;
-                                            const dl = await FileSystem.downloadAsync(logoForPrint, dest);
-                                            if (dl?.uri) logoForPrint = dl.uri;
+                                            const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
+                                            if (baseDir) {
+                                              const dest = baseDir + fileName;
+                                              const dl = await FileSystem.downloadAsync(logoForPrint, dest);
+                                              if (dl?.uri) logoForPrint = dl.uri;
+                                            }
                                           } catch(e) { console.warn('[PDF] download logo failed', e); }
                                         }
                                         let logoBase64 = null;

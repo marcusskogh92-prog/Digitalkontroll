@@ -12,12 +12,13 @@ import { Alert, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidin
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import * as ImagePicker from 'expo-image-picker';
 import 'react-native-get-random-values';
 import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
 import { createByggdelMall, deleteByggdelMall, deleteDraftControlFromFirestore, fetchByggdelHierarchy, fetchByggdelMallar, saveByggdelHierarchy, saveDraftToFirestore, updateByggdelMall } from './firebase';
+// Load ImagePicker dynamically inside handlers to avoid web-only export issues
+let ImagePicker = null;
 
 export default function BaseControlForm({
   project,
@@ -1120,9 +1121,13 @@ export default function BaseControlForm({
       if (!sid || pIdx < 0) return;
       try { Keyboard.dismiss(); } catch(e) {}
 
+      // Dynamically import ImagePicker when needed
+      if (!ImagePicker) {
+        try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+      }
       let perm = null;
       try {
-        if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
+        if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
           perm = await ImagePicker.getMediaLibraryPermissionsAsync();
         }
       } catch(e) {}
@@ -1143,7 +1148,7 @@ export default function BaseControlForm({
       const pickerOptions = { quality: 0.8 };
       if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
       await new Promise(resolve => InteractionManager.runAfterInteractions(() => setTimeout(resolve, 200)));
-      const res = await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      const res = (ImagePicker && typeof ImagePicker.launchImageLibraryAsync === 'function') ? await ImagePicker.launchImageLibraryAsync(pickerOptions) : null;
       const assets = (res && Array.isArray(res.assets) && res.assets.length) ? res.assets : (res && res.uri ? [{ uri: res.uri }] : []);
       const photos = (assets || [])
         .map(a => {

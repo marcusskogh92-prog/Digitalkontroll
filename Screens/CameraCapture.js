@@ -4,9 +4,10 @@ import { CommonActions, useNavigation, useRoute } from '@react-navigation/native
 import * as CameraModule from 'expo-camera';
 import { Camera } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// Load ImagePicker dynamically in handlers to avoid bundling native-only exports on web
+let ImagePicker = null;
 
 const PRIMARY = '#263238';
 
@@ -46,8 +47,11 @@ export default function CameraCapture() {
   }
   const handlePickFromLibrary = async () => {
     try {
+      if (!ImagePicker) {
+        try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+      }
       let perm = null;
-      if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
+      if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
         perm = await ImagePicker.getMediaLibraryPermissionsAsync();
       }
       if (!perm || !(perm.granted === true || perm.status === 'granted')) {
@@ -58,10 +62,14 @@ export default function CameraCapture() {
         Alert.alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
         return;
       }
-      const mediaTypesOption = (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images) ? ImagePicker.MediaType.Images : undefined;
+      const mediaTypesOption = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
+        ? ImagePicker.MediaTypeOptions.Images
+        : (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images)
+          ? ImagePicker.MediaType.Images
+          : undefined;
       const pickerOptions = { quality: 0.8 };
       if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
-      const res = await ImagePicker.launchImageLibraryAsync(pickerOptions);
+      const res = (ImagePicker && typeof ImagePicker.launchImageLibraryAsync === 'function') ? await ImagePicker.launchImageLibraryAsync(pickerOptions) : null;
       const extractAssets = (r) => {
         if (!r) return [];
         if (Array.isArray(r.assets) && r.assets.length) return r.assets;
