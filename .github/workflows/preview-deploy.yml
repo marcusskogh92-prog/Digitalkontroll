@@ -1,0 +1,31 @@
+name: Preview Deploy (Firebase Hosting)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    # also run on branch pushes (non-main) so you can get preview urls
+    branches-ignore: ['main']
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build web bundle
+        run: npm run build
+      - name: Deploy to Firebase preview channel
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # derive a safe channel name from branch or PR head ref
+          CHANNEL="${{ github.head_ref || github.ref_name }}"
+          CHANNEL_SANITIZED=$(echo "$CHANNEL" | tr '/ ' '-' | tr -cd '[:alnum:]-_')
+          echo "Deploying to preview channel: $CHANNEL_SANITIZED"
+          npx firebase-tools hosting:channel:deploy "$CHANNEL_SANITIZED" --expires 7d --project digitalkontroll-8fd05 --token "$FIREBASE_TOKEN"
