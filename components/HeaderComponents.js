@@ -81,11 +81,16 @@ export function HomeHeaderSearch({ navigation, route }) {
     return false;
   }, [route?.params?.headerSearchKeepConnected]);
 
+  const setHeaderSearchParams = React.useCallback((params) => {
+    if (Platform.OS !== 'web') return;
+    try { navigation?.setParams?.(params); } catch (_e) {}
+  }, [navigation]);
+
   React.useEffect(() => {
-    if (measuredWidth && navigation?.setParams) {
-      try { navigation.setParams({ headerSearchWidth: measuredWidth }); } catch (_e) {}
+    if (measuredWidth) {
+      setHeaderSearchParams({ headerSearchWidth: measuredWidth });
     }
-  }, [measuredWidth, navigation]);
+  }, [measuredWidth, setHeaderSearchParams]);
 
   const measureAbsolute = React.useCallback(() => {
     try {
@@ -95,11 +100,11 @@ export function HomeHeaderSearch({ navigation, route }) {
           if (typeof w === 'number' && w > 0) setMeasuredWidth(prev => (prev && Math.abs(prev - w) < 1 ? prev : w));
           const bottomY = (y || 0) + (h || 0) - 1;
           const leftX = (x || 0);
-          try { navigation?.setParams?.({ headerSearchWidth: w, headerSearchBottom: bottomY, headerSearchLeft: leftX, headerSearchTop: y || 0 }); } catch (_e) {}
+          setHeaderSearchParams({ headerSearchWidth: w, headerSearchBottom: bottomY, headerSearchLeft: leftX, headerSearchTop: y || 0 });
         });
       }
     } catch (_e) {}
-  }, [navigation]);
+  }, [setHeaderSearchParams]);
 
   React.useEffect(() => {
     if (Platform.OS === 'web') {
@@ -118,9 +123,9 @@ export function HomeHeaderSearch({ navigation, route }) {
   const submitSearch = React.useCallback(() => {
     try {
       const q = String(query || '').trim();
-      navigation?.setParams?.({ headerProjectSearchText: q, headerSearchOpen: true });
+      setHeaderSearchParams({ headerProjectSearchText: q, headerSearchOpen: true });
     } catch (_e) {}
-  }, [navigation, query]);
+  }, [setHeaderSearchParams, query]);
 
   return (
     <View
@@ -163,7 +168,7 @@ export function HomeHeaderSearch({ navigation, route }) {
         <TextInput
           value={query}
           onChangeText={(t) => {
-            try { navigation?.setParams?.({ headerProjectSearchText: t, headerSearchOpen: true }); } catch (_e) {}
+            setHeaderSearchParams({ headerProjectSearchText: t, headerSearchOpen: true });
           }}
           placeholder="Sök projekt…"
           placeholderTextColor="#888"
@@ -183,11 +188,11 @@ export function HomeHeaderSearch({ navigation, route }) {
           onSubmitEditing={submitSearch}
           onFocus={() => {
             setIsFocused(true);
-            try { navigation?.setParams?.({ headerSearchOpen: true, headerSearchKeepConnected: false }); } catch (_e) {}
+            setHeaderSearchParams({ headerSearchOpen: true, headerSearchKeepConnected: false });
           }}
           onBlur={() => {
             setIsFocused(false);
-            try { navigation?.setParams?.({ headerSearchOpen: false }); } catch (_e) {}
+            setHeaderSearchParams({ headerSearchOpen: false });
           }}
           autoCorrect={false}
           autoCapitalize="none"

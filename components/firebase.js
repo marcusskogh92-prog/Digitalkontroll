@@ -3,8 +3,8 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
 import { Alert, Platform } from 'react-native';
@@ -27,37 +27,16 @@ const app = initializeApp(firebaseConfig);
 export const storage = getStorage(app);
 
 // Initiera autentisering & Firestore
-// Prefer web `getAuth` by default; attempt to enable React Native persistence
-// only on native platforms via dynamic import to avoid bundling native-only
-// exports into the web build (which causes compile errors).
-let _auth = getAuth(app);
-if (Platform && Platform.OS && Platform.OS !== 'web') {
-  try {
-    // Try synchronous require first (works in many native packagers).
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const rnAuth = require('firebase/auth');
-      if (rnAuth && typeof rnAuth.initializeAuth === 'function' && typeof rnAuth.getReactNativePersistence === 'function') {
-        _auth = rnAuth.initializeAuth(app, { persistence: rnAuth.getReactNativePersistence(AsyncStorage) });
-      }
-    } catch (reqErr) {
-      // Fall back to dynamic import for environments that support it.
-      (async () => {
-        try {
-          const rnAuth = await import('firebase/auth');
-          if (rnAuth && typeof rnAuth.initializeAuth === 'function' && typeof rnAuth.getReactNativePersistence === 'function') {
-            _auth = rnAuth.initializeAuth(app, { persistence: rnAuth.getReactNativePersistence(AsyncStorage) });
-          }
-        } catch (e) {
-          // No-op: leave default web auth instance
-        }
-      })();
-    }
-  } catch (e) {
-    // leave default web auth instance
-  }
+// Webb: använd standard getAuth. Native: använd initializeAuth med AsyncStorage-persistens
+let auth;
+if (Platform.OS === 'web') {
+  auth = getAuth(app);
+} else {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
 }
-export const auth = _auth;
+export { auth };
 export const db = getFirestore(app);
 // Functions client
 let _functionsClient = null;
@@ -1150,19 +1129,42 @@ export async function fetchCompanyControlTypes(companyIdOverride) {
       try {
         const data = docSnap.data() || {};
         const key = String(data.key || docSnap.id || data.name || '').trim() || `ct_${docSnap.id}`;
-        const name = String(data.name || data.title || key).trim();
-        if (!name) return;
-        const icon = String(data.icon || '').trim() || 'document-text-outline';
-        const color = String(data.color || '').trim() || '#455A64';
-        const order = (typeof data.order === 'number' && Number.isFinite(data.order)) ? data.order : (100 + extras.length);
-        const hidden = !!data.hidden;
-        extras.push({ key, name, icon, color, order, hidden, builtin: false, id: docSnap.id });
+        // Bygg en patch som bara innehåller de fält som faktiskt finns på dokumentet
+        // så att vi inte råkar skriva över standardvärden (namn/ikon/färg) när en
+        // override bara vill sätta t.ex. `hidden: true`.
+        const patch = { key, builtin: false, id: docSnap.id };
+        if (Object.prototype.hasOwnProperty.call(data, 'name') || Object.prototype.hasOwnProperty.call(data, 'title')) {
+          const name = String(data.name || data.title || key).trim();
+          if (name) patch.name = name;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'icon')) {
+          const icon = String(data.icon || '').trim();
+          if (icon) patch.icon = icon;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'color')) {
+          const color = String(data.color || '').trim();
+          if (color) patch.color = color;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'order') && typeof data.order === 'number' && Number.isFinite(data.order)) {
+          patch.order = data.order;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'hidden')) {
+          patch.hidden = !!data.hidden;
+        }
+        extras.push(patch);
       } catch (_e) {}
     });
     if (!extras.length) return base;
     const byKey = new Map();
     base.forEach((t) => { byKey.set(String(t.key || t.name).toLowerCase(), t); });
-    extras.forEach((t) => { byKey.set(String(t.key || t.name).toLowerCase(), t); });
+    // Overlay företags-specifika overrides ovanpå defaulttyperna i stället
+    // för att ersätta dem helt. På så sätt kan en override som bara sätter
+    // t.ex. `hidden: true` återanvända defaultens namn, ikon och färg.
+    extras.forEach((t) => {
+      const k = String(t.key || t.name).toLowerCase();
+      const existing = byKey.get(k) || {};
+      byKey.set(k, { ...existing, ...t });
+    });
     const merged = Array.from(byKey.values());
     merged.sort((a, b) => {
       const ao = typeof a.order === 'number' ? a.order : 9999;
@@ -1291,7 +1293,7 @@ export async function fetchCompanyMallar(companyIdOverride) {
   }
 }
 
-export async function createCompanyMall({ title, description, controlType }, companyIdOverride) {
+export async function createCompanyMall({ title, description, controlType, layout, version }, companyIdOverride) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
   if (!companyId) {
     const err = new Error('no_company');
@@ -1301,6 +1303,21 @@ export async function createCompanyMall({ title, description, controlType }, com
   const t = String(title || '').trim();
   const desc = String(description || '').trim();
   const ct = String(controlType || '').trim();
+  const layoutData = layout || null;
+  const versionNumber = Number.isFinite(Number(version)) && Number(version) > 0 ? Number(version) : 1;
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
   if (!t) {
     const err = new Error('invalid-argument');
     err.code = 'invalid-argument';
@@ -1312,10 +1329,38 @@ export async function createCompanyMall({ title, description, controlType }, com
     title: t,
     description: desc,
     controlType: ct || null,
+    layout: layoutData,
+    createdBy: createdBy || null,
+    hidden: false,
+    version: versionNumber,
     createdAt: serverTimestamp(),
   };
   const docRef = await addDoc(colRef, payload);
   return docRef.id;
+}
+
+// Uppdatera en företagsmall (merge)
+// Exempel: updateCompanyMall({ id, patch: { hidden: true } })
+export async function updateCompanyMall({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const mallId = String(id || '').trim();
+  if (!mallId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'mallar', mallId);
+  await updateDoc(ref, safePatch);
+  return true;
 }
 
 export async function deleteCompanyMall({ id }, companyIdOverride) {

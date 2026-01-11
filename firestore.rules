@@ -41,7 +41,14 @@ service cloud.firestore {
           // or admin inside MS Byggsystem
           || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
         );
-      allow update, delete: if isCompanyMember(company);
+      // Allow updates both for members of the company and for global superadmins / MS Byggsystem-admins.
+      allow update, delete: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+            || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+          )
+        );
     }
 
     // Allow collection group queries on any "profil" subcollection (used to list companies
@@ -63,7 +70,32 @@ service cloud.firestore {
 
     // Företags-specifika kontrolltyper (company-scoped)
     // Används av adminvyn "Kontrolltyper" samt vid skapande av nya kontrollpunkter.
+    // Läsning tillåts både för medlemmar i företaget och för globala admins
+    // (superadmin eller MS Byggsystem-admin) så att centrala admins kan se
+    // vilka kontrolltyper som används hos alla företag.
     match /foretag/{company}/kontrolltyper/{typeId} {
+      allow read: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            // Token-baserade superadmins
+            request.auth.token.superadmin == true ||
+            request.auth.token.role == 'superadmin' ||
+            // Admin i MS Byggsystem
+            (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+            // Whitelist specifika superadmin-mail för robusthet
+            request.auth.token.email == 'marcus@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem'
+          )
+        );
+      // Skriv-rättigheter lämnas företags-lokala; bara medlemmar kan ändra
+      // sina egna företags kontrolltyper.
+      allow write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika mallar (company-scoped)
+    // Används av adminvyn "Mallar" för att skapa och hantera mallar per kontrolltyp.
+    match /foretag/{company}/mallar/{mallId} {
       allow read, write: if isCompanyMember(company);
     }
 

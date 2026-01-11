@@ -1,14 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenu from '../components/HeaderUserMenu';
-import { auth, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
+import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import ProjectDetails from './ProjectDetails';
+import TemplateControlScreen from './TemplateControlScreen';
 let createPortal = null;
 if (Platform.OS === 'web') {
   try { createPortal = require('react-dom').createPortal; } catch(_e) { createPortal = null; }
@@ -43,6 +44,9 @@ export default function HomeScreen({ route, navigation }) {
   const rightPaneScrollRef = useRef(null);
   const activityScrollRef = useRef(null);
   const hierarchyRef = useRef([]);
+  const [spinSidebarHome, setSpinSidebarHome] = useState(0);
+  const [spinSidebarRefresh, setSpinSidebarRefresh] = useState(0);
+  const [spinSidebarFilter, setSpinSidebarFilter] = useState(0);
   
   // Close header search on Escape key (web)
   React.useEffect(() => {
@@ -402,6 +406,13 @@ export default function HomeScreen({ route, navigation }) {
   // State for project selection modal (for creating controls)
   const [selectProjectModal, setSelectProjectModal] = useState({ visible: false, type: null });
   const [showControlTypeModal, setShowControlTypeModal] = useState(false);
+  const [projectControlModal, setProjectControlModal] = useState({ visible: false, project: null });
+  const [projectControlSelectedType, setProjectControlSelectedType] = useState('');
+  const [projectControlTypePickerOpen, setProjectControlTypePickerOpen] = useState(false);
+  const [projectControlTemplates, setProjectControlTemplates] = useState([]);
+  const [projectControlSelectedTemplateId, setProjectControlSelectedTemplateId] = useState('');
+  const [projectControlTemplatePickerOpen, setProjectControlTemplatePickerOpen] = useState(false);
+  const [projectControlTemplateSearch, setProjectControlTemplateSearch] = useState('');
 
   // Check that a project number/id is unique across the whole hierarchy.
   // Must be declared before any JSX/constants that reference it (RN-web TDZ).
@@ -1245,6 +1256,8 @@ export default function HomeScreen({ route, navigation }) {
   // Laddningsstate för hierarkin
   const [loadingHierarchy, setLoadingHierarchy] = useState(true);
   const [hierarchy, setHierarchy] = useState([]);
+  const [spinMain, setSpinMain] = useState({});
+  const [spinSub, setSpinSub] = useState({});
   const [localFallbackExists, setLocalFallbackExists] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
@@ -1252,6 +1265,7 @@ export default function HomeScreen({ route, navigation }) {
   const [isInlineLocked, setIsInlineLocked] = useState(false);
   const pendingProjectSwitchRef = useRef(null);
   const [projectControlsRefreshNonce, setProjectControlsRefreshNonce] = useState(0);
+  const [inlineControlEditor, setInlineControlEditor] = useState(null); // { project, controlType }
 
   // Used to request a specific action when opening a project from the dashboard (e.g. open a draft inline)
   const [projectSelectedAction, setProjectSelectedAction] = useState(null);
@@ -1820,6 +1834,25 @@ export default function HomeScreen({ route, navigation }) {
     setSelectedProject(null);
   }, []);
 
+  const openInlineControlEditor = React.useCallback((project, controlType, templateId = null) => {
+    if (!project || !controlType) return;
+    setSelectedProject(project);
+    setInlineControlEditor({ project, controlType, templateId });
+    setProjectSelectedAction(null);
+  }, []);
+
+  const closeInlineControlEditor = React.useCallback(() => {
+    setInlineControlEditor(null);
+  }, []);
+
+  const handleInlineControlFinished = React.useCallback(() => {
+    try {
+      showAlert('Sparad', 'Kontrollen är sparad.');
+    } catch(_e) {}
+    setInlineControlEditor(null);
+    setProjectControlsRefreshNonce((n) => n + 1);
+  }, []);
+
   React.useEffect(() => {
     if (Platform.OS !== 'web') return;
     // Refresh dashboard when returning to start panel or after sync/hierarchy changes.
@@ -1905,24 +1938,59 @@ export default function HomeScreen({ route, navigation }) {
 
   // Company profile (used for per-company feature visibility)
   const [companyProfile, setCompanyProfile] = useState(null);
+  const [controlTypes, setControlTypes] = useState(DEFAULT_CONTROL_TYPES);
+
+  // Load full control type list (default + company-specific) for the active company
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!companyId) {
+        if (mounted) setControlTypes(DEFAULT_CONTROL_TYPES);
+        return;
+      }
+      try {
+        const list = await fetchCompanyControlTypes(companyId);
+        if (mounted && Array.isArray(list) && list.length > 0) {
+          setControlTypes(list);
+        } else if (mounted) {
+          setControlTypes(DEFAULT_CONTROL_TYPES);
+        }
+      } catch (_e) {
+        if (mounted) setControlTypes(DEFAULT_CONTROL_TYPES);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [companyId]);
 
   const controlTypeOptions = React.useMemo(() => {
-    const all = [
-      { type: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2' },
-      { type: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C' },
-      { type: 'Fuktmätning', icon: 'water-outline', color: '#0288D1' },
-      { type: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2' },
-      { type: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600' },
-      { type: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C' }
-    ];
+    const baseList = Array.isArray(controlTypes) && controlTypes.length > 0
+      ? controlTypes
+      : DEFAULT_CONTROL_TYPES;
+
+    // If we have any custom (non-builtin) control types, we treat the
+    // per-company list as the source of truth and ignore the older
+    // enabledControlTypes filter from the company profile.
+    const hasCustomTypes = baseList.some(ct => ct && ct.builtin === false);
+
+    let visible = baseList.filter(ct => ct && ct.hidden !== true);
 
     const enabled = companyProfile?.enabledControlTypes;
-    const filtered = Array.isArray(enabled)
-      ? all.filter(o => enabled.includes(o.type))
-      : all;
+    if (!hasCustomTypes && Array.isArray(enabled) && enabled.length > 0) {
+      const enabledSet = new Set(enabled.map(v => String(v || '').trim()).filter(Boolean));
+      visible = visible.filter((ct) => {
+        const name = String(ct.name || '').trim();
+        const key = String(ct.key || '').trim();
+        if (!enabledSet.size) return true;
+        return (name && enabledSet.has(name)) || (key && enabledSet.has(key));
+      });
+    }
 
-    return filtered.slice().sort((a, b) => a.type.localeCompare(b.type));
-  }, [companyProfile]);
+    return visible.map((ct) => ({
+      type: ct.name || ct.key || '',
+      icon: ct.icon || 'document-text-outline',
+      color: ct.color || '#455A64',
+    })).filter(o => o.type);
+  }, [controlTypes, companyProfile]);
 
   // Load company profile when companyId changes
   React.useEffect(() => {
@@ -2595,7 +2663,7 @@ export default function HomeScreen({ route, navigation }) {
     if (t.type === 'project') {
       return [
         { key: 'open', label: 'Öppna projekt', icon: '📄' },
-        { key: 'addProject', label: 'Lägg till projekt', icon: '➕' },
+        { key: 'addControl', label: 'Skapa ny kontroll', icon: '✅' },
         { key: 'copy', label: 'Kopiera projekt', icon: '📋' },
         { key: 'rename', label: 'Byt namn', icon: '✏️' },
         { key: 'delete', label: 'Radera', icon: '🗑️', danger: true },
@@ -2654,10 +2722,26 @@ export default function HomeScreen({ route, navigation }) {
         case 'open':
           if (project && Platform.OS === 'web') requestProjectSwitch(project, { selectedAction: null });
           break;
-        case 'addProject':
-          setNewProjectModal({ visible: true, parentSubId: subId });
-          setNewProjectName('');
-          setNewProjectNumber('');
+        case 'addControl':
+          if (project) {
+            setProjectControlSelectedType(controlTypeOptions[0]?.type || '');
+            setProjectControlTypePickerOpen(false);
+            setProjectControlTemplates([]);
+            setProjectControlSelectedTemplateId('');
+            setProjectControlTemplatePickerOpen(false);
+            setProjectControlTemplateSearch('');
+            (async () => {
+              try {
+                const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+                if (cid) {
+                  const items = await fetchCompanyMallar(cid).catch(() => []);
+                  const list = Array.isArray(items) ? items : [];
+                  setProjectControlTemplates(list);
+                }
+              } catch(_e) {}
+              setProjectControlModal({ visible: true, project });
+            })();
+          }
           break;
         case 'copy':
           copyProjectWeb(mainId, subId, project);
@@ -2682,6 +2766,16 @@ export default function HomeScreen({ route, navigation }) {
       return item;
     });
   }
+
+  const handleToggleMainFolder = (mainId) => {
+    setHierarchy(prev => prev.map(m => m.id === mainId ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }));
+    setSpinMain(prev => ({ ...prev, [mainId]: (prev[mainId] || 0) + 1 }));
+  };
+
+  const handleToggleSubFolder = (subId) => {
+    setHierarchy(prev => toggleExpand(1, subId, prev));
+    setSpinSub(prev => ({ ...prev, [subId]: (prev[subId] || 0) + 1 }));
+  };
 
   // Stil för återanvändning
 // eslint-disable-next-line no-unused-vars
@@ -2904,16 +2998,10 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                 key={proj.id}
                                 style={{ padding: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
                                 onPress={() => {
+                                  const selType = selectProjectModal.type;
                                   setSelectProjectModal({ visible: false, type: null });
-                                  switch (selectProjectModal.type) {
-                                    case 'Arbetsberedning': navigation.navigate('ArbetsberedningScreen', { project: proj }); break;
-                                    case 'Riskbedömning': navigation.navigate('RiskbedömningScreen', { project: proj }); break;
-                                    case 'Fuktmätning': navigation.navigate('FuktmätningScreen', { project: proj }); break;
-                                    case 'Egenkontroll': navigation.navigate('EgenkontrollScreen', { project: proj }); break;
-                                    case 'Mottagningskontroll': navigation.navigate('MottagningskontrollScreen', { project: proj }); break;
-                                    case 'Skyddsrond': navigation.navigate('SkyddsrondScreen', { project: proj }); break;
-                                    default:
-                                      navigation.navigate('ControlForm', { project: proj, controlType: selectProjectModal.type });
+                                  if (selType) {
+                                    openInlineControlEditor(proj, selType);
                                   }
                                 }}
                               >
@@ -2976,16 +3064,10 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                     <View key={proj.id} style={{ marginLeft: 32 }}>
                                       <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent', borderRadius: 4, padding: '2px 4px', marginBottom: 0 }}
                                         onPress={() => {
+                                          const selType = selectProjectModal.type;
                                           setSelectProjectModal({ visible: false, type: null });
-                                          switch (selectProjectModal.type) {
-                                            case 'Arbetsberedning': navigation.navigate('ArbetsberedningScreen', { project: proj }); break;
-                                            case 'Riskbedömning': navigation.navigate('RiskbedömningScreen', { project: proj }); break;
-                                            case 'Fuktmätning': navigation.navigate('FuktmätningScreen', { project: proj }); break;
-                                            case 'Egenkontroll': navigation.navigate('EgenkontrollScreen', { project: proj }); break;
-                                            case 'Mottagningskontroll': navigation.navigate('MottagningskontrollScreen', { project: proj }); break;
-                                            case 'Skyddsrond': navigation.navigate('SkyddsrondScreen', { project: proj }); break;
-                                            default:
-                                              navigation.navigate('ControlForm', { project: proj, controlType: selectProjectModal.type });
+                                          if (selType) {
+                                            openInlineControlEditor(proj, selType);
                                           }
                                         }}
                                       >
@@ -3174,7 +3256,8 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
             <View
               style={{
                 flex: 1,
-                justifyContent: 'flex-end',
+                // Center the search dialog vertically on mobile
+                justifyContent: 'center',
                 alignItems: 'center',
                 paddingTop: 20,
                 paddingBottom: 8,
@@ -3357,7 +3440,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                             activeOpacity={0.8}
                             onPress={() => {
                                 // Switch project inline and close the header dropdown (keep the query text).
-                                try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {}
+                                if (Platform.OS === 'web') {
+                                  try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {}
+                                }
                                 requestProjectSwitch(proj, { selectedAction: null });
                               }}
                           >
@@ -3383,7 +3468,11 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     <View
                       // backdrop to capture outside clicks and close the dropdown
                       onStartShouldSetResponder={() => true}
-                      onResponderRelease={() => { try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {} }}
+                      onResponderRelease={() => {
+                        if (Platform.OS === 'web') {
+                          try { navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false }); } catch(_e) {}
+                        }
+                      }}
                       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99998, backgroundColor: 'rgba(0,0,0,0)' }}
                     />
                     {innerDropdown}
@@ -3753,17 +3842,29 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   <TouchableOpacity
                     style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
                     onPress={() => {
+                      setSpinSidebarHome((n) => n + 1);
                       if (selectedProject) closeSelectedProject();
                     }}
                     activeOpacity={0.7}
                     accessibilityLabel="Hem"
                   >
-                    <Ionicons name="home-outline" size={18} color="#1976D2" />
+                    <Ionicons
+                      name="home-outline"
+                      size={18}
+                      color="#1976D2"
+                      style={{
+                        transform: [{ rotate: `${spinSidebarHome * 360}deg` }],
+                        transitionProperty: 'transform',
+                        transitionDuration: '0.4s',
+                        transitionTimingFunction: 'ease',
+                      }}
+                    />
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
                     onPress={() => {
+                      setSpinSidebarRefresh((n) => n + 1);
                       if (selectedProject) {
                         setProjectControlsRefreshNonce((n) => n + 1);
                       } else {
@@ -3773,16 +3874,39 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     activeOpacity={0.7}
                     accessibilityLabel="Uppdatera"
                   >
-                    <Ionicons name="refresh" size={18} color="#1976D2" />
+                    <Ionicons
+                      name="refresh"
+                      size={18}
+                      color="#1976D2"
+                      style={{
+                        transform: [{ rotate: `${spinSidebarRefresh * 360}deg` }],
+                        transitionProperty: 'transform',
+                        transitionDuration: '0.4s',
+                        transitionTimingFunction: 'ease',
+                      }}
+                    />
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
-                    onPress={() => setFilterModalVisible(true)}
+                    onPress={() => {
+                      setSpinSidebarFilter((n) => n + 1);
+                      setFilterModalVisible(true);
+                    }}
                     activeOpacity={0.7}
                   >
                     <View style={{ position: 'relative' }}>
-                      <Ionicons name="filter" size={18} color="#1976D2" />
+                      <Ionicons
+                        name="filter"
+                        size={18}
+                        color="#1976D2"
+                        style={{
+                          transform: [{ rotate: `${spinSidebarFilter * 360}deg` }],
+                          transitionProperty: 'transform',
+                          transitionDuration: '0.4s',
+                          transitionTimingFunction: 'ease',
+                        }}
+                      />
                       {projectStatusFilter !== 'all' && (
                         <View
                           style={{
@@ -3835,7 +3959,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                 borderColor: isHovered ? '#1976D2' : 'transparent',
                                 transition: 'background 0.15s, border 0.15s',
                               }}
-                              onPress={() => setHierarchy(prev => prev.map(m => m.id === main.id ? { ...m, expanded: !m.expanded } : { ...m, expanded: false }))}
+                              onPress={() => handleToggleMainFolder(main.id)}
                               activeOpacity={0.7}
                               onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
                               delayLongPress={2000}
@@ -3851,7 +3975,18 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                 if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
                               }}
                             >
-                              <Ionicons name={main.expanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" style={{ marginRight: 4 }} />
+                              <Ionicons
+                                name={main.expanded ? 'chevron-down' : 'chevron-forward'}
+                                size={18}
+                                color="#222"
+                                style={{
+                                  marginRight: 4,
+                                  transform: Platform.OS === 'web' ? [{ rotate: `${(spinMain[main.id] || 0) * 360}deg` }] : undefined,
+                                  transitionProperty: Platform.OS === 'web' ? 'transform' : undefined,
+                                  transitionDuration: Platform.OS === 'web' ? '0.35s' : undefined,
+                                  transitionTimingFunction: Platform.OS === 'web' ? 'ease' : undefined,
+                                }}
+                              />
                               <Text style={{ fontSize: 15, fontWeight: isHovered ? '700' : '600', color: '#222', marginLeft: 2 }}>{main.name}</Text>
                             </TouchableOpacity>
                               );
@@ -3897,14 +4032,25 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                         borderColor: isHovered ? '#1976D2' : 'transparent',
                                         transition: 'background 0.15s, border 0.15s',
                                       }}
-                                      onPress={() => setHierarchy(toggleExpand(1, sub.id))}
+                                      onPress={() => handleToggleSubFolder(sub.id)}
                                       onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
                                       delayLongPress={2000}
                                       activeOpacity={0.7}
                                       onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(getRowKey('sub', String(main.id), String(sub.id))) : undefined}
                                       onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
                                     >
-                                      <Ionicons name={sub.expanded ? 'chevron-down' : 'chevron-forward'} size={16} color="#222" style={{ marginRight: 4 }} />
+                                      <Ionicons
+                                        name={sub.expanded ? 'chevron-down' : 'chevron-forward'}
+                                        size={16}
+                                        color="#222"
+                                        style={{
+                                          marginRight: 4,
+                                          transform: Platform.OS === 'web' ? [{ rotate: `${(spinSub[sub.id] || 0) * 360}deg` }] : undefined,
+                                          transitionProperty: Platform.OS === 'web' ? 'transform' : undefined,
+                                          transitionDuration: Platform.OS === 'web' ? '0.35s' : undefined,
+                                          transitionTimingFunction: Platform.OS === 'web' ? 'ease' : undefined,
+                                        }}
+                                      />
                                       <Text style={{ fontSize: 14, fontWeight: isHovered ? '700' : '600', color: '#222', marginLeft: 2 }}>{sub.name}</Text>
                                     </TouchableOpacity>
                                       );
@@ -4074,7 +4220,17 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   {/* Main content (dashboard / project / control) */}
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <ScrollView ref={rightPaneScrollRef} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
-                      {selectedProject ? (
+                      {inlineControlEditor && inlineControlEditor.project ? (
+                        <View style={{ flex: 1, padding: 18 }}>
+                          <TemplateControlScreen
+                            project={inlineControlEditor.project}
+                            controlType={inlineControlEditor.controlType}
+                            route={{ params: { templateId: inlineControlEditor.templateId || null, companyId } }}
+                            onExit={closeInlineControlEditor}
+                            onFinished={handleInlineControlFinished}
+                          />
+                        </View>
+                      ) : selectedProject ? (
                         <View style={{ flex: 1 }}>
                           <ProjectDetails route={{ params: { project: selectedProject, companyId, selectedAction: projectSelectedAction, onInlineLockChange: handleInlineLockChange } }} navigation={navigation} inlineClose={closeSelectedProject} refreshNonce={projectControlsRefreshNonce} />
                         </View>
@@ -4845,6 +5001,274 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   <TouchableOpacity
                     style={{ marginTop: 8, alignSelf: 'center' }}
                     onPress={() => setShowControlTypeModal(false)}
+                  >
+                    <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
+            {/* Modal: skapa ny kontroll för valt projekt via högerklick på projekt i trädet */}
+            <Modal
+              visible={projectControlModal.visible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => {
+                setProjectControlModal({ visible: false, project: null });
+                setProjectControlSelectedType('');
+                setProjectControlTypePickerOpen(false);
+                setProjectControlSelectedTemplateId('');
+                setProjectControlTemplatePickerOpen(false);
+                setProjectControlTemplateSearch('');
+              }}
+            >
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+                <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 4, color: '#222', textAlign: 'center' }}>
+                    Skapa ny kontroll
+                  </Text>
+                  {projectControlModal.project && (
+                    <Text style={{ fontSize: 14, color: '#555', marginBottom: 14, textAlign: 'center' }}>
+                      {projectControlModal.project.id} - {projectControlModal.project.name}
+                    </Text>
+                  )}
+                  <Text style={{ fontSize: 13, color: '#555', marginBottom: 6 }}>Kontrolltyp</Text>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setProjectControlTypePickerOpen(o => !o)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: '#ddd',
+                      borderRadius: 8,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                      backgroundColor: '#fff',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
+                        {(() => {
+                          const meta = controlTypeOptions.find(o => o.type === projectControlSelectedType) || null;
+                          if (!meta) return null;
+                          return (
+                            <View
+                              style={{
+                                width: 22,
+                                height: 22,
+                                borderRadius: 6,
+                                backgroundColor: meta.color || '#00897B',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                marginRight: 8,
+                              }}
+                            >
+                              <Ionicons name={meta.icon} size={14} color="#fff" />
+                            </View>
+                          );
+                        })()}
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', flexShrink: 1 }} numberOfLines={1}>
+                          {projectControlSelectedType || 'Välj kontrolltyp'}
+                        </Text>
+                      </View>
+                      <Ionicons
+                        name={projectControlTypePickerOpen ? 'chevron-up' : 'chevron-down'}
+                        size={18}
+                        color="#555"
+                      />
+                    </View>
+                  </TouchableOpacity>
+                  {projectControlTypePickerOpen && controlTypeOptions.length > 0 && (
+                    <View
+                      style={{
+                        marginBottom: 10,
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        borderRadius: 8,
+                        backgroundColor: '#fff',
+                        maxHeight: 220,
+                        overflow: 'auto',
+                      }}
+                    >
+                      {controlTypeOptions.map(({ type, icon, color }) => {
+                        const selected = type === projectControlSelectedType;
+                        return (
+                          <TouchableOpacity
+                            key={type}
+                            onPress={() => {
+                              setProjectControlSelectedType(type);
+                              setProjectControlTypePickerOpen(false);
+                            }}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              paddingVertical: 8,
+                              paddingHorizontal: 10,
+                              backgroundColor: selected ? '#E0F2F1' : '#fff',
+                              borderBottomWidth: 1,
+                              borderBottomColor: '#eee',
+                            }}
+                          >
+                            <Ionicons name={icon} size={18} color={color} style={{ marginRight: 10 }} />
+                            <Text style={{ fontSize: 14, color: '#263238' }}>{type}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                  {Array.isArray(companyProfile?.enabledControlTypes) && controlTypeOptions.length === 0 ? (
+                    <Text style={{ color: '#D32F2F', textAlign: 'center', marginTop: 6, marginBottom: 8 }}>
+                      Inga kontrolltyper är aktiverade för företaget.
+                    </Text>
+                  ) : null}
+                  {/* Mall-val: visas om det finns minst en mall för vald kontrolltyp */}
+                  {(() => {
+                    const ct = String(projectControlSelectedType || '').trim();
+                    const allTemplates = Array.isArray(projectControlTemplates) ? projectControlTemplates : [];
+                    const baseForType = ct
+                      ? allTemplates.filter(t => String(t.controlType || '').trim() === ct)
+                      : [];
+                    // Om ingen mall överhuvudtaget finns för vald kontrolltyp, visa inget mall-fält.
+                    if (!ct || baseForType.length === 0) return null;
+
+                    let filtered = baseForType;
+                    const q = String(projectControlTemplateSearch || '').trim().toLowerCase();
+                    if (q) {
+                      filtered = filtered.filter((t) => {
+                        const title = String(t.title || '').toLowerCase();
+                        const desc = String(t.description || '').toLowerCase();
+                        const v = t.version != null ? String(t.version).toLowerCase() : '';
+                        return title.includes(q) || desc.includes(q) || v.includes(q);
+                      });
+                    }
+                    const selectedTemplate = baseForType.find(t => String(t.id) === String(projectControlSelectedTemplateId)) || null;
+                    const selectedLabel = selectedTemplate?.title || 'Välj mall';
+                    return (
+                      <>
+                        <Text style={{ fontSize: 13, color: '#555', marginBottom: 6, marginTop: 10 }}>Mall</Text>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => setProjectControlTemplatePickerOpen(o => !o)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: '#ddd',
+                            borderRadius: 8,
+                            paddingVertical: 8,
+                            paddingHorizontal: 10,
+                            backgroundColor: '#fff',
+                            marginBottom: 4,
+                          }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', flexShrink: 1 }} numberOfLines={1}>
+                              {selectedLabel}
+                            </Text>
+                            <Ionicons
+                              name={projectControlTemplatePickerOpen ? 'chevron-up' : 'chevron-down'}
+                              size={18}
+                              color="#555"
+                            />
+                          </View>
+                        </TouchableOpacity>
+                        {projectControlTemplatePickerOpen && (
+                          <View
+                            style={{
+                              marginBottom: 10,
+                              borderWidth: 1,
+                              borderColor: '#ddd',
+                              borderRadius: 8,
+                              backgroundColor: '#fff',
+                              maxHeight: 220,
+                              overflow: 'auto',
+                            }}
+                          >
+                            <TextInput
+                              placeholder="Sök mall"
+                              value={projectControlTemplateSearch}
+                              onChangeText={setProjectControlTemplateSearch}
+                              style={{
+                                paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#eee',
+                                fontSize: 13,
+                              }}
+                            />
+                            {filtered.length === 0 ? (
+                              <Text
+                                style={{ paddingVertical: 6, paddingHorizontal: 8, fontSize: 12, color: '#78909C' }}
+                              >
+                                Inga mallar hittades för din sökning.
+                              </Text>
+                            ) : filtered.map((tpl) => {
+                              const selected = String(tpl.id) === String(projectControlSelectedTemplateId);
+                              const title = tpl.title || 'Namnlös mall';
+                              const v = tpl.version != null ? String(tpl.version) : '';
+                              const versionLabel = v ? `v${v}` : '';
+                              return (
+                                <TouchableOpacity
+                                  key={tpl.id}
+                                  onPress={() => {
+                                    setProjectControlSelectedTemplateId(String(tpl.id));
+                                    setProjectControlTemplatePickerOpen(false);
+                                  }}
+                                  style={{
+                                    paddingVertical: 5,
+                                    paddingHorizontal: 8,
+                                    backgroundColor: selected ? '#E3F2FD' : '#fff',
+                                    borderBottomWidth: 1,
+                                    borderBottomColor: '#eee',
+                                  }}
+                                >
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Text style={{ fontSize: 13, color: '#263238', flexShrink: 1 }} numberOfLines={1}>
+                                      {title}
+                                    </Text>
+                                    {!!versionLabel && (
+                                      <Text style={{ fontSize: 11, color: '#78909C', marginLeft: 6 }} numberOfLines={1}>
+                                        {versionLabel}
+                                      </Text>
+                                    )}
+                                  </View>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </>
+                    );
+                  })()}
+                  <TouchableOpacity
+                    disabled={!projectControlSelectedType}
+                    style={{
+                      marginTop: 6,
+                      marginBottom: 4,
+                      alignSelf: 'stretch',
+                      backgroundColor: projectControlSelectedType ? '#1976D2' : '#B0BEC5',
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      if (!projectControlSelectedType) return;
+                      const proj = projectControlModal.project;
+                      setProjectControlModal({ visible: false, project: null });
+                      setProjectControlTypePickerOpen(false);
+                      if (proj) {
+                        const ct = projectControlSelectedType;
+                        const tplId = projectControlSelectedTemplateId || null;
+                        openInlineControlEditor(proj, ct, tplId);
+                      }
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Skapa kontroll</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ marginTop: 8, alignSelf: 'center' }}
+                    onPress={() => {
+                      setProjectControlModal({ visible: false, project: null });
+                      setProjectControlSelectedType('');
+                      setProjectControlTypePickerOpen(false);
+                    }}
                   >
                     <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
                   </TouchableOpacity>

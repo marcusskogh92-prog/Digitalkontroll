@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState } from 'react';
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, ImageBackground, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { auth, fetchAdminAuditForCompany, fetchCompanyProfile, saveCompanyProfile } from '../components/firebase';
+import { auth, fetchAdminAuditForCompany, fetchCompanyProfile, resolveCompanyLogoUrl, saveCompanyProfile, storage } from '../components/firebase';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
@@ -28,8 +29,11 @@ export default function ManageCompany({ navigation }) {
   const [paymentTerms, setPaymentTerms] = useState('30');
   const [invoiceMethod, setInvoiceMethod] = useState('email');
   const [loading, setLoading] = useState(false);
+  const [logoUrl, setLogoUrl] = useState('');
+  const [logoUploading, setLogoUploading] = useState(false);
   const [auditEvents, setAuditEvents] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     // Keep header consistent with project views (search + logos)
@@ -126,7 +130,7 @@ export default function ManageCompany({ navigation }) {
             window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
               detail: {
                 companyId: trimmedId,
-                profile: { companyName: trimmedName, userLimit: limitNum },
+                profile: { companyName: trimmedName, userLimit: limitNum, logoUrl: logoUrl || undefined },
               },
             }));
           }
@@ -138,6 +142,7 @@ export default function ManageCompany({ navigation }) {
             setCompanyId(trimmedId);
             setCompanyName(latest.companyName || trimmedName);
             setUserLimit(typeof latest.userLimit !== 'undefined' && latest.userLimit !== null ? String(latest.userLimit) : String(limitNum));
+            setLogoUrl(latest.logoUrl || '');
           } else {
             setCompanyId(trimmedId);
             setCompanyName(trimmedName);
@@ -154,6 +159,64 @@ export default function ManageCompany({ navigation }) {
     } catch (e) {
       Alert.alert('Fel', String(e?.message || e));
     } finally { setLoading(false); }
+  };
+
+  const handleLogoFileChange = async (event) => {
+    try {
+      if (!companyId) {
+        Alert.alert('Fel', 'Välj först ett företag i listan till vänster.');
+        return;
+      }
+      const file = event?.target?.files && event.target.files[0] ? event.target.files[0] : null;
+      if (!file) return;
+      // Visa en direktförhandsvisning på webben medan uppladdning pågår
+      try {
+        if (Platform.OS === 'web' && typeof URL !== 'undefined' && URL.createObjectURL) {
+          const localPreview = URL.createObjectURL(file);
+          if (localPreview) {
+            setLogoUrl(localPreview);
+          }
+        }
+      } catch (_e) {}
+      setLogoUploading(true);
+      const safeCompanyId = String(companyId).trim();
+      const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${Date.now()}_${file.name}`;
+      const ref = storageRef(storage, path);
+      await uploadBytes(ref, file);
+      const url = await getDownloadURL(ref);
+      const ok = await saveCompanyProfile(safeCompanyId, { logoUrl: url });
+      if (!ok) {
+        throw new Error('Kunde inte spara företagsprofil (logoUrl).');
+      }
+      // Försök alltid använda samma logik som i headern (hanterar gs://-URL:er)
+      try {
+        const resolved = await resolveCompanyLogoUrl(safeCompanyId);
+        setLogoUrl((resolved || url || '').trim());
+      } catch (_e) {
+        setLogoUrl(url || '');
+      }
+      // Inform sidebar / other views about updated profile
+      try {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+            detail: {
+              companyId: safeCompanyId,
+              profile: { logoUrl: url },
+            },
+          }));
+        }
+      } catch (_e) {}
+      Alert.alert('Logga uppdaterad', 'Företagsloggan har sparats.');
+    } catch (e) {
+      Alert.alert('Fel', 'Kunde inte ladda upp loggan: ' + String(e?.message || e));
+    } finally {
+      setLogoUploading(false);
+      try {
+        if (event?.target) {
+          event.target.value = '';
+        }
+      } catch (_e) {}
+    }
   };
 
   // Web: render inside the central dashboard area so layout and background remain consistent
@@ -200,6 +263,19 @@ export default function ManageCompany({ navigation }) {
         setBillingReference(prof?.billingReference || '');
         setPaymentTerms(prof?.paymentTerms ? String(prof.paymentTerms) : '30');
         setInvoiceMethod(prof?.invoiceMethod || 'email');
+        // Förhandsläs logga: om det är en gammal gs://-URL vill vi omvandla den till https.
+        (async () => {
+          try {
+            const resolved = await resolveCompanyLogoUrl(cid);
+            if (resolved) {
+              setLogoUrl(resolved);
+            } else {
+              setLogoUrl(prof?.logoUrl || '');
+            }
+          } catch (_e) {
+            setLogoUrl(prof?.logoUrl || '');
+          }
+        })();
 
         // Hämta senaste admin-loggposter för företaget (endast webb)
         if (Platform.OS === 'web' && cid) {
@@ -270,7 +346,7 @@ export default function ManageCompany({ navigation }) {
         >
           <View style={dashboardContainerStyle}>
             <View style={dashboardColumnsStyle}>
-              <View style={{ flex: 1, minWidth: 360, marginRight: 16 }}>
+              <View style={{ width: 640, maxWidth: 640, minWidth: 360, marginRight: 24 }}>
                 <View style={[dashboardCardStyle, { alignSelf: 'flex-start', maxWidth: 600 }] }>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
                     <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
@@ -405,6 +481,62 @@ export default function ManageCompany({ navigation }) {
                   ) : null}
                 </View>
               </View>
+
+              <View style={{ width: 320, maxWidth: 360 }}>
+                <View style={[dashboardCardStyle, { alignSelf: 'flex-start' }] }>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#222', marginBottom: 10 }}>Företagslogga</Text>
+                  {hasSelectedCompany ? (
+                    <>
+                      <View style={{ marginBottom: 12, alignItems: 'center', justifyContent: 'center' }}>
+                        {logoUrl ? (
+                          <img
+                            src={logoUrl}
+                            alt="Företagslogga"
+                            style={{ maxHeight: 80, maxWidth: 260, objectFit: 'contain', borderRadius: 6, border: '1px solid #eee', backgroundColor: '#fff', padding: 4 }}
+                          />
+                        ) : (
+                          <View style={{ height: 80, width: '100%', borderRadius: 6, borderWidth: 1, borderColor: '#eee', backgroundColor: '#fafafa', alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 12, color: '#999' }}>Ingen logga uppladdad ännu.</Text>
+                          </View>
+                        )}
+                      </View>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              if (fileInputRef.current) fileInputRef.current.click();
+                            } catch (_e) {}
+                          }}
+                          disabled={logoUploading}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #ccc',
+                            backgroundColor: '#fafafa',
+                            cursor: logoUploading ? 'default' : 'pointer',
+                            fontSize: 13,
+                          }}
+                        >
+                          {logoUploading ? 'Laddar upp logga…' : 'Byt logga'}
+                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleLogoFileChange}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <Text style={{ fontSize: 13, color: '#666' }}>
+                      Välj ett företag i listan till vänster för att visa och ändra företagsloggan.
+                    </Text>
+                  )}
+                </View>
+              </View>
+
             </View>
           </View>
       </MainLayout>

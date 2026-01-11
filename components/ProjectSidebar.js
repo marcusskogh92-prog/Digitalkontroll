@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateUserRemote } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote } from './firebase';
 import UserEditModal from './UserEditModal';
 
 function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, templatesMode = false, templatesVersion = 0, iconName = null, iconColor = null, controlTypesMode = false }) {
@@ -20,6 +20,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [hoveredCompany, setHoveredCompany] = useState(null);
   const [hoveredUser, setHoveredUser] = useState(null);
   const [hoveredControlTypeKey, setHoveredControlTypeKey] = useState(null);
+  const [hoveredTemplateItemKey, setHoveredTemplateItemKey] = useState(null);
   const [userContextMenu, setUserContextMenu] = useState(null); // { companyId, member, x, y }
   const [expandedMemberRoles, setExpandedMemberRoles] = useState({});
   const [editingUser, setEditingUser] = useState(null);
@@ -36,6 +37,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [spinAdd, setSpinAdd] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
   const [spinTemplateTypes, setSpinTemplateTypes] = useState({});
+  const [spinGroups, setSpinGroups] = useState({});
+  const [spinSubs, setSpinSubs] = useState({});
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addCompanyName, setAddCompanyName] = useState('');
   const [addCompanyId, setAddCompanyId] = useState('');
@@ -48,8 +51,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [controlTypesByCompany, setControlTypesByCompany] = useState({});
   const [templatesByCompany, setTemplatesByCompany] = useState({});
   const [templateFetchErrors, setTemplateFetchErrors] = useState({});
-  const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, controlType, x, y }
   const [controlTypeContextMenu, setControlTypeContextMenu] = useState(null); // { companyId, profile, controlTypeId, controlTypeKey, controlTypeName, builtin, hidden, x, y }
+  const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, profile, controlType, template, x, y }
 
   const showToast = (msg, timeout = 3000) => {
     try {
@@ -163,7 +166,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       setHierarchy(items || []);
       setLoading(false);
     }).catch(() => { setHierarchy([]); setLoading(false); });
-  }, [companiesMode]);
+  }, [companiesMode, restrictCompanyId]);
 
   // Web: react to company profile updates from ManageCompany (e.g. userLimit changes)
   useEffect(() => {
@@ -412,8 +415,15 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
   const filteredGroups = filterTree(hierarchy);
 
-  const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
-  const toggleSub = (id) => setExpandedSubs(prev => ({ ...prev, [id]: !prev[id] }));
+  const toggleGroup = (id) => {
+    setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+    setSpinGroups(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  };
+
+  const toggleSub = (id) => {
+    setExpandedSubs(prev => ({ ...prev, [id]: !prev[id] }));
+    setSpinSubs(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  };
 
   if (loading) {
     return (
@@ -916,8 +926,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           {(() => {
                             if (templatesMode) {
                               const summary = templatesByCompany && templatesByCompany[company.id];
-                              const total = summary && typeof summary.total === 'number' ? summary.total : 0;
-                              return ` (${total})`;
+                              const totalTemplates = summary && typeof summary.total === 'number' ? summary.total : 0;
+                              return ` (${totalTemplates})`;
                             }
 
                             // I Kontrolltyper-läget vill vi visa antal kontrolltyper per företag,
@@ -946,31 +956,33 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             return ` (${used})`;
                           })()}
                         </span>
-                        <span
-                          style={{
-                            marginLeft: 8,
-                            padding: '0 6px',
-                            minWidth: 32,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'flex-end',
-                            boxSizing: 'border-box',
-                            flexShrink: 0,
-                          }}
-                          title={companyEnabled ? 'Aktivt' : 'Pausat'}
-                        >
+                        {effectiveGlobalAdmin ? (
                           <span
                             style={{
-                              width: 12,
-                              height: 12,
-                              borderRadius: 999,
-                              backgroundColor: companyEnabled ? '#4CAF50' : '#E53935',
-                              border: '1px solid rgba(0,0,0,0.08)',
+                              marginLeft: 8,
+                              padding: '0 6px',
+                              minWidth: 32,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'flex-end',
                               boxSizing: 'border-box',
-                              display: 'inline-block',
+                              flexShrink: 0,
                             }}
-                          />
-                        </span>
+                            title={companyEnabled ? 'Företaget är aktivt (visas bara för superadmin)' : 'Företaget är pausat/inaktivt (visas bara för superadmin)'}
+                          >
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: 999,
+                                backgroundColor: companyEnabled ? '#4CAF50' : '#E53935',
+                                border: '1px solid rgba(0,0,0,0.08)',
+                                boxSizing: 'border-box',
+                                display: 'inline-block',
+                              }}
+                            />
+                          </span>
+                        ) : null}
                       </button>
                     </div>
                     <ContextMenu
@@ -987,6 +999,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         if (controlTypesMode) {
                           return [
                             { key: 'addControlType', label: 'Lägg till kontrolltyp', icon: '➕' },
+                          ];
+                        }
+
+                        // I Mallar-läget: företagsmenyn ska bara erbjuda "Lägg till mall".
+                        if (templatesMode) {
+                          return [
+                            { key: 'addTemplate', label: 'Lägg till mall', icon: '➕' },
                           ];
                         }
 
@@ -1007,6 +1026,14 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           setContextMenuVisible(false);
                           if (onSelectProject) {
                             onSelectProject({ companyId: compId, profile: contextMenuCompany.profile, createControlType: true });
+                          }
+                          return;
+                        }
+                        if (templatesMode && item.key === 'addTemplate') {
+                          setContextMenuVisible(false);
+                          if (onSelectProject) {
+                            // Välj bara företaget; själva formuläret för ny mall finns i mitten
+                            onSelectProject({ companyId: compId, profile: contextMenuCompany.profile });
                           }
                           return;
                         }
@@ -1185,35 +1212,19 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                       }}
                     />
 
-                    {templatesMode && templateContextMenu && templateContextMenu.companyId === company.id && (
-                      <ContextMenu
-                        visible={!!templateContextMenu}
-                        x={templateContextMenu.x}
-                        y={templateContextMenu.y}
-                        onClose={() => setTemplateContextMenu(null)}
-                        items={[{ key: 'addTemplate', label: 'Lägg till mall', icon: '➕' }]}
-                        onSelect={(item) => {
-                          if (!templateContextMenu) return;
-                          if (!item || item.key !== 'addTemplate') {
-                            setTemplateContextMenu(null);
-                            return;
-                          }
-                          const { companyId: tplCompanyId, controlType: tplControlType } = templateContextMenu;
-                          setTemplateContextMenu(null);
-                          if (onSelectProject && tplCompanyId) {
-                            onSelectProject({ companyId: tplCompanyId, controlType: tplControlType });
-                          }
-                        }}
-                      />
-                    )}
-
-                    {controlTypesMode && controlTypeContextMenu && controlTypeContextMenu.companyId === company.id && (
+                    {(controlTypesMode || templatesMode) && controlTypeContextMenu && controlTypeContextMenu.companyId === company.id && (
                       <ContextMenu
                         visible={!!controlTypeContextMenu}
                         x={controlTypeContextMenu.x}
                         y={controlTypeContextMenu.y}
                         onClose={() => setControlTypeContextMenu(null)}
                         items={(function () {
+                          if (templatesMode) {
+                            return [
+                              { key: 'addTemplate', label: 'Lägg till mall', icon: '➕' },
+                            ];
+                          }
+
                           const isHidden = !!controlTypeContextMenu.hidden;
                           return [
                             { key: 'rename', label: 'Byt namn' },
@@ -1225,6 +1236,16 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           const ctx = controlTypeContextMenu;
                           setControlTypeContextMenu(null);
                           if (!ctx || !item) return;
+                          if (templatesMode && item.key === 'addTemplate') {
+                            const compId = ctx.companyId;
+                            const typeName = ctx.controlTypeName || ctx.controlTypeKey || '';
+                            if (onSelectProject && compId && typeName) {
+                              onSelectProject({ companyId: compId, profile: company.profile, controlType: typeName, openTemplateModal: true });
+                            }
+                            return;
+                          }
+
+                          if (!controlTypesMode) return;
                           const compId = ctx.companyId;
                           const ctId = ctx.controlTypeId;
                           const ctName = ctx.controlTypeName || '';
@@ -1318,7 +1339,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
                     {templatesMode && expandedCompanies[company.id] && (
                       <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 6 }}>
-                        {(controlTypesByCompany[company.id] || DEFAULT_CONTROL_TYPES).map(({ name, icon, color, key: ctKey }) => {
+                        {(controlTypesByCompany[company.id] || DEFAULT_CONTROL_TYPES).map(({ name, icon, color, key: ctKey, id, hidden, builtin }) => {
                           const type = name || ctKey || '';
                           if (!type) return null;
                           const key = `${company.id}:${type}`;
@@ -1326,6 +1347,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           const isSelected = selectedTemplateKey === key;
                           const isHovered = hoveredTemplateKey === key;
                           const isExpanded = !!expandedTemplateTypes[key];
+                          const isHidden = !!hidden;
                           const summary = templatesByCompany && templatesByCompany[company.id];
                           const count = summary && summary.perType && typeof summary.perType[type] === 'number'
                             ? summary.perType[type]
@@ -1350,9 +1372,22 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   try { if (e && e.preventDefault) e.preventDefault(); } catch (_) {}
                                   const x = (e && e.clientX) ? e.clientX : 60;
                                   const y = (e && e.clientY) ? e.clientY : 60;
-                                  setTemplateContextMenu({ companyId: company.id, controlType: type, x, y });
+                                  setControlTypeContextMenu({
+                                    companyId: company.id,
+                                    profile: company.profile,
+                                    controlTypeId: id,
+                                    controlTypeKey: ctKey,
+                                    controlTypeName: type,
+                                    builtin: !!builtin,
+                                    hidden: isHidden,
+                                    x,
+                                    y,
+                                  });
                                 }}
                                 onClick={() => {
+                                  // Visa bara klick-feedback tillfälligt; vi vill inte
+                                  // ha kvar en "markerad" kontrolltyp efter att
+                                  // användaren har klickat bort fokus.
                                   setSelectedTemplateKey(key);
                                   setSpinTemplateTypes(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
                                   setExpandedTemplateTypes(prev => {
@@ -1364,6 +1399,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   if (onSelectProject) {
                                     onSelectProject({ companyId: company.id, profile: company.profile, controlType: type });
                                   }
+                                  // Rensa markeringsstate strax efter klick så att
+                                  // raden beter sig mer som hover (likt användarlistor).
+                                  setTimeout(() => {
+                                    try {
+                                      setSelectedTemplateKey(prev => (prev === key ? null : prev));
+                                    } catch (_) {}
+                                  }, 150);
                                 }}
                               >
                                 <div
@@ -1392,43 +1434,92 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                       transition: 'transform 0.4s ease',
                                     }}
                                   />
-                                  <span style={{ color: '#333' }}>
+                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>
                                     {count > 0 ? `${type} (${count})` : type}
+                                  </span>
+                                  <span
+                                    style={{
+                                      marginLeft: 'auto',
+                                      padding: '1px 6px',
+                                      borderRadius: 999,
+                                      fontSize: 10,
+                                      lineHeight: '14px',
+                                      backgroundColor: isHidden ? '#FFEBEE' : '#E8F5E9',
+                                      color: isHidden ? '#C62828' : '#2E7D32',
+                                      border: `1px solid ${isHidden ? '#FFCDD2' : '#C8E6C9'}`,
+                                    }}
+                                  >
+                                    {isHidden ? 'Inaktiv' : 'Aktiv'}
                                   </span>
                                 </div>
                               </button>
                               {isExpanded && (
                                 templatesForType.length > 0 ? (
                                   <ul style={{ listStyle: 'none', paddingLeft: 40, marginTop: 2 }}>
-                                    {templatesForType.map((tpl) => (
-                                      <li key={tpl.id}>
-                                        <button
-                                          style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            padding: 0,
-                                            cursor: 'pointer',
-                                            width: '100%',
-                                            textAlign: 'left',
-                                            fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                                            fontSize: 13,
-                                          }}
-                                          onClick={() => {
-                                            if (onSelectProject) {
-                                              onSelectProject({
+                                    {templatesForType.map((tpl) => {
+                                      const itemKey = `${company.id}:${type}:${tpl.id}`;
+                                      const isHoveredItem = hoveredTemplateItemKey === itemKey;
+                                      const isHiddenItem = !!tpl.hidden;
+                                      return (
+                                        <li key={tpl.id}>
+                                          <button
+                                            style={{
+                                              background: isHoveredItem ? '#eee' : 'transparent',
+                                              border: 'none',
+                                              padding: 0,
+                                              cursor: 'pointer',
+                                              width: '100%',
+                                              textAlign: 'left',
+                                              fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                              fontSize: 13,
+                                            }}
+                                            onMouseEnter={() => setHoveredTemplateItemKey(itemKey)}
+                                            onMouseLeave={() => setHoveredTemplateItemKey(prev => (prev === itemKey ? null : prev))}
+                                            onContextMenu={(e) => {
+                                              try { if (e && e.preventDefault) e.preventDefault(); } catch (_) {}
+                                              const x = (e && e.clientX) ? e.clientX : 60;
+                                              const y = (e && e.clientY) ? e.clientY : 60;
+                                              setTemplateContextMenu({
                                                 companyId: company.id,
                                                 profile: company.profile,
                                                 controlType: type,
-                                                templateId: tpl.id,
                                                 template: tpl,
+                                                x,
+                                                y,
                                               });
-                                            }
-                                          }}
-                                        >
-                                          <span style={{ color: '#444' }}>{tpl.title || 'Namnlös mall'}</span>
-                                        </button>
-                                      </li>
-                                    ))}
+                                            }}
+                                            onClick={() => {
+                                              if (onSelectProject) {
+                                                onSelectProject({
+                                                  companyId: company.id,
+                                                  profile: company.profile,
+                                                  controlType: type,
+                                                  templateId: tpl.id,
+                                                  template: tpl,
+                                                });
+                                              }
+                                            }}
+                                          >
+                                            <span
+                                              style={{
+                                                display: 'block',
+                                                padding: '3px 4px',
+                                                paddingLeft: 32,
+                                                borderRadius: 4,
+                                                borderWidth: 1,
+                                                borderStyle: 'solid',
+                                                borderColor: isHoveredItem ? '#1976D2' : 'transparent',
+                                                transition: 'background 0.15s, border 0.15s',
+                                                color: isHiddenItem ? '#9E9E9E' : '#444',
+                                                fontStyle: isHiddenItem ? 'italic' : 'normal',
+                                              }}
+                                            >
+                                              {(tpl.title || 'Namnlös mall') + (isHiddenItem ? ' (inaktiv)' : '')}
+                                            </span>
+                                          </button>
+                                        </li>
+                                      );
+                                    })}
                                   </ul>
                                 ) : (
                                   <div style={{ paddingLeft: 48, marginTop: 2, fontSize: 12, color: '#D32F2F' }}>
@@ -1440,6 +1531,101 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           );
                         })}
                       </ul>
+                    )}
+                    {templatesMode && templateContextMenu && templateContextMenu.companyId === company.id && (
+                      <ContextMenu
+                        visible={!!templateContextMenu}
+                        x={templateContextMenu.x}
+                        y={templateContextMenu.y}
+                        onClose={() => setTemplateContextMenu(null)}
+                        items={(function () {
+                          const ctx = templateContextMenu;
+                          const isHidden = !!(ctx && ctx.template && ctx.template.hidden);
+                          return [
+                            { key: 'edit', label: 'Redigera' },
+                            { key: isHidden ? 'activate' : 'hide', label: isHidden ? 'Aktivera' : 'Dölj' },
+                            { key: 'delete', label: 'Radera', danger: true },
+                          ];
+                        })()}
+                        onSelect={async (item) => {
+                          const ctx = templateContextMenu;
+                          setTemplateContextMenu(null);
+                          if (!ctx || !ctx.template || !ctx.companyId || !item) return;
+
+                          const compId = ctx.companyId;
+                          const tpl = ctx.template;
+                          const type = ctx.controlType || '';
+
+                          const refreshTemplatesForCompany = async () => {
+                            try {
+                              const items = await fetchCompanyMallar(compId);
+                              const list = Array.isArray(items) ? items : [];
+                              const perType = {};
+                              list.forEach((t) => {
+                                const ct = String(t?.controlType || '').trim();
+                                if (!ct) return;
+                                perType[ct] = (perType[ct] || 0) + 1;
+                              });
+                              setTemplatesByCompany(prev => ({
+                                ...prev,
+                                [compId]: { total: list.length, perType, items: list },
+                              }));
+                            } catch (e) {
+                              setTemplateFetchErrors(prev => ({ ...prev, [compId]: String(e?.message || e) }));
+                            }
+                          };
+
+                          const notifyTemplatesChange = () => {
+                            try {
+                              if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('dkTemplatesUpdated', { detail: { companyId: compId } }));
+                              }
+                            } catch (_) {}
+                          };
+
+                          try {
+                            if (item.key === 'edit') {
+                              if (onSelectProject) {
+                                onSelectProject({
+                                  companyId: compId,
+                                  profile: ctx.profile,
+                                  controlType: type,
+                                  templateId: tpl.id,
+                                  template: tpl,
+                                  openTemplateModal: true,
+                                });
+                              }
+                              return;
+                            }
+
+                            if (item.key === 'hide' || item.key === 'activate') {
+                              const targetHidden = item.key === 'hide';
+                              await updateCompanyMall({ id: tpl.id, patch: { hidden: targetHidden } }, compId);
+                              await refreshTemplatesForCompany();
+                              notifyTemplatesChange();
+                              return;
+                            }
+
+                            if (item.key === 'delete') {
+                              let confirmed = true;
+                              try {
+                                if (typeof window !== 'undefined' && window.confirm) {
+                                  confirmed = window.confirm(`Är du säker på att du vill radera mallen "${String(tpl.title || 'Namnlös mall')}"? Detta går inte att ångra.`);
+                                }
+                              } catch (_) { confirmed = true; }
+                              if (!confirmed) return;
+                              await deleteCompanyMall({ id: tpl.id }, compId);
+                              await refreshTemplatesForCompany();
+                              notifyTemplatesChange();
+                              return;
+                            }
+                          } catch (e) {
+                            try {
+                              showToast('Kunde inte uppdatera mall: ' + String(e?.message || e));
+                            } catch (_) {}
+                          }
+                        }}
+                      />
                     )}
 
                     {controlTypesMode && expandedCompanies[company.id] && (
@@ -1513,10 +1699,24 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   <Ionicons
                                     name={icon}
                                     size={14}
-                                    color={isHidden ? '#B0BEC5' : color}
+                                    color={color}
                                     style={{ marginRight: 8 }}
                                   />
                                   <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
+                                  <span
+                                    style={{
+                                      marginLeft: 'auto',
+                                      padding: '1px 6px',
+                                      borderRadius: 999,
+                                      fontSize: 10,
+                                      lineHeight: '14px',
+                                      backgroundColor: isHidden ? '#FFEBEE' : '#E8F5E9',
+                                      color: isHidden ? '#C62828' : '#2E7D32',
+                                      border: `1px solid ${isHidden ? '#FFCDD2' : '#C8E6C9'}`,
+                                    }}
+                                  >
+                                    {isHidden ? 'Inaktiv' : 'Aktiv'}
+                                  </span>
                                 </div>
                               </button>
                             </li>
@@ -1571,7 +1771,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                 </div>
                                 {roleState.admin && (
                                   <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                                    {admins.length === 0 && (<li style={{ color: '#888', fontSize: 13 }}>Inga administratörer hittades.</li>)}
+                                    {admins.length === 0 && (<li style={{ color: '#D32F2F', fontSize: 13 }}>Ingen admin skapad.</li>)}
                                     {admins.map(m => {
                                       const memKey = String(m.uid || m.id || '');
                                       const isHoveredUser = hoveredUser === `${company.id}:${memKey}`;
@@ -1635,7 +1835,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                 </div>
                                 {roleState.users && (
                                   <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                                    {usersList.length === 0 && (<li style={{ color: '#888', fontSize: 13 }}>Inga användare hittades.</li>)}
+                                    {usersList.length === 0 && (<li style={{ color: '#D32F2F', fontSize: 13 }}>Ingen användare skapad.</li>)}
                                     {usersList.map(m => {
                                       const memKey = String(m.uid || m.id || '');
                                       const isHoveredUser = hoveredUser === `${company.id}:${memKey}`;
@@ -1857,18 +2057,48 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           {filteredGroups.length === 0 && (
             <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga projekt hittades.</li>
           )}
-          {filteredGroups.map(group => (
+          {filteredGroups.map(group => {
+            const groupSpin = spinGroups[group.id] || 0;
+            const groupAngle = expandedGroups[group.id] ? (groupSpin * 360 + 90) : (groupSpin * 360);
+            return (
             <li key={group.id}>
               <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleGroup(group.id)}>
-                <span style={{ color: '#222', fontSize: 18, fontWeight: 700, marginRight: 6, display: 'inline-block', transform: expandedGroups[group.id] ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>&gt;</span>
+                <span
+                  style={{
+                    color: '#222',
+                    fontSize: 18,
+                    fontWeight: 700,
+                    marginRight: 6,
+                    display: 'inline-block',
+                    transform: `rotate(${groupAngle}deg)`,
+                    transition: 'transform 0.4s ease',
+                  }}
+                >
+                  &gt;
+                </span>
                 <span style={{ fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, fontSize: 16, letterSpacing: 0.1 }}>{group.name}</span>
               </div>
               {expandedGroups[group.id] && group.children.length > 0 && (
                 <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
-                  {group.children.map(sub => (
+                  {group.children.map(sub => {
+                    const subSpin = spinSubs[sub.id] || 0;
+                    const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
+                    return (
                     <li key={sub.id}>
                       <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSub(sub.id)}>
-                        <span style={{ color: '#222', fontSize: 15, fontWeight: 600, marginRight: 6, display: 'inline-block', transform: expandedSubs[sub.id] ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>&gt;</span>
+                        <span
+                          style={{
+                            color: '#222',
+                            fontSize: 15,
+                            fontWeight: 600,
+                            marginRight: 6,
+                            display: 'inline-block',
+                            transform: `rotate(${subAngle}deg)`,
+                            transition: 'transform 0.4s ease',
+                          }}
+                        >
+                          &gt;
+                        </span>
                         <span style={{ fontWeight: 600, fontSize: 15 }}>{sub.name}</span>
                       </div>
                       {expandedSubs[sub.id] && sub.children.length > 0 && (
@@ -1900,11 +2130,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         </ul>
                       )}
                     </li>
-                  ))}
+                  );
+                  })}
                 </ul>
               )}
             </li>
-          ))}
+          );
+          })}
         </ul>
       )}
     </div>

@@ -68,8 +68,7 @@
     "firebase-admin": "^13.6.0",
     "typescript": "~5.9.2",
     "webpack": "^5.88.2",
-    "webpack-cli": "^5.1.4",
-    "@expo/webpack-config": "^19.0.0"
+    "webpack-cli": "^5.1.4"
   },
   "private": true
 }

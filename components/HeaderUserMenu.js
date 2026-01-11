@@ -19,6 +19,7 @@ export default function HeaderUserMenu() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [roleLabel, setRoleLabel] = useState('');
+  const [spinChevron, setSpinChevron] = useState(0);
 
   const openMenu = () => {
     try {
@@ -26,11 +27,13 @@ export default function HeaderUserMenu() {
       if (node && typeof node.measureInWindow === 'function') {
         node.measureInWindow((x, y, w, h) => {
           setMenuPos({ x: Math.max(8, x), y: y + (h || 36) + 6 });
+          setSpinChevron((n) => n + 1);
           setMenuVisible(true);
         });
         return;
       }
     } catch(_e) {}
+    setSpinChevron((n) => n + 1);
     setMenuVisible(true);
   };
 
@@ -123,7 +126,18 @@ export default function HeaderUserMenu() {
             <Text style={{ fontSize: 12, color: '#607D8B', marginTop: 2 }}>{roleLabel}</Text>
           )}
         </View>
-        <Ionicons name="chevron-down" size={14} color="#666" style={{ marginLeft: 6, transform: [{ rotate: (menuVisible ? '180deg' : '0deg') }] }} />
+        <Ionicons
+          name="chevron-down"
+          size={14}
+          color="#666"
+          style={{
+            marginLeft: 6,
+            transform: [{ rotate: `${spinChevron * 360 + (menuVisible ? 180 : 0)}deg` }],
+            transitionProperty: 'transform',
+            transitionDuration: '0.35s',
+            transitionTimingFunction: 'ease',
+          }}
+        />
       </TouchableOpacity>
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
         try {

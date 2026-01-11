@@ -4,9 +4,9 @@
     "slug": "digitalkontroll",
     "icon": "./assets/images/app.icon.vit.png",
     "splash": {
-      "image": "./assets/images/splash-icon.png",
-      "backgroundColor": "#263238",
-      "resizeMode": "contain"
+      "image": "./assets/images/inlogg.app.png",
+      "backgroundColor": "#000000",
+      "resizeMode": "cover"
     },
     "web": {
       "favicon": "./assets/images/app.icon.vit.png"
@@ -14,17 +14,17 @@
     "ios": {
       "bundleIdentifier": "se.msbygg.digitalkontroll",
       "splash": {
-        "image": "./assets/images/splash-icon.png",
-        "backgroundColor": "#263238",
-        "resizeMode": "contain"
+        "image": "./assets/images/inlogg.app.png",
+        "backgroundColor": "#000000",
+        "resizeMode": "cover"
       }
     },
     "android": {
       "package": "se.msbygg.digitalkontroll",
       "splash": {
-        "image": "./assets/images/splash-icon.png",
-        "backgroundColor": "#263238",
-        "resizeMode": "contain"
+        "image": "./assets/images/inlogg.app.png",
+        "backgroundColor": "#000000",
+        "resizeMode": "cover"
       }
     },
     "plugins": [

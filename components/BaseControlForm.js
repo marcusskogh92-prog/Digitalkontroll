@@ -17,6 +17,7 @@ import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { Colors } from '../constants/theme';
 import { createByggdelMall, deleteByggdelMall, deleteDraftControlFromFirestore, fetchByggdelHierarchy, fetchByggdelMallar, saveByggdelHierarchy, saveDraftToFirestore, updateByggdelMall } from './firebase';
+import { CompanyHeaderLogo } from './HeaderComponents';
 // Load ImagePicker dynamically inside handlers to avoid web-only export issues
 let ImagePicker = null;
 
@@ -34,6 +35,8 @@ export default function BaseControlForm({
   onFinished,
   initialValues = {},
   hideWeather = false,
+  hideProjectHeader = false,
+  templatePreviewMode = false,
 }) {
   const { height: windowHeight } = useWindowDimensions();
   const onExitRef = useRef(onExit);
@@ -313,6 +316,8 @@ export default function BaseControlForm({
   const route = useRoute();
   const navigation = useNavigation();
   // ...existing code...
+  const routeParams = route && route.params ? route.params : {};
+  const isTemplatePreview = !!(templatePreviewMode || (routeParams && routeParams.previewFromTemplate));
   const participantsLabel = controlType === 'Mottagningskontroll' ? 'Mottagare' : 'Deltagare';
   const addParticipantsLabel = controlType === 'Mottagningskontroll' ? 'Lägg till mottagare' : 'Lägg till deltagare';
   const editParticipantsLabel = controlType === 'Mottagningskontroll' ? 'Redigera mottagare' : 'Redigera deltagare';
@@ -571,9 +576,9 @@ export default function BaseControlForm({
   const [checklist, setChecklist] = useState(() => {
     // Always prefer params.savedChecklist if present and non-empty, else checklistConfig
     let raw = [];
-    if (route.params && Array.isArray(route.params.savedChecklist) && route.params.savedChecklist.length > 0) {
-      raw = route.params.savedChecklist;
-    } else if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
+    if (!isTemplatePreview && routeParams && Array.isArray(routeParams.savedChecklist) && routeParams.savedChecklist.length > 0) {
+      raw = routeParams.savedChecklist;
+    } else if (!isTemplatePreview && initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
       raw = initialValues.checklist;
     } else if (Array.isArray(checklistConfig) && checklistConfig.length > 0) {
       // Arbetsberedning: start with no visible sections until user selects categories
@@ -634,7 +639,7 @@ export default function BaseControlForm({
         if (pts.length > 0) return true;
       }
       return false;
-    } catch(e) {
+    } catch (e) {
       return false;
     }
   };
@@ -707,10 +712,10 @@ export default function BaseControlForm({
 
   // Track initial state for dirty checking
   const initialChecklist = useMemo(() => {
-    if (route.params && Array.isArray(route.params.savedChecklist) && route.params.savedChecklist.length > 0) {
-      return route.params.savedChecklist;
+    if (!isTemplatePreview && routeParams && Array.isArray(routeParams.savedChecklist) && routeParams.savedChecklist.length > 0) {
+      return routeParams.savedChecklist;
     }
-    if (initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
+    if (!isTemplatePreview && initialValues && Array.isArray(initialValues.checklist) && initialValues.checklist.length > 0) {
       return initialValues.checklist;
     }
     // Arbetsberedning: baseline is empty until user selects categories
@@ -725,7 +730,7 @@ export default function BaseControlForm({
       }));
     }
     return [];
-  }, [checklistConfig, controlType, initialValues, route.params]);
+  }, [checklistConfig, controlType, initialValues, routeParams, isTemplatePreview]);
 
   const initialParticipants = useMemo(() => {
     if (initialValues && Array.isArray(initialValues.participants) && initialValues.participants.length > 0) return initialValues.participants;
@@ -2504,18 +2509,20 @@ export default function BaseControlForm({
         ]}
         keyboardShouldPersistTaps="handled"
       >
-      <View style={{ flex: 1 }}>
+        <View style={{ flex: 1 }}>
                 {/* Förklaring av statusknappar för riskbedömning (legend row removed from top, now only in checklist section header) */}
         {/* Project Info and meta */}
         <View style={{ padding: 16, paddingBottom: 0 }}>
-        {/* Project number and name */}
-        {project && (
-          <>
-            <Text style={{ fontSize: 20, color: '#222', fontWeight: 'bold', marginBottom: 8, letterSpacing: 0.2 }}>
-              {project.id ? project.id : ''}{project.id && project.name ? ' – ' : ''}{project.name ? project.name : ''}
-            </Text>
-            <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '100%', marginBottom: 10 }} />
-          </>
+        {/* Company logo header (always shown) */}
+        <View style={{ marginBottom: 8 }}>
+          <CompanyHeaderLogo />
+        </View>
+        <View style={{ height: 2, backgroundColor: '#e0e0e0', width: '100%', marginBottom: hideProjectHeader ? 10 : 6 }} />
+        {/* Project number and name (toggled via meta-fältet "Projekt") */}
+        {project && !hideProjectHeader && (
+          <Text style={{ fontSize: 20, color: '#222', fontWeight: 'bold', marginBottom: 10, letterSpacing: 0.2 }}>
+            {project.id ? project.id : ''}{project.id && project.name ? ' – ' : ''}{project.name ? project.name : ''}
+          </Text>
         )}
         {/* Date row - long press to edit */}
         {/* Date row with icon, text, and edit button */}

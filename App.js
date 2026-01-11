@@ -28,6 +28,7 @@ import MottagningskontrollScreen from './Screens/MottagningskontrollScreen';
 import ProjectDetails from './Screens/ProjectDetails';
 import RiskbedömningScreen from './Screens/RiskbedömningScreen';
 import SkyddsrondScreen from './Screens/SkyddsrondScreen';
+import TemplateControlScreen from './Screens/TemplateControlScreen';
 
 const Stack = createStackNavigator();
 
@@ -63,37 +64,45 @@ export default function App() {
           <Stack.Navigator
             initialRouteName="Login"
             screenOptions={({ route, navigation }) => {
-              const edgeNudge = Platform.OS === 'web' ? -144 : 0;
-              const dkExtraNudge = Platform.OS === 'web' ? -10 : 0;
+              const isWeb = Platform.OS === 'web';
+              const edgeNudge = isWeb ? -144 : 0;
+              const dkExtraNudge = isWeb ? -10 : 0;
               return ({
-                headerStyle: { backgroundColor: '#FFFFFF', height: 96, paddingLeft: 0, paddingRight: 0, zIndex: 10, overflow: 'visible' },
+                // Clean base header for all screens; detailed layout handled via container styles
+                headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
                 headerTintColor: '#000',
                 headerTitleStyle: { fontWeight: 'bold', color: '#000', fontFamily: 'Inter_700Bold' },
                 headerTitleAlign: 'center',
-                headerTitleContainerStyle: Platform.OS === 'web'
+                headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
                   : { flex: 1, paddingLeft: 0, paddingRight: 0 },
-                headerTitle: () => <HomeHeaderSearch navigation={navigation} route={route} />,
+                // Only show project search in header on web
+                headerTitle: () => (isWeb ? <HomeHeaderSearch navigation={navigation} route={route} /> : null),
                 headerLeft: () => (
                   <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
                     <DigitalKontrollHeaderLogo />
                   </View>
                 ),
-                headerLeftContainerStyle: Platform.OS === 'web'
+                headerLeftContainerStyle: isWeb
                   ? { position: 'absolute', left: 20, top: 0, height: '100%', justifyContent: 'center', paddingLeft: 0, zIndex: 20 }
                   : { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
                 headerRight: () => (
                   <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
-                    {/* Persistent user menu (web) - hide on Home, Home renders it inline next to Verktyg */}
-                    {Platform.OS === 'web' && route?.name !== 'Home' ? (
-                      <View style={{ marginLeft: 12 }}>
-                        <HeaderUserMenuConditional />
-                      </View>
-                    ) : null}
+                    {/* On native, hide company logo + header menu to keep header compact */}
+                    {isWeb && (
+                      <>
+                        <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
+                        {/* Persistent user menu (web) - hide on Home, Home renders it inline next to Verktyg */}
+                        {route?.name !== 'Home' ? (
+                          <View style={{ marginLeft: 12 }}>
+                            <HeaderUserMenuConditional />
+                          </View>
+                        ) : null}
+                      </>
+                    )}
                   </View>
                 ),
-                headerRightContainerStyle: Platform.OS === 'web'
+                headerRightContainerStyle: isWeb
                   ? { position: 'absolute', right: 20, top: 0, height: '100%', justifyContent: 'center', paddingRight: 0 }
                   : { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
                 headerBackTitleVisible: false,
@@ -105,31 +114,46 @@ export default function App() {
               name="Home" 
               component={HomeScreen} 
               options={({ route, navigation }) => {
-                const edgeNudge = Platform.OS === 'web' ? -144 : 0;
-                const dkExtraNudge = Platform.OS === 'web' ? -10 : 0;
+                const isWeb = Platform.OS === 'web';
+                const edgeNudge = isWeb ? -144 : 0;
+                const dkExtraNudge = isWeb ? -10 : 0;
                 return ({
-                  headerStyle: { backgroundColor: '#FFFFFF', height: 96, paddingLeft: 0, paddingRight: 0, zIndex: 10, overflow: 'visible' },
+                  // Keep header clean on native; extra layout is handled via container styles
+                  headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
                 headerTitleAlign: 'center',
-                headerTitleContainerStyle: Platform.OS === 'web'
+                headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
                   : { flex: 1, paddingLeft: 0, paddingRight: 0 },
-                headerTitle: () => <HomeHeaderSearch navigation={navigation} route={route} />,
-                headerLeft: () => (
-                  <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
-                    <DigitalKontrollHeaderLogo />
-                  </View>
+                // Web: projekt-sök i headern. Native: centrera DigitalKontroll-loggan, lyft den lite och dra den visuellt mer åt vänster.
+                headerTitle: () => (
+                  isWeb
+                    ? <HomeHeaderSearch navigation={navigation} route={route} />
+                    : (
+                      <View style={{ marginBottom: 4, marginLeft: -28 }}>
+                        <DigitalKontrollHeaderLogo />
+                      </View>
+                    )
                 ),
-                  headerLeftContainerStyle: Platform.OS === 'web'
+                // På webben ligger loggan till vänster, i appen behövs ingen vänster-komponent här.
+                headerLeft: () => (
+                  isWeb ? (
+                    <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
+                      <DigitalKontrollHeaderLogo />
+                    </View>
+                  ) : null
+                ),
+                  headerLeftContainerStyle: isWeb
                     ? { position: 'absolute', left: 20, top: 0, height: '100%', justifyContent: 'center', paddingLeft: 0, zIndex: 20 }
-                    : { width: 260, alignItems: 'flex-start', justifyContent: 'center', marginLeft: edgeNudge + dkExtraNudge, paddingLeft: 0 },
+                    : { width: 0, alignItems: 'flex-start', justifyContent: 'center', marginLeft: 0, paddingLeft: 0 },
                 headerRight: () => (
                   <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />
+                    {/* Only show company logo in header on web; native keeps header minimal */}
+                    {isWeb && <CompanyHeaderLogo companyId={route?.params?.companyId || ''} />}
                   </View>
                 ),
-                  headerRightContainerStyle: Platform.OS === 'web'
+                  headerRightContainerStyle: isWeb
                     ? { position: 'absolute', right: 20, top: 0, height: '100%', justifyContent: 'center', paddingRight: 0 }
-                    : { width: 260, alignItems: 'flex-end', justifyContent: 'center', marginRight: edgeNudge, paddingRight: 0 },
+                    : { width: 0, alignItems: 'flex-end', justifyContent: 'center', marginRight: 0, paddingRight: 0 },
                 headerBackTitleVisible: false,
                 });
               }}
@@ -287,6 +311,24 @@ export default function App() {
                 </TouchableOpacity>
               ),
             })} />
+            <Stack.Screen
+              name="TemplateControlScreen"
+              component={TemplateControlScreen}
+              options={({ navigation }) => ({
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
+                headerLeft: () => (
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    accessibilityLabel="Tillbaka"
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                  >
+                    <Ionicons name="chevron-back" size={30} color="#000" />
+                  </TouchableOpacity>
+                ),
+              })}
+            />
             <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={({ navigation }) => ({
               headerBackTitleVisible: false,
               headerBackTitle: '',

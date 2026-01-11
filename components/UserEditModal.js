@@ -8,6 +8,16 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   const [role, setRole] = useState('user'); // 'admin' | 'user'
   const [showPassword, setShowPassword] = useState(false);
 
+  const normalizeName = (value) => {
+    if (!value) return '';
+    const trimmed = String(value).replace(/\s+/g, ' ').trim();
+    if (!trimmed) return '';
+    return trimmed
+      .split(' ')
+      .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
+      .join(' ');
+  };
+
   const isMsBygg = String(companyId || '').trim() === 'MS Byggsystem';
 
   const rawEmail = String(email || '').trim();
@@ -61,7 +71,7 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
           <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Förnamn{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
           <input
             value={firstName}
-            onChange={e => setFirstName(e.target.value)}
+            onChange={e => setFirstName(normalizeName(e.target.value))}
             aria-required={isNew}
             style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${firstNameMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
           />
@@ -70,7 +80,7 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
           <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Efternamn{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
           <input
             value={lastName}
-            onChange={e => setLastName(e.target.value)}
+            onChange={e => setLastName(normalizeName(e.target.value))}
             aria-required={isNew}
             style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${lastNameMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
           />

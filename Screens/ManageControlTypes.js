@@ -143,6 +143,7 @@ export default function ManageControlTypes({ route, navigation }) {
     return () => { mounted = false; };
   }, [companyId]);
 
+
   useEffect(() => {
     if (Platform.OS !== 'web') return undefined;
     if (typeof window === 'undefined') return undefined;

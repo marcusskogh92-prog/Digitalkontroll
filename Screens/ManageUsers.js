@@ -293,7 +293,6 @@ export default function ManageUsers({ route, navigation }) {
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }}>Hantera användare</Text>
                 </View>
               </View>
-
               <View style={{ maxWidth: 680 }}>
                 {!hasSelectedCompany && (
                   <View style={{
@@ -346,6 +345,54 @@ export default function ManageUsers({ route, navigation }) {
                     Högerklicka på företaget för att lägga till eller ta bort användare.
                   </Text>
                 </View>
+
+                {hasSelectedCompany && (
+                  <View style={{ marginTop: 20, width: '84%', marginLeft: '8%' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: '#222', marginBottom: 6 }}>
+                      Användare i {companyId}
+                    </Text>
+                    <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa' }}>
+                      {Array.isArray(members) && members.length > 0 ? (
+                        members.map((m) => {
+                          const role = String(m.role || '').trim();
+                          let roleLabel = 'Användare';
+                          let roleColor = '#455A64';
+                          if (role === 'admin') { roleLabel = 'Admin'; roleColor = '#1565C0'; }
+                          else if (role === 'superadmin') { roleLabel = 'Superadmin'; roleColor = '#C62828'; }
+
+                          return (
+                            <View
+                              key={m.uid || m.id || m.email}
+                              style={{
+                                paddingVertical: 8,
+                                paddingHorizontal: 10,
+                                borderBottomWidth: 1,
+                                borderBottomColor: '#e0e0e0',
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                              }}
+                            >
+                              <View style={{ flex: 1, marginRight: 12 }}>
+                                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>
+                                  {formatPersonName(m.displayName || m.email || '')}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{m.email || ''}</Text>
+                              </View>
+                              <View style={{ paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#ECEFF1' }}>
+                                <Text style={{ fontSize: 11, fontWeight: '600', color: roleColor }}>{roleLabel}</Text>
+                              </View>
+                            </View>
+                          );
+                        })
+                      ) : (
+                        <View style={{ paddingVertical: 10, paddingHorizontal: 10 }}>
+                          <Text style={{ fontSize: 13, color: '#D32F2F' }}>Ingen användare skapad.</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
               </View>
             </View>
           </View>
