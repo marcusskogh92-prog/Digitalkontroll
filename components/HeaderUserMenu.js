@@ -37,6 +37,7 @@ export default function HeaderUserMenu() {
   const displayName = (auth && auth.currentUser) ? formatPersonName(auth.currentUser.displayName || auth.currentUser.email || '') : 'Användare';
   const [isOwner, setIsOwner] = useState(false);
   const [isMsAdmin, setIsMsAdmin] = useState(false);
+  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
   const [cid, setCid] = useState('');
 
   useEffect(() => {
@@ -56,7 +57,10 @@ export default function HeaderUserMenu() {
         setCid(companyId);
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
         if (!active) return;
+        // MS Byggsystem-admin (behörighet till globala företagsverktyg)
         setIsMsAdmin(adminClaim && companyId === 'MS Byggsystem');
+        // Admin i valfritt företag (ska kunna hantera sina egna användare)
+        setIsCompanyAdmin(adminClaim);
 
         // Beräkna rolltext för headern
         const emailLower = email;
@@ -74,8 +78,17 @@ export default function HeaderUserMenu() {
   }, []);
 
   const menuItems = [];
-  if (isOwner || isMsAdmin) menuItems.push({ key: 'manage_company', label: 'Hantera företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-  if (isOwner || isMsAdmin) menuItems.push({ key: 'manage_users', label: 'Hantera användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+  const isSuperOrMsAdmin = isOwner || isMsAdmin;
+  // Företag: endast för superadmin / MS Byggsystem-admin
+  if (isSuperOrMsAdmin) {
+    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+  }
+  // Användare / Kontrolltyper / Mallar: alla admin-användare (oavsett företag)
+  if (isOwner || isCompanyAdmin) {
+    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+    menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
+    menuItems.push({ key: 'manage_templates', label: 'Mallar', icon: <Ionicons name="copy-outline" size={16} color="#00897B" /> });
+  }
 
   const PortalContent = (
     <ContextMenu
@@ -91,6 +104,8 @@ export default function HeaderUserMenu() {
           const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
           if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
           if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
+          if (it.key === 'manage_control_types') return navigation.navigate('ManageControlTypes', { companyId: cid });
+          if (it.key === 'manage_templates') return navigation.navigate('ManageTemplates', { companyId: cid });
         } catch(_e) {}
       }}
     />

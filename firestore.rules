@@ -61,6 +61,12 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Företags-specifika kontrolltyper (company-scoped)
+    // Används av adminvyn "Kontrolltyper" samt vid skapande av nya kontrollpunkter.
+    match /foretag/{company}/kontrolltyper/{typeId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Company members directory (company-scoped)
     // Used for listing admins/roles in the app without enabling cross-company user queries.
     match /foretag/{company}/members/{uid} {
@@ -75,6 +81,22 @@ service cloud.firestore {
     // Used by dashboard "Senaste aktivitet" (e.g. login events)
     match /foretag/{company}/activity/{eventId} {
       allow read, write: if isCompanyMember(company);
+    }
+
+    // Global admin audit log (read-only for superadmins / MS Byggsystem-admins)
+    match /admin_audit/{eventId} {
+      allow read: if request.auth != null && (
+        // Token-baserade superadmins
+        request.auth.token.superadmin == true ||
+        request.auth.token.role == 'superadmin' ||
+        // Admin i MS Byggsystem
+        (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+        // Whitelist specifika superadmin-mail så att läsrätt inte bryts om companyId-claimen skulle peka på annat företag.
+        request.auth.token.email == 'marcus@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem'
+      );
+      allow write: if false; // only server-side (admin SDK) writes
     }
 
     // Allow users to read/write their own profile doc

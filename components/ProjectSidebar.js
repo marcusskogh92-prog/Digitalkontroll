@@ -3,16 +3,12 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Alert, TouchableOpacity } from 'react-native';
+import { Alert, Platform, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
-import { adminFetchCompanyMembers, auth, createUserRemote, deleteUserRemote, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, saveUserProfile, setCompanyStatusRemote, updateUserRemote } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateUserRemote } from './firebase';
 import UserEditModal from './UserEditModal';
 
-
-
-
-
-function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false }) {
+function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, templatesMode = false, templatesVersion = 0, iconName = null, iconColor = null, controlTypesMode = false }) {
   const [search, setSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
   const [expandedSubs, setExpandedSubs] = useState({});
@@ -23,6 +19,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [membersByCompany, setMembersByCompany] = useState({});
   const [hoveredCompany, setHoveredCompany] = useState(null);
   const [hoveredUser, setHoveredUser] = useState(null);
+  const [hoveredControlTypeKey, setHoveredControlTypeKey] = useState(null);
   const [userContextMenu, setUserContextMenu] = useState(null); // { companyId, member, x, y }
   const [expandedMemberRoles, setExpandedMemberRoles] = useState({});
   const [editingUser, setEditingUser] = useState(null);
@@ -34,15 +31,25 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [contextMenuCompany, setContextMenuCompany] = useState(null);
   const [memberFetchErrors, setMemberFetchErrors] = useState({});
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
+  const [showDeletedCompanies, setShowDeletedCompanies] = useState(false);
   const [spinHome, setSpinHome] = useState(0);
   const [spinAdd, setSpinAdd] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
+  const [spinTemplateTypes, setSpinTemplateTypes] = useState({});
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addCompanyName, setAddCompanyName] = useState('');
   const [addCompanyId, setAddCompanyId] = useState('');
   const [addCompanySaving, setAddCompanySaving] = useState(false);
   const [addCompanyError, setAddCompanyError] = useState('');
   const [toast, setToast] = useState({ visible: false, message: '' });
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState(null);
+  const [hoveredTemplateKey, setHoveredTemplateKey] = useState(null);
+  const [expandedTemplateTypes, setExpandedTemplateTypes] = useState({});
+  const [controlTypesByCompany, setControlTypesByCompany] = useState({});
+  const [templatesByCompany, setTemplatesByCompany] = useState({});
+  const [templateFetchErrors, setTemplateFetchErrors] = useState({});
+  const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, controlType, x, y }
+  const [controlTypeContextMenu, setControlTypeContextMenu] = useState(null); // { companyId, profile, controlTypeId, controlTypeKey, controlTypeName, builtin, hidden, x, y }
 
   const showToast = (msg, timeout = 3000) => {
     try {
@@ -93,7 +100,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
   const visibleCompanies = (Array.isArray(companies) ? companies : []).filter((c) => {
     try {
-      return !(c && c.profile && c.profile.deleted);
+      const deleted = !!(c && c.profile && c.profile.deleted);
+      if (!showDeletedCompanies && deleted) return false;
+      return true;
     } catch (e) {
       return true;
     }
@@ -115,7 +124,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     if (companiesMode) {
       fetchCompanies().then(async (items) => {
         if (items && items.length > 0) {
-          setCompanies(items);
+          const filtered = restrictCompanyId ? items.filter(c => c && c.id === restrictCompanyId) : items;
+          setCompanies(filtered);
           setLoading(false);
           return;
         }
@@ -127,7 +137,10 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             return { id, profile: prof };
           } catch (e) { return null; }
         }));
-        const good = (fetched || []).filter(x => x && (x.profile || x.id));
+        let good = (fetched || []).filter(x => x && (x.profile || x.id));
+        if (restrictCompanyId) {
+          good = good.filter(c => c && c.id === restrictCompanyId);
+        }
         if (good.length > 0) setCompanies(good);
         else setCompanies([]);
         setLoading(false);
@@ -137,7 +150,10 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         const fetched = await Promise.all(fallbackIds.map(async id => {
           try { const prof = await fetchCompanyProfile(id); return { id, profile: prof }; } catch(e) { return null; }
         }));
-        const good = (fetched || []).filter(x => x && (x.profile || x.id));
+        let good = (fetched || []).filter(x => x && (x.profile || x.id));
+        if (restrictCompanyId) {
+          good = good.filter(c => c && c.id === restrictCompanyId);
+        }
         setCompanies(good);
         setLoading(false);
       });
@@ -149,8 +165,107 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     }).catch(() => { setHierarchy([]); setLoading(false); });
   }, [companiesMode]);
 
-  // If the current user is a global admin, prefetch members for all companies so we can
-  // show member counts in the companies list. This runs after companies are loaded.
+  // Web: react to company profile updates from ManageCompany (e.g. userLimit changes)
+  useEffect(() => {
+    if (!companiesMode) return;
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+
+    const handler = (event) => {
+      try {
+        const cid = event?.detail?.companyId;
+        const profilePatch = event?.detail?.profile || {};
+        if (!cid) return;
+
+        // Fetch latest profile from Firestore so sidebar always reflects
+        // the persisted value (in case anything changed server-side).
+        (async () => {
+          let latestProfile = null;
+          try {
+            latestProfile = await fetchCompanyProfile(cid).catch(() => null);
+          } catch (_err) {
+            latestProfile = null;
+          }
+          const mergedPatch = latestProfile ? { ...(latestProfile || {}), ...profilePatch } : profilePatch;
+
+          setCompanies((prev) => {
+            if (!Array.isArray(prev) || prev.length === 0) return prev;
+            let changed = false;
+            const next = prev.map((c) => {
+              if (c.id !== cid) return c;
+              changed = true;
+              return { ...c, profile: { ...(c.profile || {}), ...mergedPatch } };
+            });
+            return changed ? next : prev;
+          });
+        })();
+      } catch (e) {}
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('dkCompanyProfileUpdated', handler);
+    }
+    return () => {
+      try { if (typeof window !== 'undefined') window.removeEventListener('dkCompanyProfileUpdated', handler); } catch (_e) {}
+    };
+  }, [companiesMode]);
+
+  // When used for user management with a restricted company, optionally auto-expand
+  // that company and show its Admin/Användare lists directly.
+  useEffect(() => {
+    if (!companiesMode) return;
+    if (!autoExpandMembers) return;
+    if (!restrictCompanyId) return;
+    if (!Array.isArray(companies) || companies.length === 0) return;
+
+    const cid = restrictCompanyId;
+    const hasCompany = companies.some(c => c && c.id === cid);
+    if (!hasCompany) return;
+
+    setExpandedCompanies(prev => {
+      if (prev && prev[cid]) return prev;
+      return { [cid]: true };
+    });
+
+    setExpandedMemberRoles(prev => ({
+      ...prev,
+      [cid]: { ...(prev[cid] || {}), admin: true, users: true },
+    }));
+
+    if (!showMembers) return;
+    if (membersByCompany && membersByCompany[cid]) return;
+
+    (async () => {
+      let loaded = false;
+      try {
+        const r = await adminFetchCompanyMembers(cid);
+        const mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+        if (Array.isArray(mems)) {
+          setMembersByCompany(prev => ({ ...prev, [cid]: mems }));
+          loaded = true;
+        }
+      } catch (e) {
+        try {
+          const raw = String(e && e.message ? e.message : (e || ''));
+          if (raw && raw.trim().toLowerCase() !== 'internal') {
+            setMemberFetchErrors(prev => ({ ...prev, [cid]: raw }));
+          }
+        } catch (_) {}
+      }
+      if (!loaded) {
+        try {
+          const members = await fetchCompanyMembers(cid).catch(() => []);
+          setMembersByCompany(prev => ({ ...prev, [cid]: members }));
+        } catch (e) {
+          setMembersByCompany(prev => ({ ...prev, [cid]: [] }));
+        }
+      }
+    })();
+  }, [companiesMode, autoExpandMembers, restrictCompanyId, companies, showMembers, membersByCompany]);
+
+  // If the current user är "global" admin (superadmin eller MS Byggsystem-admin),
+  // prefetcha medlemmar för alla företag så vi kan visa användarantal i listan.
+  // Vanliga företags-admins (t.ex. Wilzéns) räknas inte som global admin här.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -160,11 +275,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         if (!user || !user.getIdTokenResult) return;
         const token = await user.getIdTokenResult(false).catch(() => null);
         const claims = token && token.claims ? token.claims : {};
-        const isGlobalAdmin = !!(claims.admin === true || claims.role === 'admin' || claims.superadmin === true);
+        const companyFromClaims = String(claims.companyId || '').trim();
+        const isMsAdminClaim = !!((claims.admin === true || claims.role === 'admin') && companyFromClaims === 'MS Byggsystem');
+        const isSuperClaim = !!(claims.superadmin === true || claims.role === 'superadmin');
         const userEmail = (user && user.email) ? String(user.email).toLowerCase() : '';
         // Allowlist override: allow specific known superadmin emails to see all members
         const isEmailSuperadmin = userEmail === 'marcus@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.com' || userEmail === 'marcus.skogh@msbyggsystem';
-        const effectiveGlobalAdmin = isGlobalAdmin || isEmailSuperadmin;
+        const effectiveGlobalAdmin = isSuperClaim || isMsAdminClaim || isEmailSuperadmin;
         try { setEffectiveGlobalAdmin(!!effectiveGlobalAdmin); } catch (_) {}
         if (!effectiveGlobalAdmin) return;
         // Fetch members for each company in parallel (but limit concurrency to avoid bursts)
@@ -204,6 +321,81 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     return () => { cancelled = true; };
   }, [companiesMode, companies]);
 
+  // When used in Mallar-läge (templatesMode), hämta mallar per företag för att
+  // kunna visa räknare både på företagsnivå och per kontrolltyp.
+  useEffect(() => {
+    if (!companiesMode || !templatesMode) return;
+    if (!Array.isArray(companies) || companies.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // Hämta mallar per företag
+        const results = await Promise.all(
+          companies.map(async (c) => {
+            try {
+              const items = await fetchCompanyMallar(c.id);
+              const list = Array.isArray(items) ? items : [];
+              const perType = {};
+              list.forEach((tpl) => {
+                const ct = String(tpl?.controlType || '').trim();
+                if (!ct) return;
+                perType[ct] = (perType[ct] || 0) + 1;
+              });
+              return { id: c.id, total: list.length, perType, items: list };
+            } catch (e) {
+              return { id: c.id, total: 0, perType: {}, items: [], error: String(e?.message || e) };
+            }
+          })
+        );
+        if (cancelled) return;
+        const nextMap = {};
+        const nextErr = {};
+        results.forEach((r) => {
+          nextMap[r.id] = { total: r.total, perType: r.perType, items: Array.isArray(r.items) ? r.items : [] };
+          if (r.error) nextErr[r.id] = r.error;
+        });
+        setTemplatesByCompany((prev) => ({ ...prev, ...nextMap }));
+        if (Object.keys(nextErr).length > 0) {
+          setTemplateFetchErrors((prev) => ({ ...prev, ...nextErr }));
+        }
+      } catch (_e) {}
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companiesMode, templatesMode, companies, templatesVersion]);
+
+  // När vi är i Mallar-läge eller Kontrolltyper-läge, hämta kontrolltyper per företag så
+  // vänstersidans lista kan visa både standard- och företags-specifika typer.
+  useEffect(() => {
+    if (!companiesMode || (!templatesMode && !controlTypesMode)) return;
+    if (!Array.isArray(companies) || companies.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const results = await Promise.all(
+          companies.map(async (c) => {
+            try {
+              const list = await fetchCompanyControlTypes(c.id).catch(() => DEFAULT_CONTROL_TYPES);
+              return { id: c.id, types: Array.isArray(list) && list.length > 0 ? list : DEFAULT_CONTROL_TYPES };
+            } catch (_e) {
+              return { id: c.id, types: DEFAULT_CONTROL_TYPES };
+            }
+          })
+        );
+        if (cancelled) return;
+        const next = {};
+        results.forEach((r) => { next[r.id] = r.types; });
+        setControlTypesByCompany(next);
+      } catch (_e) {}
+    })();
+
+    return () => { cancelled = true; };
+  }, [companiesMode, templatesMode, controlTypesMode, companies]);
+
   // Filtrera projekt baserat på söksträng (namn eller "nummer")
   const filterTree = (tree) => tree
     .map(group => {
@@ -234,9 +426,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const handleGoHome = () => {
     try {
       if (typeof window !== 'undefined') {
-        // Try SPA navigation first
-        try { window.history.pushState(null, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); return; } catch(_) {}
-        window.location.href = '/';
+        // Signalera till omgivande skärm att vi vill tillbaka till dashboarden.
+        // Själva navigationen hanteras i skärmen (t.ex. ManageCompany/AdminAuditLog)
+        // så att användaren förblir inloggad.
+        try {
+          window.dispatchEvent(new CustomEvent('dkGoHome'));
+        } catch (_e) {}
       }
     } catch (e) {}
   };
@@ -333,7 +528,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           const prev = Array.isArray(companies) ? companies : [];
           const items = await fetchCompanies();
           if (Array.isArray(items) && items.length > 0) {
-            setCompanies(items);
+            // Apply same filtering as initial load: respect restrictCompanyId
+            const filtered = restrictCompanyId ? items.filter(c => c && c.id === restrictCompanyId) : items;
+            setCompanies(filtered);
           } else {
             // keep previous companies if fetch returned empty — avoid wiping the UI
             showToast('Uppdateringen gav inga nya företag.');
@@ -394,7 +591,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   };
 
   return (
-    <div style={{ width: 'max-content', minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative' }}>
+    <div style={{ width: 320, minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', overflowX: 'hidden', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative', boxSizing: 'border-box', flexShrink: 0 }}>
       {addDialogOpen && (
         <div
           style={{
@@ -483,7 +680,14 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {iconName ? (
+            <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name={iconName} size={13} color="#fff" />
+            </div>
+          ) : null}
+          <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+        </div>
         {companiesMode ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
             <TouchableOpacity
@@ -549,31 +753,60 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           boxSizing: 'border-box',
         }}
       />
-      {companiesMode ? (
-        <div style={{ marginTop: 8, marginBottom: 8 }}>
-          <button
-            onClick={handleAddCompany}
-            style={{ background: '#fff', border: '1px solid #1976d2', color: '#1976d2', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}
-          >
-            + Lägg till företag
-          </button>
-        </div>
+      {companiesMode && !hideCompanyActions ? (
+        <>
+          <div style={{ marginTop: 8, marginBottom: 4 }}>
+            <button
+              onClick={handleAddCompany}
+              style={{ background: '#fff', border: '1px solid #1976d2', color: '#1976d2', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}
+            >
+              + Lägg till företag
+            </button>
+          </div>
+          {effectiveGlobalAdmin ? (
+            <div style={{ marginBottom: 8, fontSize: 12, color: '#555', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={showDeletedCompanies}
+                onChange={e => setShowDeletedCompanies(!!e.target.checked)}
+                style={{ margin: 0 }}
+              />
+              <span>Visa dolda företag</span>
+            </div>
+          ) : null}
+        </>
       ) : null}
       <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
       {companiesMode ? (<>
         <ul style={{ listStyle: 'none', padding: 0 }}>
-          {visibleCompanies.filter(c => {
-            const q = search.toLowerCase();
-            const name = String((c.profile && (c.profile.companyName || c.profile.name)) || '').toLowerCase();
-              return q === '' || name.includes(q) || String(c.id || '').toLowerCase().includes(q);
-          }).length === 0 && (
-            <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga företag hittades.</li>
-          )}
-              {visibleCompanies.filter(c => {
-                 const q = search.toLowerCase();
-                const name = String((c.profile && (c.profile.companyName || c.profile.name)) || '').toLowerCase();
-                return q === '' || name.includes(q) || String(c.id || '').toLowerCase().includes(q);
-              }).map(company => {
+          {(() => {
+            const filtered = visibleCompanies.filter(c => {
+              // In memberSearchMode (Hantera användare) eller när sidomenyn är
+              // låst till ett enda företag (restrictCompanyId) ska sökfältet
+              // inte filtrera bort själva företaget – bara användarna under.
+              if (memberSearchMode || restrictCompanyId) return true;
+              const q = search.toLowerCase();
+              const name = String((c.profile && (c.profile.companyName || c.profile.name)) || '').toLowerCase();
+              if (!q) return true;
+
+              // I Kontrolltyper-läget: filtrera även på kontrolltypernas namn.
+              if (controlTypesMode) {
+                const types = (controlTypesByCompany[c.id] || DEFAULT_CONTROL_TYPES) || [];
+                const hasTypeMatch = types.some(t => {
+                  const label = String(t.name || t.key || '').toLowerCase();
+                  return label && label.includes(q);
+                });
+                if (hasTypeMatch) return true;
+              }
+
+              return name.includes(q) || String(c.id || '').toLowerCase().includes(q);
+            });
+            if (!memberSearchMode && !restrictCompanyId && filtered.length === 0) {
+              return (
+                <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga företag hittades.</li>
+              );
+            }
+            return filtered.map(company => {
                 const companyEnabled = isCompanyEnabled(company);
                 return (
                 <li key={company.id}>
@@ -590,14 +823,20 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         setContextMenuCompany(company);
                         setContextMenuVisible(true);
                       }}
-                      style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', flex: 1,
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        flex: 1,
                         background: hoveredCompany === company.id ? '#eee' : 'transparent',
                         borderRadius: 4,
-                        padding: hoveredCompany === company.id ? '2px 4px' : 0,
+                        padding: '2px 4px',
                         borderWidth: 1,
                         borderStyle: 'solid',
                         borderColor: hoveredCompany === company.id ? '#1976D2' : 'transparent',
-                        transition: 'background 0.15s, border 0.15s',
+                        transition: 'background 0.15s, border-color 0.15s',
+                        boxSizing: 'border-box',
                       }}
                     >
                       <button
@@ -615,10 +854,18 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         alignItems: 'center',
                         width: '100%',
                         justifyContent: 'space-between',
-                        whiteSpace: 'nowrap',
                       }}
                         onClick={async () => {
-                          setExpandedCompanies(prev => ({ ...prev, [company.id]: !prev[company.id] }));
+                          setExpandedCompanies(prev => {
+                            const isOpen = !!prev[company.id];
+                            // Allow only one expanded company at a time
+                            if (isOpen) return {};
+                            return { [company.id]: true };
+                          });
+                          // Whenever we change which company is öppnad, reset
+                          // the per-company member role expansion so that
+                          // "Admin" och "Användare" listas alltid startar stängda.
+                          try { setExpandedMemberRoles({}); } catch(_e) {}
                           if (showMembers && !membersByCompany[company.id]) {
                             // Try admin callable first (works across companies as superadmin), then fallback to client fetch
                             let loaded = false;
@@ -651,18 +898,36 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           }
                         }}
                       >
-                        <span style={{ fontWeight: hoveredCompany === company.id ? '700' : '600', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <Ionicons
                             name="briefcase"
                             size={16}
-                            color="#555"
+                            color={company.profile && company.profile.deleted ? '#999' : '#555'}
                             style={{
                               transform: expandedCompanies[company.id] ? 'rotate(360deg)' : 'rotate(0deg)',
                               transition: 'transform 0.4s ease'
                             }}
                           />
-                          {(company.profile && (company.profile.companyName || company.profile.name)) || company.id}
                           {(() => {
+                            const baseName = (company.profile && (company.profile.companyName || company.profile.name)) || company.id;
+                            if (company.profile && company.profile.deleted) return `${baseName} (dolt)`;
+                            return baseName;
+                          })()}
+                          {(() => {
+                            if (templatesMode) {
+                              const summary = templatesByCompany && templatesByCompany[company.id];
+                              const total = summary && typeof summary.total === 'number' ? summary.total : 0;
+                              return ` (${total})`;
+                            }
+
+                            // I Kontrolltyper-läget vill vi visa antal kontrolltyper per företag,
+                            // inte antal användare/licenser.
+                            if (controlTypesMode && controlTypesByCompany && controlTypesByCompany[company.id]) {
+                              const types = controlTypesByCompany[company.id] || [];
+                              const count = Array.isArray(types) ? types.length : 0;
+                              if (count > 0) return ` (${count})`;
+                            }
+
                             const mems = membersByCompany && membersByCompany[company.id] ? (membersByCompany[company.id] || []) : null;
                             if (!mems) return '';
                             const used = mems.length;
@@ -677,22 +942,20 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                 }
                               } catch (_) {}
                             }
-                            // Pragmatisk fallback: visa standard 10 licenser om inget annat hittas
-                            if (limit === null) {
-                              limit = 10;
-                            }
                             if (typeof limit === 'number') return ` (${used}/${limit})`;
                             return ` (${used})`;
                           })()}
                         </span>
                         <span
                           style={{
-                            marginLeft: 12,
-                            padding: '2px 10px',
-                            minWidth: 40,
+                            marginLeft: 8,
+                            padding: '0 6px',
+                            minWidth: 32,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'flex-end',
+                            boxSizing: 'border-box',
+                            flexShrink: 0,
                           }}
                           title={companyEnabled ? 'Aktivt' : 'Pausat'}
                         >
@@ -717,16 +980,36 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                       onClose={() => setContextMenuVisible(false)}
                       items={(() => {
                         const enabled = companyEnabled;
-                        return [
-                          { key: 'addUser', label: 'Lägg till användare', icon: '➕' },
+                        const deleted = !!(company.profile && company.profile.deleted);
+
+                        // I Kontrolltyper-läget använder vi ett enklare menyupplägg
+                        // där huvudfokus är att lägga till kontrolltyper.
+                        if (controlTypesMode) {
+                          return [
+                            { key: 'addControlType', label: 'Lägg till kontrolltyp', icon: '➕' },
+                          ];
+                        }
+
+                        const base = [{ key: 'addUser', label: 'Lägg till användare', icon: '➕' }];
+                        if (!effectiveGlobalAdmin || !allowCompanyManagementActions) return base;
+                        return base.concat([
+                          { key: 'rename', label: 'Byt företagsnamn', icon: '✏️' },
+                          { key: 'setLimit', label: 'Justera antal användare (userLimit)', icon: '👥' },
                           { key: 'activate', label: 'Aktivera företag', icon: '▶️', disabled: enabled },
                           { key: 'pause', label: 'Pausa företag', icon: '⏸️', disabled: !enabled },
-                          { key: 'deleteCompany', label: 'Radera företag', icon: '🗑️', danger: true },
-                        ];
+                          { key: 'deleteCompany', label: deleted ? 'Radera företag' : 'Dölj företag', icon: '🗑️', danger: true },
+                        ]);
                       })()}
                       onSelect={async (item) => {
                         if (!contextMenuCompany) return;
                         const compId = contextMenuCompany.id;
+                        if (controlTypesMode && item.key === 'addControlType') {
+                          setContextMenuVisible(false);
+                          if (onSelectProject) {
+                            onSelectProject({ companyId: compId, profile: contextMenuCompany.profile, createControlType: true });
+                          }
+                          return;
+                        }
                         if (item.key === 'addUser') {
                           // Open the same modal as edit, but in "create" mode.
                           setEditingUser({ companyId: compId, member: {}, create: true });
@@ -757,39 +1040,514 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             try { Alert.alert('Fel', 'Kunde inte ändra status: ' + combined); } catch(_) { try { window.alert('Kunde inte ändra status'); } catch(__) {} }
                           }
                         } else if (item.key === 'deleteCompany') {
-                          const conf = (typeof window !== 'undefined') ? window.confirm('Radera företaget ' + compId + '? Detta tar inte bort historik, men döljer företaget i listan.') : true;
-                          if (!conf) return;
+                          const prof = contextMenuCompany && contextMenuCompany.profile ? contextMenuCompany.profile : {};
+                          const alreadyDeleted = !!prof.deleted;
+
+                          if (!alreadyDeleted) {
+                            const conf = (typeof window !== 'undefined')
+                              ? window.confirm('Dölj företaget ' + compId + '? Företaget pausas och döljs i listan. Du kan visa det igen via "Visa dolda företag".')
+                              : true;
+                            if (!conf) return;
+                            try {
+                              const res = await setCompanyStatusRemote({ companyId: compId, deleted: true, enabled: false });
+                              const ok = !!(res && (res.ok === true || res.success === true));
+                              if (!ok) {
+                                showToast('Kunde inte radera företaget (servern avvisade ändringen).');
+                                return;
+                              }
+                              // Markera som raderat lokalt istället för att ta bort helt.
+                              setCompanies(prev =>
+                                Array.isArray(prev)
+                                  ? prev.map(c =>
+                                      c.id === compId
+                                        ? { ...c, profile: { ...(c.profile || {}), deleted: true, enabled: false } }
+                                        : c
+                                    )
+                                  : prev
+                              );
+                              try {
+                                Alert.alert('Dolt', 'Företaget har pausats och dolts från listan.');
+                              } catch (e) {
+                                try { window.alert('Företaget har dolts från listan.'); } catch (_) {}
+                              }
+                            } catch (e) {
+                              const rawCode = e && e.code ? String(e.code) : '';
+                              const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                              const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                              showToast('Kunde inte radera företaget: ' + combined);
+                              try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget.'); } catch (__ ) {} }
+                            }
+                          } else {
+                            const conf = (typeof window !== 'undefined')
+                              ? window.confirm(
+                                  'Företaget ' +
+                                    compId +
+                                    ' är redan dolt. Vill du radera det PERMANENT? Detta tar bort all historik och kan inte ångras.'
+                                )
+                              : true;
+                            if (!conf) return;
+                            try {
+                              const res = await purgeCompanyRemote({ companyId: compId });
+                              const ok = !!(res && (res.ok === true || res.success === true));
+                              if (!ok) {
+                                showToast('Kunde inte radera företaget permanent (servern avvisade ändringen).');
+                                return;
+                              }
+                              setCompanies(prev => (Array.isArray(prev) ? prev.filter(c => c.id !== compId) : prev));
+                              try {
+                                Alert.alert('Borttaget', 'Företaget har raderats permanent och all historik är borttagen.');
+                              } catch (e) {
+                                try { window.alert('Företaget har raderats permanent.'); } catch (_) {}
+                              }
+                            } catch (e) {
+                              const rawCode = e && e.code ? String(e.code) : '';
+                              const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                              const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                              showToast('Kunde inte radera företaget permanent: ' + combined);
+                              try { Alert.alert('Fel', 'Kunde inte radera företaget permanent: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget permanent.'); } catch (__ ) {} }
+                            }
+                          }
+                        } else if (item.key === 'setLimit') {
+                          if (typeof window === 'undefined') return;
+                          // Förifyll med nuvarande limit om den finns
+                          let currentLimit = null;
                           try {
-                            const res = await setCompanyStatusRemote({ companyId: compId, deleted: true, enabled: false });
+                            const prof = contextMenuCompany && contextMenuCompany.profile ? contextMenuCompany.profile : null;
+                            if (prof && prof.userLimit !== undefined && prof.userLimit !== null && prof.userLimit !== '') {
+                              const raw = String(prof.userLimit).trim();
+                              const m = raw.match(/-?\d+/);
+                              if (m && m[0]) {
+                                const n = parseInt(m[0], 10);
+                                if (!Number.isNaN(n) && Number.isFinite(n)) currentLimit = n;
+                              }
+                            }
+                          } catch (_) {}
+
+                          const initial = currentLimit !== null ? String(currentLimit) : '';
+                          const raw = window.prompt('Ange max antal användare (userLimit) för ' + compId + ':', initial);
+                          if (raw === null) return; // avbrutet
+                          const trimmed = String(raw).trim();
+                          if (!trimmed) return;
+                          const parsed = parseInt(trimmed, 10);
+                          if (Number.isNaN(parsed) || !Number.isFinite(parsed) || parsed < 0) {
+                            try { Alert.alert('Fel', 'Ogiltigt antal användare. Ange ett heltal 0 eller större.'); } catch(e) { try { window.alert('Ogiltigt antal användare.'); } catch(_) {} }
+                            return;
+                          }
+
+                          try {
+                            const res = await setCompanyUserLimitRemote({ companyId: compId, userLimit: parsed });
                             const ok = !!(res && (res.ok === true || res.success === true));
                             if (!ok) {
-                              showToast('Kunde inte radera företaget (servern avvisade ändringen).');
+                              showToast('Kunde inte spara userLimit (servern avvisade ändringen).');
                               return;
                             }
-                            setCompanies(prev => (Array.isArray(prev) ? prev.filter(c => c.id !== compId) : prev));
-                            try { Alert.alert('Borttaget', 'Företaget har dolts från listan.'); } catch(e) { try { window.alert('Företaget har dolts från listan.'); } catch(_) {} }
+                            try { Alert.alert('Ok', `Max antal användare uppdaterat till ${parsed}.`); } catch(e) { try { window.alert('Max antal användare uppdaterat.'); } catch(_) {} }
+                            try {
+                              const updated = await fetchCompanyProfile(compId);
+                              setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
+                            } catch(e) {}
                           } catch (e) {
                             const rawCode = e && e.code ? String(e.code) : '';
                             const rawMsg = e && e.message ? String(e.message) : String(e || '');
                             const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                            showToast('Kunde inte radera företaget: ' + combined);
-                            try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch(_) { try { window.alert('Kunde inte radera företaget.'); } catch(__) {} }
+                            showToast('Kunde inte uppdatera userLimit: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte uppdatera userLimit: ' + combined); } catch(_) { try { window.alert('Kunde inte uppdatera userLimit.'); } catch(__) {} }
+                          }
+                        } else if (item.key === 'rename') {
+                          if (typeof window === 'undefined') return;
+                          const prof = contextMenuCompany && contextMenuCompany.profile ? contextMenuCompany.profile : {};
+                          const currentName = (prof && (prof.companyName || prof.name)) || compId;
+                          const raw = window.prompt('Ange nytt företagsnamn för ' + compId + ':', currentName);
+                          if (raw === null) return; // avbrutet
+                          const trimmed = String(raw).trim();
+                          if (!trimmed) return;
+
+                          try {
+                            const res = await setCompanyNameRemote({ companyId: compId, companyName: trimmed });
+                            const ok = !!(res && (res.ok === true || res.success === true));
+                            if (!ok) {
+                              showToast('Kunde inte uppdatera företagsnamnet (servern avvisade ändringen).');
+                              return;
+                            }
+                            try { Alert.alert('Ok', 'Företagsnamnet har uppdaterats.'); } catch(e) { try { window.alert('Företagsnamnet har uppdaterats.'); } catch(_) {} }
+                            try {
+                              const updated = await fetchCompanyProfile(compId);
+                              setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
+                            } catch(e) {}
+                          } catch (e) {
+                            const rawCode = e && e.code ? String(e.code) : '';
+                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                            showToast('Kunde inte uppdatera företagsnamn: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte uppdatera företagsnamn: ' + combined); } catch(_) { try { window.alert('Kunde inte uppdatera företagsnamn.'); } catch(__) {} }
                           }
                         }
                       }}
                     />
 
+                    {templatesMode && templateContextMenu && templateContextMenu.companyId === company.id && (
+                      <ContextMenu
+                        visible={!!templateContextMenu}
+                        x={templateContextMenu.x}
+                        y={templateContextMenu.y}
+                        onClose={() => setTemplateContextMenu(null)}
+                        items={[{ key: 'addTemplate', label: 'Lägg till mall', icon: '➕' }]}
+                        onSelect={(item) => {
+                          if (!templateContextMenu) return;
+                          if (!item || item.key !== 'addTemplate') {
+                            setTemplateContextMenu(null);
+                            return;
+                          }
+                          const { companyId: tplCompanyId, controlType: tplControlType } = templateContextMenu;
+                          setTemplateContextMenu(null);
+                          if (onSelectProject && tplCompanyId) {
+                            onSelectProject({ companyId: tplCompanyId, controlType: tplControlType });
+                          }
+                        }}
+                      />
+                    )}
+
+                    {controlTypesMode && controlTypeContextMenu && controlTypeContextMenu.companyId === company.id && (
+                      <ContextMenu
+                        visible={!!controlTypeContextMenu}
+                        x={controlTypeContextMenu.x}
+                        y={controlTypeContextMenu.y}
+                        onClose={() => setControlTypeContextMenu(null)}
+                        items={(function () {
+                          const isHidden = !!controlTypeContextMenu.hidden;
+                          return [
+                            { key: 'rename', label: 'Byt namn' },
+                            { key: isHidden ? 'activate' : 'hide', label: isHidden ? 'Aktivera' : 'Dölj' },
+                            { key: 'delete', label: 'Radera' },
+                          ];
+                        })()}
+                        onSelect={async (item) => {
+                          const ctx = controlTypeContextMenu;
+                          setControlTypeContextMenu(null);
+                          if (!ctx || !item) return;
+                          const compId = ctx.companyId;
+                          const ctId = ctx.controlTypeId;
+                          const ctName = ctx.controlTypeName || '';
+                          const ctKey = ctx.controlTypeKey || '';
+                          const isBuiltin = !!ctx.builtin;
+                          const isHidden = !!ctx.hidden;
+                          if (!compId) return;
+
+                          const notifyChange = () => {
+                            try {
+                              if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('dkControlTypesUpdated', { detail: { companyId: compId } }));
+                              }
+                            } catch (_) {}
+                          };
+
+                          try {
+                            if (item.key === 'rename') {
+                              let raw = ctName;
+                              try {
+                                if (typeof window !== 'undefined' && window.prompt) {
+                                  raw = window.prompt('Nytt namn för kontrolltypen', ctName || '') || '';
+                                }
+                              } catch (_) {}
+                              const trimmed = String(raw || '').trim();
+                              if (!trimmed || trimmed === ctName) return;
+                              if (isBuiltin || !ctId) {
+                                await updateCompanyControlType({ key: ctKey || ctName || trimmed, name: trimmed }, compId);
+                              } else {
+                                await updateCompanyControlType({ id: ctId, name: trimmed }, compId);
+                              }
+                              try {
+                                const list = await fetchCompanyControlTypes(compId).catch(() => null);
+                                if (Array.isArray(list) && list.length > 0) {
+                                  setControlTypesByCompany(prev => ({ ...prev, [compId]: list }));
+                                }
+                              } catch (_) {}
+                              notifyChange();
+                              return;
+                            }
+
+                            if (item.key === 'hide' || item.key === 'activate') {
+                              const targetHidden = item.key === 'hide';
+                              if (isBuiltin || !ctId) {
+                                await updateCompanyControlType({ key: ctKey || ctName, hidden: targetHidden }, compId);
+                              } else {
+                                await updateCompanyControlType({ id: ctId, hidden: targetHidden }, compId);
+                              }
+                              try {
+                                const list = await fetchCompanyControlTypes(compId).catch(() => null);
+                                if (Array.isArray(list) && list.length > 0) {
+                                  setControlTypesByCompany(prev => ({ ...prev, [compId]: list }));
+                                }
+                              } catch (_) {}
+                              notifyChange();
+                              return;
+                            }
+
+                            if (item.key === 'delete') {
+                              let confirmed = true;
+                              try {
+                                if (typeof window !== 'undefined' && window.confirm) {
+                                  confirmed = window.confirm(`Är du säker på att du vill radera kontrolltypen "${ctName || ''}"? Detta går inte att ångra.`);
+                                }
+                              } catch (_) { confirmed = true; }
+                              if (!confirmed) return;
+                              if (isBuiltin || !ctId) {
+                                // För inbyggda kontrolltyper kan vi inte radera globalt,
+                                // behandla "Radera" som att dölja typen för detta företag.
+                                await updateCompanyControlType({ key: ctKey || ctName, hidden: true }, compId);
+                              } else {
+                                await deleteCompanyControlType({ id: ctId }, compId);
+                              }
+                              try {
+                                const list = await fetchCompanyControlTypes(compId).catch(() => null);
+                                if (Array.isArray(list) && list.length > 0) {
+                                  setControlTypesByCompany(prev => ({ ...prev, [compId]: list }));
+                                }
+                              } catch (_) {}
+                              notifyChange();
+                              return;
+                            }
+                          } catch (e) {
+                            try {
+                              showToast('Kunde inte uppdatera kontrolltyp: ' + String(e?.message || e));
+                            } catch (_) {}
+                          }
+                        }}
+                      />
+                    )}
+
+                    {templatesMode && expandedCompanies[company.id] && (
+                      <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 6 }}>
+                        {(controlTypesByCompany[company.id] || DEFAULT_CONTROL_TYPES).map(({ name, icon, color, key: ctKey }) => {
+                          const type = name || ctKey || '';
+                          if (!type) return null;
+                          const key = `${company.id}:${type}`;
+                          const spin = spinTemplateTypes[key] || 0;
+                          const isSelected = selectedTemplateKey === key;
+                          const isHovered = hoveredTemplateKey === key;
+                          const isExpanded = !!expandedTemplateTypes[key];
+                          const summary = templatesByCompany && templatesByCompany[company.id];
+                          const count = summary && summary.perType && typeof summary.perType[type] === 'number'
+                            ? summary.perType[type]
+                            : 0;
+                          const templatesForType = summary && Array.isArray(summary.items)
+                            ? summary.items.filter(tpl => String(tpl?.controlType || '').trim() === type)
+                            : [];
+                          return (
+                            <li key={key}>
+                              <button
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: 0,
+                                  cursor: 'pointer',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                  fontSize: 14,
+                                }}
+                                onContextMenu={(e) => {
+                                  try { if (e && e.preventDefault) e.preventDefault(); } catch (_) {}
+                                  const x = (e && e.clientX) ? e.clientX : 60;
+                                  const y = (e && e.clientY) ? e.clientY : 60;
+                                  setTemplateContextMenu({ companyId: company.id, controlType: type, x, y });
+                                }}
+                                onClick={() => {
+                                  setSelectedTemplateKey(key);
+                                  setSpinTemplateTypes(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+                                  setExpandedTemplateTypes(prev => {
+                                    const isOpen = !!prev[key];
+                                    // Allow max en öppen kontrolltyp åt gången
+                                    if (isOpen) return {};
+                                    return { [key]: true };
+                                  });
+                                  if (onSelectProject) {
+                                    onSelectProject({ companyId: company.id, profile: company.profile, controlType: type });
+                                  }
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    padding: '4px 4px',
+                                    paddingLeft: 24,
+                                    borderRadius: 4,
+                                    backgroundColor: isSelected ? '#e3f2fd' : (isHovered ? '#f5f5f5' : 'transparent'),
+                                    borderWidth: 1,
+                                    borderStyle: 'solid',
+                                    borderColor: isSelected ? '#1976D2' : (isHovered ? '#ccc' : 'transparent'),
+                                    transition: 'background 0.15s, border-color 0.15s',
+                                  }}
+                                  onMouseEnter={() => setHoveredTemplateKey(key)}
+                                  onMouseLeave={() => { setHoveredTemplateKey(prev => (prev === key ? null : prev)); }}
+                                >
+                                  <Ionicons
+                                    name={icon}
+                                    size={14}
+                                    color={color}
+                                    style={{
+                                      marginRight: 8,
+                                      transform: `rotate(${spin * 360}deg)`,
+                                      transition: 'transform 0.4s ease',
+                                    }}
+                                  />
+                                  <span style={{ color: '#333' }}>
+                                    {count > 0 ? `${type} (${count})` : type}
+                                  </span>
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                templatesForType.length > 0 ? (
+                                  <ul style={{ listStyle: 'none', paddingLeft: 40, marginTop: 2 }}>
+                                    {templatesForType.map((tpl) => (
+                                      <li key={tpl.id}>
+                                        <button
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            padding: 0,
+                                            cursor: 'pointer',
+                                            width: '100%',
+                                            textAlign: 'left',
+                                            fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                            fontSize: 13,
+                                          }}
+                                          onClick={() => {
+                                            if (onSelectProject) {
+                                              onSelectProject({
+                                                companyId: company.id,
+                                                profile: company.profile,
+                                                controlType: type,
+                                                templateId: tpl.id,
+                                                template: tpl,
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          <span style={{ color: '#444' }}>{tpl.title || 'Namnlös mall'}</span>
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={{ paddingLeft: 48, marginTop: 2, fontSize: 12, color: '#D32F2F' }}>
+                                    Inga mallar skapade
+                                  </div>
+                                )
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+
+                    {controlTypesMode && expandedCompanies[company.id] && (
+                      <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 6 }}>
+                        {(controlTypesByCompany[company.id] || DEFAULT_CONTROL_TYPES)
+                          .filter((ct) => {
+                            const type = (ct && (ct.name || ct.key)) || '';
+                            if (!type) return false;
+                            const q = search.toLowerCase();
+                            if (!q) return true;
+                            return String(type).toLowerCase().includes(q);
+                          })
+                          .map((ct) => {
+                          const { name, icon, color, key: ctKey, id, hidden, builtin } = ct || {};
+                          const type = name || ctKey || '';
+                          if (!type) return null;
+                          const key = `${company.id}:ct:${id || type}`;
+                          const isHidden = !!hidden;
+                          const isHovered = hoveredControlTypeKey === key;
+                          return (
+                            <li key={key}>
+                              <button
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: 0,
+                                  cursor: 'default',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                  fontSize: 14,
+                                }}
+                                onContextMenu={(e) => {
+                                  try { if (e && e.preventDefault) e.preventDefault(); } catch (_) {}
+                                  const x = (e && e.clientX) ? e.clientX : 60;
+                                  const y = (e && e.clientY) ? e.clientY : 60;
+                                  setControlTypeContextMenu({
+                                    companyId: company.id,
+                                    profile: company.profile,
+                                    controlTypeId: id,
+                                    controlTypeKey: ctKey,
+                                    controlTypeName: type,
+                                    builtin: !!builtin,
+                                    hidden: isHidden,
+                                    x,
+                                    y,
+                                  });
+                                }}
+                                onClick={() => {
+                                  if (onSelectProject) {
+                                    onSelectProject({ companyId: company.id, profile: company.profile, controlType: type });
+                                  }
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    padding: '4px 4px',
+                                    paddingLeft: 24,
+                                    borderRadius: 4,
+                                    backgroundColor: isHovered ? '#f5f5f5' : 'transparent',
+                                    borderWidth: 1,
+                                    borderStyle: 'solid',
+                                    borderColor: isHovered ? '#1976D2' : 'transparent',
+                                    transition: 'background 0.15s, border-color 0.15s',
+                                  }}
+                                  onMouseEnter={() => setHoveredControlTypeKey(key)}
+                                  onMouseLeave={() => { setHoveredControlTypeKey(prev => (prev === key ? null : prev)); }}
+                                >
+                                  <Ionicons
+                                    name={icon}
+                                    size={14}
+                                    color={isHidden ? '#B0BEC5' : color}
+                                    style={{ marginRight: 8 }}
+                                  />
+                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+
                     {showMembers && expandedCompanies[company.id] && (
                       <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 6 }}>
                         {(() => {
-                          const members = (membersByCompany[company.id] || []);
-                          if (!members.length) {
+                          const membersRaw = membersByCompany[company.id];
+                          if (!membersRaw) {
                             return (
-                              <li style={{ color: '#D32F2F', fontSize: 13 }}>Inga användare skapade än.</li>
+                              <li style={{ color: '#666', fontSize: 13 }}>Laddar användare…</li>
                             );
                           }
-                          const admins = members.filter(isAdmin);
-                          const usersList = members.filter(m => !isAdmin(m));
+                          const members = Array.isArray(membersRaw) ? membersRaw : [];
+                          const q = memberSearchMode ? search.toLowerCase() : '';
+                          const matchesQuery = (m) => {
+                            if (!q) return true;
+                            const text = `${m.displayName || ''} ${m.firstName || ''} ${m.lastName || ''} ${m.email || ''}`.toLowerCase();
+                            return text.includes(q);
+                          };
+                          const admins = members.filter(m => isAdmin(m) && matchesQuery(m));
+                          const usersList = members.filter(m => !isAdmin(m) && matchesQuery(m));
+                          if (!admins.length && !usersList.length) {
+                            return (
+                              <li style={{ color: '#D32F2F', fontSize: 13 }}>Inga användare matchar sökningen.</li>
+                            );
+                          }
                           const roleState = expandedMemberRoles[company.id] || {};
                           return (
                             <>
@@ -927,7 +1685,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                   </div>
                 </li>
                 );
-              })}
+              });
+          })()}
         </ul>
       {userContextMenu && (
         <ContextMenu
@@ -1052,7 +1811,16 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             console.warn('User save error', e);
             try {
               const code = e && e.code ? String(e.code) : '';
-              // För callable functions hamnar vårt meddelande ofta i `details`
+
+              // Specifik text när licenstaket är nått
+              if (code === 'functions/failed-precondition') {
+                const msg = 'Max antal användare är uppnådd';
+                setEditingUserError(msg);
+                Alert.alert('Fel', msg);
+                return;
+              }
+
+              // För övriga fel: bygg ett mer tekniskt meddelande
               const details = (e && (e.details || e.data)) || '';
               const msgText = e && e.message ? String(e.message) : '';
               let detailText = '';

@@ -11,6 +11,7 @@ import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '
 import HeaderUserMenuConditional from './components/HeaderUserMenuConditional';
 
 // Importera skärmar
+import AdminAuditLog from './Screens/AdminAuditLog';
 import ArbetsberedningScreen from './Screens/ArbetsberedningScreen';
 import CameraCapture from './Screens/CameraCapture';
 import ControlDetails from './Screens/ControlDetails';
@@ -20,6 +21,8 @@ import FuktmätningScreen from './Screens/FuktmätningScreen';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
 import ManageCompany from './Screens/ManageCompany';
+import ManageControlTypes from './Screens/ManageControlTypes';
+import ManageTemplates from './Screens/ManageTemplates';
 import ManageUsers from './Screens/ManageUsers';
 import MottagningskontrollScreen from './Screens/MottagningskontrollScreen';
 import ProjectDetails from './Screens/ProjectDetails';
@@ -210,7 +213,22 @@ export default function App() {
             })} />
             <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
             <Stack.Screen name="ManageCompany" component={ManageCompany} options={({ navigation }) => ({
-              title: 'Hantera företag',
+              title: 'Företag',
+              headerBackTitleVisible: false,
+              headerBackTitle: '',
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.goBack()}
+                  accessibilityLabel="Tillbaka"
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                >
+                  <Ionicons name="chevron-back" size={30} color="#000" />
+                </TouchableOpacity>
+              ),
+            })} />
+            <Stack.Screen name="AdminAuditLog" component={AdminAuditLog} options={({ navigation }) => ({
+              title: 'Adminlogg',
               headerBackTitleVisible: false,
               headerBackTitle: '',
               headerLeft: () => (
@@ -225,7 +243,37 @@ export default function App() {
               ),
             })} />
             <Stack.Screen name="ManageUsers" component={ManageUsers} options={({ navigation }) => ({
-              title: 'Hantera användare',
+              title: 'Användare',
+              headerBackTitleVisible: false,
+              headerBackTitle: '',
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.goBack()}
+                  accessibilityLabel="Tillbaka"
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                >
+                  <Ionicons name="chevron-back" size={30} color="#000" />
+                </TouchableOpacity>
+              ),
+            })} />
+            <Stack.Screen name="ManageTemplates" component={ManageTemplates} options={({ navigation }) => ({
+              title: 'Mallar',
+              headerBackTitleVisible: false,
+              headerBackTitle: '',
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.goBack()}
+                  accessibilityLabel="Tillbaka"
+                  hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                  style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                >
+                  <Ionicons name="chevron-back" size={30} color="#000" />
+                </TouchableOpacity>
+              ),
+            })} />
+            <Stack.Screen name="ManageControlTypes" component={ManageControlTypes} options={({ navigation }) => ({
+              title: 'Kontrolltyper',
               headerBackTitleVisible: false,
               headerBackTitle: '',
               headerLeft: () => (

@@ -164,6 +164,85 @@ export async function setCompanyStatusRemote({ companyId, enabled, deleted }) {
   return res && res.data ? res.data : res;
 }
 
+export async function setCompanyUserLimitRemote({ companyId, userLimit }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyUserLimit');
+  const payload = { companyId, userLimit };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function setCompanyNameRemote({ companyId, companyName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyName');
+  const payload = { companyId, companyName };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function purgeCompanyRemote({ companyId }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'purgeCompany');
+  const payload = { companyId };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function fetchAdminAuditForCompany(companyId, limitCount = 50) {
+  if (!db) throw new Error('Firestore not initialized');
+  const q = query(
+    collection(db, 'admin_audit'),
+    where('companyId', '==', companyId)
+  );
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    items.push({ id: docSnap.id, ...data });
+  });
+  // Sortera senaste först på klientsidan för att undvika composite index-krav
+  items.sort((a, b) => {
+    const ta = a && a.ts && typeof a.ts.toMillis === 'function' ? a.ts.toMillis() : 0;
+    const tb = b && b.ts && typeof b.ts.toMillis === 'function' ? b.ts.toMillis() : 0;
+    return tb - ta;
+  });
+  if (limitCount && items.length > limitCount) {
+    return items.slice(0, limitCount);
+  }
+  return items;
+}
+
+// Global admin audit fetcher. If companyId is provided, filters on that company,
+// otherwise returns latest events across all companies.
+export async function fetchAdminAuditEvents({ companyId = null, limitCount = 100 } = {}) {
+  if (!db) throw new Error('Firestore not initialized');
+  const baseCol = collection(db, 'admin_audit');
+  let q;
+  if (companyId) {
+    // Endast filter på companyId här; sortering sker i klienten för att
+    // undvika krav på composite-index (companyId + ts).
+    q = query(baseCol, where('companyId', '==', companyId));
+  } else {
+    q = query(baseCol, orderBy('ts', 'desc'), limit(limitCount));
+  }
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    items.push({ id: docSnap.id, ...data });
+  });
+  // Säkerställ konsekvent sortering (senaste först) även i filtrerat läge
+  items.sort((a, b) => {
+    const ta = a && a.ts && typeof a.ts.toMillis === 'function' ? a.ts.toMillis() : 0;
+    const tb = b && b.ts && typeof b.ts.toMillis === 'function' ? b.ts.toMillis() : 0;
+    return tb - ta;
+  });
+  if (limitCount && items.length > limitCount) {
+    return items.slice(0, limitCount);
+  }
+  return items;
+}
+
 async function getAuthDebugSnapshot() {
   const snap = {
     projectId: firebaseConfig?.projectId || null,
@@ -1045,6 +1124,216 @@ export async function saveByggdelHierarchy({ momentsByGroup }, companyIdOverride
   } catch(e) {
     return false;
   }
+}
+
+// Default kontrolltyper (globala standarder) som alltid finns tillgängliga.
+// Dessa kan kompletteras med företags-specifika kontrolltyper i
+// /foretag/{companyId}/kontrolltyper.
+export const DEFAULT_CONTROL_TYPES = [
+  { key: 'arbetsberedning', name: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2', order: 10, builtin: true },
+  { key: 'egenkontroll', name: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C', order: 20, builtin: true },
+  { key: 'fuktmatning', name: 'Fuktmätning', icon: 'water-outline', color: '#0288D1', order: 30, builtin: true },
+  { key: 'mottagningskontroll', name: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2', order: 40, builtin: true },
+  { key: 'riskbedomning', name: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600', order: 50, builtin: true },
+  { key: 'skyddsrond', name: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C', order: 60, builtin: true },
+];
+
+export async function fetchCompanyControlTypes(companyIdOverride) {
+  const base = DEFAULT_CONTROL_TYPES.slice();
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) return base;
+  try {
+    const colRef = collection(db, 'foretag', companyId, 'kontrolltyper');
+    const snap = await getDocs(colRef);
+    const extras = [];
+    snap.forEach((docSnap) => {
+      try {
+        const data = docSnap.data() || {};
+        const key = String(data.key || docSnap.id || data.name || '').trim() || `ct_${docSnap.id}`;
+        const name = String(data.name || data.title || key).trim();
+        if (!name) return;
+        const icon = String(data.icon || '').trim() || 'document-text-outline';
+        const color = String(data.color || '').trim() || '#455A64';
+        const order = (typeof data.order === 'number' && Number.isFinite(data.order)) ? data.order : (100 + extras.length);
+        const hidden = !!data.hidden;
+        extras.push({ key, name, icon, color, order, hidden, builtin: false, id: docSnap.id });
+      } catch (_e) {}
+    });
+    if (!extras.length) return base;
+    const byKey = new Map();
+    base.forEach((t) => { byKey.set(String(t.key || t.name).toLowerCase(), t); });
+    extras.forEach((t) => { byKey.set(String(t.key || t.name).toLowerCase(), t); });
+    const merged = Array.from(byKey.values());
+    merged.sort((a, b) => {
+      const ao = typeof a.order === 'number' ? a.order : 9999;
+      const bo = typeof b.order === 'number' ? b.order : 9999;
+      if (ao !== bo) return ao - bo;
+      const an = String(a.name || '').toLowerCase();
+      const bn = String(b.name || '').toLowerCase();
+      return an.localeCompare(bn, 'sv');
+    });
+    return merged;
+  } catch (_e) {
+    return base;
+  }
+}
+
+// Skapa en ny företags-specifik kontrolltyp under /foretag/{companyId}/kontrolltyper.
+// Minimal payload: { name }. Optionellt: { key, icon, color, order }.
+export async function createCompanyControlType(payload, companyIdOverride) {
+  if (!payload || !payload.name) throw new Error('Namn på kontrolltyp saknas.');
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  const name = String(payload.name || '').trim();
+  if (!name) throw new Error('Namn på kontrolltyp saknas.');
+  const keyRaw = String(payload.key || '').trim();
+  const key = keyRaw || name.toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+  const icon = String(payload.icon || '').trim() || 'document-text-outline';
+  const color = String(payload.color || '').trim() || '#455A64';
+  const order = (typeof payload.order === 'number' && Number.isFinite(payload.order)) ? payload.order : null;
+  try {
+    const colRef = collection(db, 'foretag', companyId, 'kontrolltyper');
+    const docRef = await addDoc(colRef, sanitizeForFirestore({
+      key,
+      name,
+      icon,
+      color,
+      ...(order !== null ? { order } : {}),
+      createdAt: serverTimestamp(),
+    }));
+    return { id: docRef.id, key, name, icon, color, order };
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte skapa kontrolltyp.');
+  }
+}
+
+// Uppdatera en befintlig företags-specifik kontrolltyp.
+// Payload ska innehålla antingen { id } eller { key } och valfria fält att uppdatera: { name, icon, color, order, hidden }.
+export async function updateCompanyControlType(payload, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  let docId = String(payload?.id || '').trim();
+  if (!docId) {
+    const keyRaw = String(payload?.key || '').trim();
+    if (!keyRaw) throw new Error('ID eller nyckel för kontrolltyp saknas.');
+    // Normalisera docId från key på samma sätt som createCompanyControlType gör för key.
+    docId = keyRaw.toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+    if (!docId) throw new Error('Ogiltig nyckel för kontrolltyp.');
+  }
+
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    const name = String(payload.name || '').trim();
+    if (!name) throw new Error('Namn på kontrolltyp saknas.');
+    patch.name = name;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'icon')) {
+    patch.icon = String(payload.icon || '').trim() || 'document-text-outline';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'color')) {
+    patch.color = String(payload.color || '').trim() || '#455A64';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'order')) {
+    if (typeof payload.order === 'number' && Number.isFinite(payload.order)) {
+      patch.order = payload.order;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'hidden')) {
+    patch.hidden = !!payload.hidden;
+  }
+
+  if (Object.keys(patch).length === 0) return true;
+
+  patch.updatedAt = serverTimestamp();
+
+  try {
+    const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
+    await setDoc(ref, sanitizeForFirestore(patch), { merge: true });
+    return true;
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte uppdatera kontrolltyp.');
+  }
+}
+
+// Radera en företags-specifik kontrolltyp.
+export async function deleteCompanyControlType(payload, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  const docId = String(payload?.id || '').trim();
+  if (!docId) throw new Error('ID för kontrolltyp saknas.');
+  try {
+    const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
+    await deleteDoc(ref);
+    return true;
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte radera kontrolltyp.');
+  }
+}
+
+export async function fetchCompanyMallar(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'mallar'));
+    const out = [];
+    snap.forEach(docSnap => {
+      const d = docSnap.data() || {};
+      out.push(Object.assign({}, d, { id: docSnap.id }));
+    });
+    out.sort((a, b) => {
+      const at = String(a && (a.title ?? '')).trim();
+      const bt = String(b && (b.title ?? '')).trim();
+      return at.localeCompare(bt, 'sv');
+    });
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function createCompanyMall({ title, description, controlType }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const t = String(title || '').trim();
+  const desc = String(description || '').trim();
+  const ct = String(controlType || '').trim();
+  if (!t) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const colRef = collection(db, 'foretag', companyId, 'mallar');
+  const payload = {
+    title: t,
+    description: desc,
+    controlType: ct || null,
+    createdAt: serverTimestamp(),
+  };
+  const docRef = await addDoc(colRef, payload);
+  return docRef.id;
+}
+
+export async function deleteCompanyMall({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const mallId = String(id || '').trim();
+  if (!mallId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  await deleteDoc(doc(db, 'foretag', companyId, 'mallar', mallId));
+  return true;
 }
 
 // Byggdel mall-register per företag

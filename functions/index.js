@@ -16,6 +16,23 @@ admin.initializeApp({ projectId: resolvedProjectId });
 const firestore = admin.firestore();
 const db = admin.firestore();
 
+// Helper to write a global admin audit event. This is separate from the
+// per-company /foretag/{company}/activity feed and is intended for
+// superadmin/verktyg-översikt i webbgränssnittet.
+async function logAdminAuditEvent(event) {
+  try {
+    const payload = Object.assign(
+      {
+        ts: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      event || {}
+    );
+    await db.collection('admin_audit').add(payload);
+  } catch (e) {
+    console.warn('logAdminAuditEvent failed', e && e.message ? e.message : e);
+  }
+}
+
 /**
  * Callable function to provision a new company (foretag).
  * - Creates minimal profile document
@@ -63,6 +80,15 @@ async function provisionCompanyImpl(data, context) {
     //    custom claims. Superadmins/MS Byggsystem-admins manage the new
     //    company's users via the separate user management functions instead.
 
+    try {
+      await logAdminAuditEvent({
+        type: 'provisionCompany',
+        companyId,
+        actorUid: callerUid,
+        payload: { companyName },
+      });
+    } catch (_e) {}
+
     return { ok: true, companyId, uid: callerUid };
   } catch (err) {
     console.error('provisionCompany failed', err);
@@ -94,6 +120,51 @@ function callerIsAdmin(context) {
   return token.admin === true || token.role === 'admin' || token.globalAdmin === true;
 }
 
+// Delete all Firebase Auth users that belong to a specific companyId
+// (based on custom claims). This scans users in pages of 1000 which is
+// fine for the expected scale of this project.
+async function deleteAuthUsersForCompany(companyId) {
+  let nextPageToken = undefined;
+  let deletedCount = 0;
+  let failedCount = 0;
+  const failures = [];
+
+  do {
+    // listUsers returns up to 1000 users at a time
+    const res = await admin.auth().listUsers(1000, nextPageToken);
+    const users = res && Array.isArray(res.users) ? res.users : [];
+
+    const targets = users.filter((u) => {
+      try {
+        const claims = u && u.customClaims ? u.customClaims : {};
+        return claims && claims.companyId === companyId;
+      } catch (e) {
+        return false;
+      }
+    });
+
+    await Promise.all(targets.map(async (u) => {
+      try {
+        await admin.auth().deleteUser(u.uid);
+        deletedCount += 1;
+      } catch (e) {
+        failedCount += 1;
+        failures.push({ uid: u.uid, error: e && e.message ? e.message : e });
+      }
+    }));
+
+    nextPageToken = res.pageToken;
+  } while (nextPageToken);
+
+  if (failedCount > 0) {
+    console.warn('deleteAuthUsersForCompany: some deletes failed', { companyId, deletedCount, failedCount, failures });
+  } else {
+    console.log('deleteAuthUsersForCompany: completed', { companyId, deletedCount });
+  }
+
+  return { deletedCount, failedCount };
+}
+
 exports.createUser = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -113,7 +184,19 @@ exports.createUser = functions.https.onCall(async (data, context) => {
     // Read company profile for userLimit
     const profRef = db.doc(`foretag/${companyId}/profil/public`);
     const profSnap = await profRef.get();
-    const userLimit = profSnap.exists ? profSnap.data().userLimit : null;
+    const rawUserLimit = profSnap.exists ? profSnap.data().userLimit : null;
+
+    // Normalisera userLimit till ett tal om det ligger som sträng i Firestore
+    let userLimit = null;
+    if (typeof rawUserLimit === 'number') {
+      userLimit = rawUserLimit;
+    } else if (typeof rawUserLimit === 'string') {
+      const m = rawUserLimit.trim().match(/-?\d+/);
+      if (m && m[0]) {
+        const n = parseInt(m[0], 10);
+        if (!Number.isNaN(n) && Number.isFinite(n)) userLimit = n;
+      }
+    }
 
     // Count current members
     const membersRef = db.collection(`foretag/${companyId}/members`);
@@ -177,6 +260,16 @@ exports.createUser = functions.https.onCall(async (data, context) => {
         ts: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) { /* non-blocking */ }
+
+    try {
+      await logAdminAuditEvent({
+        type: 'createUser',
+        companyId,
+        actorUid: context.auth.uid || null,
+        targetUid: userRecord.uid,
+        payload: { email, displayName, role },
+      });
+    } catch (_e) {}
 
     return { ok: true, uid: userRecord.uid, tempPassword };
   } catch (err) {
@@ -245,6 +338,15 @@ exports.setSuperadmin = functions.https.onCall(async (data, context) => {
 
     const claims = Object.assign({}, (userRecord.customClaims || {}), { superadmin: true });
     await admin.auth().setCustomUserClaims(userRecord.uid, claims);
+    try {
+      await logAdminAuditEvent({
+        type: 'setSuperadmin',
+        actorUid: context.auth.uid || null,
+        targetUid: userRecord.uid,
+        payload: { email: userRecord.email },
+      });
+    } catch (_e) {}
+
     return { ok: true, uid: userRecord.uid };
   } catch (err) {
     console.error('setSuperadmin error', err);
@@ -286,6 +388,15 @@ exports.deleteUser = functions.https.onCall(async (data, context) => {
         ts: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) {}
+
+    try {
+      await logAdminAuditEvent({
+        type: 'deleteUser',
+        companyId,
+        actorUid: context.auth.uid || null,
+        targetUid: uid,
+      });
+    } catch (_e) {}
 
     return { ok: true };
   } catch (err) {
@@ -362,6 +473,16 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
         ts: admin.firestore.FieldValue.serverTimestamp(),
       });
     } catch (e) { /* non-blocking */ }
+
+    try {
+      await logAdminAuditEvent({
+        type: 'updateUser',
+        companyId,
+        actorUid: context.auth.uid || null,
+        targetUid: uid,
+        payload: { role: role || null, email: email || null, passwordChanged: !!password },
+      });
+    } catch (_e) {}
 
     return { ok: true };
   } catch (err) {
@@ -480,6 +601,251 @@ exports.setCompanyStatus = functions.https.onCall(async (data, context) => {
     console.warn('setCompanyStatus activity log failed', { companyId, update, err: e && e.message ? e.message : e });
     // non-blocking: do not fail the function if logging fails
   }
+
+  return { ok: true };
+});
+
+// Set or update company userLimit (max antal användare).
+// Samma behörighetsmodell som setCompanyStatus: superadmin eller MS Byggsystem-admin.
+exports.setCompanyUserLimit = functions.https.onCall(async (data, context) => {
+  if (!context || !context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const token = context.auth.token || {};
+  const callerEmail = token.email ? String(token.email).toLowerCase() : '';
+  const isSuperadmin = !!token.superadmin || token.role === 'superadmin';
+  const callerCompanyId = token.companyId || null;
+  const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
+  const isEmailSuperadmin = callerEmail === 'marcus@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem';
+
+  if (!isSuperadmin && !(callerCompanyId === 'MS Byggsystem' && callerIsCompanyAdmin) && !isEmailSuperadmin) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller MS Byggsystem-admin kan ändra userLimit');
+  }
+
+  const companyId = data && data.companyId ? String(data.companyId).trim() : null;
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  const rawLimit = (data && Object.prototype.hasOwnProperty.call(data, 'userLimit')) ? data.userLimit : null;
+  if (rawLimit === null || rawLimit === undefined || rawLimit === '') {
+    throw new functions.https.HttpsError('invalid-argument', 'userLimit is required');
+  }
+
+  let userLimit = null;
+  if (typeof rawLimit === 'number') {
+    userLimit = rawLimit;
+  } else if (typeof rawLimit === 'string') {
+    const m = rawLimit.trim().match(/-?\d+/);
+    if (m && m[0]) {
+      const n = parseInt(m[0], 10);
+      if (!Number.isNaN(n) && Number.isFinite(n)) userLimit = n;
+    }
+  }
+
+  if (typeof userLimit !== 'number' || !Number.isFinite(userLimit) || userLimit < 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'userLimit must be a non-negative number');
+  }
+
+  const update = { userLimit };
+
+  try {
+    const profRef = db.doc(`foretag/${companyId}/profil/public`);
+    await profRef.set(update, { merge: true });
+  } catch (err) {
+    console.error('setCompanyUserLimit profile write error', { companyId, update, err: err && err.message ? err.message : err });
+    throw new functions.https.HttpsError(
+      'internal',
+      `[profile-write] companyId=${companyId}, update=${JSON.stringify(update)}: ${err && err.message ? String(err.message) : String(err)}`
+    );
+  }
+
+  try {
+    await db.collection(`foretag/${companyId}/activity`).add({
+      type: 'setCompanyUserLimit',
+      actorUid: context.auth.uid || null,
+      update,
+      ts: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('setCompanyUserLimit activity log failed', { companyId, update, err: e && e.message ? e.message : e });
+  }
+
+  try {
+    await logAdminAuditEvent({
+      type: 'setCompanyUserLimit',
+      companyId,
+      actorUid: context.auth.uid || null,
+      payload: update,
+    });
+  } catch (_e) {}
+
+  return { ok: true, userLimit };
+});
+
+// Update company display name (companyName) in profile.public.
+// Same permissions as setCompanyStatus/userLimit.
+exports.setCompanyName = functions.https.onCall(async (data, context) => {
+  if (!context || !context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const token = context.auth.token || {};
+  const callerEmail = token.email ? String(token.email).toLowerCase() : '';
+  const isSuperadmin = !!token.superadmin || token.role === 'superadmin';
+  const callerCompanyId = token.companyId || null;
+  const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
+  const isEmailSuperadmin = callerEmail === 'marcus@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem';
+
+  if (!isSuperadmin && !(callerCompanyId === 'MS Byggsystem' && callerIsCompanyAdmin) && !isEmailSuperadmin) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller MS Byggsystem-admin kan ändra företagsnamn');
+  }
+
+  const companyId = data && data.companyId ? String(data.companyId).trim() : null;
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  const rawName = data && data.companyName ? String(data.companyName).trim() : '';
+  if (!rawName) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyName is required');
+  }
+
+  const update = { companyName: rawName };
+
+  try {
+    const profRef = db.doc(`foretag/${companyId}/profil/public`);
+    await profRef.set(update, { merge: true });
+  } catch (err) {
+    console.error('setCompanyName profile write error', { companyId, update, err: err && err.message ? err.message : err });
+    throw new functions.https.HttpsError(
+      'internal',
+      `[profile-write] companyId=${companyId}, update=${JSON.stringify(update)}: ${err && err.message ? String(err.message) : String(err)}`
+    );
+  }
+
+  try {
+    await db.collection(`foretag/${companyId}/activity`).add({
+      type: 'setCompanyName',
+      actorUid: context.auth.uid || null,
+      update,
+      ts: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('setCompanyName activity log failed', { companyId, update, err: e && e.message ? e.message : e });
+  }
+
+  try {
+    await logAdminAuditEvent({
+      type: 'setCompanyName',
+      companyId,
+      actorUid: context.auth.uid || null,
+      payload: update,
+    });
+  } catch (_e) {}
+
+  return { ok: true, companyName: rawName };
+});
+
+// Permanently delete a company and its main subcollections.
+// Only for superadmin / MS Byggsystem-admin. Use with care.
+exports.purgeCompany = functions.https.onCall(async (data, context) => {
+  if (!context || !context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const token = context.auth.token || {};
+  const callerEmail = token.email ? String(token.email).toLowerCase() : '';
+  const isSuperadmin = !!token.superadmin || token.role === 'superadmin';
+  const callerCompanyId = token.companyId || null;
+  const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
+  const isEmailSuperadmin = callerEmail === 'marcus@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem.se' || callerEmail === 'marcus.skogh@msbyggsystem';
+
+  if (!isSuperadmin && !(callerCompanyId === 'MS Byggsystem' && callerIsCompanyAdmin) && !isEmailSuperadmin) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller MS Byggsystem-admin kan radera företag permanent');
+  }
+
+  const companyId = data && data.companyId ? String(data.companyId).trim() : null;
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  const companyRef = db.doc(`foretag/${companyId}`);
+
+  async function deleteCollection(colPath) {
+    const colRef = db.collection(colPath);
+    const snap = await colRef.get();
+    const deletions = [];
+    snap.forEach((d) => {
+      deletions.push(d.ref.delete().catch(() => null));
+    });
+    await Promise.all(deletions);
+  }
+
+  try {
+    // 1) Delete Auth users that belong to this company (based on custom claims).
+    try {
+      await deleteAuthUsersForCompany(companyId);
+    } catch (authErr) {
+      console.warn('purgeCompany auth delete failed', { companyId, err: authErr && authErr.message ? authErr.message : authErr });
+      // Fortsätt ändå med att radera Firestore-data, så att företaget inte fastnar halvvägs.
+    }
+
+    // 2) Delete known subcollections under the company document.
+    const subcollections = [
+      `foretag/${companyId}/profil`,
+      `foretag/${companyId}/members`,
+      `foretag/${companyId}/activity`,
+      `foretag/${companyId}/controls`,
+      `foretag/${companyId}/draft_controls`,
+      `foretag/${companyId}/hierarki`,
+      `foretag/${companyId}/mallar`,
+      `foretag/${companyId}/byggdel_mallar`,
+      `foretag/${companyId}/byggdel_hierarki`,
+    ];
+
+    for (const path of subcollections) {
+      try {
+        await deleteCollection(path);
+      } catch (e) {
+        console.warn('purgeCompany subcollection delete failed', { companyId, path, err: e && e.message ? e.message : e });
+      }
+    }
+
+    // 3) Finally delete the company doc itself.
+    await companyRef.delete();
+  } catch (err) {
+    const rawCode = err && typeof err.code === 'string' ? err.code : '';
+    const msg = err && err.message ? String(err.message) : String(err || '');
+    console.error('purgeCompany error', { companyId, code: rawCode, message: msg, raw: err });
+
+    // Om det redan är en HttpsError, skicka vidare som den är.
+    if (err instanceof functions.https.HttpsError) {
+      throw err;
+    }
+
+    // Försök bevara ursprunglig felkod från Firestore etc, annars använd 'internal'.
+    const allowedCodes = [
+      'cancelled', 'unknown', 'invalid-argument', 'deadline-exceeded', 'not-found', 'already-exists',
+      'permission-denied', 'resource-exhausted', 'failed-precondition', 'aborted', 'out-of-range',
+      'unimplemented', 'internal', 'unavailable', 'data-loss', 'unauthenticated',
+    ];
+    const effectiveCode = allowedCodes.includes(rawCode) ? rawCode : 'internal';
+
+    throw new functions.https.HttpsError(
+      effectiveCode,
+      `Kunde inte radera företag permanent (code=${effectiveCode}${rawCode && effectiveCode !== rawCode ? ', raw=' + rawCode : ''}): ${msg || 'Okänt fel'}`
+    );
+  }
+
+  try {
+    await logAdminAuditEvent({
+      type: 'purgeCompany',
+      companyId,
+      actorUid: context.auth.uid || null,
+    });
+  } catch (_e) {}
 
   return { ok: true };
 });

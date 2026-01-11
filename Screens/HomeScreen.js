@@ -1204,6 +1204,7 @@ export default function HomeScreen({ route, navigation }) {
   const currentEmailLower = String(auth?.currentUser?.email || '').toLowerCase();
   const isMsAdminClaim = !!(authClaims && (authClaims.admin === true || authClaims.role === 'admin'));
   const allowedTools = (currentEmailLower === 'marcus@msbyggsystem.se' || currentEmailLower === 'marcus.skogh@msbyggsystem.se') || (String(authClaims?.companyId || '').trim() === 'MS Byggsystem' && isMsAdminClaim);
+  const showHeaderUserMenu = !!(isAdminUser || currentEmailLower === 'marcus@msbyggsystem.se' || currentEmailLower === 'marcus.skogh@msbyggsystem.se');
 
   const openUserMenu = () => {
     try {
@@ -3446,6 +3447,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               if (isSuperAdmin) {
                 // Put company management first for superadmins
                 menuItems.unshift({ key: 'manage_company', label: 'Hantera företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+                menuItems.push({ key: 'admin_audit', label: 'Adminlogg', icon: <Ionicons name="list" size={16} color="#1565C0" /> });
               }
 
               return (
@@ -3480,6 +3482,10 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                           try { navigation.navigate('ManageCompany'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna Hantera företag'); }
                           return;
                         }
+                        if (it && it.key === 'admin_audit') {
+                          try { navigation.navigate('AdminAuditLog'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna adminlogg'); }
+                          return;
+                        }
                         if (it && it.key === 'manage_users') {
                           try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) { Alert.alert('Valt', it.label); }
                           return;
@@ -3495,7 +3501,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8, marginLeft: 8 }}>
               {Platform.OS === 'web' ? (
                 <View style={{ marginRight: 6 }}>
-                  {allowedTools ? <HeaderUserMenu /> : <HeaderDisplayName />}
+                  {showHeaderUserMenu ? <HeaderUserMenu /> : <HeaderDisplayName />}
                 </View>
               ) : null}
               {allowedTools ? (
@@ -3507,6 +3513,16 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 </TouchableOpacity>
               ) : null}
             </View>
+            {canShowSupportToolsInHeader && supportMenuOpen && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#1565C0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={() => {
+                  try { navigation.navigate('AdminAuditLog'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna adminlogg'); }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Adminlogg</Text>
+              </TouchableOpacity>
+            )}
             {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
