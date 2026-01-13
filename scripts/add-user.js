@@ -82,7 +82,7 @@ async function main() {
     try {
       userRecord = await auth.getUserByEmail(email);
       console.log('User already exists:', userRecord.uid);
-    } catch (_e) {
+    } catch(e) {
       userRecord = await auth.createUser({
         email,
         password,
@@ -99,7 +99,7 @@ async function main() {
         await auth.updateUser(userRecord.uid, { displayName: desiredDisplayName });
         userRecord = await auth.getUser(userRecord.uid);
         console.log('Updated displayName:', userRecord.displayName);
-      } catch (_e) {
+      } catch(e) {
         console.warn('Could not update displayName:', e?.message || e);
       }
     }
@@ -136,7 +136,7 @@ async function main() {
     console.log('Wrote users/{uid} document');
     console.log('Done.');
     process.exit(0);
-  } catch (_e) {
+  } catch(e) {
       console.error('Error:', _err);
     process.exit(1);
   }

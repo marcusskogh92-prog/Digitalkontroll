@@ -672,7 +672,7 @@ export default function ControlDetails({ route }) {
                             // Välj/tar foto
                             // Dynamically import ImagePicker for camera capture
                             if (!ImagePicker) {
-                              try { ImagePicker = await import('expo-image-picker'); } catch (_e) { ImagePicker = null; }
+                              try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
                             }
                             const launch = (ImagePicker && typeof ImagePicker.launchCameraAsync === 'function') ? ImagePicker.launchCameraAsync : null;
                             const mediaTypes = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images) ? ImagePicker.MediaTypeOptions.Images : undefined;

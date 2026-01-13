@@ -50,7 +50,7 @@ async function readUriAsBase64(uri) {
     if (!FileSystem) {
       try {
         FileSystem = await import('expo-file-system');
-      } catch (_e) {
+      } catch (e) {
         FileSystem = null;
       }
     }
@@ -63,7 +63,7 @@ async function readUriAsBase64(uri) {
     if (!FileSystem || typeof FileSystem.readAsStringAsync !== 'function') return null;
     const b = await FileSystem.readAsStringAsync(uri, { encoding: encodingOption });
     return b;
-  } catch (_e) {
+  } catch(e) {
     console.warn('[PDF] readUriAsBase64 failed for', uri, e);
     return null;
   }
@@ -82,7 +82,7 @@ async function toDataUri(uri) {
       try {
         // Ensure FileSystem is available
         if (!FileSystem) {
-          try { FileSystem = await import('expo-file-system'); } catch (_e) { FileSystem = null; }
+          try { FileSystem = await import('expo-file-system'); } catch(e) { FileSystem = null; }
         }
         const fileName = 'pdf-img-' + (Math.random().toString(36).slice(2, 9)) + '.jpg';
         const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
@@ -94,9 +94,9 @@ async function toDataUri(uri) {
             if (b2) return 'data:image/jpeg;base64,' + b2;
           }
         }
-      } catch (_e) {}
+      } catch(e) {}
     }
-  } catch (_e) {
+  } catch(e) {
     console.warn('[PDF] toDataUri failed for', uri, e);
   }
   return uri;
@@ -122,7 +122,7 @@ async function embedImagesInControl(ctrl) {
             const src = p.uri || p;
             const d = await toDataUri(src);
             return Object.assign({}, p, { uri: d || src });
-          } catch (_e) { return p; }
+          } catch(e) { return p; }
         }));
         c[field] = mapped;
       }
@@ -138,7 +138,7 @@ async function embedImagesInControl(ctrl) {
             return Object.assign({}, s, { uri: d || s.uri });
           }
           return s;
-        } catch (_e) { return s; }
+        } catch(e) { return s; }
       }));
       c.mottagningsSignatures = sigs;
     }
@@ -159,20 +159,20 @@ async function embedImagesInControl(ctrl) {
                   const src = it.uri || it;
                   const d = await toDataUri(src);
                   return (typeof it === 'string') ? (d || src) : Object.assign({}, it, { uri: d || src });
-                } catch (_e) { return it; }
+                } catch(e) { return it; }
               }));
             }
             try {
               const src = entry.uri || entry;
               const d = await toDataUri(src);
               return (typeof entry === 'string') ? (d || src) : Object.assign({}, entry, { uri: d || src });
-            } catch (_e) { return entry; }
+            } catch(e) { return entry; }
           }));
           c.checklist[si].photos = newPhotos;
         }
       }
     }
-  } catch (_e) {
+  } catch(e) {
     console.warn('[PDF] embedImagesInControl failed', e);
   }
   return c;
@@ -316,7 +316,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               try {
                 profile = await fetchCompanyProfile(companyId);
                 if (profile) setCompanyProfile(profile);
-              } catch (_e) {}
+              } catch(e) {}
             }
             const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
             const companyLogoFromProfile = profile?.logoUrl || null;
@@ -349,13 +349,13 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     logoBase64 = await readUriAsBase64(local);
                     if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                   }
-                } catch (_e) {
+                } catch(e) {
                   // ignore
                 }
               } else {
                 logoForPrint = 'data:image/png;base64,' + logoBase64;
               }
-            } catch (_e) { console.warn('[PDF] logo base64 conversion failed', e); }
+            } catch(e) { console.warn('[PDF] logo base64 conversion failed', e); }
 
             // Build HTML safely and log length to aid debugging blank PDFs
             let html;
@@ -391,7 +391,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               } else {
                 throw new Error('printToFileAsync returned no uri');
               }
-            } catch (_e) {
+            } catch(e) {
               console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', err);
               try {
                 let html2 = null;
@@ -418,7 +418,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 }
               } catch (err2) { throw err2; }
             }
-          } catch (_e) {
+          } catch(e) {
             console.error('[PDF] Preview error:', e);
             setNotice({ visible: true, text: 'Kunde inte förhandsvisa PDF' });
             setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
@@ -439,7 +439,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             try {
               profile = await fetchCompanyProfile(companyId);
               if (profile) setCompanyProfile(profile);
-            } catch (_e) {}
+            } catch(e) {}
           }
           const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
           const companyLogoFromProfile = profile?.logoUrl || null;
@@ -469,11 +469,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   logoBase64 = await readUriAsBase64(local);
                   if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                 }
-              } catch (_e) {}
+              } catch(e) {}
             } else {
               logoForPrint = 'data:image/png;base64,' + logoBase64;
             }
-          } catch (_e) { console.warn('[PDF] logo base64 conversion failed', e); }
+          } catch(e) { console.warn('[PDF] logo base64 conversion failed', e); }
 
           // Bygg HTML för export (alla eller filtrerat) — säkrare bygg och logg
           let html;
@@ -505,7 +505,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             } else {
               throw new Error('printToFileAsync returned no uri');
             }
-          } catch (_e) {
+          } catch(e) {
             console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
             try {
               let html2 = null;
@@ -534,7 +534,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
           setNotice({ visible: true, text: 'PDF genererad' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
-        } catch (_e) {
+        } catch(e) {
           console.error('[PDF] Export error:', e);
           setNotice({ visible: true, text: 'Kunde inte exportera PDF' });
           setTimeout(() => setNotice({ visible: false, text: '' }), 4000);
@@ -556,7 +556,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       if (scrollRef?.current && typeof scrollRef.current.scrollTo === 'function') {
         scrollRef.current.scrollTo({ y: 0, animated: false });
       }
-    } catch (_e) {}
+    } catch(e) {}
   };
   const closeInlineControl = () => setInlineControl(null);
 
@@ -570,7 +570,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       // Backwards-compatible: allow both prop injection patterns
       // 1) route.params.onInlineLockChange (if parent can't pass real props)
       if (typeof cb === 'function') cb(isInlineFormOpen);
-    } catch (_e) {}
+    } catch(e) {}
   }, [inlineControl?.type]);
 
   // When HomeScreen passes a selectedAction (e.g. open a draft from the dashboard),
@@ -587,9 +587,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         openInlineControl(selectedAction.type, selectedAction.initialValues || undefined);
       }
       if (selectedAction.kind === 'openControlDetails' && selectedAction.control) {
-        try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch (_e) {}
+        try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch(e) {}
       }
-    } catch (_e) {}
+    } catch(e) {}
   }, [selectedAction?.id]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
   const [companyAdmins, setCompanyAdmins] = useState([]);
@@ -616,7 +616,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           .sort((a, b) => formatPersonName(a).localeCompare(formatPersonName(b), 'sv'));
 
         if (!cancelled) setCompanyAdmins(admins);
-      } catch (_e) {
+      } catch(e) {
         if (!cancelled) {
           setCompanyAdmins([]);
           const msg = e?.code === 'permission-denied'
@@ -674,7 +674,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch (_e) { /* ignore Firestore errors - we already have local fallback */ }
+    } catch(e) { /* ignore Firestore errors - we already have local fallback */ }
 
     // Fetch remote drafts too so a draft created in app can be finished on web
     try {
@@ -686,7 +686,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch (_e) { /* ignore */ }
+    } catch(e) { /* ignore */ }
     // Sort controls by date (prefer date || savedAt || createdAt) descending
     allControls.sort((a,b) => {
       const ta = new Date(a.date || a.savedAt || a.createdAt || 0).getTime() || 0;
@@ -777,7 +777,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         if (typeof v === 'number') return v;
         const t = new Date(v).getTime();
         return Number.isFinite(t) ? t : 0;
-      } catch (_e) {
+      } catch(e) {
         return 0;
       }
     };
@@ -790,7 +790,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         const ts = toMs(c.date || c.savedAt || c.updatedAt || c.createdAt || null);
         if (ts > lastMs) lastMs = ts;
       });
-    } catch (_e) {}
+    } catch(e) {}
 
     const createdMs = toMs(editableProject?.createdAt || null);
     const firstDueMs = toMs(editableProject?.skyddsrondFirstDueDate || null);
@@ -807,7 +807,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       try {
         if (!ms) return '—';
         return new Date(ms).toLocaleDateString('sv-SE');
-      } catch (_e) {
+      } catch(e) {
         return '—';
       }
     };
@@ -1054,7 +1054,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             return;
           }
         }
-      } catch (_e) {}
+      } catch (e) {}
       // No saved prefs: default to first four visible control types (store key when möjligt)
       const defaults = (controlTypeOptions || []).slice(0, 4).map(o => o.key || o.type);
       setQuickControlSlots([
@@ -1071,7 +1071,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const persistQuickSlots = React.useCallback(async (slots) => {
     try {
       await AsyncStorage.setItem(quickSlotsStorageKey, JSON.stringify(slots));
-    } catch (_e) {}
+    } catch (e) {}
   }, [quickSlotsStorageKey]);
 
   const openQuickSlotConfig = (index) => {
@@ -1108,7 +1108,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
 
       // Best-effort: delete remote draft too
-      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch (_e) {}
+      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch(e) {}
     } else {
       // Remove from completed_controls
       const completedRaw = await AsyncStorage.getItem('completed_controls');
@@ -1119,7 +1119,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('completed_controls', JSON.stringify(completed));
 
       // Best-effort: delete remote control too
-      try { await deleteControlFromFirestore(control.id, companyId); } catch (_e) {}
+      try { await deleteControlFromFirestore(control.id, companyId); } catch(e) {}
     }
   };
 
@@ -1159,7 +1159,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             window.dispatchEvent(new CustomEvent('dkInlineAttemptExit', { detail: { reason: 'headerBack' } }));
             return;
           }
-        } catch (_e) {}
+        } catch(e) {}
       }
 
       // For non-form inline views (e.g. ControlDetails), just go back to the project page.
@@ -2328,7 +2328,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   }
                 }
                 return { total, open };
-              } catch (_e) {
+              } catch(e) {
                 return { total: 0, open: 0 };
               }
             }
@@ -2369,7 +2369,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     {t === 'Skyddsrond' && anyOpenDeviation && (
                       <TouchableOpacity
                         onPress={(e) => {
-                          try { e && e.stopPropagation && e.stopPropagation(); } catch (_e) {}
+                          try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
                           // Expand the group so the problematic rond becomes visible (and highlighted).
                           setExpandedByType((prev) => ({ ...prev, [t]: true }));
                         }}
@@ -2418,7 +2418,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                             try {
                               const d = new Date(v);
                               if (!isNaN(d)) return d.toLocaleDateString('sv-SE');
-                            } catch (_e) {}
+                            } catch(e) {}
                             return null;
                           };
                           parsedDate = tryParse(item.date) || tryParse(item.dateValue) || tryParse(item.savedAt) || tryParse(item.createdAt) || tryParse(item.created) || '';
@@ -2563,7 +2563,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                   style={{ marginLeft: trailingIconMarginLeft, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
                                   activeOpacity={0.85}
                                   onPress={(e) => {
-                                    try { e && e.stopPropagation && e.stopPropagation(); } catch (_e) {}
+                                    try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
                                     navigation.navigate('ControlDetails', { control: item, project, companyId });
                                   }}
                                   accessibilityLabel="Åtgärda"
@@ -2589,7 +2589,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                           try {
                                             profile = await fetchCompanyProfile(companyId);
                                             if (profile) setCompanyProfile(profile);
-                                          } catch (_e) {}
+                                          } catch(e) {}
                                         }
                                         const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
                                         const companyLogoFromProfile = profile?.logoUrl || null;
@@ -2603,7 +2603,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                               const dl = await FileSystem.downloadAsync(logoForPrint, dest);
                                               if (dl?.uri) logoForPrint = dl.uri;
                                             }
-                                          } catch (_e) { console.warn('[PDF] download logo failed', e); }
+                                          } catch(e) { console.warn('[PDF] download logo failed', e); }
                                         }
                                         let logoBase64 = null;
                                         try {
@@ -2617,11 +2617,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                                 logoBase64 = await readUriAsBase64(local);
                                                 if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                                               }
-                                            } catch (_e) { /* ignore */ }
+                                            } catch(e) { /* ignore */ }
                                           } else {
                                             logoForPrint = 'data:image/png;base64,' + logoBase64;
                                           }
-                                        } catch (_e) { console.warn('[PDF] logo base64 convert failed', e); }
+                                        } catch(e) { console.warn('[PDF] logo base64 convert failed', e); }
 
                                         let html;
                                         // Embed images for this item before building HTML
@@ -2659,7 +2659,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                         } else {
                                           throw new Error('printToFileAsync returned no uri');
                                         }
-                                      } catch (_e) {
+                                      } catch(e) {
                                         console.warn('[PDF] single-item PDF generation failed, retrying without logo', err);
                                         try {
                                           let html2;

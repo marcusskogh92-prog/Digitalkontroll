@@ -57,7 +57,7 @@ export default function FuktmätningScreen({ date, participants = [], project: p
         }
       } catch (_e) {}
       alert('Kontrollen har sparats som utförd!');
-      } catch (_e) {
+      } catch (e) {
       alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };

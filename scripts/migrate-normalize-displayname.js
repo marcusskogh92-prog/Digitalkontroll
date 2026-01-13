@@ -81,13 +81,13 @@ async function main() {
         if (!dryRun) {
           try {
             await auth.updateUser(uid, { displayName: normalized });
-          } catch (_e) {
+          } catch(e) {
             console.warn('[migrate] auth.updateUser failed for uid=%s: %s', uid, e?.message || e);
           }
 
           try {
             await db.collection('users').doc(uid).set({ displayName: normalized, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-          } catch (_e) {
+          } catch(e) {
             console.warn('[migrate] users doc update failed for uid=%s: %s', uid, e?.message || e);
           }
 
@@ -97,12 +97,12 @@ async function main() {
             try {
               const udoc = await db.collection('users').doc(uid).get();
               if (udoc.exists) companyId = udoc.data()?.companyId || null;
-            } catch (_e) {}
+            } catch(e) {}
           }
           if (companyId) {
             try {
               await db.collection('foretag').doc(companyId).collection('members').doc(uid).set({ displayName: normalized, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-            } catch (_e) {
+            } catch(e) {
               console.warn('[migrate] member doc update failed for uid=%s company=%s: %s', uid, companyId, e?.message || e);
             }
           }
@@ -113,7 +113,7 @@ async function main() {
     console.log('[migrate] scanned=%d will-change=%d', total, changed);
     if (dryRun) console.log('[migrate] dry run complete — no changes applied. Re-run with --dryRun=false to apply.');
     else console.log('[migrate] migration applied.');
-  } catch (_e) {
+  } catch(e) {
     console.error('[migrate] fatal error:', e);
     process.exit(1);
   }

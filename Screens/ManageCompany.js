@@ -156,7 +156,7 @@ export default function ManageCompany({ navigation }) {
       } else {
         Alert.alert('Fel', 'Kunde inte spara företagsprofil.');
       }
-    } catch (_e) {
+    } catch (e) {
       Alert.alert('Fel', String(e?.message || e));
     } finally { setLoading(false); }
   };
@@ -207,7 +207,7 @@ export default function ManageCompany({ navigation }) {
         }
       } catch (_e) {}
       Alert.alert('Logga uppdaterad', 'Företagsloggan har sparats.');
-    } catch (_e) {
+    } catch (e) {
       Alert.alert('Fel', 'Kunde inte ladda upp loggan: ' + String(e?.message || e));
     } finally {
       setLogoUploading(false);
@@ -293,7 +293,7 @@ export default function ManageCompany({ navigation }) {
         } else {
           setAuditEvents([]);
         }
-      } catch (_e) {}
+      } catch (e) {}
     };
 
     const hasSelectedCompany = !!(String(companyId || '').trim() || String(companyName || '').trim());
@@ -349,7 +349,7 @@ export default function ManageCompany({ navigation }) {
               <View style={{ width: 640, maxWidth: 640, minWidth: 360, marginRight: 24 }}>
                 <View style={[dashboardCardStyle, { alignSelf: 'flex-start', maxWidth: 600 }] }>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                    <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch (_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
+                    <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                       <Ionicons name="chevron-back" size={20} color="#222" />
                     </TouchableOpacity>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>

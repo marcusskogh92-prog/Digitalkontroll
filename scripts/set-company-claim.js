@@ -38,7 +38,7 @@ async function main() {
     await auth.setCustomUserClaims(user.uid, claims);
     console.log('Set custom claims for uid=%s:', user.uid, claims);
     process.exit(0);
-  } catch (_e) {
+  } catch (e) {
     console.error('Error:', e);
     process.exit(1);
   }

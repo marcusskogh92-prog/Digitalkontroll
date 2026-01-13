@@ -8,7 +8,7 @@ try {
     try {
       let s = fs.readFileSync(f, 'utf8');
       let ns = s;
-      ns = ns.replace(/catch\(\s*_[A-Za-z0-9]+\s*\)/g, 'catch (_e)');
+      ns = ns.replace(/catch\(\s*_[A-Za-z0-9]+\s*\)/g, 'catch(e)');
       ns = ns.replace(/catch\(\s*\(\s*_[A-Za-z0-9]+\s*\)\s*=>/g, 'catch((e) =>');
       if (ns !== s) { fs.writeFileSync(f, ns, 'utf8'); console.log('Updated', f); }
     } catch (err) { console.error('ERR', f, err.message); }

@@ -53,7 +53,7 @@ async function main() {
     // create admin user if email provided
     if (adminEmail) {
       let userRecord;
-      try { userRecord = await auth.getUserByEmail(adminEmail); console.log('Admin user exists:', userRecord.uid); } catch (_e) {
+      try { userRecord = await auth.getUserByEmail(adminEmail); console.log('Admin user exists:', userRecord.uid); } catch(e) {
         userRecord = await auth.createUser({ email: adminEmail, password: adminPassword, displayName: formatPersonName(adminEmail.split('@')[0]) });
         console.log('Created admin user:', userRecord.uid);
       }

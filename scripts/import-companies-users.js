@@ -202,7 +202,7 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
   if (!dryRun) {
     try {
       userRecord = await auth.getUserByEmail(email);
-    } catch (_e) {
+    } catch(e) {
       userRecord = await auth.createUser({
         email,
         password,
@@ -217,7 +217,7 @@ async function upsertUserAndMembership({ auth, db, companyId, companyName, rowDa
       try {
         await auth.updateUser(userRecord.uid, { displayName });
         userRecord = await auth.getUser(userRecord.uid);
-      } catch (_e) {
+      } catch(e) {
         // ignore
       }
     }
