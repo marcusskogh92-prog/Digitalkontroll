@@ -137,7 +137,7 @@ async function main() {
     console.log('Done.');
     process.exit(0);
   } catch(e) {
-      console.error('Error:', _err);
+    console.error('Error:', e);
     process.exit(1);
   }
 }
