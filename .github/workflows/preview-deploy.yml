@@ -19,6 +19,20 @@ jobs:
         run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
       - name: Install expo-cli
         run: npm install -g expo-cli
+      - name: Diagnose environment
+        run: |
+          set -euo pipefail
+          echo "Node: $(node -v)"
+          echo "npm: $(npm -v)"
+          echo "npx: $(npx --version || true)"
+          echo "expo (global): $(expo --version 2>/dev/null || true)"
+          npx expo --version || true
+          echo "--- package.json ---"
+          cat package.json
+          echo "--- top-level files ---"
+          ls -la
+          echo "--- check webpack deps ---"
+          npm ls webpack webpack-cli --depth=0 || true
       - name: Build web bundle
         run: npx expo export:web
       - name: Deploy to Firebase preview channel
