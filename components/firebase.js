@@ -311,7 +311,7 @@ function sanitizeForFirestore(value) {
   try {
     return _walk(value);
   } catch(e) {
-    console.warn('[firebase] sanitizeForFirestore failed, falling back to JSON stringify', err);
+    console.warn('[firebase] sanitizeForFirestore failed, falling back to JSON stringify', e);
     // As a last resort, stringify the whole payload so setDoc won't throw nested-array errors.
     try {
       return { __json: JSON.stringify(value) };
@@ -1544,7 +1544,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
     if (isPermissionError) {
       try {
         return await attemptWrite({ forceTokenRefresh: true });
-      } catch(e) {
+      } catch(e2) {
         e = e2 || e;
       }
     }
@@ -1607,7 +1607,7 @@ export async function deleteByggdelMall({ mallId }, companyIdOverride) {
     if (permissionDenied) {
       try {
         return await attemptDelete({ forceTokenRefresh: true });
-      } catch(e) {
+      } catch(e2) {
         e = e2 || e;
       }
     }
@@ -1683,7 +1683,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
     if (isPermissionError) {
       try {
         return await attemptWrite({ forceTokenRefresh: true });
-      } catch(e) {
+      } catch(e2) {
         e = e2 || e;
       }
     }
