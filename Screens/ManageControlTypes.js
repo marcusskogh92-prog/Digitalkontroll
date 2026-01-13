@@ -323,7 +323,7 @@ export default function ManageControlTypes({ route, navigation }) {
 
                 <View style={{ marginTop: 18, width: '84%', marginLeft: '8%' }}>
                   <Text style={{ fontSize: 13, color: '#555', lineHeight: 18 }}>
-                    Högerklicka på ett företagsnamnet i listan till vänster och välj "Lägg till kontrolltyp" för att lägga till egna kontrollpunkter.
+                    Högerklicka på ett företagsnamnet i listan till vänster och välj &quot;Lägg till kontrolltyp&quot; för att lägga till egna kontrollpunkter.
                     {'\n'}{'\n'}För att redigera kontrollen kan ni högerklicka på den i listan och välja mellan att byta namn, dölj/aktivera eller radera kontrollen.
                   </Text>
                 </View>
