@@ -426,6 +426,15 @@ export async function resolveCompanyLogoUrl(companyId) {
 
       for (const b of bucketCandidates.length > 0 ? bucketCandidates : ['']) {
         try {
+          // On web prefer the public GCS URL (avoids tokenized REST calls that sometimes 403 in browsers)
+          if (Platform && Platform.OS === 'web' && b) {
+            try {
+              const publicUrl = 'https://storage.googleapis.com/' + b + '/' + encodeURI(fullPath.replace(/^\/+/, ''));
+              return publicUrl;
+            } catch (e) {
+              // fall back to SDK below
+            }
+          }
           const st = b ? getStorage(app, `gs://${b}`) : storage;
           const r = storageRef(st, fullPath);
           const https = await getDownloadURL(r);

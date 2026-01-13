@@ -291,9 +291,9 @@ export default function CameraCapture() {
             marginBottom: 12,
             maxWidth: 420,
             maxHeight: 420,
-            resizeMode: 'contain',
             backgroundColor: '#111',
           }}
+          resizeMode="contain"
         />
           <View style={{ width: '92%', marginTop: 12 }}>
           <Text style={{ color: '#fff', marginBottom: 6 }}>Kommentar</Text>
@@ -454,7 +454,7 @@ export default function CameraCapture() {
       </TouchableOpacity>
       {/* Stor foto-knapp: mitten nedtill (porträtt) eller mitten till höger (landskap) */}
       {orientation === 'portrait' ? (
-        <View style={styles.cameraButtonBarPortrait} pointerEvents="box-none">
+        <View style={[styles.cameraButtonBarPortrait, { pointerEvents: 'box-none' }] }>
           <TouchableOpacity
             style={styles.cameraButton}
             onPress={handleCapture}
@@ -463,7 +463,7 @@ export default function CameraCapture() {
           >
             <MaterialIcons name="photo-camera" size={44} color="#fff" />
           </TouchableOpacity>
-          <View style={styles.libraryButtonWrapperPortrait} pointerEvents="box-none">
+          <View style={[styles.libraryButtonWrapperPortrait, { pointerEvents: 'box-none' }] }>
             <TouchableOpacity
               style={[styles.cameraButton, styles.libraryButton]}
               onPress={handlePickFromLibrary}
@@ -475,7 +475,7 @@ export default function CameraCapture() {
           </View>
         </View>
       ) : (
-        <View style={styles.cameraButtonBarLandscape} pointerEvents="box-none">
+        <View style={[styles.cameraButtonBarLandscape, { pointerEvents: 'box-none' }] }>
           <TouchableOpacity
             style={styles.cameraButton}
             onPress={handleCapture}
@@ -484,7 +484,7 @@ export default function CameraCapture() {
           >
             <MaterialIcons name="photo-camera" size={44} color="#fff" />
           </TouchableOpacity>
-          <View style={styles.libraryButtonWrapperLandscape} pointerEvents="box-none">
+          <View style={[styles.libraryButtonWrapperLandscape, { pointerEvents: 'box-none' }] }>
             <TouchableOpacity
               style={[styles.cameraButton, styles.libraryButton]}
               onPress={handlePickFromLibrary}

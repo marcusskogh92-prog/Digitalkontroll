@@ -33,11 +33,12 @@ export function CompanyHeaderLogo({ companyId }) {
     return () => { active = false; };
   }, [companyId]);
 
-  return (
+    return (
     logoUrl ? (
       <Image
         source={{ uri: logoUrl }}
-        style={{ width: 250, height: 60, resizeMode: 'contain' }}
+        style={{ width: 250, height: 60 }}
+        resizeMode="contain"
         accessibilityLabel="Företagslogotyp"
       />
     ) : null
@@ -51,7 +52,8 @@ export function DigitalKontrollHeaderLogo() {
         source={Platform.OS === 'web'
           ? require('../assets/images/app.icon.webb.png')
           : require('../assets/images/app.icon.png')}
-        style={{ width: 40, height: 40, resizeMode: 'contain', marginRight: 10 }}
+        style={{ width: 40, height: 40, marginRight: 10 }}
+        resizeMode="contain"
         accessibilityLabel="DigitalKontroll ikon"
       />
       <Text style={{ fontSize: 20, color: '#111', fontFamily: 'Inter_700Bold' }}>DigitalKontroll</Text>

@@ -6,6 +6,8 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    Animated,
+    Easing,
     Image,
     KeyboardAvoidingView,
     Modal,
@@ -38,7 +40,7 @@ import SkyddsrondScreen from './SkyddsrondScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '../components/HeaderComponents';
-import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 
 // Utility: read a file URI as base64 if possible
 async function readUriAsBase64(uri) {
@@ -247,6 +249,26 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
+            const [controlTypeScrollMetrics, setControlTypeScrollMetrics] = useState({
+              contentHeight: 0,
+              containerHeight: 0,
+              scrollY: 0,
+            });
+
+            const controlTypeCanScroll = controlTypeScrollMetrics.contentHeight > (controlTypeScrollMetrics.containerHeight + 1);
+            let controlTypeThumbHeight = 0;
+            let controlTypeThumbTop = 0;
+            if (controlTypeCanScroll) {
+              const { containerHeight, contentHeight, scrollY } = controlTypeScrollMetrics;
+              const minThumb = 24;
+              const thumbHeightRaw = (containerHeight * containerHeight) / (contentHeight || 1);
+              const thumbHeight = Math.max(minThumb, isFinite(thumbHeightRaw) ? thumbHeightRaw : minThumb);
+              const maxThumbTop = Math.max(0, containerHeight - thumbHeight);
+              const scrollableDistance = Math.max(0, contentHeight - containerHeight);
+              const thumbTop = scrollableDistance > 0 ? (scrollY / scrollableDistance) * maxThumbTop : 0;
+              controlTypeThumbHeight = thumbHeight;
+              controlTypeThumbTop = thumbTop;
+            }
           // Anpassa header så den beter sig som Home:
           // - Web: behåll sökrutan och företagsloggan.
           // - Native: visa bara DigitalKontroll-loggan centrerad, utan sökfält.
@@ -716,6 +738,26 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [companyLogoUri, setCompanyLogoUri] = useState(null);
   const [companyProfile, setCompanyProfile] = useState(null);
   const [skyddsrondWeeksPickerVisible, setSkyddsrondWeeksPickerVisible] = useState(false);
+  const [projectInfoExpanded, setProjectInfoExpanded] = useState(false);
+  const projectInfoSpin = useRef(new Animated.Value(0)).current;
+
+  const toggleProjectInfo = () => {
+    const next = !projectInfoExpanded;
+    setProjectInfoExpanded(next);
+    try {
+      Animated.timing(projectInfoSpin, {
+        toValue: next ? 1 : 0,
+        duration: 250,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: (Platform && Platform.OS === 'web') ? false : true,
+      }).start();
+    } catch (_e) {}
+  };
+
+  const projectInfoRotate = projectInfoSpin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
 
   const skyddsrondInfo = React.useMemo(() => {
     const enabled = editableProject?.skyddsrondEnabled !== false;
@@ -840,16 +882,133 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
 
     return visible.map((ct) => ({
       type: ct.name || ct.key || '',
+      key: ct.key || '',
       icon: ct.icon || 'document-text-outline',
       color: ct.color || '#455A64',
     })).filter(o => o.type);
   }, [controlTypes, companyProfile]);
+  const [templates, setTemplates] = useState([]);
+  const [templatePickerVisible, setTemplatePickerVisible] = useState(false);
+  const [templatePickerLabel, setTemplatePickerLabel] = useState('');
+  const [templatePickerItems, setTemplatePickerItems] = useState([]);
+  const [templatePickerSearch, setTemplatePickerSearch] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!companyId) {
+          if (!cancelled) setTemplates([]);
+          return;
+        }
+        const items = await fetchCompanyMallar(companyId).catch(() => []);
+        if (cancelled) return;
+        const list = Array.isArray(items) ? items : [];
+        // Filtrera bort mallar utan kontrolltyp; sortering sker redan i fetchCompanyMallar
+        const active = list.filter(tpl => String(tpl?.controlType || '').trim());
+        setTemplates(active);
+      } catch (_e) {
+        if (!cancelled) setTemplates([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId]);
+
+  const openTemplatePicker = (label, items) => {
+    setTemplatePickerLabel(label || '');
+    setTemplatePickerItems(Array.isArray(items) ? items : []);
+    setTemplatePickerSearch('');
+    setTemplatePickerVisible(true);
+  };
+
+  const handleStartControl = async (keyOrName, labelOverride) => {
+    const raw = String(keyOrName || '').trim();
+    const v = raw.toLowerCase();
+    const label = labelOverride || raw;
+
+    // Native: om det finns mallar för denna kontrolltyp, använd TemplateControlScreen
+    if (Platform.OS !== 'web') {
+      const relevantTemplates = (templates || []).filter((tpl) => {
+        const ct = String(tpl?.controlType || '').trim();
+        if (!ct) return false;
+        return ct === label;
+      });
+
+      if (relevantTemplates.length === 1) {
+        const tpl = relevantTemplates[0];
+        navigation.navigate('TemplateControlScreen', {
+          project,
+          controlType: label,
+          templateId: tpl.id,
+          template: tpl,
+          companyId,
+        });
+        return;
+      }
+
+      if (relevantTemplates.length > 1) {
+        openTemplatePicker(label, relevantTemplates);
+        return;
+      }
+    }
+
+    switch (v) {
+      case 'arbetsberedning':
+        if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
+        else navigation.navigate('ArbetsberedningScreen', { project });
+        break;
+      case 'riskbedömning':
+      case 'riskbedomning':
+        if (Platform.OS === 'web') openInlineControl('Riskbedömning');
+        else navigation.navigate('RiskbedömningScreen', { project });
+        break;
+      case 'fuktmätning':
+      case 'fuktmatning':
+        if (Platform.OS === 'web') openInlineControl('Fuktmätning');
+        else navigation.navigate('FuktmätningScreen', { project });
+        break;
+      case 'egenkontroll':
+        if (Platform.OS === 'web') openInlineControl('Egenkontroll');
+        else navigation.navigate('EgenkontrollScreen', { project });
+        break;
+      case 'mottagningskontroll':
+        if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
+        else navigation.navigate('MottagningskontrollScreen', { project });
+        break;
+      case 'skyddsrond':
+        if (Platform.OS === 'web') openInlineControl('Skyddsrond');
+        else navigation.navigate('SkyddsrondScreen', { project });
+        break;
+      default:
+        {
+            const meta = (controlTypeOptions || []).find(o => (o.key && o.key.toLowerCase() === v) || o.type === label) || null;
+            const iconName = meta && meta.icon ? meta.icon : undefined;
+            const iconColor = meta && meta.color ? meta.color : undefined;
+            if (Platform.OS === 'web') {
+              openInlineControl(label);
+            } else {
+              navigation.navigate('ControlForm', {
+                project,
+                controlType: label,
+                controlIcon: iconName,
+                controlColor: iconColor,
+              });
+            }
+        }
+    }
+  };
   const [exportFilter, setExportFilter] = useState('Alla');
   const [selectedControl, setSelectedControl] = useState(null);
   const [showControlOptions, setShowControlOptions] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ visible: false, control: null });
   const undoTimerRef = useRef(null);
+  const [quickControlSlots, setQuickControlSlots] = useState(['', '', '', '']);
+  const [quickSlotConfigIndex, setQuickSlotConfigIndex] = useState(null);
+  const [showQuickSlotModal, setShowQuickSlotModal] = useState(false);
+  const quickSlotsLoadedRef = useRef(false);
   // ...existing code...
 
   // Prefetch company profile for PDF branding (logo/name) without affecting UI
@@ -864,6 +1023,61 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       .catch((e) => { /* ignore */ });
     return () => { active = false; };
   }, [companyId]);
+
+  // Load and persist per-user quick control button choices
+  const quickSlotsStorageKey = React.useMemo(() => {
+    const userKey = (initialCreator && (initialCreator.uid || initialCreator.id || initialCreator.email))
+      ? String(initialCreator.uid || initialCreator.id || initialCreator.email)
+      : 'local';
+    const companyKey = companyId ? String(companyId) : 'global';
+    return `quick_control_slots_${companyKey}_${userKey}`;
+  }, [companyId, initialCreator]);
+
+  React.useEffect(() => {
+    if (!controlTypeOptions || controlTypeOptions.length === 0) return;
+    if (quickSlotsLoadedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(quickSlotsStorageKey);
+        if (cancelled) return;
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length) {
+            setQuickControlSlots([
+              String(arr[0] || ''),
+              String(arr[1] || ''),
+              String(arr[2] || ''),
+              String(arr[3] || ''),
+            ]);
+            quickSlotsLoadedRef.current = true;
+            return;
+          }
+        }
+      } catch (e) {}
+      // No saved prefs: default to first four visible control types (store key when möjligt)
+      const defaults = (controlTypeOptions || []).slice(0, 4).map(o => o.key || o.type);
+      setQuickControlSlots([
+        defaults[0] || '',
+        defaults[1] || '',
+        defaults[2] || '',
+        defaults[3] || '',
+      ]);
+      quickSlotsLoadedRef.current = true;
+    })();
+    return () => { cancelled = true; };
+  }, [controlTypeOptions, quickSlotsStorageKey]);
+
+  const persistQuickSlots = React.useCallback(async (slots) => {
+    try {
+      await AsyncStorage.setItem(quickSlotsStorageKey, JSON.stringify(slots));
+    } catch (e) {}
+  }, [quickSlotsStorageKey]);
+
+  const openQuickSlotConfig = (index) => {
+    setQuickSlotConfigIndex(index);
+    setShowQuickSlotModal(true);
+  };
 
   // Handler for long-press on a control
   const handleControlLongPress = (control) => {
@@ -1085,31 +1299,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap' }}>
             <TouchableOpacity
-              style={{ padding: 6, marginRight: 8, borderRadius: 8 }}
-              onPress={() => setShowSummary(true)}
-              accessibilityLabel="Skriv ut"
-            >
-              <Ionicons name="print-outline" size={20} color="#222" />
-            </TouchableOpacity>
-            <TouchableOpacity
               onPress={() => setEditingInfo(true)}
               accessibilityLabel="Ändra projektinfo"
               style={{ padding: 6, marginRight: 8 }}
             >
               <Ionicons name="create-outline" size={22} color="#1976D2" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{ padding: 6 }}
-              onPress={() => {
-                if ((controls || []).length === 0) {
-                  setShowDeleteModal(true);
-                } else {
-                  setShowDeleteWarning(true);
-                }
-              }}
-              accessibilityLabel="Radera projekt"
-            >
-              <Ionicons name="trash-outline" size={20} color="#D32F2F" />
             </TouchableOpacity>
           </View>
         ) : (
@@ -1122,16 +1316,20 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </TouchableOpacity>
         )}
       </View>
-      {/* Projektinfo med logga, status, projektnummer, projektnamn */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
+      {/* Projektinfo med logga, status, projektnummer, projektnamn (expanderbar) */}
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
         {companyLogoUri ? (
           <View style={{ marginRight: 16 }}>
             <Image source={{ uri: companyLogoUri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee' }} resizeMode="contain" />
           </View>
         ) : null}
         <View style={{ flex: 1, position: 'relative' }}>
-          {/* Informationsrader */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          {/* Header-rad med projektnummer/namn och chevron */}
+          <TouchableOpacity
+            onPress={toggleProjectInfo}
+            activeOpacity={0.8}
+            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: projectInfoExpanded ? 8 : 0 }}
+          >
             <View style={{
               width: 16,
               height: 16,
@@ -1142,9 +1340,13 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               borderColor: '#bbb',
             }} />
             <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.id}</Text>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#222' }}>{editableProject?.name}</Text>
-            {/* edit button moved to header row */}
-          </View>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{editableProject?.name}</Text>
+            <Animated.View style={{ marginLeft: 8, transform: [{ rotate: projectInfoRotate }] }}>
+              <Ionicons name={projectInfoExpanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {projectInfoExpanded && (
           <View style={{ marginBottom: 2 }}>
             <View style={{ marginBottom: 2 }}>
               <Text style={{ fontSize: 15, color: '#555' }}>
@@ -1206,19 +1408,20 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               </Text>
             </View>
           </View>
+          )}
         </View>
       </View>
 
       {/* Modal för ändra projektinfo - uppdaterad layout liknande nya modaler (t.ex. Ny mall) */}
       <Modal visible={editingInfo} transparent animationType="fade" onRequestClose={() => setEditingInfo(false)}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 18, minWidth: 320, maxWidth: 420, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 18, minWidth: 320, maxWidth: 420, maxHeight: '75%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
             {/* Header med ikon, titel och stäng-kryss i samma stil som Ny mall-modal */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#1976D2', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
                 <Ionicons name="briefcase-outline" size={16} color="#fff" />
               </View>
-              <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: '#222' }}>Ändra projektinfo</Text>
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: '#222' }}>Projektinformation</Text>
               <TouchableOpacity
                 onPress={() => setEditingInfo(false)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1228,7 +1431,12 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 360, paddingHorizontal: 2 }} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={{ alignSelf: 'stretch' }}
+              contentContainerStyle={{ paddingHorizontal: 2, paddingBottom: 16 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
                             {/* Projektnummer */}
                             <View style={{ marginBottom: 14 }}>
                               <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Projektnummer</Text>
@@ -1261,10 +1469,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   delayLongPress={2000}
                 >
                   <TextInput
-                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: canEditCreated ? '#fff' : '#eee', color: canEditCreated ? '#222' : '#888' }}
+                    style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: canEditCreated ? '#fff' : '#eee', color: canEditCreated ? '#222' : '#888', pointerEvents: 'none' }}
                     value={editableProject?.createdAt ? new Date(editableProject.createdAt).toLocaleDateString() : ''}
                     editable={false}
-                    pointerEvents="none"
                   />
                   {!canEditCreated && (
                     <Text style={{ fontSize: 13, color: '#888', marginTop: 4, textAlign: 'center' }}>
@@ -1343,7 +1550,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   onRequestClose={() => setAdminPickerVisible(false)}
                 >
                   <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
-                    <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', minWidth: 300, maxWidth: 380 }}>
+                    <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, minWidth: 280, maxWidth: 360 }}>
                       <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 10, textAlign: 'center' }}>
                         Välj ansvarig
                       </Text>
@@ -1361,28 +1568,53 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                           Inga admins hittades i företaget.
                         </Text>
                       ) : (
-                        <ScrollView style={{ maxHeight: 420 }}>
-                          {companyAdmins.map((m) => (
-                            <TouchableOpacity
-                              key={m.id || m.uid || m.email}
-                              style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
-                              onPress={() => {
-                                const uid = m.uid || m.id || null;
-                                const name = formatPersonName(m);
-                                setEditableProject(p => ({
-                                  ...(p || {}),
-                                  ansvarig: name,
-                                  ansvarigId: uid,
-                                }));
-                                setAdminPickerVisible(false);
-                              }}
-                            >
-                              <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
-                                {formatPersonName(m)}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
+                        companyAdmins.length <= 5 ? (
+                          <View>
+                            {companyAdmins.map((m) => (
+                              <TouchableOpacity
+                                key={m.id || m.uid || m.email}
+                                style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                                onPress={() => {
+                                  const uid = m.uid || m.id || null;
+                                  const name = formatPersonName(m);
+                                  setEditableProject(p => ({
+                                    ...(p || {}),
+                                    ansvarig: name,
+                                    ansvarigId: uid,
+                                  }));
+                                  setAdminPickerVisible(false);
+                                }}
+                              >
+                                <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                                  {formatPersonName(m)}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        ) : (
+                          <ScrollView style={{ maxHeight: 260 }}>
+                            {companyAdmins.map((m) => (
+                              <TouchableOpacity
+                                key={m.id || m.uid || m.email}
+                                style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                                onPress={() => {
+                                  const uid = m.uid || m.id || null;
+                                  const name = formatPersonName(m);
+                                  setEditableProject(p => ({
+                                    ...(p || {}),
+                                    ansvarig: name,
+                                    ansvarigId: uid,
+                                  }));
+                                  setAdminPickerVisible(false);
+                                }}
+                              >
+                                <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                                  {formatPersonName(m)}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        )
                       )))}
 
                       <TouchableOpacity
@@ -1580,12 +1812,27 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>Spara</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              onPress={() => {
+                setEditingInfo(false);
+                if ((controls || []).length === 0) {
+                  setShowDeleteModal(true);
+                } else {
+                  setShowDeleteWarning(true);
+                }
+              }}
+              style={{ marginTop: 10, paddingVertical: 10, alignItems: 'center' }}
+              activeOpacity={0.85}
+              accessibilityLabel="Radera projekt"
+            >
+              <Text style={{ color: '#D32F2F', fontSize: 14, fontWeight: '600' }}>Radera projekt</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
       {/* Knapprad med horisontella linjer */}
       <View style={{ marginBottom: 12 }}>
-        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 10, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 16, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
         {Platform.OS === 'web' ? (
           <>
             <View style={{ marginBottom: 8, alignItems: 'flex-start', paddingHorizontal: 0 }}>
@@ -1620,37 +1867,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     elevation: 2,
                     cursor: 'pointer'
                   }}
-                  onPress={() => {
-                    switch (type) {
-                      case 'Arbetsberedning':
-                        if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
-                        else navigation.navigate('ArbetsberedningScreen', { project });
-                        break;
-                      case 'Riskbedömning':
-                        if (Platform.OS === 'web') openInlineControl('Riskbedömning');
-                        else navigation.navigate('RiskbedömningScreen', { project });
-                        break;
-                      case 'Fuktmätning':
-                        if (Platform.OS === 'web') openInlineControl('Fuktmätning');
-                        else navigation.navigate('FuktmätningScreen', { project });
-                        break;
-                      case 'Egenkontroll':
-                        if (Platform.OS === 'web') openInlineControl('Egenkontroll');
-                        else navigation.navigate('EgenkontrollScreen', { project });
-                        break;
-                      case 'Mottagningskontroll':
-                        if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
-                        else navigation.navigate('MottagningskontrollScreen', { project });
-                        break;
-                      case 'Skyddsrond':
-                        if (Platform.OS === 'web') openInlineControl('Skyddsrond');
-                        else navigation.navigate('SkyddsrondScreen', { project });
-                        break;
-                      default:
-                        if (Platform.OS === 'web') openInlineControl(type);
-                        else navigation.navigate('ControlForm', { project, controlType: type });
-                    }
-                  }}
+                  onPress={() => handleStartControl(type)}
                   activeOpacity={0.85}
                 >
                   <Ionicons name={icon} size={18} color={color} style={{ marginRight: 10 }} />
@@ -1661,99 +1878,97 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </>
         ) : (
           <>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+            <View style={{ width: '100%' }}>
               <TouchableOpacity
                 style={{
-                  backgroundColor: '#f5f5f5',
+                  backgroundColor: '#fff',
                   borderRadius: 10,
                   borderWidth: 1,
                   borderColor: '#e0e0e0',
                   flexDirection: 'row',
                   alignItems: 'center',
-                  paddingVertical: 6,
+                  justifyContent: 'center',
+                  paddingVertical: 10,
                   paddingHorizontal: 18,
                   shadowColor: '#222',
                   shadowOffset: { width: 0, height: 2 },
                   shadowOpacity: 0.08,
                   shadowRadius: 4,
                   elevation: 1,
-                  minHeight: 36,
-                  maxWidth: 180,
-                  width: 'auto',
+                  minHeight: 40,
+                  width: '100%',
                   marginBottom: 8,
-                  marginRight: 40,
                   overflow: 'hidden',
                 }}
                 activeOpacity={0.85}
                 onPress={() => setShowControlTypeModal(true)}
               >
-                <Ionicons name="add-circle-outline" size={20} color="#222" style={{ marginRight: 10 }} />
-                <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Ny kontroll</Text>
+                <View
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    backgroundColor: '#1976D2',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginRight: 10,
+                  }}
+                >
+                  <Ionicons name="add" size={16} color="#fff" />
+                </View>
+                <Text style={{ color: '#222', fontWeight: '600', fontSize: 15, letterSpacing: 0.5, zIndex: 1 }}>Skapa ny kontroll</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#e0e0e0',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 6,
-                  paddingHorizontal: 12,
-                  shadowColor: '#222',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 4,
-                  elevation: 1,
-                  minHeight: 36,
-                  maxWidth: 50,
-                  marginRight: 10,
-                  marginBottom: 8,
-                  overflow: 'hidden',
-                }}
-                activeOpacity={0.85}
-                onPress={() => setShowSummary(true)}
-                accessibilityLabel="Skriv ut"
-              >
-                <Ionicons name="print-outline" size={20} color="#222" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#e0e0e0',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 6,
-                  paddingHorizontal: 12,
-                  shadowColor: '#D32F2F',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 4,
-                  elevation: 1,
-                  minHeight: 36,
-                  maxWidth: 50,
-                  marginRight: 0,
-                  marginBottom: 8,
-                  overflow: 'hidden',
-                }}
-                activeOpacity={0.85}
-                onPress={() => {
-                  if ((controls || []).length === 0) {
-                    setShowDeleteModal(true);
-                  } else {
-                    setShowDeleteWarning(true);
-                  }
-                }}
-                accessibilityLabel="Radera projekt"
-              >
-                <Ionicons name="trash-outline" size={20} color="#D32F2F" />
-              </TouchableOpacity>
+            </View>
+            <Text style={{ marginTop: 10, marginBottom: 4, color: '#555', fontSize: 13, textAlign: 'left' }}>
+              Justerbara snabbval – håll in knappen 2 sek för att byta val.
+            </Text>
+            <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              {[0, 1, 2, 3].map((slotIndex) => {
+                const slotType = quickControlSlots[slotIndex];
+                const meta = (controlTypeOptions || []).find(o => o.key === slotType || o.type === slotType) || (controlTypeOptions || [])[slotIndex] || null;
+                const hasType = !!(meta && meta.type);
+                const iconName = hasType ? meta.icon : 'add-circle-outline';
+                const iconColor = hasType ? meta.color : '#1976D2';
+                const label = hasType ? meta.type : 'Välj';
+                return (
+                  <TouchableOpacity
+                    key={String(slotIndex)}
+                    style={{
+                      flexBasis: '48%',
+                      backgroundColor: '#fff',
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: '#e0e0e0',
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      marginBottom: 8,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.06,
+                      shadowRadius: 4,
+                      elevation: 2,
+                    }}
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (hasType) handleStartControl(meta.key || meta.type, meta.type);
+                      else openQuickSlotConfig(slotIndex);
+                    }}
+                    onLongPress={() => openQuickSlotConfig(slotIndex)}
+                    delayLongPress={1500}
+                  >
+                    <Ionicons name={iconName} size={18} color={iconColor} style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#222', fontWeight: '600', fontSize: 14 }} numberOfLines={1}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
-        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 10, width: '110%', marginLeft: '-5%' }} />
+        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 16, width: '110%', marginLeft: '-5%' }} />
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
@@ -1765,67 +1980,236 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         animationType="fade"
         onRequestClose={() => setShowControlTypeModal(false)}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 18, color: '#222', textAlign: 'center', marginTop: 6 }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, paddingVertical: 20, paddingHorizontal: 20, width: 340, maxWidth: '90%', maxHeight: '60%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8, color: '#222', textAlign: 'center', marginTop: 6 }}>
               Välj kontrolltyp
             </Text>
-            {controlTypeOptions.map(({ type, icon, color }) => (
-              <TouchableOpacity
-                key={type}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
-                onPress={() => {
-                  setShowControlTypeModal(false);
-                  // Route each control type to its dedicated screen
-                  switch (type) {
-                    case 'Arbetsberedning':
-                      if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
-                      else navigation.navigate('ArbetsberedningScreen', { project });
-                      break;
-                    case 'Riskbedömning':
-                      if (Platform.OS === 'web') openInlineControl('Riskbedömning');
-                      else navigation.navigate('RiskbedömningScreen', { project });
-                      break;
-                    case 'Fuktmätning':
-                      if (Platform.OS === 'web') openInlineControl('Fuktmätning');
-                      else navigation.navigate('FuktmätningScreen', { project });
-                      break;
-                    case 'Egenkontroll':
-                      if (Platform.OS === 'web') openInlineControl('Egenkontroll');
-                      else navigation.navigate('EgenkontrollScreen', { project });
-                      break;
-                    case 'Mottagningskontroll':
-                      if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
-                      else navigation.navigate('MottagningskontrollScreen', { project });
-                      break;
-                    case 'Skyddsrond':
-                      if (Platform.OS === 'web') openInlineControl('Skyddsrond');
-                      else navigation.navigate('SkyddsrondScreen', { project });
-                      break;
-                    default:
-                      if (Platform.OS === 'web') openInlineControl(type);
-                      else navigation.navigate('ControlForm', {
-                        project,
-                        controlType: type
-                      });
-                  }
+            <View style={{ flexDirection: 'row', marginTop: 4 }}>
+              <ScrollView
+                style={{ maxHeight: 320, flex: 1 }}
+                showsVerticalScrollIndicator
+                onLayout={(e) => {
+                  const h = e?.nativeEvent?.layout?.height || 0;
+                  setControlTypeScrollMetrics(prev => ({ ...prev, containerHeight: h }));
                 }}
+                onContentSizeChange={(w, h) => {
+                  setControlTypeScrollMetrics(prev => ({ ...prev, contentHeight: h || 0 }));
+                }}
+                onScroll={(e) => {
+                  const y = e?.nativeEvent?.contentOffset?.y || 0;
+                  setControlTypeScrollMetrics(prev => ({ ...prev, scrollY: y }));
+                }}
+                scrollEventThrottle={16}
               >
-                <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
-                <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{type}</Text>
-              </TouchableOpacity>
-            ))}
-            {Array.isArray(companyProfile?.enabledControlTypes) && controlTypeOptions.length === 0 ? (
-              <Text style={{ color: '#D32F2F', textAlign: 'center', marginTop: 6, marginBottom: 8 }}>
-                Inga kontrolltyper är aktiverade för företaget.
-              </Text>
-            ) : null}
-                      <TouchableOpacity
-                        style={{ marginTop: 8, alignSelf: 'center' }}
-                        onPress={() => setShowControlTypeModal(false)}
+                {controlTypeOptions.map(({ type, icon, color, key }) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 8, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
+                    onPress={() => {
+                      setShowControlTypeModal(false);
+                      handleStartControl(key || type, type);
+                    }}
+                  >
+                    <Ionicons name={icon} size={22} color={color} style={{ marginRight: 12 }} />
+                    <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{type}</Text>
+                  </TouchableOpacity>
+                ))}
+                {Array.isArray(companyProfile?.enabledControlTypes) && controlTypeOptions.length === 0 ? (
+                  <Text style={{ color: '#D32F2F', textAlign: 'center', marginTop: 6, marginBottom: 8 }}>
+                    Inga kontrolltyper är aktiverade för företaget.
+                  </Text>
+                ) : null}
+              </ScrollView>
+                {controlTypeCanScroll ? (
+                <View
+                  style={{
+                    width: 3,
+                    marginLeft: 6,
+                    borderRadius: 999,
+                    backgroundColor: '#E0E0E0',
+                    height: controlTypeScrollMetrics.containerHeight || 0,
+                    overflow: 'hidden',
+                    alignSelf: 'flex-start',
+                    marginTop: 2,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <View
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      borderRadius: 999,
+                      backgroundColor: '#B0B0B0',
+                      height: controlTypeThumbHeight,
+                      top: controlTypeThumbTop,
+                    }}
+                  />
+                </View>
+              ) : null}
+            </View>
+            <TouchableOpacity
+              style={{ marginTop: 8, alignSelf: 'center' }}
+              onPress={() => setShowControlTypeModal(false)}
+            >
+              <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: välj mall när en kontrolltyp har flera mallar */}
+      <Modal
+        visible={templatePickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTemplatePickerVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, paddingVertical: 20, paddingHorizontal: 20, width: 340, maxWidth: '90%', maxHeight: '60%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: '#222', textAlign: 'center' }}>
+              {templatePickerLabel ? `Välj mall för ${templatePickerLabel}` : 'Välj mall'}
+            </Text>
+            <TextInput
+              placeholder="Sök mall..."
+              placeholderTextColor="#999"
+              value={templatePickerSearch}
+              onChangeText={setTemplatePickerSearch}
+              style={{
+                marginTop: 8,
+                marginBottom: 10,
+                borderWidth: 1,
+                borderColor: '#e0e0e0',
+                borderRadius: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                fontSize: 14,
+                backgroundColor: '#f9f9f9',
+              }}
+            />
+            <ScrollView style={{ maxHeight: 320, marginTop: 4 }}>
+              {(() => {
+                const all = Array.isArray(templatePickerItems) ? templatePickerItems : [];
+                const qRaw = String(templatePickerSearch || '').trim();
+                const q = qRaw.toLowerCase();
+                const filtered = all.filter((tpl) => {
+                  if (!q) return true;
+                  const title = String(tpl?.title || '').toLowerCase();
+                  return title.includes(q);
+                });
+
+                if (!filtered.length) {
+                  const hasQuery = !!qRaw;
+                  return (
+                    <Text style={{ fontSize: 14, color: '#D32F2F', textAlign: 'center', marginTop: 8 }}>
+                      {hasQuery
+                        ? `Ingen mall hittades för "${qRaw}".`
+                        : 'Inga mallar tillgängliga.'}
+                    </Text>
+                  );
+                }
+
+                return filtered.map((tpl) => {
+                  const isHidden = !!tpl.hidden;
+                  const title = String(tpl?.title || 'Namnlös mall');
+                  const versionLabel = (typeof tpl?.version === 'number' || typeof tpl?.version === 'string')
+                    ? `v${tpl.version}`
+                    : '';
+                  return (
+                    <TouchableOpacity
+                      key={tpl.id || title}
+                      style={{
+                        paddingVertical: 6,
+                        paddingHorizontal: 4,
+                        marginBottom: 2,
+                      }}
+                      onPress={() => {
+                        setTemplatePickerVisible(false);
+                        if (!tpl) return;
+                        navigation.navigate('TemplateControlScreen', {
+                          project,
+                          controlType: templatePickerLabel || tpl.controlType || 'Kontroll',
+                          templateId: tpl.id,
+                          template: tpl,
+                          companyId,
+                        });
+                      }}
+                    >
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingVertical: 4,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#eee',
+                        }}
                       >
-                        <Text style={{ color: '#222', fontSize: 16 }}>Avbryt</Text>
-                      </TouchableOpacity>
+                        <Text
+                          style={{ fontSize: 15, fontWeight: '600', color: isHidden ? '#9E9E9E' : '#222', flexShrink: 1 }}
+                          numberOfLines={1}
+                        >
+                          {title + (isHidden ? ' (inaktiv)' : '')}
+                        </Text>
+                        {versionLabel ? (
+                          <Text style={{ fontSize: 13, color: '#555', marginLeft: 8 }} numberOfLines={1}>
+                            {versionLabel}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
+            </ScrollView>
+            <TouchableOpacity
+              style={{ marginTop: 12, alignSelf: 'center' }}
+              onPress={() => setTemplatePickerVisible(false)}
+            >
+              <Text style={{ color: '#222', fontSize: 16 }}>Stäng</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: välj kontrolltyp för snabbknapp */}
+      <Modal
+        visible={showQuickSlotModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowQuickSlotModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 320, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center' }}>
+              Välj snabbknapp
+            </Text>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {controlTypeOptions.map(({ type, icon, color, key }) => (
+                <TouchableOpacity
+                  key={type}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 6, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0' }}
+                  onPress={() => {
+                    if (quickSlotConfigIndex == null) return;
+                    const next = [...quickControlSlots];
+                    next[quickSlotConfigIndex] = key || type;
+                    setQuickControlSlots(next);
+                    persistQuickSlots(next);
+                    setShowQuickSlotModal(false);
+                  }}
+                >
+                  <Ionicons name={icon} size={20} color={color} style={{ marginRight: 10 }} />
+                  <Text style={{ fontSize: 15, color: '#222', fontWeight: '600' }}>{type}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={{ marginTop: 10, alignSelf: 'center' }}
+              onPress={() => setShowQuickSlotModal(false)}
+            >
+              <Text style={{ color: '#222', fontSize: 16 }}>Stäng</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1882,24 +2266,30 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         />
       </View>
 
-      {controls.length === 0 ? (
-        <Text style={[styles.noControls, { color: '#D32F2F' }]}>Inga kontroller utförda än</Text>
-      ) : (
-        <View>
-          {(() => {
-            // Filtrera kontroller baserat på söktext
-            const lowerSearch = (searchText || '').toLowerCase();
-            const filteredControls = !lowerSearch
-              ? controls
-              : controls.filter(c => {
-                  const fields = [c.deliveryDesc, c.materialDesc, c.generalNote, c.description, c.arbetsmoment];
-                  return fields.some(f => f && String(f).toLowerCase().includes(lowerSearch));
-                });
-            const grouped = controlTypes
-              .map((t) => ({ type: t, items: filteredControls.filter(c => (c.type || '') === t) }))
-              .filter(g => g.items.length > 0);
+      {(() => {
+        const baseControls = Array.isArray(controls) ? controls : [];
+        // Filtrera kontroller baserat på söktext
+        const lowerSearch = (searchText || '').toLowerCase();
+        const filteredControls = !lowerSearch
+          ? baseControls
+          : baseControls.filter(c => {
+              const fields = [c.deliveryDesc, c.materialDesc, c.generalNote, c.description, c.arbetsmoment];
+              return fields.some(f => f && String(f).toLowerCase().includes(lowerSearch));
+            });
+        const grouped = controlTypes
+          .map((t) => ({ type: t, items: filteredControls.filter(c => (c.type || '') === t) }))
+          .filter(g => g.items.length > 0);
 
-            const toggleType = (t) => {
+        if (grouped.length === 0) {
+          const msg = lowerSearch
+            ? 'Inga kontroller matchar sökningen.'
+            : 'Inga kontroller utförda än';
+          return (
+            <Text style={[styles.noControls, { color: '#D32F2F' }]}>{msg}</Text>
+          );
+        }
+
+        const toggleType = (t) => {
               try { Haptics.selectionAsync(); } catch {}
               setExpandedByType((prev) => ({ ...prev, [t]: !(prev[t] ?? false) }));
             };
@@ -1943,8 +2333,10 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               }
             }
 
-            // For group header: are ALL Skyddsrond controls handled?
-            return grouped.map(({ type, items }) => {
+        // For group header: are ALL Skyddsrond controls handled?
+        return (
+          <View>
+            {grouped.map(({ type, items }) => {
               const t = type;
               const typeMeta = (controlTypeOptions || []).find(o => o.type === t) || null;
               let allHandled = true;
@@ -2354,10 +2746,10 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   ) : null}
                 </View>
               );
-            });
-          })()}
-        </View>
-      )}
+            })}
+          </View>
+        );
+      })()}
 
       {/* Formulär */}
       {showForm && (

@@ -2423,7 +2423,8 @@ export default function BaseControlForm({
                 }}>
                   <Image
                     source={{ uri: (photoModal.uris[photoModal.index] && photoModal.uris[photoModal.index].uri) ? photoModal.uris[photoModal.index].uri : photoModal.uris[photoModal.index] }}
-                    style={{ width: '100%', aspectRatio: 4/3, resizeMode: 'contain', backgroundColor: '#111' }}
+                    style={{ width: '100%', aspectRatio: 4/3, backgroundColor: '#111' }}
+                    resizeMode="contain"
                     onTouchStart={handleTouchStart}
                     onTouchEnd={(e) => handleTouchEnd(e, photoModal.uris, photoModal.index)}
                   />
@@ -3090,7 +3091,7 @@ export default function BaseControlForm({
         {/* Byggdel modal (Arbetsberedning + Egenkontroll) */}
         {(controlType === 'Arbetsberedning' || controlType === 'Egenkontroll') && (
           <Modal visible={showByggdelModal} transparent animationType="fade" onRequestClose={closeByggdelModal}>
-            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ pointerEvents: 'box-none', flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
               <Pressable onPress={closeByggdelModal} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
               <View style={{ width: '90%', maxWidth: 420, backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd' }}>
                 <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
@@ -3488,7 +3489,7 @@ export default function BaseControlForm({
 
                 {/* Create mall overlay (inside Byggdel modal for iOS/Expo Go stability) */}
                 {showCreateByggdelMallModal ? (
-                  <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
+                  <View style={{ pointerEvents: 'box-none', position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}>
                     <View
                       style={{
                         flex: 1,
@@ -3763,7 +3764,7 @@ export default function BaseControlForm({
         {/* Create mall popup (separate from Byggdel modal to avoid nested Modals) */}
         {controlType === 'Arbetsberedning' && (
           <Modal visible={showCreateByggdelMallModal && !showByggdelModal} transparent animationType="fade" onRequestClose={() => {}}>
-            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}>
+            <View style={{ pointerEvents: 'box-none', flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}>
               <View
                 style={{
                   flex: 1,
@@ -3816,7 +3817,7 @@ export default function BaseControlForm({
             animationType="fade"
             onRequestClose={() => {}}
           >
-            <View pointerEvents="box-none" style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ pointerEvents: 'box-none', flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center' }}>
               <View style={{ width: '90%', maxWidth: 420, height: '85%', backgroundColor: '#fff', borderRadius: 12, overflow: 'hidden', elevation: 8, borderWidth: 1, borderColor: '#ddd', marginBottom: mallEditorKeyboardHeight > 0 ? Math.min(mallEditorKeyboardHeight, 220) : 0 }}>
                 <View style={{ backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee' }}>
                   <Text style={{ color: '#000', fontSize: 18, fontWeight: '700' }} numberOfLines={2}>

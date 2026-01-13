@@ -32,6 +32,22 @@ import TemplateControlScreen from './Screens/TemplateControlScreen';
 
 const Stack = createStackNavigator();
 
+// Suppress specific deprecation warnings on web that are noisy but safe
+if (typeof Platform !== 'undefined' && Platform && Platform.OS === 'web') {
+  try {
+    const _origWarn = console.warn && console.warn.bind && console.warn.bind(console);
+    console.warn = (...args) => {
+      try {
+        const msg = String(args && args[0] ? args[0] : '');
+        if (msg.includes('props.pointerEvents is deprecated') || msg.includes('"shadow*" style props are deprecated')) {
+          return; // ignore these specific RN-web deprecation warnings
+        }
+      } catch (e) {}
+      if (_origWarn) _origWarn(...args);
+    };
+  } catch (e) {}
+}
+
 function ensureWebTitle() {
   if (Platform.OS !== 'web') return;
   if (typeof document === 'undefined') return;
@@ -159,13 +175,18 @@ export default function App() {
               }}
             />
             <Stack.Screen name="ControlDetails" component={ControlDetails} options={{ title: 'Kontrolldetaljer' }} />
-            <Stack.Screen name="ControlForm" component={ControlForm} options={({ navigation }) => ({
-              headerTitle: () => (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="checkbox-outline" size={28} color="#7B1FA2" style={{ marginRight: 10 }} />
-                  <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#222' }}>Mottagningskontroll</Text>
-                </View>
-              ),
+            <Stack.Screen name="ControlForm" component={ControlForm} options={({ navigation, route }) => ({
+              headerTitle: () => {
+                const title = route?.params?.controlType || 'Mottagningskontroll';
+                const iconName = route?.params?.controlIcon || 'checkbox-outline';
+                const iconColor = route?.params?.controlColor || '#7B1FA2';
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name={iconName} size={28} color={iconColor} style={{ marginRight: 10 }} />
+                    <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#222' }}>{title}</Text>
+                  </View>
+                );
+              },
               headerBackTitleVisible: false,
               headerBackTitle: '',
               headerLeft: () => (

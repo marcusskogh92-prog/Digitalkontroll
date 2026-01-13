@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { auth } from './firebase';
 import { formatPersonName } from './formatPersonName';
@@ -20,6 +20,8 @@ export default function HeaderUserMenu() {
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [roleLabel, setRoleLabel] = useState('');
   const [spinChevron, setSpinChevron] = useState(0);
+  const chevronSpinAnim = useRef(new Animated.Value(0)).current;
+  const chevronDeg = useRef(0);
 
   const openMenu = () => {
     try {
@@ -27,12 +29,15 @@ export default function HeaderUserMenu() {
       if (node && typeof node.measureInWindow === 'function') {
         node.measureInWindow((x, y, w, h) => {
           setMenuPos({ x: Math.max(8, x), y: y + (h || 36) + 6 });
+          // spin chevron and open menu
+          try { chevronDeg.current = (chevronDeg.current || 0) + 360; Animated.timing(chevronSpinAnim, { toValue: chevronDeg.current, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: (Platform && Platform.OS === 'web') ? false : true }).start(); } catch(_e) {}
           setSpinChevron((n) => n + 1);
           setMenuVisible(true);
         });
         return;
       }
     } catch(_e) {}
+    try { chevronDeg.current = (chevronDeg.current || 0) + 360; Animated.timing(chevronSpinAnim, { toValue: chevronDeg.current, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: (Platform && Platform.OS === 'web') ? false : true }).start(); } catch(_e) {}
     setSpinChevron((n) => n + 1);
     setMenuVisible(true);
   };
@@ -41,6 +46,7 @@ export default function HeaderUserMenu() {
   const [isOwner, setIsOwner] = useState(false);
   const [isMsAdmin, setIsMsAdmin] = useState(false);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [cid, setCid] = useState('');
 
   useEffect(() => {
@@ -65,16 +71,19 @@ export default function HeaderUserMenu() {
         // Admin i valfritt företag (ska kunna hantera sina egna användare)
         setIsCompanyAdmin(adminClaim);
 
-        // Beräkna rolltext för headern
+        // Beräkna rolltext och superadmin-flagga för headern
         const emailLower = email;
         const isEmailSuperadmin = emailLower === 'marcus@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.com' || emailLower === 'marcus.skogh@msbyggsystem';
-        const isSuperadmin = !!(claims.superadmin === true || claims.role === 'superadmin' || isEmailSuperadmin);
+        const superadminFlag = !!(claims.superadmin === true || claims.role === 'superadmin' || isEmailSuperadmin);
         const isAdmin = !!(claims.admin === true || claims.role === 'admin');
         let label = '';
-        if (isSuperadmin) label = 'Superadmin';
+        if (superadminFlag) label = 'Superadmin';
         else if (isAdmin) label = 'Admin';
         else label = 'Användare';
-        if (active) setRoleLabel(label);
+        if (active) {
+          setRoleLabel(label);
+          setIsSuperadmin(superadminFlag);
+        }
       } catch(_e) {}
     })();
     return () => { active = false; };
@@ -82,16 +91,20 @@ export default function HeaderUserMenu() {
 
   const menuItems = [];
   const isSuperOrMsAdmin = isOwner || isMsAdmin;
-  // Företag: endast för superadmin / MS Byggsystem-admin
-  if (isSuperOrMsAdmin) {
-    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+  // För superadmin: visa samma admin-menypunkter som tidigare
+  if (isSuperadmin) {
+    if (isSuperOrMsAdmin) {
+      menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+    }
+    if (isOwner || isCompanyAdmin) {
+      menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
+      menuItems.push({ key: 'manage_templates', label: 'Mallar', icon: <Ionicons name="copy-outline" size={16} color="#00897B" /> });
+    }
   }
-  // Användare / Kontrolltyper / Mallar: alla admin-användare (oavsett företag)
-  if (isOwner || isCompanyAdmin) {
-    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
-    menuItems.push({ key: 'manage_templates', label: 'Mallar', icon: <Ionicons name="copy-outline" size={16} color="#00897B" /> });
-  }
+
+  // Alla roller (superadmin, admin, användare) ska kunna logga ut här
+  menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
 
   const PortalContent = (
     <ContextMenu
@@ -109,6 +122,16 @@ export default function HeaderUserMenu() {
           if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
           if (it.key === 'manage_control_types') return navigation.navigate('ManageControlTypes', { companyId: cid });
           if (it.key === 'manage_templates') return navigation.navigate('ManageTemplates', { companyId: cid });
+          if (it.key === 'logout') {
+            try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
+            try { await auth.signOut(); } catch(_e) {}
+            try {
+              navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+            } catch(_e) {
+              try { navigation.navigate('Login'); } catch(__e) {}
+            }
+            return;
+          }
         } catch(_e) {}
       }}
     />
@@ -126,18 +149,12 @@ export default function HeaderUserMenu() {
             <Text style={{ fontSize: 12, color: '#607D8B', marginTop: 2 }}>{roleLabel}</Text>
           )}
         </View>
-        <Ionicons
-          name="chevron-down"
-          size={14}
-          color="#666"
-          style={{
-            marginLeft: 6,
-            transform: [{ rotate: `${spinChevron * 360 + (menuVisible ? 180 : 0)}deg` }],
-            transitionProperty: 'transform',
-            transitionDuration: '0.35s',
-            transitionTimingFunction: 'ease',
-          }}
-        />
+        <Animated.View style={{ marginLeft: 6, transform: [
+          { rotate: chevronSpinAnim.interpolate({ inputRange: [0, 360], outputRange: ['0deg', '360deg'] }) },
+          { rotate: menuVisible ? '180deg' : '0deg' }
+        ] }}>
+          <Ionicons name="chevron-down" size={14} color="#666" />
+        </Animated.View>
       </TouchableOpacity>
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
         try {

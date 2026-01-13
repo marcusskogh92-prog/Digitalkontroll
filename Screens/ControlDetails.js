@@ -866,7 +866,8 @@ export default function ControlDetails({ route }) {
                 {selectedPhoto && (
                   <Image
                     source={{ uri: selectedPhoto }}
-                    style={{ width: '100%', height: 350, borderRadius: 12, resizeMode: 'contain', backgroundColor: '#000' }}
+                    style={{ width: '100%', height: 350, borderRadius: 12, backgroundColor: '#000' }}
+                    resizeMode="contain"
                   />
                 )}
                 <Text style={{ color: '#fff', marginTop: 12, textAlign: 'center' }}>Tryck utanför bilden för att stänga</Text>
