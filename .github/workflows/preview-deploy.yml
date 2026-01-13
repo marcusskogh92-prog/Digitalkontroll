@@ -34,7 +34,7 @@ jobs:
           echo "--- check webpack deps ---"
           npm ls webpack webpack-cli --depth=0 || true
       - name: Build web bundle
-        run: npx expo export:web
+        run: npx expo export --platform web
       - name: Deploy to Firebase preview channel
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
