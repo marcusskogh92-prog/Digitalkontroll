@@ -62,7 +62,7 @@ export default function TemplateControlScreen({
         } else {
           setError('Kunde inte hitta vald mall.');
         }
-      } catch (e) {
+      } catch (_e) {
         if (!cancelled) {
           setError(String(e?.message || e));
         }
@@ -160,7 +160,7 @@ export default function TemplateControlScreen({
           templateVersion: completed.templateVersion || null,
         });
       } catch (_e) {}
-    } catch (e) {
+    } catch (_e) {
       try {
         Alert.alert('Fel', 'Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
       } catch (_e) {

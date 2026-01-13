@@ -58,7 +58,7 @@ export default function BaseControlForm({
       const nm = tpl.mallName || tpl.name || '';
       const parts = [hg, mm, nm].map(x => String(x || '').trim()).filter(Boolean);
       return parts.join(' / ');
-    } catch(e) {
+    } catch (_e) {
       return '';
     }
   };
@@ -70,7 +70,7 @@ export default function BaseControlForm({
       const mm = tpl.moment || '';
       const parts = [hg, mm].map(x => String(x || '').trim()).filter(Boolean);
       return parts.join(' / ');
-    } catch(e) {
+    } catch (_e) {
       return '';
     }
   };
@@ -267,7 +267,7 @@ export default function BaseControlForm({
         const h = e && e.endCoordinates ? e.endCoordinates.height : 0;
         const shift = Math.max(0, h - 80);
         setSignerKeyboardShift(shift);
-      } catch(e) {
+      } catch (_e) {
         setSignerKeyboardShift(0);
       }
     };
@@ -341,11 +341,11 @@ export default function BaseControlForm({
     try {
       if (typeof window === 'undefined' || !window.dispatchEvent) return;
       window.dispatchEvent(new CustomEvent('dkInlineExitDecision', { detail: { decision: String(decision || '') } }));
-    } catch(e) {}
+    } catch (_e) {}
   };
 
   const closeBackConfirm = (decision) => {
-    try { setShowBackConfirm(false); } catch(e) {}
+    try { setShowBackConfirm(false); } catch (_e) {}
     if (decision) dispatchInlineExitDecision(decision);
   };
 
@@ -384,7 +384,7 @@ export default function BaseControlForm({
       if (!isDirtyRef.current) return; // Allow navigation if not dirty
       e.preventDefault();
       blockedNavEvent.current = e;
-      try { setBackConfirmMode('dirty'); } catch(e) {}
+      try { setBackConfirmMode('dirty'); } catch (_e) {}
       setShowBackConfirm(true);
     });
     return unsubscribe;
@@ -404,7 +404,7 @@ export default function BaseControlForm({
     const pushGuard = () => {
       try {
         window.history.pushState({ ...(window.history.state || {}), dkInlineControl: guardId }, '');
-      } catch(e) {}
+      } catch (_e) {}
     };
     pushGuard();
 
@@ -412,9 +412,9 @@ export default function BaseControlForm({
       try {
         // Re-add guard entry so the user stays "here" until they choose.
         pushGuard();
-      } catch(e) {}
-      try { setBackConfirmMode(mode || 'exit'); } catch(e) {}
-      try { setShowBackConfirm(true); } catch(e) {}
+      } catch (_e) {}
+      try { setBackConfirmMode(mode || 'exit'); } catch (_e) {}
+      try { setShowBackConfirm(true); } catch (_e) {}
     };
 
     const onPopState = () => {
@@ -422,21 +422,21 @@ export default function BaseControlForm({
         // Always confirm when leaving an inline control (prevents accidental project switch)
         if (isDirtyRef.current) requestExitConfirm('dirty');
         else requestExitConfirm('exit');
-      } catch(e) {}
+      } catch (_e) {}
     };
 
     const onAttemptExit = () => {
       try {
         if (isDirtyRef.current) requestExitConfirm('dirty');
         else requestExitConfirm('exit');
-      } catch(e) {}
+      } catch (_e) {}
     };
 
     window.addEventListener('popstate', onPopState);
     window.addEventListener('dkInlineAttemptExit', onAttemptExit);
     return () => {
-      try { window.removeEventListener('popstate', onPopState); } catch(e) {}
-      try { window.removeEventListener('dkInlineAttemptExit', onAttemptExit); } catch(e) {}
+      try { window.removeEventListener('popstate', onPopState); } catch (_e) {}
+      try { window.removeEventListener('dkInlineAttemptExit', onAttemptExit); } catch (_e) {}
     };
   }, []);
   const [photoModal, setPhotoModal] = useState({ visible: false, uris: [], index: 0 });
@@ -479,7 +479,7 @@ export default function BaseControlForm({
         setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0, mallSectionId, mallPointIdx });
         return;
       }
-    } catch(e) {}
+    } catch (_e) {}
 
     // 1) Try remove from mottagningsPhotos (central photos list)
     try {
@@ -495,7 +495,7 @@ export default function BaseControlForm({
         setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
         return;
       }
-    } catch(e) {
+    } catch (_e) {
       // ignore and try checklist removal
     }
 
@@ -532,7 +532,7 @@ export default function BaseControlForm({
         setPhotoModal({ visible: newUris.length > 0, uris: newUris, index: newUris.length > 0 ? newIndex : 0 });
         return;
       }
-    } catch(e) {
+    } catch (_e) {
       // ignore and fallback to removing from modal only
     }
 
@@ -639,7 +639,7 @@ export default function BaseControlForm({
         if (pts.length > 0) return true;
       }
       return false;
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
@@ -926,8 +926,8 @@ export default function BaseControlForm({
     const subShow = Keyboard.addListener(showEvent, onShow);
     const subHide = Keyboard.addListener(hideEvent, onHide);
     return () => {
-      try { subShow && subShow.remove && subShow.remove(); } catch(e) {}
-      try { subHide && subHide.remove && subHide.remove(); } catch(e) {}
+      try { subShow && subShow.remove && subShow.remove(); } catch (_e) {}
+      try { subHide && subHide.remove && subHide.remove(); } catch (_e) {}
     };
   }, []);
   useEffect(() => {
@@ -947,13 +947,13 @@ export default function BaseControlForm({
     const subShow = Keyboard.addListener(showEvent, onShow);
     const subHide = Keyboard.addListener(hideEvent, onHide);
     return () => {
-      try { subShow && subShow.remove && subShow.remove(); } catch(e) {}
-      try { subHide && subHide.remove && subHide.remove(); } catch(e) {}
+      try { subShow && subShow.remove && subShow.remove(); } catch (_e) {}
+      try { subHide && subHide.remove && subHide.remove(); } catch (_e) {}
     };
   }, []);
 
   const closeByggdelModal = () => {
-    try { Keyboard.dismiss && Keyboard.dismiss(); } catch(e) {}
+    try { Keyboard.dismiss && Keyboard.dismiss(); } catch (_e) {}
     setShowByggdelModal(false);
     setShowAktivaByggdelarModal(false);
     setNewByggdelMallName('');
@@ -965,7 +965,7 @@ export default function BaseControlForm({
   };
 
   const closeCreateByggdelMallModal = () => {
-    try { Keyboard.dismiss && Keyboard.dismiss(); } catch(e) {}
+    try { Keyboard.dismiss && Keyboard.dismiss(); } catch (_e) {}
     setShowCreateByggdelMallModal(false);
     setCreateByggdelMallContext(null);
     setNewByggdelMallName('');
@@ -1025,7 +1025,7 @@ export default function BaseControlForm({
           openByggdelMallEditor({ id: createdId, name: nm, huvudgrupp: hgKeyPrefix, moment: momentLabel, points: [], sections: [] });
         }, 250);
       }
-    } catch(e) {
+    } catch (_e) {
       const code = e && e.code ? String(e.code) : '';
       const msg = (e && e.message) ? String(e.message) : '';
       const isDuplicate = code === 'already-exists' || code === 'already_exists' || (msg && msg.toLowerCase().includes('already') && msg.toLowerCase().includes('exist'));
@@ -1114,7 +1114,7 @@ export default function BaseControlForm({
       setNewByggdelMallSectionTitle('');
       setNewByggdelMallPointBySectionId({});
       setShowByggdelMallEditor(true);
-    } catch(e) {
+    } catch (_e) {
       Alert.alert('Kunde inte öppna', 'Försök igen.');
     }
   };
@@ -1124,22 +1124,22 @@ export default function BaseControlForm({
       const sid = String(mallSectionId || '').trim();
       const pIdx = (typeof mallPointIdx === 'number') ? mallPointIdx : -1;
       if (!sid || pIdx < 0) return;
-      try { Keyboard.dismiss(); } catch(e) {}
+      try { Keyboard.dismiss(); } catch (_e) {}
 
       // Dynamically import ImagePicker when needed
       if (!ImagePicker) {
-        try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+        try { ImagePicker = await import('expo-image-picker'); } catch (_e) { ImagePicker = null; }
       }
       let perm = null;
       try {
         if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
           perm = await ImagePicker.getMediaLibraryPermissionsAsync();
         }
-      } catch(e) {}
+      } catch (_e) {}
       if (!perm || !(perm.granted === true || perm.status === 'granted')) {
         try {
           perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        } catch(e) {}
+        } catch (_e) {}
       }
       const ok = (perm && (perm.granted === true || perm.status === 'granted'));
       if (!ok) {
@@ -1183,7 +1183,7 @@ export default function BaseControlForm({
         });
       });
       setPhotoModal({ visible: true, uris: Array.isArray(modalUris) ? modalUris : [], index: 0, mallSectionId: sid, mallPointIdx: pIdx });
-    } catch(e) {
+    } catch (_e) {
       alert('Kunde inte välja bild: ' + (e?.message || e));
     }
   };
@@ -1200,7 +1200,7 @@ export default function BaseControlForm({
       if (changed) {
         saveByggdelHierarchy({ momentsByGroup: merged }).catch((e) => {});
       }
-    } catch(e) {
+    } catch (_e) {
       setByggdelMomentsByGroup(defaultByggdelMomentsByGroup);
     } finally {
       setByggdelHierarchyLoading(false);
@@ -1224,7 +1224,7 @@ export default function BaseControlForm({
         return an.localeCompare(bn, 'sv');
       });
       setByggdelMallar(arr);
-    } catch(e) {
+    } catch (_e) {
       setByggdelMallar([]);
     } finally {
       setByggdelMallarLoading(false);
@@ -1298,7 +1298,7 @@ export default function BaseControlForm({
         setChecklist(newChecklist);
       }
       setExpandedChecklist([]);
-    } catch(e) {}
+    } catch (_e) {}
   };
 
   useEffect(() => {
@@ -1352,7 +1352,7 @@ export default function BaseControlForm({
         if (!currentChecklist || currentChecklist.length === 0) {
           applySelectedCategoriesToChecklist(flags);
         }
-      } catch(e) {}
+      } catch (_e) {}
     })();
   }, [controlType, project && project.id, checklistConfig, initialValues]);
 
@@ -1424,7 +1424,7 @@ export default function BaseControlForm({
 
         const uniq = Array.from(new Set(migrated.map(x => String(x || '').trim()).filter(Boolean)));
         setAktivaByggdelarSelectedKeys(uniq);
-      } catch(e) {
+      } catch (_e) {
         setAktivaByggdelarSelectedKeys([]);
       }
     })();
@@ -1476,18 +1476,18 @@ export default function BaseControlForm({
     const handlePickFromLibrary = async () => {
       try {
         console.log('[BaseControlForm] handlePickFromLibrary start');
-        try { Keyboard.dismiss(); } catch(e) {}
+        try { Keyboard.dismiss(); } catch (_e) {}
         setShowPhotoChoice(false);
         let perm = null;
         try {
           if (typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
             perm = await ImagePicker.getMediaLibraryPermissionsAsync();
           }
-        } catch(e) {}
+        } catch (_e) {}
         if (!perm || !(perm.granted === true || perm.status === 'granted')) {
           try {
             perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          } catch(e) {}
+          } catch (_e) {}
         }
         const ok = (perm && (perm.granted === true || perm.status === 'granted'));
         if (!ok) {
@@ -1565,7 +1565,7 @@ export default function BaseControlForm({
           }
         }
         // User cancelled or no assets: No-op
-      } catch(e) {
+      } catch (_e) {
         console.warn('Image pick error', e);
         alert('Kunde inte välja bild: ' + (e?.message || e));
       }
@@ -1586,15 +1586,15 @@ export default function BaseControlForm({
       const b = Array.isArray(incoming.participants) ? incoming.participants : [];
       const key = (p) => ((p && p.name) ? p.name : JSON.stringify(p)) + '::' + ((p && p.company) ? p.company : '');
       const map = new Map();
-      a.concat(b).forEach(p => { try { map.set(key(p), p); } catch(e) {} });
+      a.concat(b).forEach(p => { try { map.set(key(p), p); } catch (_e) {} });
       out.participants = Array.from(map.values());
-    } catch(e) {}
+    } catch (_e) {}
     // Merge mottagningsSignatures
     try {
       const a = Array.isArray(existing.mottagningsSignatures) ? existing.mottagningsSignatures : [];
       const b = Array.isArray(incoming.mottagningsSignatures) ? incoming.mottagningsSignatures : [];
       out.mottagningsSignatures = [...a, ...b.filter(s => !a.includes(s))];
-    } catch(e) {}
+    } catch (_e) {}
     // Merge mottagningsPhotos by uri
     try {
       const a = Array.isArray(existing.mottagningsPhotos) ? existing.mottagningsPhotos : [];
@@ -1603,7 +1603,7 @@ export default function BaseControlForm({
       const merged = [...a];
       b.forEach(x => { if (x && x.uri && !seen.has(x.uri)) { seen.add(x.uri); merged.push(x); } });
       out.mottagningsPhotos = merged;
-    } catch(e) {}
+    } catch (_e) {}
     // Merge checklist: prefer incoming structure but union photos per point
     try {
       const A = Array.isArray(existing.checklist) ? existing.checklist : [];
@@ -1631,7 +1631,7 @@ export default function BaseControlForm({
         });
         out.checklist = mergedChecklist;
       }
-    } catch(e) {}
+    } catch (_e) {}
     return out;
   };
 
@@ -1644,7 +1644,7 @@ export default function BaseControlForm({
     try {
       const raw = await AsyncStorage.getItem('draft_controls');
       if (raw) arr = JSON.parse(raw) || [];
-    } catch(e) { arr = []; }
+    } catch (_e) { arr = []; }
     // Find matching draft by id first
     let idx = -1;
     if (draftObj && draftObj.id) {
@@ -1702,7 +1702,7 @@ export default function BaseControlForm({
               (async () => {
                 try {
                   const toSaveId = draftId || uuidv4();
-                  try { setDraftId(toSaveId); } catch(e) {}
+                  try { setDraftId(toSaveId); } catch (_e) {}
                   const draftObj = {
                     id: toSaveId,
                     date: dateValue,
@@ -1726,14 +1726,14 @@ export default function BaseControlForm({
                   try {
                     await persistDraftObject(draftObj);
                     // ...existing code...
-                  } catch(e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch(e) {} }
-                } catch(e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch(e) {} }
+                  } catch (_e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (_e) {} }
+                } catch (_e) { try { console.warn('[BaseControlForm] persist after attach failed', e); } catch (_e) {} }
               })();
             }
           }
-        } catch(e) {}
+        } catch (_e) {}
         if (toAdd.length === 0) {
-          try { navigation.setParams({ cameraResult: undefined }); } catch(e) {}
+          try { navigation.setParams({ cameraResult: undefined }); } catch (_e) {}
           return;
         }
         setMottagningsPhotos(prevState => {
@@ -1742,11 +1742,11 @@ export default function BaseControlForm({
           return next;
         });
         // ...existing code...
-        try { navigation.setParams({ cameraResult: undefined }); } catch(e) {}
-      } catch(e) {}
+        try { navigation.setParams({ cameraResult: undefined }); } catch (_e) {}
+      } catch (_e) {}
     } else if (uri) {
       if (processedCameraUrisRef.current.has(uri)) {
-        try { navigation.setParams({ cameraResult: undefined }); } catch(e) {}
+        try { navigation.setParams({ cameraResult: undefined }); } catch (_e) {}
         return;
       }
       if (controlType === 'Mottagningskontroll') {
@@ -1761,9 +1761,9 @@ export default function BaseControlForm({
             mottagningsPhotosRef.current = next;
             return next;
           });
-          try { console.log('[BaseControlForm] appended uri to mottagningsPhotos, item:', uri); } catch(e) {}
-          try { navigation.setParams({ cameraResult: undefined }); } catch(e) {}
-        } catch(e) {}
+          try { console.log('[BaseControlForm] appended uri to mottagningsPhotos, item:', uri); } catch (_e) {}
+          try { navigation.setParams({ cameraResult: undefined }); } catch (_e) {}
+        } catch (_e) {}
       } else if (sectionIdx !== undefined && pointIdx !== undefined) {
         try {
           const prev = checklistRef.current || [];
@@ -1780,13 +1780,13 @@ export default function BaseControlForm({
           setChecklist(newChecklist);
           checklistRef.current = newChecklist;
           setExpandedChecklist(prev => prev.includes(sectionIdx) ? prev : [sectionIdx]);
-          try { navigation.setParams({ cameraResult: undefined }); } catch(e) {}
+          try { navigation.setParams({ cameraResult: undefined }); } catch (_e) {}
           // Persist updated checklist (including photos) to draft controls immediately so
           // photos added from CameraCapture are not lost if the user navigates away.
           (async () => {
             try {
               const toSaveId = draftId || uuidv4();
-              try { setDraftId(toSaveId); } catch(e) {}
+              try { setDraftId(toSaveId); } catch (_e) {}
               const draftObj = {
                 id: toSaveId,
                 date: dateValue,
@@ -1809,13 +1809,13 @@ export default function BaseControlForm({
               };
               try {
                 await persistDraftObject(draftObj);
-                try { console.log('[BaseControlForm] persisted draft after uri add, id:', draftObj.id); } catch(e) {}
-              } catch(e) { try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch(e) {} }
-            } catch(e) {
-              try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch(e) {}
+                try { console.log('[BaseControlForm] persisted draft after uri add, id:', draftObj.id); } catch (_e) {}
+              } catch (_e) { try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch (_e) {} }
+            } catch (_e) {
+              try { console.warn('[BaseControlForm] persist after uri add failed', e); } catch (_e) {}
             }
           })();
-        } catch(e) {}
+        } catch (_e) {}
       }
     }
   };
@@ -1846,9 +1846,9 @@ export default function BaseControlForm({
             const idx = typeof state.index === 'number' ? state.index : state.routes.findIndex(r => r.key === route.key);
             const prev = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
             // ...existing code...
-          } catch(e) {}
+          } catch (_e) {}
         }
-      } catch(e) {}
+      } catch (_e) {}
     };
     const unsub = navigation.addListener('focus', () => { checkStateForCameraResult(); });
     // also check immediately (in case params were set while backgrounded)
@@ -1866,10 +1866,10 @@ export default function BaseControlForm({
         if (!Array.isArray(arr) || arr.length === 0) return;
         // ...existing code...
         for (const cameraResult of arr) {
-          try { processCameraResult(cameraResult); } catch(e) {}
+          try { processCameraResult(cameraResult); } catch (_e) {}
         }
         await AsyncStorage.removeItem('pending_camera_photos');
-      } catch(e) {}
+      } catch (_e) {}
     };
     const unsub2 = navigation.addListener('focus', () => { drainPending(); });
     // run now as well
@@ -1907,14 +1907,14 @@ export default function BaseControlForm({
           sigCurrentRef.current = next;
           setSigCurrent(next);
         }
-      } catch(e) {}
+      } catch (_e) {}
     },
     onPanResponderRelease: () => {
       try {
         const curr = (sigCurrentRef.current && sigCurrentRef.current.length) ? [...(Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []), sigCurrentRef.current] : (Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []);
         sigStrokesRef.current = curr;
         setSigStrokes(curr);
-      } catch(e) {}
+      } catch (_e) {}
       sigCurrentRef.current = [];
       setSigCurrent([]);
     },
@@ -1923,7 +1923,7 @@ export default function BaseControlForm({
         const curr = (sigCurrentRef.current && sigCurrentRef.current.length) ? [...(Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []), sigCurrentRef.current] : (Array.isArray(sigStrokesRef.current) ? sigStrokesRef.current : []);
         sigStrokesRef.current = curr;
         setSigStrokes(curr);
-      } catch(e) {}
+      } catch (_e) {}
       sigCurrentRef.current = [];
       setSigCurrent([]);
     }
@@ -1977,7 +1977,7 @@ export default function BaseControlForm({
         savedAt: new Date().toISOString(),
       };
       // Ensure subsequent saves update the same draft instead of creating a new one
-      try { setDraftId(draft.id); } catch(e) {}
+      try { setDraftId(draft.id); } catch (_e) {}
 
       // Persist draft using merge-upsert helper so we don't overwrite richer data
       try {
@@ -1986,16 +1986,16 @@ export default function BaseControlForm({
         try {
           // Best-effort: also save draft to Firestore so web/app can sync
           await saveDraftToFirestore(draft);
-        } catch(e) {}
-      } catch(e) {
-        try { console.warn('[BaseControlForm] failed to persist draft_controls', e); } catch(e) {}
+        } catch (_e) {}
+      } catch (_e) {
+        try { console.warn('[BaseControlForm] failed to persist draft_controls', e); } catch (_e) {}
       }
       // store last saved draft so concurrent attempts can reuse it
       lastSavedDraftRef.current = draft;
       return draft;
-    } catch(e) {
+    } catch (_e) {
       // If persistence fails, still return the constructed draft so callers/upserters reuse same id
-      try { if (draft) lastSavedDraftRef.current = draft; } catch(e) {}
+      try { if (draft) lastSavedDraftRef.current = draft; } catch (_e) {}
       alert('Kunde inte spara utkast: ' + (e && e.message ? e.message : String(e)));
       return draft;
     } finally {
@@ -2015,7 +2015,7 @@ export default function BaseControlForm({
     // Ensure repeated saves (e.g. accidental double click) target the same record.
     try {
       if (!(initialValues && initialValues.id) && !draftId) setDraftId(resolvedId);
-    } catch(e) {}
+    } catch (_e) {}
 
     try {
       if (onSave) {
@@ -2040,7 +2040,7 @@ export default function BaseControlForm({
           type: controlType,
         }));
       }
-    } catch(e) {
+    } catch (_e) {
       finishingSaveRef.current = false;
       Alert.alert('Kunde inte spara', (e && e.message) ? e.message : String(e));
       return;
@@ -2065,18 +2065,18 @@ export default function BaseControlForm({
       if (draftIdToDelete) {
         await deleteDraftControlFromFirestore(draftIdToDelete);
       }
-    } catch(e) {}
+    } catch (_e) {}
     // Clear dirty flag so beforeRemove won't intercept navigation
     try {
       isDirtyRef.current = false;
-    } catch(e) {}
+    } catch (_e) {}
 
     // For "Slutför" on web: show a lightweight confirmation (like "Spara utkast")
     // and then exit back to the project automatically.
     if (!isEditingCompleted) {
-      try { setShowFinishConfirm(true); } catch(e) {}
+      try { setShowFinishConfirm(true); } catch (_e) {}
       setTimeout(() => {
-        try { setShowFinishConfirm(false); } catch(e) {}
+        try { setShowFinishConfirm(false); } catch (_e) {}
         finishingSaveRef.current = false;
         try {
           if (typeof onFinished === 'function') {
@@ -2092,7 +2092,7 @@ export default function BaseControlForm({
           } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
             navigation.goBack();
           }
-        } catch(e) {}
+        } catch (_e) {}
       }, 900);
       return;
     }
@@ -2153,11 +2153,11 @@ export default function BaseControlForm({
     });
     try {
       // Mark form as not dirty and hide any back-confirm modal so navigation proceeds cleanly
-      try { isDirtyRef.current = false; } catch(e) {}
-      try { setShowBackConfirm(false); } catch(e) {}
+      try { isDirtyRef.current = false; } catch (_e) {}
+      try { setShowBackConfirm(false); } catch (_e) {}
       setShowDraftSavedConfirm(true);
       setTimeout(() => {
-        try { setShowDraftSavedConfirm(false); } catch(e) {}
+        try { setShowDraftSavedConfirm(false); } catch (_e) {}
         try {
           if (blockedNavEvent.current) {
             blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
@@ -2167,9 +2167,9 @@ export default function BaseControlForm({
           } else if (navigation && navigation.canGoBack && navigation.canGoBack()) {
             navigation.goBack();
           }
-        } catch(e) {}
+        } catch (_e) {}
       }, 1000);
-    } catch(e) {}
+    } catch (_e) {}
   };
 
   // Render
@@ -2265,7 +2265,7 @@ export default function BaseControlForm({
                     (async () => {
                       try {
                         await saveDraftControl();
-                      } catch(e) { }
+                      } catch (_e) { }
                     })();
                   }}
                   style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
@@ -2328,7 +2328,7 @@ export default function BaseControlForm({
                         type: controlType,
                       });
                   // Ensure navigation won't be blocked by dirty flag after saving
-                  try { isDirtyRef.current = false; } catch(e) {}
+                  try { isDirtyRef.current = false; } catch (_e) {}
                   closeBackConfirm('draft');
                   if (blockedNavEvent.current) {
                     blockedNavEvent.current.data.action && navigation.dispatch(blockedNavEvent.current.data.action);
@@ -2459,7 +2459,7 @@ export default function BaseControlForm({
                           setMottagningsPhotos(mpNew);
                           mottagningsPhotosRef.current = mpNew;
                         }
-                      } catch(e) {}
+                      } catch (_e) {}
                     }}
                     placeholder="Lägg till kommentar..."
                     placeholderTextColor="#ddd"
@@ -2796,7 +2796,7 @@ export default function BaseControlForm({
                                 const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
                                 if (cfg.length > 0) setSelectedCategories(cfg.map(() => false));
                               }
-                            } catch(e) {}
+                            } catch (_e) {}
                           };
 
                           if (hadMall && hasAnyChecklistPoints(checklistRef.current)) {
@@ -2985,7 +2985,7 @@ export default function BaseControlForm({
                               const cfg = Array.isArray(checklistConfig) ? checklistConfig : [];
                               if (cfg.length > 0) setSelectedCategories(cfg.map(() => false));
                             }
-                          } catch(e) {}
+                          } catch (_e) {}
                         };
 
                         if (hadMall && hasAnyChecklistPoints(checklistRef.current)) {
@@ -3410,7 +3410,7 @@ export default function BaseControlForm({
                                                                                 setByggdelMallSectionsDraft([]);
                                                                                 setNewByggdelMallSectionTitle('');
                                                                               }
-                                                                            } catch(e) {
+                                                                            } catch (_e) {
                                                                               const msg = (e && e.message) ? String(e.message) : '';
                                                                               const code = e && e.code ? String(e.code) : '';
                                                                               const isPermission = code === 'permission-denied' || (msg && msg.toLowerCase().includes('permission'));
@@ -3746,7 +3746,7 @@ export default function BaseControlForm({
                             if (pid) {
                               AsyncStorage.setItem(arbetsberedningActiveByggdelKey(pid), JSON.stringify({ selectedKeys: normalized })).catch((e) => {});
                             }
-                          } catch(e) {}
+                          } catch (_e) {}
                           setShowAktivaByggdelarModal(false);
                         }}
                         style={{ flex: 1, alignItems: 'center', paddingVertical: 12, marginLeft: 8 }}
@@ -3893,7 +3893,7 @@ export default function BaseControlForm({
                                               setByggdelMallEditorExpandedSectionId(prev => (String(prev || '') === sid ? '' : prev));
                                               setNewByggdelMallPointBySectionId(prev => {
                                                 const next = Object.assign({}, (prev && typeof prev === 'object') ? prev : {});
-                                                try { delete next[sid]; } catch(e) {}
+                                                try { delete next[sid]; } catch (_e) {}
                                                 return next;
                                               });
                                             }
@@ -4172,7 +4172,7 @@ export default function BaseControlForm({
                         }
                         await refreshByggdelMallar();
                         setShowByggdelMallEditor(false);
-                      } catch(e) {
+                      } catch (_e) {
                         Alert.alert('Kunde inte spara', 'Försök igen.');
                       } finally {
                         setSavingByggdelMallPoints(false);
@@ -4470,7 +4470,7 @@ export default function BaseControlForm({
                           const selectedLabels = cfg.filter((_, i) => !!selectedCategories[i]).map(sec => sec && sec.label ? sec.label : '').filter(Boolean);
                           AsyncStorage.setItem(arbetsberedningCategoryKey(pid), JSON.stringify({ selectedLabels })).catch((e) => {});
                         }
-                      } catch(e) {}
+                      } catch (_e) {}
                     }
                     setShowCategoryModal(false);
                   }}
@@ -4532,7 +4532,7 @@ export default function BaseControlForm({
                   const thumbItem = out[sectionThumbIndex];
                   sectionThumbUri = (thumbItem && typeof thumbItem === 'object' && thumbItem.uri) ? thumbItem.uri : thumbItem;
                 }
-              } catch(e) {
+              } catch (_e) {
                 sectionPhotoItems = [];
                 sectionThumbIndex = 0;
                 sectionThumbUri = null;
@@ -4551,7 +4551,7 @@ export default function BaseControlForm({
                   const rem = section.remediation && section.remediation[pt];
                   if (!rem) return i;
                 }
-              } catch(e) {}
+              } catch (_e) {}
               return -1;
             })();
 
@@ -4629,8 +4629,8 @@ export default function BaseControlForm({
                   {Platform.OS === 'web' && controlType === 'Skyddsrond' && hasAvvikelse && firstUnhandledDeviationIdx >= 0 && (
                     <TouchableOpacity
                       onPress={(e) => {
-                        try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
-                        try { setExpandedChecklist([sectionIdx]); } catch(e) {}
+                        try { e && e.stopPropagation && e.stopPropagation(); } catch (_e) {}
+                        try { setExpandedChecklist([sectionIdx]); } catch (_e) {}
                         try {
                           setRemediationModal({
                             visible: true,
@@ -4641,7 +4641,7 @@ export default function BaseControlForm({
                             date: '',
                             infoMode: false,
                           });
-                        } catch(e) {}
+                        } catch (_e) {}
                       }}
                       style={{ marginLeft: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600' }}
                       activeOpacity={0.85}
@@ -4653,7 +4653,7 @@ export default function BaseControlForm({
                   {Platform.OS === 'web' && sectionThumbUri && sectionPhotoItems.length > 0 && (
                     <TouchableOpacity
                       onPress={(e) => {
-                        try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
+                        try { e && e.stopPropagation && e.stopPropagation(); } catch (_e) {}
                         setPhotoModal({ visible: true, uris: sectionPhotoItems, index: sectionThumbIndex });
                       }}
                       style={{ marginLeft: 8 }}
@@ -4835,7 +4835,7 @@ export default function BaseControlForm({
                                           date: remediation && remediation.date ? remediation.date : '',
                                           infoMode: true,
                                         });
-                                      } catch(e) {}
+                                      } catch (_e) {}
                                     }}
                                     style={{ marginLeft: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#E8F5E9' }}
                                     accessibilityLabel={`Visa åtgärdsinfo för ${pointText}`}
@@ -4851,7 +4851,7 @@ export default function BaseControlForm({
                                   onPress={() => {
                                     try {
                                       setRemediationModal({ visible: true, sectionIdx, pointIdx, comment: '', name: '', date: '', infoMode: false });
-                                    } catch(e) {}
+                                    } catch (_e) {}
                                   }}
                                   style={{ marginLeft: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 0, backgroundColor: '#FFD600' }}
                                   accessibilityLabel={`Åtgärda avvikelse för ${pointText}`}
@@ -5066,7 +5066,7 @@ export default function BaseControlForm({
                         ) : (
                           <Image source={{ uri: existing.uri }} style={{ width: 120, height: 48, borderRadius: 6, marginRight: 8, borderWidth: 1, borderColor: '#e0e0e0' }} />
                         )}
-                        <TouchableOpacity onPress={() => { const v = existing.strokes || []; setSignatureForIndex(pIdx); setSigStrokes(v); try { sigStrokesRef.current = v; } catch(e) {} }} style={{ paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 }}>
+                        <TouchableOpacity onPress={() => { const v = existing.strokes || []; setSignatureForIndex(pIdx); setSigStrokes(v); try { sigStrokesRef.current = v; } catch (_e) {} }} style={{ paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 }}>
                           <Text style={{ color: '#1976D2' }}>Byt</Text>
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => setMottagningsSignatures(prev => prev.filter(s => s.name !== name))} style={{ paddingHorizontal: 10, paddingVertical: 6 }}>
@@ -5074,7 +5074,7 @@ export default function BaseControlForm({
                         </TouchableOpacity>
                       </>
                     ) : (
-                      <TouchableOpacity onPress={() => { setSignatureForIndex(pIdx); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch(e) {} }} style={{ paddingHorizontal: 6, paddingVertical: 2 }} accessibilityLabel="Lägg till signatur">
+                      <TouchableOpacity onPress={() => { setSignatureForIndex(pIdx); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (_e) {} }} style={{ paddingHorizontal: 6, paddingVertical: 2 }} accessibilityLabel="Lägg till signatur">
                         <Ionicons name="add-circle-outline" size={24} color="#1976D2" />
                       </TouchableOpacity>
                     )}
@@ -5085,7 +5085,7 @@ export default function BaseControlForm({
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Text style={{ fontSize: 15, color: '#222' }}>Signatur</Text>
-              <TouchableOpacity onPress={() => { setSignatureForIndex('mottagnings'); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch(e) {} }} style={{ paddingVertical: 4, paddingHorizontal: 6 }} accessibilityLabel="Lägg till signatur">
+              <TouchableOpacity onPress={() => { setSignatureForIndex('mottagnings'); const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (_e) {} }} style={{ paddingVertical: 4, paddingHorizontal: 6 }} accessibilityLabel="Lägg till signatur">
                 <Ionicons name="add-circle-outline" size={28} color="#1976D2" />
               </TouchableOpacity>
             </View>
@@ -5215,8 +5215,8 @@ export default function BaseControlForm({
                 onPress={() => {
                   setShowCancelEditConfirm(false);
                   setShowBackConfirm(false); // Prevent double modal
-                  try { isDirtyRef.current = false; } catch(e) {}
-                  try { if (blockedNavEvent) blockedNavEvent.current = null; } catch(e) {}
+                  try { isDirtyRef.current = false; } catch (_e) {}
+                  try { if (blockedNavEvent) blockedNavEvent.current = null; } catch (_e) {}
                   if (typeof onExit === 'function') onExit();
                   else if (navigation && navigation.goBack) navigation.goBack();
                 }}
@@ -5245,7 +5245,7 @@ export default function BaseControlForm({
               </Svg>
             </View>
             <View style={{ flexDirection: 'row', marginTop: 12, width: '100%', justifyContent: 'space-between' }}>
-              <TouchableOpacity onPress={() => { const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch(e) {} setSigCurrent([]); }} style={{ padding: 10 }}>
+              <TouchableOpacity onPress={() => { const v = []; setSigStrokes(v); try { sigStrokesRef.current = v; } catch (_e) {} setSigCurrent([]); }} style={{ padding: 10 }}>
                 <Text style={{ color: '#D32F2F' }}>Rensa</Text>
               </TouchableOpacity>
               <View style={{ flexDirection: 'row' }}>
@@ -5269,10 +5269,10 @@ export default function BaseControlForm({
                     // Reset local signature drawing state and close modal
                     const v = [];
                     setSigStrokes(v);
-                    try { sigStrokesRef.current = v; } catch(e) {}
+                    try { sigStrokesRef.current = v; } catch (_e) {}
                     setSigCurrent([]);
                     setSignatureForIndex(null);
-                  } catch(e) {}
+                  } catch (_e) {}
                 }} style={{ padding: 10 }}>
                   <Text style={{ color: '#1976D2', fontWeight: '600' }}>OK</Text>
                 </TouchableOpacity>

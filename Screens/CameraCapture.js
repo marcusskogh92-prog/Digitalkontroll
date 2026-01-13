@@ -42,13 +42,13 @@ export default function CameraCapture() {
     } else {
       resolvedInfo = { type: 'none', keys: Object.keys(CameraModule || {}) };
     }
-  } catch(e) {
+  } catch (_e) {
     resolvedInfo = { type: 'error', keys: Object.keys(CameraModule || {}), error: String(e) };
   }
   const handlePickFromLibrary = async () => {
     try {
       if (!ImagePicker) {
-        try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+        try { ImagePicker = await import('expo-image-picker'); } catch (_e) { ImagePicker = null; }
       }
       let perm = null;
       if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
@@ -110,7 +110,7 @@ export default function CameraCapture() {
                   await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                 } catch(_e) {}
               })();
-            } catch(e) {}
+            } catch (_e) {}
             setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
           } else {
             try {
@@ -129,21 +129,21 @@ export default function CameraCapture() {
                       pending.push(payload.cameraResult);
                       await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                     })();
-                  } catch(e) {}
-                  setTimeout(() => { try { navigation.goBack(); } catch(e) {} }, 300);
+                  } catch (_e) {}
+                  setTimeout(() => { try { navigation.goBack(); } catch (_e) {} }, 300);
                 } else {
                   navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                 }
               } else {
                 navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
               }
-            } catch(e) {
+            } catch (_e) {
               navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
             }
           }
         }
       }
-    } catch(e) {
+    } catch (_e) {
       Alert.alert('Kunde inte välja bild: ' + (e?.message || e));
     }
   };
@@ -171,7 +171,7 @@ export default function CameraCapture() {
             perm = await CameraModule.Camera[fn]();
             if (perm) break;
           }
-        } catch(e) {}
+        } catch (_e) {}
       }
       const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
       if (status !== 'granted') {
@@ -211,7 +211,7 @@ export default function CameraCapture() {
 
       setPhotoPreview(finalPhoto);
       setPhotoComment('');
-    } catch(e) {
+    } catch (_e) {
       Alert.alert('Fel vid fotografering', String(e?.message || e));
     } finally {
       setIsCapturing(false);
@@ -241,12 +241,12 @@ export default function CameraCapture() {
             perm = await CameraModule.Camera[fn]();
             if (perm) break;
           }
-        } catch(e) {}
+        } catch (_e) {}
       }
       const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
       setHasPermission(status === 'granted' ? true : false);
       return status === 'granted';
-    } catch(e) {
+    } catch (_e) {
       setHasPermission(false);
       return false;
     }
@@ -307,10 +307,10 @@ export default function CameraCapture() {
             blurOnSubmit={true}
             onFocus={() => {
               // Delay to allow keyboard to open then scroll the input into view
-              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch(e) {} }, 120);
+              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch (_e) {} }, 120);
             }}
             returnKeyType="done"
-            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch(e) {} }}
+            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch (_e) {} }}
             style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff', minHeight: 48 }}
           />
         </View>
@@ -345,7 +345,7 @@ export default function CameraCapture() {
                     if (returnKey) {
                       try {
                         navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
-                      } catch(e) {}
+                      } catch (_e) {}
                       try {
                         const state = navigation.getState && navigation.getState();
                         if (state && Array.isArray(state.routes)) {
@@ -354,10 +354,10 @@ export default function CameraCapture() {
                           if (prevRoute && prevRoute.key) {
                             try {
                               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
-                            } catch(e) {}
+                            } catch (_e) {}
                           }
                         }
-                      } catch(e) {}
+                      } catch (_e) {}
                       try {
                         (async () => {
                           try {
@@ -365,11 +365,11 @@ export default function CameraCapture() {
                             const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
                             pending.push(payload.cameraResult);
                             await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
-                          } catch(e) {}
+                          } catch (_e) {}
                         })();
-                      } catch(e) {}
+                      } catch (_e) {}
                       setTimeout(() => {
-                        try { navigation.goBack(); } catch(e) {};
+                        try { navigation.goBack(); } catch (_e) {};
                       }, 300);
                     } else {
                       try {
@@ -380,7 +380,7 @@ export default function CameraCapture() {
                             if (prevRoute && prevRoute.key) {
                             try {
                               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
-                            } catch(e) {}
+                            } catch (_e) {}
                             try {
                               (async () => {
                                 const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
@@ -388,22 +388,22 @@ export default function CameraCapture() {
                                 pending.push(payload.cameraResult);
                                 await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                               })();
-                            } catch(e) {}
-                            setTimeout(() => { try { navigation.goBack(); } catch(e) {} }, 300);
+                            } catch (_e) {}
+                            setTimeout(() => { try { navigation.goBack(); } catch (_e) {} }, 300);
                           } else {
                             navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                           }
                         } else {
                           navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                         }
-                      } catch(e) {
+                      } catch (_e) {
                         navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                       }
                     }
-                  } catch(e) {
+                  } catch (_e) {
                     navigation.navigate(target, payload);
                   }
-              } catch(e) {
+              } catch (_e) {
                 navigation.navigate(target, {
                   cameraResult: {
                     uri: photoPreview.uri,

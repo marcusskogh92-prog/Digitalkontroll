@@ -116,7 +116,7 @@ export default function ManageUsers({ route, navigation }) {
         setProfile(prof || null);
         const mems = await fetchCompanyMembers(companyId) || [];
         setMembers(mems);
-      } catch (e) {
+      } catch (_e) {
         console.warn(e);
       } finally { setLoading(false); }
     })();
@@ -194,7 +194,7 @@ export default function ManageUsers({ route, navigation }) {
       } else {
         Alert.alert('Fel', 'Kunde inte skapa användare.');
       }
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -283,7 +283,7 @@ export default function ManageUsers({ route, navigation }) {
           <View style={dashboardContainerStyle}>
             <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 760, maxWidth: '100%' }] }>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
+                <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch (_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                   <Ionicons name="chevron-back" size={20} color="#222" />
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>

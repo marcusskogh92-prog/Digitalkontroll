@@ -42,7 +42,7 @@ export const db = getFirestore(app);
 let _functionsClient = null;
 try {
   _functionsClient = getFunctions(app);
-} catch (e) {
+} catch (_e) {
   _functionsClient = null;
 }
 export const functionsClient = _functionsClient;
@@ -58,9 +58,9 @@ try {
         connectFunctionsEmulator(functionsClient, 'localhost', 5001);
         console.log('[firebase] connected functions client to emulator at localhost:5001');
       }
-    } catch (e) { console.warn('[firebase] could not connect functions emulator', e); }
+    } catch (_e) { console.warn('[firebase] could not connect functions emulator', e); }
   }
-} catch(e) {}
+} catch (_e) {}
 
 // Also connect Firestore and Auth clients to local emulators when running on localhost
 try {
@@ -71,16 +71,16 @@ try {
         connectFirestoreEmulator(db, 'localhost', 8085);
         console.log('[firebase] connected firestore client to emulator at localhost:8085');
       }
-    } catch (e) { console.warn('[firebase] could not connect firestore emulator', e); }
+    } catch (_e) { console.warn('[firebase] could not connect firestore emulator', e); }
     try {
       if (typeof connectAuthEmulator === 'function' && auth) {
         // Auth emulator default port 9099
-        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch(e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
+        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch (_e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
         console.log('[firebase] connected auth client to emulator at http://localhost:9099');
       }
-    } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
+    } catch (_e) { console.warn('[firebase] could not connect auth emulator', e); }
   }
-} catch(e) {}
+} catch (_e) {}
 */
 
 // Callable wrappers
@@ -235,10 +235,10 @@ async function getAuthDebugSnapshot() {
       const tokenRes = await auth.currentUser.getIdTokenResult(false).catch((e) => null);
       snap.claimsCompanyId = tokenRes?.claims?.companyId || null;
     }
-  } catch(e) {}
+  } catch (_e) {}
   try {
     snap.storedCompanyId = await AsyncStorage.getItem('dk_companyId');
-  } catch(e) {}
+  } catch (_e) {}
   return snap;
 }
 
@@ -259,12 +259,12 @@ async function resolveCompanyId(preferredCompanyId, payload) {
       const claims = tokenRes && tokenRes.claims ? tokenRes.claims : {};
       if (claims && claims.companyId) return claims.companyId;
     }
-  } catch(e) {}
+  } catch (_e) {}
 
   try {
     const stored = await AsyncStorage.getItem('dk_companyId');
     if (stored) return stored;
-  } catch(e) {}
+  } catch (_e) {}
   return null;
 }
 
@@ -310,12 +310,12 @@ function sanitizeForFirestore(value) {
 
   try {
     return _walk(value);
-  } catch(e) {
+  } catch (_e) {
     console.warn('[firebase] sanitizeForFirestore failed, falling back to JSON stringify', e);
     // As a last resort, stringify the whole payload so setDoc won't throw nested-array errors.
     try {
       return { __json: JSON.stringify(value) };
-    } catch(e) {
+    } catch (_e) {
       return null;
     }
   }
@@ -331,7 +331,7 @@ export async function fetchHierarchy(companyId) {
       const data = snap.data();
       return Array.isArray(data.items) ? data.items : [];
     }
-  } catch(e) {
+  } catch (_e) {
     // Silent fail -> caller can fall back to local storage
   }
   return [];
@@ -344,7 +344,7 @@ export async function saveHierarchy(companyId, items) {
     // write items with server timestamp
     await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -356,7 +356,7 @@ export async function fetchCompanyProfile(companyId) {
     const ref = doc(db, 'foretag', companyId, 'profil', 'public');
     const snap = await getDoc(ref);
     if (snap.exists()) return snap.data();
-  } catch(e) {}
+  } catch (_e) {}
   return null;
 }
 
@@ -379,7 +379,7 @@ export async function fetchCompanies() {
         const companyId = companyDoc && companyDoc.id ? companyDoc.id : null;
         if (!companyId) return;
         out.push({ id: companyId, profile: d.data() || null });
-      } catch (e) {
+      } catch (_e) {
         // Ignore individual mapping errors; continue with others
       }
     });
@@ -392,7 +392,7 @@ export async function fetchCompanies() {
     });
 
     return out;
-  } catch (e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -431,7 +431,7 @@ export async function resolveCompanyLogoUrl(companyId) {
             try {
               const publicUrl = 'https://storage.googleapis.com/' + b + '/' + encodeURI(fullPath.replace(/^\/+/, ''));
               return publicUrl;
-            } catch (e) {
+            } catch (_e) {
               // fall back to SDK below
             }
           }
@@ -445,7 +445,7 @@ export async function resolveCompanyLogoUrl(companyId) {
       }
 
       return null;
-    } catch(e) {
+    } catch (_e) {
       return null;
     }
   }
@@ -459,7 +459,7 @@ export async function saveCompanyProfile(companyId, profile) {
     const ref = doc(db, 'foretag', companyId, 'profil', 'public');
     await setDoc(ref, profile, { merge: true });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -471,7 +471,7 @@ export async function fetchUserProfile(uid) {
     const ref = doc(db, 'users', uid);
     const snap = await getDoc(ref);
     if (snap.exists()) return snap.data();
-  } catch(e) {}
+  } catch (_e) {}
   return null;
 }
 
@@ -492,7 +492,7 @@ export async function upsertCompanyMember({ companyId: companyIdOverride, uid, d
       updatedAt: serverTimestamp(),
     }, { merge: true });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -502,7 +502,7 @@ export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
 
     const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
@@ -515,7 +515,7 @@ export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
       let snap;
       try {
         snap = await getDocsFromServer(q);
-      } catch(e) {
+      } catch (_e) {
         snap = await getDocs(q);
       }
       const out = [];
@@ -532,7 +532,7 @@ export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
           fromCache: snap?.metadata?.fromCache ?? null,
         }
       };
-    } catch (e) {
+    } catch (_e) {
       const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       return { ok: false, out: [], err: e, permissionDenied, companyId, meta: null };
     }
@@ -563,7 +563,7 @@ export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
         arr.push(entry);
         await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
         await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-      } catch(e) {}
+      } catch (_e) {}
 
       return [];
     }
@@ -586,10 +586,10 @@ export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
       arr.push(entry);
       await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
       await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-    } catch(e) {}
+    } catch (_e) {}
 
     return [];
-  } catch(e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -602,7 +602,7 @@ export function subscribeCompanyMembers(companyIdOverride, { role, onData, onErr
     try {
       const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
       if (!companyId) {
-        try { if (typeof onData === 'function') onData([], { size: 0, fromCache: null, companyId: null }); } catch(e) {}
+        try { if (typeof onData === 'function') onData([], { size: 0, fromCache: null, companyId: null }); } catch (_e) {}
         return;
       }
       const baseRef = collection(db, 'foretag', companyId, 'members');
@@ -617,19 +617,19 @@ export function subscribeCompanyMembers(companyIdOverride, { role, onData, onErr
             if (typeof onData === 'function') {
               onData(out, { size: snap.size, fromCache: snap.metadata?.fromCache ?? null, companyId });
             }
-          } catch(e) {}
+          } catch (_e) {}
         },
         (err) => {
-          try { if (typeof onError === 'function') onError(err); } catch(e) {}
+          try { if (typeof onError === 'function') onError(err); } catch (_e) {}
         }
       );
-    } catch(e) {
-      try { if (typeof onError === 'function') onError(e); } catch(e) {}
+    } catch (_e) {
+      try { if (typeof onError === 'function') onError(e); } catch (_e) {}
     }
   })();
 
   return () => {
-    try { if (typeof unsub === 'function') unsub(); } catch(e) {}
+    try { if (typeof unsub === 'function') unsub(); } catch (_e) {}
   };
 }
 
@@ -640,7 +640,7 @@ export async function saveUserProfile(uid, data) {
     const ref = doc(db, 'users', uid);
     await setDoc(ref, data, { merge: true });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -662,7 +662,7 @@ export async function logUserAction({ uid, email, companyId, type, payload }) {
       ts: serverTimestamp(),
     });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -682,7 +682,7 @@ export async function logCompanyActivity(event, companyIdOverride) {
     });
     await addDoc(ref, sanitizeForFirestore(payload));
     return true;
-  } catch(e) {
+  } catch (_e) {
     // Record last Firestore error for debugging (permission-denied, etc)
     try {
       const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
@@ -700,7 +700,7 @@ export async function logCompanyActivity(event, companyIdOverride) {
       arr.push(entry);
       await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
       await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-    } catch(e) {}
+    } catch (_e) {}
     return false;
   }
 }
@@ -713,7 +713,7 @@ export function subscribeCompanyActivity(companyIdOverride, { onData, onError, l
     try {
       const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
       if (!companyId) {
-        try { if (typeof onData === 'function') onData([], { size: 0, fromCache: null, companyId: null }); } catch(e) {}
+        try { if (typeof onData === 'function') onData([], { size: 0, fromCache: null, companyId: null }); } catch (_e) {}
         return;
       }
       const baseRef = collection(db, 'foretag', companyId, 'activity');
@@ -727,7 +727,7 @@ export function subscribeCompanyActivity(companyIdOverride, { onData, onError, l
             if (typeof onData === 'function') {
               onData(out, { size: snap.size, fromCache: snap.metadata?.fromCache ?? null, companyId });
             }
-          } catch(e) {}
+          } catch (_e) {}
         },
         (err) => {
           // Record last Firestore error for debugging
@@ -747,12 +747,12 @@ export function subscribeCompanyActivity(companyIdOverride, { onData, onError, l
               arr.push(entry);
               await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
               await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-            } catch(e) {}
+            } catch (_e) {}
           })();
-          try { if (typeof onError === 'function') onError(err); } catch(e) {}
+          try { if (typeof onError === 'function') onError(err); } catch (_e) {}
         }
       );
-    } catch(e) {
+    } catch (_e) {
       // Record last Firestore error for debugging
       (async () => {
         try {
@@ -770,14 +770,14 @@ export function subscribeCompanyActivity(companyIdOverride, { onData, onError, l
           arr.push(entry);
           await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
           await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-        } catch(e) {}
+        } catch (_e) {}
       })();
-      try { if (typeof onError === 'function') onError(e); } catch(e) {}
+      try { if (typeof onError === 'function') onError(e); } catch (_e) {}
     }
   })();
 
   return () => {
-    try { if (typeof unsub === 'function') unsub(); } catch(e) {}
+    try { if (typeof unsub === 'function') unsub(); } catch (_e) {}
   };
 }
 
@@ -788,7 +788,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
     const companyId = await resolveCompanyId(companyIdOverride, control);
     if (!companyId) return { ok: false, err: null, permissionDenied: false };
@@ -805,7 +805,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
     const safePayload = sanitizeForFirestore(payload);
     try {
       await setDoc(ref, safePayload, { merge: true });
-    } catch(e) {
+    } catch (_e) {
       const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       return { ok: false, err: e, permissionDenied };
     }
@@ -818,7 +818,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
         arr.push({ ...control, id, savedAt: new Date().toISOString() });
         await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
       }
-    } catch(e) {
+    } catch (_e) {
       // ignore local persist failures
     }
     return { ok: true, err: null, permissionDenied: false };
@@ -834,7 +834,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
       throw second.err || first.err || new Error('permission-denied');
     }
     throw first.err;
-  } catch(e) {
+  } catch (_e) {
       // If Firestore rejects due to permission issues, persist locally and show a friendly alert
       const isPermissionError = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       try {
@@ -842,7 +842,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
         let arr = rawArr ? JSON.parse(rawArr) : [];
         const debug = await getAuthDebugSnapshot();
         let resolvedCompanyId = null;
-        try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, control); } catch(e) {}
+        try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, control); } catch (_e) {}
         const entry = {
           fn: 'saveControlToFirestore',
           code: e?.code || null,
@@ -857,7 +857,7 @@ export async function saveControlToFirestore(control, companyIdOverride) {
         await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
         // keep single "last" key for compatibility
         await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-      } catch(e) {}
+      } catch (_e) {}
 
       if (isPermissionError) {
         // Save the control locally so the app doesn't lose data and can sync later
@@ -869,12 +869,12 @@ export async function saveControlToFirestore(control, companyIdOverride) {
             arr.push({ ...control, id, savedAt: new Date().toISOString() });
             await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
           }
-        } catch(e) {}
+        } catch (_e) {}
 
         // Show friendly user-facing message and warn in console (avoid raw console.error to reduce noisy UI logs)
         try {
           Alert.alert('Sparat lokalt', 'Kontrollen sparades lokalt eftersom servern nekade skrivning. Appen kommer försöka synka senare.');
-        } catch(e) {}
+        } catch (_e) {}
         console.warn('[firebase] saveControlToFirestore permission denied — saved locally');
         return false;
       }
@@ -891,7 +891,7 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
     const companyId = await resolveCompanyId(companyIdOverride, draft);
     if (!companyId) return { ok: false, err: null, permissionDenied: false };
@@ -907,7 +907,7 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
     const safePayload = sanitizeForFirestore(payload);
     try {
       await setDoc(ref, safePayload, { merge: true });
-    } catch(e) {
+    } catch (_e) {
       const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       return { ok: false, err: e, permissionDenied };
     }
@@ -922,7 +922,7 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
         arr.push({ ...draft, id, savedAt: new Date().toISOString() });
       }
       await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
-    } catch(e) {
+    } catch (_e) {
       // ignore local persist failures
     }
     return { ok: true, err: null, permissionDenied: false };
@@ -937,14 +937,14 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
       throw second.err || first.err || new Error('permission-denied');
     }
     throw first.err;
-  } catch(e) {
+  } catch (_e) {
       const isPermissionError = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       try {
         const rawArr = await AsyncStorage.getItem('dk_last_fs_errors');
         let arr = rawArr ? JSON.parse(rawArr) : [];
         const debug = await getAuthDebugSnapshot();
         let resolvedCompanyId = null;
-        try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, draft); } catch(e) {}
+        try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, draft); } catch (_e) {}
         const entry = {
           fn: 'saveDraftToFirestore',
           code: e?.code || null,
@@ -959,7 +959,7 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
         await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
         // keep single "last" key for compatibility
         await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-      } catch(e) {}
+      } catch (_e) {}
 
       if (isPermissionError) {
         // Save the draft locally so user doesn't lose work
@@ -974,11 +974,11 @@ export async function saveDraftToFirestore(draft, companyIdOverride) {
             arr.push({ ...draft, id, savedAt: new Date().toISOString() });
           }
           await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
-        } catch(e) {}
+        } catch (_e) {}
 
         try {
           Alert.alert('Sparat lokalt', 'Utkast sparades lokalt eftersom servern nekade skrivning. Appen kommer försöka synka senare.');
-        } catch(e) {}
+        } catch (_e) {}
         console.warn('[firebase] saveDraftToFirestore permission denied — saved locally');
         return false;
       }
@@ -1004,7 +1004,7 @@ export async function fetchControlsForProject(projectId, companyIdOverride) {
         const d = docSnap.data() || {};
         out.push(Object.assign({}, d, { id: docSnap.id }));
       });
-    } catch(e) {}
+    } catch (_e) {}
 
     // Backward compatibility: some items may have only project.id
     try {
@@ -1016,10 +1016,10 @@ export async function fetchControlsForProject(projectId, companyIdOverride) {
           out.push(Object.assign({}, d, { id: docSnap.id }));
         }
       });
-    } catch(e) {}
+    } catch (_e) {}
 
     return out;
-  } catch(e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -1040,7 +1040,7 @@ export async function fetchDraftControlsForProject(projectId, companyIdOverride)
         const d = docSnap.data() || {};
         out.push(Object.assign({}, d, { id: docSnap.id }));
       });
-    } catch(e) {}
+    } catch (_e) {}
 
     // Backward compatibility: some items may have only project.id
     try {
@@ -1052,10 +1052,10 @@ export async function fetchDraftControlsForProject(projectId, companyIdOverride)
           out.push(Object.assign({}, d, { id: docSnap.id }));
         }
       });
-    } catch(e) {}
+    } catch (_e) {}
 
     return out;
-  } catch(e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -1067,7 +1067,7 @@ export async function deleteDraftControlFromFirestore(draftId, companyIdOverride
     if (!companyId) return false;
     await deleteDoc(doc(db, 'foretag', companyId, 'draft_controls', String(draftId)));
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -1079,7 +1079,7 @@ export async function deleteControlFromFirestore(controlId, companyIdOverride) {
     if (!companyId) return false;
     await deleteDoc(doc(db, 'foretag', companyId, 'controls', String(controlId)));
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -1097,7 +1097,7 @@ export async function fetchByggdelHierarchy(companyIdOverride) {
     const data = snap.data() || {};
     const momentsByGroup = (data && typeof data.momentsByGroup === 'object' && data.momentsByGroup) ? data.momentsByGroup : {};
     return { momentsByGroup };
-  } catch(e) {
+  } catch (_e) {
     return { momentsByGroup: {} };
   }
 }
@@ -1109,7 +1109,7 @@ export async function saveByggdelHierarchy({ momentsByGroup }, companyIdOverride
     const ref = doc(db, 'foretag', companyId, 'byggdel_hierarki', 'state');
     await setDoc(ref, { momentsByGroup: momentsByGroup || {}, updatedAt: serverTimestamp() }, { merge: true });
     return true;
-  } catch(e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -1213,7 +1213,7 @@ export async function createCompanyControlType(payload, companyIdOverride) {
       createdAt: serverTimestamp(),
     }));
     return { id: docRef.id, key, name, icon, color, order };
-  } catch (e) {
+  } catch (_e) {
     throw new Error(e?.message || 'Kunde inte skapa kontrolltyp.');
   }
 }
@@ -1261,7 +1261,7 @@ export async function updateCompanyControlType(payload, companyIdOverride) {
     const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
     await setDoc(ref, sanitizeForFirestore(patch), { merge: true });
     return true;
-  } catch (e) {
+  } catch (_e) {
     throw new Error(e?.message || 'Kunde inte uppdatera kontrolltyp.');
   }
 }
@@ -1276,7 +1276,7 @@ export async function deleteCompanyControlType(payload, companyIdOverride) {
     const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
     await deleteDoc(ref);
     return true;
-  } catch (e) {
+  } catch (_e) {
     throw new Error(e?.message || 'Kunde inte radera kontrolltyp.');
   }
 }
@@ -1297,7 +1297,7 @@ export async function fetchCompanyMallar(companyIdOverride) {
       return at.localeCompare(bt, 'sv');
     });
     return out;
-  } catch (e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -1422,7 +1422,7 @@ export async function fetchByggdelMallar(companyIdOverride) {
     });
 
     return out;
-  } catch(e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -1443,7 +1443,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
     let base = s;
     try {
       base = base.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-    } catch(e) {
+    } catch (_e) {
       // normalize may not exist in some environments; fall back
       base = s;
     }
@@ -1459,7 +1459,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
 
     const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -1525,7 +1525,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
     try {
       await setDoc(docRef, payload, { merge: false });
       return docRef.id;
-    } catch(e) {
+    } catch (_e) {
       const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       if (permissionDenied) {
         const err = e || new Error('permission-denied');
@@ -1539,7 +1539,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
 
   try {
     return await attemptWrite({ forceTokenRefresh: false });
-  } catch(e) {
+  } catch (_e) {
     const isPermissionError = !!(e && (e.__permissionDenied === true || e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
     if (isPermissionError) {
       try {
@@ -1555,7 +1555,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
       let arr = rawArr ? JSON.parse(rawArr) : [];
       const debug = await getAuthDebugSnapshot();
       let resolvedCompanyId = null;
-      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch(e) {}
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (_e) {}
       const entry = {
         fn: 'createByggdelMall',
         code: e?.code || null,
@@ -1568,7 +1568,7 @@ export async function createByggdelMall({ huvudgrupp, moment, name }, companyIdO
       arr.push(entry);
       await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
       await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-    } catch(e) {}
+    } catch (_e) {}
 
     throw e;
   }
@@ -1579,7 +1579,7 @@ export async function deleteByggdelMall({ mallId }, companyIdOverride) {
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
 
     const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -1602,7 +1602,7 @@ export async function deleteByggdelMall({ mallId }, companyIdOverride) {
 
   try {
     return await attemptDelete({ forceTokenRefresh: false });
-  } catch(e) {
+  } catch (_e) {
     const permissionDenied = !!(e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
     if (permissionDenied) {
       try {
@@ -1617,7 +1617,7 @@ export async function deleteByggdelMall({ mallId }, companyIdOverride) {
       let arr = rawArr ? JSON.parse(rawArr) : [];
       const debug = await getAuthDebugSnapshot();
       let resolvedCompanyId = null;
-      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch(e) {}
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (_e) {}
       const entry = {
         fn: 'deleteByggdelMall',
         code: e?.code || null,
@@ -1630,7 +1630,7 @@ export async function deleteByggdelMall({ mallId }, companyIdOverride) {
       arr.push(entry);
       await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
       await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-    } catch(e) {}
+    } catch (_e) {}
 
     throw e;
   }
@@ -1643,7 +1643,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
     if (forceTokenRefresh) {
       try {
         if (auth?.currentUser?.getIdToken) await auth.currentUser.getIdToken(true);
-      } catch(e) {}
+      } catch (_e) {}
     }
     const companyId = await resolveCompanyId(companyIdOverride, null);
     if (!companyId) {
@@ -1663,7 +1663,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
     try {
       await setDoc(ref, Object.assign({}, safePatch || {}, { updatedAt: serverTimestamp() }), { merge: true });
       return true;
-    } catch(e) {
+    } catch (_e) {
       const permissionDenied = (e && (e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
       if (permissionDenied) {
         const err = e || new Error('permission-denied');
@@ -1678,7 +1678,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
   try {
     const ok = await attemptWrite({ forceTokenRefresh: false });
     return ok;
-  } catch(e) {
+  } catch (_e) {
     const isPermissionError = !!(e && (e.__permissionDenied === true || e.code === 'permission-denied' || (e.message && e.message.toLowerCase().includes('permission'))));
     if (isPermissionError) {
       try {
@@ -1693,7 +1693,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
       let arr = rawArr ? JSON.parse(rawArr) : [];
       const debug = await getAuthDebugSnapshot();
       let resolvedCompanyId = null;
-      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch(e) {}
+      try { resolvedCompanyId = await resolveCompanyId(companyIdOverride, null); } catch (_e) {}
       const entry = {
         fn: 'updateByggdelMall',
         code: e?.code || null,
@@ -1707,7 +1707,7 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
       arr.push(entry);
       await AsyncStorage.setItem('dk_last_fs_errors', JSON.stringify(arr));
       await AsyncStorage.setItem('dk_last_fs_error', JSON.stringify(entry));
-    } catch(e) {}
+    } catch (_e) {}
 
     throw e;
   }

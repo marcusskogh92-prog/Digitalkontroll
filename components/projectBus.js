@@ -15,7 +15,7 @@ export function emitProjectUpdated(updatedProject) {
   for (const listener of projectUpdatedListeners) {
     try {
       listener(updatedProject);
-    } catch(e) {
+    } catch (_e) {
       // ignore
     }
   }

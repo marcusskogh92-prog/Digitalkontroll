@@ -12,7 +12,7 @@ function _toDisplayDate(ts) {
       return new Date(ms).toLocaleString();
     }
     return new Date(ts).toLocaleString();
-  } catch (e) {
+  } catch (_e) {
     return '';
   }
 }
@@ -23,7 +23,7 @@ function _resolveWebCompanyId() {
       const v = String(window.localStorage.getItem('dk_companyId') || '').trim();
       if (v) return v;
     }
-  } catch (e) {}
+  } catch (_e) {}
   return null;
 }
 
@@ -41,16 +41,16 @@ export default function ActivityPanel() {
             try {
               const sample = Array.isArray(data) ? data.slice(0, 12) : data;
               console.debug('subscribeCompanyActivity: raw items (sample):', sample);
-            } catch (e) {}
+            } catch (_e) {}
           }
-        } catch (e) {}
+        } catch (_e) {}
         const arr = Array.isArray(data) ? data.slice(0, 12) : [];
         setItems(arr);
       },
       onError: () => {},
       limitCount: 25,
     });
-    return () => { try { unsub(); } catch(e) {} };
+    return () => { try { unsub(); } catch (_e) {} };
   }, []);
 
   // Resolve display names for any uid present in items

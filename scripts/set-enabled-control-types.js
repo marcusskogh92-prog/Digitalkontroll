@@ -64,7 +64,7 @@ async function main() {
 
     console.log('Updated enabledControlTypes for company=%s:', company, enabledControlTypes);
     process.exit(0);
-  } catch (e) {
+  } catch (_e) {
     console.error('Error:', e);
     process.exit(1);
   }

@@ -38,7 +38,7 @@ export default function LoginScreen() {
       const companyProfile = await fetchCompanyProfile(companyId).catch(() => null);
       const enabled = isCompanyEnabled(companyProfile || {});
       return { allowed: !!enabled, companyId };
-    } catch (e) {
+    } catch (_e) {
       // Vid fel, tillåt inloggning men logga till konsol
       console.log('[Login] checkCompanyAccessForUser error', e?.message || e);
       return { allowed: true, companyId: null };
@@ -54,7 +54,7 @@ export default function LoginScreen() {
           setEmail(saved);
           setRememberMe(true);
         }
-      } catch(e) {}
+      } catch (_e) {}
     })();
   }, []);
 
@@ -88,19 +88,19 @@ export default function LoginScreen() {
         try {
           const { allowed, companyId } = await checkCompanyAccessForUser(user);
           if (!allowed) {
-            try { await auth.signOut(); } catch (e) {}
-            try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+            try { await auth.signOut(); } catch (_e) {}
+            try { await AsyncStorage.removeItem('dk_companyId'); } catch (_e) {}
             setError('Företaget är pausat. Kontakta administratören.');
             return;
           }
           const params = { email: user.email || '' };
           if (companyId) {
-            try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+            try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (_e) {}
             params.companyId = companyId;
           }
           navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
           console.log('[Login] Auto redirect total ms:', Date.now() - t0);
-        } catch(e) {
+        } catch (_e) {
           console.log('[Login] Auto redirect error', e?.code || e?.message);
         } finally {
           setAutoHandled(true);
@@ -126,20 +126,20 @@ export default function LoginScreen() {
         } else {
           await AsyncStorage.removeItem('dk_saved_email');
         }
-      } catch(e) {}
+      } catch (_e) {}
 
       // Refresh ID token to pick up any custom claims, then fetch and update companyId
       try {
         if (cred && cred.user) {
           await auth.currentUser.getIdToken(true);
         }
-      } catch(e) {
+      } catch (_e) {
         console.log('[Login] Token refresh failed', e?.message || e);
       }
       const { allowed, companyId } = await checkCompanyAccessForUser(cred.user);
       if (!allowed) {
-        try { await auth.signOut(); } catch (e) {}
-        try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+        try { await auth.signOut(); } catch (_e) {}
+        try { await AsyncStorage.removeItem('dk_companyId'); } catch (_e) {}
         setError('Företaget är pausat. Kontakta administratören.');
         // Tillåt auto-redirect att köras igen om användaren loggar in på annat företag
         setAutoHandled(false);
@@ -148,12 +148,12 @@ export default function LoginScreen() {
 
       const params = { email };
       if (companyId) {
-        try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+        try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (_e) {}
         params.companyId = companyId;
       }
       navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
       console.log('[Login] Profile+company check ms:', Date.now() - t0);
-    } catch(e) {
+    } catch (_e) {
       let message = 'Fel e-post eller lösenord';
       if (e?.code) {
         switch (e.code) {
@@ -178,7 +178,7 @@ export default function LoginScreen() {
       }
       setError(message);
       // focus email field when login fails
-      try { emailRef.current?.focus(); } catch(e) {}
+      try { emailRef.current?.focus(); } catch (_e) {}
     } finally {
       setLoading(false);
     }

@@ -196,7 +196,7 @@ export default function ManageTemplates({ route, navigation }) {
             setSelectedTemplateId(null);
           }
         }
-      } catch (e) {
+      } catch (_e) {
         console.warn(e);
       } finally {
         setLoading(false);
@@ -232,7 +232,7 @@ export default function ManageTemplates({ route, navigation }) {
               setSelectedTemplateId(null);
             }
           }
-        } catch (e) {
+        } catch (_e) {
           console.warn(e);
         } finally {
           setLoading(false);
@@ -309,7 +309,7 @@ export default function ManageTemplates({ route, navigation }) {
       try {
         Alert.alert('Mall skapad', `Mallen har skapats under kontrolltypen "${ct}".`);
       } catch (_e) {}
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -332,7 +332,7 @@ export default function ManageTemplates({ route, navigation }) {
             window.dispatchEvent(new CustomEvent('dkTemplatesUpdated', { detail: { companyId } }));
           }
         } catch (_e) {}
-      } catch (e) {
+      } catch (_e) {
         Alert.alert('Fel', String(e?.message || e));
       }
     };
@@ -359,7 +359,7 @@ export default function ManageTemplates({ route, navigation }) {
           },
         ]
       );
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -502,7 +502,7 @@ export default function ManageTemplates({ route, navigation }) {
       try {
         Alert.alert('Mall uppdaterad', `Mallen "${title}" har sparats.`);
       } catch (_e) {}
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -523,7 +523,7 @@ export default function ManageTemplates({ route, navigation }) {
     try {
       await updateCompanyMall({ id: template.id, patch: { layout: nextLayout } }, companyId);
       setTemplatesVersion(v => v + 1);
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -544,7 +544,7 @@ export default function ManageTemplates({ route, navigation }) {
     try {
       await updateCompanyMall({ id: template.id, patch: { layout: nextLayout } }, companyId);
       setTemplatesVersion(v => v + 1);
-    } catch (e) {
+    } catch (_e) {
       Alert.alert('Fel', String(e?.message || e));
     }
   };
@@ -821,7 +821,7 @@ export default function ManageTemplates({ route, navigation }) {
                         return;
                       }
                       navigation.goBack();
-                    } catch (e) {}
+                    } catch (_e) {}
                   }}
                   style={{ padding: 8, marginRight: 8 }}
                   accessibilityLabel="Tillbaka"
@@ -1430,7 +1430,7 @@ export default function ManageTemplates({ route, navigation }) {
                   handleDeleteTemplate(tpl.id);
                   return;
                 }
-              } catch (e) {
+              } catch (_e) {
                 Alert.alert('Fel', String(e?.message || e));
               }
             }}

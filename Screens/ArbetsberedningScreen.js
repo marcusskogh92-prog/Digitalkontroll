@@ -57,7 +57,7 @@ export default function ArbetsberedningScreen({ date, participants = [], project
           uid: user?.uid || null,
         });
       } catch(_e) {}
-    } catch(e) {
+    } catch (_e) {
       alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };

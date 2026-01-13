@@ -1,7 +1,7 @@
 const fs = require('fs');
 const cp = require('child_process');
 const patterns = [
-  { re: /\bcatch\s*\(\s*_([A-Za-z0-9]+)\s*\)/g, rep: 'catch(e)' },
+  { re: /\bcatch\s*\(\s*_([A-Za-z0-9]+)\s*\)/g, rep: 'catch (_e)' },
   { re: /\bcatch\s*\(\s*\(\s*_([A-Za-z0-9]+)\s*\)\s*=>/g, rep: 'catch((e) =>' },
   { re: /\bcatch\s*\(\s*_([A-Za-z0-9]+)\s*=>/g, rep: 'catch(e =>' },
 ];
