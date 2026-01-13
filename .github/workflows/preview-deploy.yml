@@ -34,7 +34,23 @@ jobs:
           echo "--- check webpack deps ---"
           npm ls webpack webpack-cli --depth=0 || true
       - name: Build web bundle
-        run: npx expo export --platform web
+        run: |
+          set -euo pipefail
+          echo "Running expo export for web..."
+          npx expo export --platform web || npx expo export:web || true
+          echo "Checking for expected output dirs..."
+          if [ -d web-build ]; then
+            echo "web-build exists"
+          elif [ -d web ]; then
+            echo "found 'web' — moving to 'web-build'"
+            mv web web-build
+          elif [ -d dist ]; then
+            echo "found 'dist' — moving to 'web-build'"
+            mv dist web-build
+          else
+            echo "No web output directory found; listing workspace:" && ls -la
+            false
+          fi
       - name: Deploy to Firebase preview channel
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
