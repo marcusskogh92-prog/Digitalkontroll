@@ -1445,7 +1445,7 @@ export default function HomeScreen({ route, navigation }) {
       // State for edit modal (main or sub group)
       const [, setEditModal] = useState({ visible: false, type: '', id: null, name: '' });
     // Helper to count ongoing and completed projects
-    // eslint-disable-next-line no-unused-vars
+     
     function _countProjectStatus(tree) {
       let ongoing = 0;
       let completed = 0;
