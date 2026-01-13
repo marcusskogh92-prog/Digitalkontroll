@@ -314,7 +314,7 @@ export default function ManageTemplates({ route, navigation }) {
     }
   };
 
-  const KLICKAhandleDeleteTemplate = (id) => {
+  const handleDeleteTemplate = (id) => {
     if (!companyId || !id) return;
 
     const performDelete = async () => {
@@ -1243,8 +1243,8 @@ export default function ManageTemplates({ route, navigation }) {
                   <View style={{ marginTop: 22, width: '92%', marginLeft: '8%' }}>
                     <Text style={{ fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Befintliga mallar</Text>
                     {hasSelectedCompany && String(controlType || '').trim() && templates.length > 0 && (
-                      <Text style={{ fontSize: 12, color: '#777', marginBottom: 4 }}>
-                        Visar mallar för kontrolltypen "{controlType}".
+                        <Text style={{ fontSize: 12, color: '#777', marginBottom: 4 }}>
+                        Visar mallar för kontrolltypen &quot;{controlType}&quot;.
                       </Text>
                     )}
                     {hasSelectedCompany && !String(controlType || '').trim() && templates.length > 0 && (
