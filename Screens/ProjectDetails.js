@@ -392,7 +392,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 throw new Error('printToFileAsync returned no uri');
               }
             } catch(e) {
-              console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', err);
+              console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', e);
               try {
                 let html2 = null;
                 if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
@@ -506,7 +506,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               throw new Error('printToFileAsync returned no uri');
             }
           } catch(e) {
-            console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
+            console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', e);
             try {
               let html2 = null;
               if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
@@ -2660,7 +2660,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                           throw new Error('printToFileAsync returned no uri');
                                         }
                                       } catch(e) {
-                                        console.warn('[PDF] single-item PDF generation failed, retrying without logo', err);
+                                        console.warn('[PDF] single-item PDF generation failed, retrying without logo', e);
                                         try {
                                           let html2;
                                           if (typeof buildSummaryHtml === 'function') {
