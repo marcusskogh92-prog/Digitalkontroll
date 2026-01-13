@@ -34,7 +34,6 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
   const [showDeletedCompanies, setShowDeletedCompanies] = useState(false);
   const [spinHome, setSpinHome] = useState(0);
-  const [spinAdd, setSpinAdd] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
   const [spinTemplateTypes, setSpinTemplateTypes] = useState({});
   const [spinGroups, setSpinGroups] = useState({});
@@ -54,11 +53,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [controlTypeContextMenu, setControlTypeContextMenu] = useState(null); // { companyId, profile, controlTypeId, controlTypeKey, controlTypeName, builtin, hidden, x, y }
   const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, profile, controlType, template, x, y }
 
+  const templateFetchErrorCount = Object.keys(templateFetchErrors || {}).length;
+
   const showToast = (msg, timeout = 3000) => {
     try {
       setToast({ visible: true, message: msg });
       setTimeout(() => setToast({ visible: false, message: '' }), timeout);
-    } catch (e) {}
+    } catch (_e) {}
   };
 
   function slugify(s) {
@@ -70,7 +71,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         .trim()
         .toLowerCase()
         .replace(/\s+/g, '-');
-    } catch (e) {
+    } catch (_e) {
       return String(s || '').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     }
   }
@@ -96,7 +97,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       if (typeof profile.active === 'boolean') return profile.active;
       // Default: företag utan explicit flagga räknas som aktiva
       return true;
-    } catch (e) {
+    } catch (_e) {
       return true;
     }
   };
@@ -106,7 +107,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       const deleted = !!(c && c.profile && c.profile.deleted);
       if (!showDeletedCompanies && deleted) return false;
       return true;
-    } catch (e) {
+    } catch (_e) {
       return true;
     }
   });
@@ -119,7 +120,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     if (!companyId && typeof window !== 'undefined' && window.localStorage) {
       companyId = String(window.localStorage.getItem('dk_companyId') || '').trim();
     }
-  } catch (e) { companyId = '' }
+  } catch (_e) { companyId = '' }
   if (!companyId) companyId = 'testdemo';
 
   useEffect(() => {
@@ -138,7 +139,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           try {
             const prof = await fetchCompanyProfile(id);
             return { id, profile: prof };
-          } catch (e) { return null; }
+          } catch (_e) { return null; }
         }));
         let good = (fetched || []).filter(x => x && (x.profile || x.id));
         if (restrictCompanyId) {
@@ -151,7 +152,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         // Try fallback on error as well
         const fallbackIds = ['MS Byggsystem', 'MS Byggsystem DEMO', 'Wilzéns Bygg'];
         const fetched = await Promise.all(fallbackIds.map(async id => {
-          try { const prof = await fetchCompanyProfile(id); return { id, profile: prof }; } catch(e) { return null; }
+          try { const prof = await fetchCompanyProfile(id); return { id, profile: prof }; } catch(_e) { return null; }
         }));
         let good = (fetched || []).filter(x => x && (x.profile || x.id));
         if (restrictCompanyId) {
@@ -166,7 +167,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       setHierarchy(items || []);
       setLoading(false);
     }).catch(() => { setHierarchy([]); setLoading(false); });
-  }, [companiesMode, restrictCompanyId]);
+  }, [companiesMode, restrictCompanyId, companyId]);
 
   // Web: react to company profile updates from ManageCompany (e.g. userLimit changes)
   useEffect(() => {
@@ -202,7 +203,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             return changed ? next : prev;
           });
         })();
-      } catch (e) {}
+      } catch (_e) {}
     };
 
     if (typeof window !== 'undefined') {
@@ -259,7 +260,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         try {
           const members = await fetchCompanyMembers(cid).catch(() => []);
           setMembersByCompany(prev => ({ ...prev, [cid]: members }));
-        } catch (e) {
+        } catch (_e) {
           setMembersByCompany(prev => ({ ...prev, [cid]: [] }));
         }
       }
@@ -319,7 +320,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         const map = {};
         results.forEach(r => { map[r.id] = r.members; });
         setMembersByCompany(prev => ({ ...prev, ...map }));
-      } catch(e) {}
+      } catch(_e) {}
     })();
     return () => { cancelled = true; };
   }, [companiesMode, companies]);
@@ -443,7 +444,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           window.dispatchEvent(new CustomEvent('dkGoHome'));
         } catch (_e) {}
       }
-    } catch (e) {}
+    } catch (_e) {}
   };
 
   const handleAddCompany = () => {
@@ -480,7 +481,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
           await auth.currentUser.getIdToken(true);
         }
-      } catch (e) {
+      } catch (_e) {
         // Non-fatal: continue but visa info i dialogen
         setAddCompanyError('Kunde inte uppdatera autentiseringstoken, försök logga ut/in om fel uppstår.');
       }
@@ -570,7 +571,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           setHierarchy(prevH);
         }
         return;
-      } catch (e) {
+      } catch (_e) {
         // Fallback: cache-busting reload on same path
         try {
           if (typeof window !== 'undefined') {
@@ -584,20 +585,6 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         } catch (_) {}
       }
     })();
-  };
-
-  const handleShowAuthDebug = async () => {
-    try {
-      const user = auth && auth.currentUser ? auth.currentUser : null;
-      let claims = null;
-      if (user && user.getIdTokenResult) {
-        try { const t = await user.getIdTokenResult(false); claims = t.claims; } catch(e) { claims = { error: String(e?.message || e) }; }
-      }
-      const out = { user: user ? { uid: user.uid, email: user.email, displayName: user.displayName } : null, claims };
-      alert('Auth debug:\n' + JSON.stringify(out, null, 2));
-    } catch (e) {
-      alert('Auth debug failed: ' + String(e?.message || e));
-    }
   };
 
   return (
@@ -697,6 +684,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             </div>
           ) : null}
           <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+          {templatesMode && templateFetchErrorCount > 0 ? (
+            <span title={`Mallfel: ${templateFetchErrorCount}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, borderRadius: 999, padding: '0 6px', backgroundColor: '#D32F2F', color: '#fff', fontSize: 12, fontWeight: 700 }}>
+              {templateFetchErrorCount}
+            </span>
+          ) : null}
         </div>
         {companiesMode ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
@@ -898,7 +890,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               try {
                                 const members = await fetchCompanyMembers(company.id).catch(() => []);
                                 setMembersByCompany(prev => ({ ...prev, [company.id]: members }));
-                              } catch (e) {
+                              } catch (_e) {
                                 setMembersByCompany(prev => ({ ...prev, [company.id]: [] }));
                               }
                             }
@@ -1054,11 +1046,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               showToast('Kunde inte ändra företagsstatus (servern avvisade ändringen).');
                               return;
                             }
-                            try { Alert.alert('Ok', `Företaget ${wantEnable ? 'aktiverades' : 'pausades'}.`); } catch(e) { try { window.alert('Ok'); } catch(_) {} }
+                            try { Alert.alert('Ok', `Företaget ${wantEnable ? 'aktiverades' : 'pausades'}.`); } catch(_e) { try { window.alert('Ok'); } catch(_) {} }
                             try {
                               const updated = await fetchCompanyProfile(compId);
                               setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
-                            } catch(e) {}
+                            } catch(_e) {}
                           } catch (e) {
                             const rawCode = e && e.code ? String(e.code) : '';
                             const rawMsg = e && e.message ? String(e.message) : String(e || '');
@@ -1094,7 +1086,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               );
                               try {
                                 Alert.alert('Dolt', 'Företaget har pausats och dolts från listan.');
-                              } catch (e) {
+                              } catch (_e) {
                                 try { window.alert('Företaget har dolts från listan.'); } catch (_) {}
                               }
                             } catch (e) {
@@ -1123,7 +1115,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               setCompanies(prev => (Array.isArray(prev) ? prev.filter(c => c.id !== compId) : prev));
                               try {
                                 Alert.alert('Borttaget', 'Företaget har raderats permanent och all historik är borttagen.');
-                              } catch (e) {
+                              } catch (_e) {
                                 try { window.alert('Företaget har raderats permanent.'); } catch (_) {}
                               }
                             } catch (e) {
@@ -1157,7 +1149,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           if (!trimmed) return;
                           const parsed = parseInt(trimmed, 10);
                           if (Number.isNaN(parsed) || !Number.isFinite(parsed) || parsed < 0) {
-                            try { Alert.alert('Fel', 'Ogiltigt antal användare. Ange ett heltal 0 eller större.'); } catch(e) { try { window.alert('Ogiltigt antal användare.'); } catch(_) {} }
+                            try { Alert.alert('Fel', 'Ogiltigt antal användare. Ange ett heltal 0 eller större.'); } catch(_e) { try { window.alert('Ogiltigt antal användare.'); } catch(_) {} }
                             return;
                           }
 
@@ -1168,11 +1160,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               showToast('Kunde inte spara userLimit (servern avvisade ändringen).');
                               return;
                             }
-                            try { Alert.alert('Ok', `Max antal användare uppdaterat till ${parsed}.`); } catch(e) { try { window.alert('Max antal användare uppdaterat.'); } catch(_) {} }
+                            try { Alert.alert('Ok', `Max antal användare uppdaterat till ${parsed}.`); } catch(_e) { try { window.alert('Max antal användare uppdaterat.'); } catch(_) {} }
                             try {
                               const updated = await fetchCompanyProfile(compId);
                               setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
-                            } catch(e) {}
+                            } catch(_e) {}
                           } catch (e) {
                             const rawCode = e && e.code ? String(e.code) : '';
                             const rawMsg = e && e.message ? String(e.message) : String(e || '');
@@ -1196,11 +1188,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               showToast('Kunde inte uppdatera företagsnamnet (servern avvisade ändringen).');
                               return;
                             }
-                            try { Alert.alert('Ok', 'Företagsnamnet har uppdaterats.'); } catch(e) { try { window.alert('Företagsnamnet har uppdaterats.'); } catch(_) {} }
+                            try { Alert.alert('Ok', 'Företagsnamnet har uppdaterats.'); } catch(_e) { try { window.alert('Företagsnamnet har uppdaterats.'); } catch(_) {} }
                             try {
                               const updated = await fetchCompanyProfile(compId);
                               setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
-                            } catch(e) {}
+                            } catch(_e) {}
                           } catch (e) {
                             const rawCode = e && e.code ? String(e.code) : '';
                             const rawMsg = e && e.message ? String(e.message) : String(e || '');
@@ -1251,7 +1243,6 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           const ctName = ctx.controlTypeName || '';
                           const ctKey = ctx.controlTypeKey || '';
                           const isBuiltin = !!ctx.builtin;
-                          const isHidden = !!ctx.hidden;
                           if (!compId) return;
 
                           const notifyChange = () => {
@@ -1911,12 +1902,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 try {
                   const r = await adminFetchCompanyMembers(compId);
                   mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
-                } catch(e) {
+                } catch(_e) {
                   try { mems = await fetchCompanyMembers(compId); } catch(_) { mems = []; }
                 }
                 setMembersByCompany(prev => ({ ...prev, [compId]: mems }));
               } catch(_) {}
-              try { Alert.alert('Borttagen', 'Användaren har tagits bort.'); } catch(e) { try { window.alert('Användaren har tagits bort.'); } catch(_) {} }
+              try { Alert.alert('Borttagen', 'Användaren har tagits bort.'); } catch(_e) { try { window.alert('Användaren har tagits bort.'); } catch(_) {} }
             } catch (e) {
               console.warn('delete user failed', e);
               try { Alert.alert('Fel', 'Kunde inte ta bort användaren: ' + String(e?.message || e)); } catch(_) { try { window.alert('Kunde inte ta bort användaren.'); } catch(__) {} }
@@ -1961,23 +1952,23 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 const needRoleChange = role && role !== 'user';
                 const needPassword = password && password.length > 0;
                 if (needRoleChange || needPassword) {
-                  try { await updateUserRemote({ companyId: editingUser.companyId, uid: newUid, displayName, email, role: role || 'user', password: needPassword ? password : undefined }); } catch(e) {}
+                  try { await updateUserRemote({ companyId: editingUser.companyId, uid: newUid, displayName, email, role: role || 'user', password: needPassword ? password : undefined }); } catch(_e) {}
                 }
                 // update client-side users doc
-                try { await saveUserProfile(newUid, { displayName, email, firstName, lastName }); } catch(e) {}
+                try { await saveUserProfile(newUid, { displayName, email, firstName, lastName }); } catch(_e) {}
                 try {
                   let mems = [];
                   try {
                     const r = await adminFetchCompanyMembers(editingUser.companyId);
                     mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
-                  } catch(e) {
+                  } catch(_e) {
                     try { mems = await fetchCompanyMembers(editingUser.companyId); } catch(_) { mems = []; }
                   }
                   setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems }));
-                } catch(e) {}
+                } catch(_e) {}
               }
               setEditingUser(null);
-              try { Alert.alert('Ok', `Användare skapad. Temporärt lösenord: ${tempPassword || ''}`); } catch(e) { try { window.alert('Användare skapad.'); } catch(_) {} }
+              try { Alert.alert('Ok', `Användare skapad. Temporärt lösenord: ${tempPassword || ''}`); } catch(_e) { try { window.alert('Användare skapad.'); } catch(_) {} }
             } else {
               // Edit existing user
               const uid = editingUser.member && (editingUser.member.uid || editingUser.member.id);
@@ -1985,24 +1976,24 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
               const theRole = role || (editingUser.member && (editingUser.member.role || (editingUser.member.isAdmin ? 'admin' : 'user'))) || 'user';
               try {
                 await updateUserRemote({ companyId: editingUser.companyId, uid, displayName, email, role: theRole, password });
-                try { await saveUserProfile(uid, { displayName, email, firstName, lastName }); } catch(e) {}
+                try { await saveUserProfile(uid, { displayName, email, firstName, lastName }); } catch(_e) {}
                 try {
                   if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
                     await auth.currentUser.getIdToken(true);
                   }
-                } catch(e) { /* non-blocking */ }
+                } catch(_e) { /* non-blocking */ }
                 try {
                   let mems = [];
                   try {
                     const r = await adminFetchCompanyMembers(editingUser.companyId);
                     mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
-                  } catch(e) {
+                  } catch(_e) {
                     try { mems = await fetchCompanyMembers(editingUser.companyId); } catch(_) { mems = []; }
                   }
                   setMembersByCompany(prev => ({ ...prev, [editingUser.companyId]: mems }));
                 } catch (_e) {}
                 setEditingUser(null);
-                try { Alert.alert('Sparat', 'Användaren uppdaterades. Behörighet och uppgifter är sparade.'); } catch(e) { try { window.alert('Användaren uppdaterades.'); } catch(_) {} }
+                try { Alert.alert('Sparat', 'Användaren uppdaterades. Behörighet och uppgifter är sparade.'); } catch(_e) { try { window.alert('Användaren uppdaterades.'); } catch(_) {} }
               } catch (e) {
                 console.warn('Could not save user', e);
               }

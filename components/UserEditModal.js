@@ -59,7 +59,7 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
     if (isSuperMember && isMsBygg) setRole('superadmin');
     else setRole(adminGuess ? 'admin' : 'user');
     setPassword('');
-  }, [visible, member]);
+  }, [visible, member, isNew, isMsBygg]);
 
   if (!visible) return null;
 

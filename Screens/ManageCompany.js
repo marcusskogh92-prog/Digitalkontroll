@@ -13,21 +13,21 @@ export default function ManageCompany({ navigation }) {
   const [companyId, setCompanyId] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [userLimit, setUserLimit] = useState('10');
-  const [orgNumber, setOrgNumber] = useState('');
-  const [companyForm, setCompanyForm] = useState('');
-  const [streetAddress, setStreetAddress] = useState('');
-  const [postalCode, setPostalCode] = useState('');
-  const [city, setCity] = useState('');
-  const [country, setCountry] = useState('');
+  const [, setOrgNumber] = useState('');
+  const [, setCompanyForm] = useState('');
+  const [, setStreetAddress] = useState('');
+  const [, setPostalCode] = useState('');
+  const [, setCity] = useState('');
+  const [, setCountry] = useState('');
 
-  const [contactName, setContactName] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-  const [contactPhone, setContactPhone] = useState('');
+  const [, setContactName] = useState('');
+  const [, setContactEmail] = useState('');
+  const [, setContactPhone] = useState('');
 
-  const [billingAddress, setBillingAddress] = useState('');
-  const [billingReference, setBillingReference] = useState('');
-  const [paymentTerms, setPaymentTerms] = useState('30');
-  const [invoiceMethod, setInvoiceMethod] = useState('email');
+  const [, setBillingAddress] = useState('');
+  const [, setBillingReference] = useState('');
+  const [, setPaymentTerms] = useState('30');
+  const [, setInvoiceMethod] = useState('email');
   const [loading, setLoading] = useState(false);
   const [logoUrl, setLogoUrl] = useState('');
   const [logoUploading, setLogoUploading] = useState(false);
@@ -53,13 +53,13 @@ export default function ManageCompany({ navigation }) {
         headerBackTitle: '',
       });
     } catch (_e) {}
-  }, []);
+  }, [navigation]);
 
   // Decide if interactive tools (manage company/users) should be shown
   const [allowedTools, setAllowedTools] = useState(false);
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [supportMenuOpen, setSupportMenuOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
+  const [, setLoggingOut] = useState(false);
   useEffect(() => {
     if (Platform.OS !== 'web') return undefined;
     let mounted = true;
@@ -223,7 +223,6 @@ export default function ManageCompany({ navigation }) {
   if (Platform.OS === 'web') {
     const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
     const dashboardColumnsStyle = { flexDirection: 'row', alignItems: 'flex-start' };
-    const dashboardSectionTitleStyle = { fontSize: 20, fontWeight: '700', color: '#222', marginBottom: 10 };
     const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
 
     const RootContainer = ImageBackground;
@@ -293,7 +292,7 @@ export default function ManageCompany({ navigation }) {
         } else {
           setAuditEvents([]);
         }
-      } catch (e) {}
+      } catch (_e) {}
     };
 
     const hasSelectedCompany = !!(String(companyId || '').trim() || String(companyName || '').trim());
@@ -349,7 +348,7 @@ export default function ManageCompany({ navigation }) {
               <View style={{ width: 640, maxWidth: 640, minWidth: 360, marginRight: 24 }}>
                 <View style={[dashboardCardStyle, { alignSelf: 'flex-start', maxWidth: 600 }] }>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                    <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
+                    <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                       <Ionicons name="chevron-back" size={20} color="#222" />
                     </TouchableOpacity>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>

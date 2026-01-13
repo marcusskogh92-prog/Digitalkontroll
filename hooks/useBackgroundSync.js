@@ -46,7 +46,7 @@ export default function useBackgroundSync(companyId, opts = {}) {
             const res = await saveHierarchy(companyId, parsed);
             ok = res === true || (res && res.ok === true);
             if (ok) break;
-          } catch(e) {
+          } catch(_e) {
             // ignore, will backoff
           }
           // exponential backoff
@@ -54,7 +54,7 @@ export default function useBackgroundSync(companyId, opts = {}) {
           await new Promise(r => backoffTimer.current = setTimeout(r, waitMs));
         }
         if (ok) {
-          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(e) {}
+          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
           setStatus('synced');
           if (onStatus) onStatus('synced');
         } else {
@@ -73,18 +73,18 @@ export default function useBackgroundSync(companyId, opts = {}) {
                 try {
                   const res = await saveControlToFirestore(ctl);
                   if (!res) remaining.push(ctl);
-                } catch(e) {
+                } catch(_e) {
                   remaining.push(ctl);
                 }
               }
               if (remaining.length === 0) {
-                try { await AsyncStorage.removeItem('completed_controls'); } catch(e) {}
+                try { await AsyncStorage.removeItem('completed_controls'); } catch(_e) {}
               } else {
-                try { await AsyncStorage.setItem('completed_controls', JSON.stringify(remaining)); } catch(e) {}
+                try { await AsyncStorage.setItem('completed_controls', JSON.stringify(remaining)); } catch(_e) {}
               }
             }
           }
-        } catch(e) {}
+        } catch(_e) {}
         try {
           // Sync draft controls
           const rawDrafts = await AsyncStorage.getItem('draft_controls');
@@ -96,19 +96,19 @@ export default function useBackgroundSync(companyId, opts = {}) {
                 try {
                   const res = await saveDraftToFirestore(d);
                   if (!res) remainingDrafts.push(d);
-                } catch(e) {
+                } catch(_e) {
                   remainingDrafts.push(d);
                 }
               }
               if (remainingDrafts.length === 0) {
-                try { await AsyncStorage.removeItem('draft_controls'); } catch(e) {}
+                try { await AsyncStorage.removeItem('draft_controls'); } catch(_e) {}
               } else {
-                try { await AsyncStorage.setItem('draft_controls', JSON.stringify(remainingDrafts)); } catch(e) {}
+                try { await AsyncStorage.setItem('draft_controls', JSON.stringify(remainingDrafts)); } catch(_e) {}
               }
             }
           }
-        } catch(e) {}
-      } catch(e) {
+        } catch(_e) {}
+      } catch(_e) {
         setStatus('error');
         if (onStatus) onStatus('error');
       }

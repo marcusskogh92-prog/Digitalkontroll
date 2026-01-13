@@ -148,7 +148,7 @@ export default function SkyddsrondScreen({
       try {
         const ok = await saveControlToFirestore(completed);
         if (!ok) throw new Error('Firestore save failed');
-      } catch(e) {
+      } catch(_e) {
         // fallback to local storage below
       }
       const existing = await AsyncStorage.getItem('completed_controls');
@@ -189,7 +189,7 @@ export default function SkyddsrondScreen({
           }
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch(e) {}
+      } catch(_e) {}
       // ...existing code...
     } catch(e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
@@ -222,7 +222,7 @@ export default function SkyddsrondScreen({
           uid: user?.uid || null,
         });
       } catch(_e) {}
-    } catch(e) {}
+    } catch(_e) {}
   };
 
   const WEATHER_OPTIONS = [

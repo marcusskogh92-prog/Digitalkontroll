@@ -124,8 +124,9 @@ export function buildMottagningsPdfHtml({ control, project, company }) {
   const headerHtml = `
     <div style="width:100%;">
       <!-- Top: company logo -->
-      <div style="display:flex; align-items:center; justify-content:flex-start;">
+      <div style="display:flex; align-items:center; justify-content:flex-start; gap:12px;">
         <div style="width:160px;">${logoImgTagHeader}</div>
+        <div style="font-size:14px; font-weight:700; color:#222;">${companyName}</div>
       </div>
 
       <!-- Horizontal marking under logo (thin black line) -->
@@ -189,7 +190,7 @@ export function buildMottagningsPdfHtml({ control, project, company }) {
         </div>
       `;
     }
-  } catch(e) {
+  } catch(_e) {
     deviationSummaryHtml = '';
   }
 

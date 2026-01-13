@@ -97,7 +97,7 @@ async function main() {
             try {
               const udoc = await db.collection('users').doc(uid).get();
               if (udoc.exists) companyId = udoc.data()?.companyId || null;
-            } catch(e) {}
+            } catch(_e) {}
           }
           if (companyId) {
             try {

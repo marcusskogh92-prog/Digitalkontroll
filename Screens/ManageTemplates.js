@@ -821,7 +821,7 @@ export default function ManageTemplates({ route, navigation }) {
                         return;
                       }
                       navigation.goBack();
-                    } catch (e) {}
+                    } catch (_e) {}
                   }}
                   style={{ padding: 8, marginRight: 8 }}
                   accessibilityLabel="Tillbaka"
@@ -999,7 +999,7 @@ export default function ManageTemplates({ route, navigation }) {
                   )}
                   <Text style={{ fontSize: 13, fontWeight: '600', marginBottom: 6 }}>Ny mall</Text>
                   <Text style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
-                    Högerklicka på en kontrolltyp i listan till vänster och välj "Lägg till mall" eller använd knappen nedan.
+                    Högerklicka på en kontrolltyp i listan till vänster och välj &quot;Lägg till mall&quot; eller använd knappen nedan.
                   </Text>
                   {!String(controlType || '').trim() && hasSelectedCompany && (
                     <Text style={{ fontSize: 12, color: '#D32F2F', marginBottom: 4 }}>
