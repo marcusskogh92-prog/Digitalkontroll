@@ -65,6 +65,9 @@ Thumbs.db
 # Examples / generated
 app-example
 
+# Generated eslint reports
+eslint-*.json
+
 # Generated native folders (if not managed)
 /ios
 /android

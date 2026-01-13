@@ -314,7 +314,7 @@ export default function ManageTemplates({ route, navigation }) {
     }
   };
 
-  const KLICKAhandleDeleteTemplate = (id) => {
+  const handleDeleteTemplate = (id) => {
     if (!companyId || !id) return;
 
     const performDelete = async () => {
@@ -821,7 +821,7 @@ export default function ManageTemplates({ route, navigation }) {
                         return;
                       }
                       navigation.goBack();
-                    } catch (e) {}
+                    } catch (_e) {}
                   }}
                   style={{ padding: 8, marginRight: 8 }}
                   accessibilityLabel="Tillbaka"
@@ -999,7 +999,7 @@ export default function ManageTemplates({ route, navigation }) {
                   )}
                   <Text style={{ fontSize: 13, fontWeight: '600', marginBottom: 6 }}>Ny mall</Text>
                   <Text style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
-                    Högerklicka på en kontrolltyp i listan till vänster och välj "Lägg till mall" eller använd knappen nedan.
+                    Högerklicka på en kontrolltyp i listan till vänster och välj &quot;Lägg till mall&quot; eller använd knappen nedan.
                   </Text>
                   {!String(controlType || '').trim() && hasSelectedCompany && (
                     <Text style={{ fontSize: 12, color: '#D32F2F', marginBottom: 4 }}>
@@ -1243,8 +1243,8 @@ export default function ManageTemplates({ route, navigation }) {
                   <View style={{ marginTop: 22, width: '92%', marginLeft: '8%' }}>
                     <Text style={{ fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Befintliga mallar</Text>
                     {hasSelectedCompany && String(controlType || '').trim() && templates.length > 0 && (
-                      <Text style={{ fontSize: 12, color: '#777', marginBottom: 4 }}>
-                        Visar mallar för kontrolltypen "{controlType}".
+                        <Text style={{ fontSize: 12, color: '#777', marginBottom: 4 }}>
+                        Visar mallar för kontrolltypen &quot;{controlType}&quot;.
                       </Text>
                     )}
                     {hasSelectedCompany && !String(controlType || '').trim() && templates.length > 0 && (

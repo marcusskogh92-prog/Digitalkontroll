@@ -47,11 +47,11 @@ function showAlert(title, message, buttons) {
   try {
     if (Platform && Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
       const msg = (typeof message === 'string') ? message : (message && typeof message === 'object' ? JSON.stringify(message, null, 2) : String(message));
-      try { window.alert(String(title || '') + '\n\n' + msg); } catch(e) { /* ignore */ }
+      try { window.alert(String(title || '') + '\n\n' + msg); } catch(_e) { /* ignore */ }
       return;
     }
-  } catch(e) {}
-  try { if (buttons) Alert.alert(title || '', message || '', buttons); else Alert.alert(title || '', message || ''); } catch(e) {}
+  } catch(_e) {}
+  try { if (buttons) Alert.alert(title || '', message || '', buttons); else Alert.alert(title || '', message || ''); } catch(_e) {}
 }
 
 export default function HomeScreen({ route, navigation }) {
@@ -1654,7 +1654,7 @@ export default function HomeScreen({ route, navigation }) {
             }
 
             return null;
-          } catch (e) {
+          } catch (_e) {
             return null;
           }
         }));
@@ -1663,7 +1663,7 @@ export default function HomeScreen({ route, navigation }) {
         try { console.log('Dashboard button URLs:', results); } catch (_e) {}
         if (results[0]) setDashboardBtn1Url(results[0]);
         if (results[1]) setDashboardBtn2Url(results[1]);
-      } catch (e) {
+      } catch (_e) {
         // ignore failures; local assets will be used
       }
     }
@@ -1739,7 +1739,7 @@ export default function HomeScreen({ route, navigation }) {
       setDashboardFocus(null);
       setDashboardDropdownTop(null);
       setDashboardHoveredStatKey(null);
-    } catch (e) {}
+    } catch (_e) {}
   }, [selectedProject]);
 
   const handleInlineLockChange = React.useCallback((locked) => {
@@ -3436,7 +3436,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   if (ov && typeof ov.width === 'number' && typeof ov.height === 'number') {
                     return { position: 'absolute', left: 0, width: ov.width, top: ov.height, zIndex: 20 };
                   }
-                } catch (e) {}
+                } catch (_e) {}
                 return { position: 'absolute', left: 0, right: 0, top: 54, zIndex: 20 };
               })()}
             >
@@ -5160,7 +5160,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
 
                                         // fallback: place dropdown under the card
                                         if (card && typeof card.width === 'number' && typeof card.height === 'number') return { position: 'absolute', left: 0, width: card.width, top: card.height, zIndex: 20 };
-                                      } catch (e) {}
+                                      } catch (_e) {}
                                       return { position: 'absolute', left: 0, right: 0, top: 218, zIndex: 20 };
                                     })()}
                                   >

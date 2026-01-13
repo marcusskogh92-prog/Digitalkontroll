@@ -54,7 +54,7 @@ export default function LoginScreen() {
           setEmail(saved);
           setRememberMe(true);
         }
-      } catch(e) {}
+      } catch(_e) {}
     })();
   }, []);
 
@@ -88,14 +88,14 @@ export default function LoginScreen() {
         try {
           const { allowed, companyId } = await checkCompanyAccessForUser(user);
           if (!allowed) {
-            try { await auth.signOut(); } catch (e) {}
-            try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+            try { await auth.signOut(); } catch (_e) {}
+            try { await AsyncStorage.removeItem('dk_companyId'); } catch (_e) {}
             setError('Företaget är pausat. Kontakta administratören.');
             return;
           }
           const params = { email: user.email || '' };
           if (companyId) {
-            try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+            try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (_e) {}
             params.companyId = companyId;
           }
           navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
@@ -126,7 +126,7 @@ export default function LoginScreen() {
         } else {
           await AsyncStorage.removeItem('dk_saved_email');
         }
-      } catch(e) {}
+      } catch(_e) {}
 
       // Refresh ID token to pick up any custom claims, then fetch and update companyId
       try {
@@ -138,8 +138,8 @@ export default function LoginScreen() {
       }
       const { allowed, companyId } = await checkCompanyAccessForUser(cred.user);
       if (!allowed) {
-        try { await auth.signOut(); } catch (e) {}
-        try { await AsyncStorage.removeItem('dk_companyId'); } catch (e) {}
+        try { await auth.signOut(); } catch (_e) {}
+        try { await AsyncStorage.removeItem('dk_companyId'); } catch (_e) {}
         setError('Företaget är pausat. Kontakta administratören.');
         // Tillåt auto-redirect att köras igen om användaren loggar in på annat företag
         setAutoHandled(false);
@@ -148,7 +148,7 @@ export default function LoginScreen() {
 
       const params = { email };
       if (companyId) {
-        try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (e) {}
+        try { await AsyncStorage.setItem('dk_companyId', companyId); } catch (_e) {}
         params.companyId = companyId;
       }
       navigation.reset({ index: 0, routes: [ { name: 'Home', params } ] });
@@ -178,7 +178,7 @@ export default function LoginScreen() {
       }
       setError(message);
       // focus email field when login fails
-      try { emailRef.current?.focus(); } catch(e) {}
+      try { emailRef.current?.focus(); } catch(_e) {}
     } finally {
       setLoading(false);
     }

@@ -67,21 +67,17 @@ export function HomeHeaderSearch({ navigation, route }) {
   const containerRef = React.useRef(null);
   const [measuredWidth, setMeasuredWidth] = React.useState(null);
 
+  const params = route?.params || {};
+
   // Determine whether header search dropdown is considered open.
   // Prefer explicit route param when present, otherwise fall back to query presence.
-  const headerSearchOpen = React.useMemo(() => {
-    if (Object.prototype.hasOwnProperty.call(route?.params || {}, 'headerSearchOpen')) {
-      return !!route.params.headerSearchOpen;
-    }
-    return !!query;
-  }, [route?.params?.headerSearchOpen, query]);
+  const headerSearchOpen = Object.prototype.hasOwnProperty.call(params, 'headerSearchOpen')
+    ? !!params.headerSearchOpen
+    : !!query;
 
-  const headerSearchKeepConnected = React.useMemo(() => {
-    if (Object.prototype.hasOwnProperty.call(route?.params || {}, 'headerSearchKeepConnected')) {
-      return !!route.params.headerSearchKeepConnected;
-    }
-    return false;
-  }, [route?.params?.headerSearchKeepConnected]);
+  const headerSearchKeepConnected = Object.prototype.hasOwnProperty.call(params, 'headerSearchKeepConnected')
+    ? !!params.headerSearchKeepConnected
+    : false;
 
   const setHeaderSearchParams = React.useCallback((params) => {
     if (Platform.OS !== 'web') return;

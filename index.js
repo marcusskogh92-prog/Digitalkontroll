@@ -3,6 +3,8 @@ import { registerRootComponent } from 'expo';
 import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
+import App from './App';
+
 // Early suppression of noisy web-only warnings/errors so they don't flood the console
 if (typeof Platform !== 'undefined' && Platform && Platform.OS === 'web') {
 	try {
@@ -29,8 +31,6 @@ if (typeof Platform !== 'undefined' && Platform && Platform.OS === 'web') {
 		};
 	} catch (e) {}
 }
-
-import App from './App';
 
 registerRootComponent(App);
 

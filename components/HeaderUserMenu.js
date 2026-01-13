@@ -19,7 +19,6 @@ export default function HeaderUserMenu() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [roleLabel, setRoleLabel] = useState('');
-  const [spinChevron, setSpinChevron] = useState(0);
   const chevronSpinAnim = useRef(new Animated.Value(0)).current;
   const chevronDeg = useRef(0);
 
@@ -31,14 +30,12 @@ export default function HeaderUserMenu() {
           setMenuPos({ x: Math.max(8, x), y: y + (h || 36) + 6 });
           // spin chevron and open menu
           try { chevronDeg.current = (chevronDeg.current || 0) + 360; Animated.timing(chevronSpinAnim, { toValue: chevronDeg.current, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: (Platform && Platform.OS === 'web') ? false : true }).start(); } catch(_e) {}
-          setSpinChevron((n) => n + 1);
           setMenuVisible(true);
         });
         return;
       }
     } catch(_e) {}
     try { chevronDeg.current = (chevronDeg.current || 0) + 360; Animated.timing(chevronSpinAnim, { toValue: chevronDeg.current, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: (Platform && Platform.OS === 'web') ? false : true }).start(); } catch(_e) {}
-    setSpinChevron((n) => n + 1);
     setMenuVisible(true);
   };
 
@@ -47,7 +44,6 @@ export default function HeaderUserMenu() {
   const [isMsAdmin, setIsMsAdmin] = useState(false);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
-  const [cid, setCid] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -63,7 +59,6 @@ export default function HeaderUserMenu() {
         const companyFromClaims = String(claims?.companyId || '').trim();
         const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
         const companyId = companyFromClaims || stored || '';
-        setCid(companyId);
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
         if (!active) return;
         // MS Byggsystem-admin (behörighet till globala företagsverktyg)

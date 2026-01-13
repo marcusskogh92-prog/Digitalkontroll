@@ -271,7 +271,7 @@ export default function ManageControlTypes({ route, navigation }) {
           <View style={dashboardContainerStyle}>
             <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 760, maxWidth: '100%' }] }>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
+                <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                   <Ionicons name="chevron-back" size={20} color="#222" />
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -323,7 +323,7 @@ export default function ManageControlTypes({ route, navigation }) {
 
                 <View style={{ marginTop: 18, width: '84%', marginLeft: '8%' }}>
                   <Text style={{ fontSize: 13, color: '#555', lineHeight: 18 }}>
-                    Högerklicka på ett företagsnamnet i listan till vänster och välj "Lägg till kontrolltyp" för att lägga till egna kontrollpunkter.
+                    Högerklicka på ett företagsnamnet i listan till vänster och välj &quot;Lägg till kontrolltyp&quot; för att lägga till egna kontrollpunkter.
                     {'\n'}{'\n'}För att redigera kontrollen kan ni högerklicka på den i listan och välja mellan att byta namn, dölj/aktivera eller radera kontrollen.
                   </Text>
                 </View>

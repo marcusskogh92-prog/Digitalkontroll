@@ -165,7 +165,7 @@ export default function TemplateControlScreen({
         Alert.alert('Fel', 'Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
       } catch (_e) {
         // Fallback för web om Alert inte finns
-        // eslint-disable-next-line no-alert
+         
         alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
       }
     }

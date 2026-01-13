@@ -48,7 +48,7 @@ export default function CameraCapture() {
   const handlePickFromLibrary = async () => {
     try {
       if (!ImagePicker) {
-        try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+        try { ImagePicker = await import('expo-image-picker'); } catch(_e) { ImagePicker = null; }
       }
       let perm = null;
       if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
@@ -110,7 +110,7 @@ export default function CameraCapture() {
                   await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                 } catch(_e) {}
               })();
-            } catch(e) {}
+            } catch(_e) {}
             setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
           } else {
             try {
@@ -129,15 +129,15 @@ export default function CameraCapture() {
                       pending.push(payload.cameraResult);
                       await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                     })();
-                  } catch(e) {}
-                  setTimeout(() => { try { navigation.goBack(); } catch(e) {} }, 300);
+                  } catch(_e) {}
+                  setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
                 } else {
                   navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                 }
               } else {
                 navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
               }
-            } catch(e) {
+            } catch(_e) {
               navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
             }
           }
@@ -155,24 +155,26 @@ export default function CameraCapture() {
     try {
       // Kontrollera kamerabehörighet först
       let perm = null;
-      const tryFns = [
-        'getCameraPermissionsAsync',
-        'requestCameraPermissionsAsync',
-        'getPermissionsAsync',
-        'requestPermissionsAsync'
-      ];
-      for (const fn of tryFns) {
-        try {
-          if (CameraModule && typeof CameraModule[fn] === 'function') {
-            perm = await CameraModule[fn]();
-            if (perm) break;
-          }
-          if (CameraModule && CameraModule.Camera && typeof CameraModule.Camera[fn] === 'function') {
-            perm = await CameraModule.Camera[fn]();
-            if (perm) break;
-          }
-        } catch(e) {}
-      }
+      try {
+        if (Camera && typeof Camera.getCameraPermissionsAsync === 'function') {
+          perm = await Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await Camera.requestCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.getPermissionsAsync === 'function') {
+          perm = await Camera.getPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestPermissionsAsync === 'function') {
+          perm = await Camera.requestPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.getCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.requestCameraPermissionsAsync();
+        }
+      } catch(_e) {}
       const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
       if (status !== 'granted') {
         Alert.alert('Kamerabehörighet krävs', 'Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet om du vill ta foto.', [{ text: 'OK', onPress: () => {} }]);
@@ -225,28 +227,30 @@ export default function CameraCapture() {
   const checkCameraPermission = async () => {
     try {
       let perm = null;
-      const tryFns = [
-        'getCameraPermissionsAsync',
-        'requestCameraPermissionsAsync',
-        'getPermissionsAsync',
-        'requestPermissionsAsync'
-      ];
-      for (const fn of tryFns) {
-        try {
-          if (CameraModule && typeof CameraModule[fn] === 'function') {
-            perm = await CameraModule[fn]();
-            if (perm) break;
-          }
-          if (CameraModule && CameraModule.Camera && typeof CameraModule.Camera[fn] === 'function') {
-            perm = await CameraModule.Camera[fn]();
-            if (perm) break;
-          }
-        } catch(e) {}
-      }
+      try {
+        if (Camera && typeof Camera.getCameraPermissionsAsync === 'function') {
+          perm = await Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await Camera.requestCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.getPermissionsAsync === 'function') {
+          perm = await Camera.getPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestPermissionsAsync === 'function') {
+          perm = await Camera.requestPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.getCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.requestCameraPermissionsAsync();
+        }
+      } catch(_e) {}
       const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
       setHasPermission(status === 'granted' ? true : false);
       return status === 'granted';
-    } catch(e) {
+    } catch(_e) {
       setHasPermission(false);
       return false;
     }
@@ -307,10 +311,10 @@ export default function CameraCapture() {
             blurOnSubmit={true}
             onFocus={() => {
               // Delay to allow keyboard to open then scroll the input into view
-              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch(e) {} }, 120);
+              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch(_e) {} }, 120);
             }}
             returnKeyType="done"
-            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch(e) {} }}
+            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch(_e) {} }}
             style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff', minHeight: 48 }}
           />
         </View>
@@ -345,7 +349,7 @@ export default function CameraCapture() {
                     if (returnKey) {
                       try {
                         navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
-                      } catch(e) {}
+                      } catch(_e) {}
                       try {
                         const state = navigation.getState && navigation.getState();
                         if (state && Array.isArray(state.routes)) {
@@ -354,10 +358,10 @@ export default function CameraCapture() {
                           if (prevRoute && prevRoute.key) {
                             try {
                               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
-                            } catch(e) {}
+                            } catch(_e) {}
                           }
                         }
-                      } catch(e) {}
+                      } catch(_e) {}
                       try {
                         (async () => {
                           try {
@@ -365,11 +369,11 @@ export default function CameraCapture() {
                             const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
                             pending.push(payload.cameraResult);
                             await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
-                          } catch(e) {}
+                          } catch(_e) {}
                         })();
-                      } catch(e) {}
+                      } catch(_e) {}
                       setTimeout(() => {
-                        try { navigation.goBack(); } catch(e) {};
+                        try { navigation.goBack(); } catch(_e) {};
                       }, 300);
                     } else {
                       try {
@@ -380,7 +384,7 @@ export default function CameraCapture() {
                             if (prevRoute && prevRoute.key) {
                             try {
                               navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
-                            } catch(e) {}
+                            } catch(_e) {}
                             try {
                               (async () => {
                                 const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
@@ -388,22 +392,22 @@ export default function CameraCapture() {
                                 pending.push(payload.cameraResult);
                                 await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
                               })();
-                            } catch(e) {}
-                            setTimeout(() => { try { navigation.goBack(); } catch(e) {} }, 300);
+                            } catch(_e) {}
+                            setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
                           } else {
                             navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                           }
                         } else {
                           navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                         }
-                      } catch(e) {
+                      } catch(_e) {
                         navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
                       }
                     }
-                  } catch(e) {
+                  } catch(_e) {
                     navigation.navigate(target, payload);
                   }
-              } catch(e) {
+              } catch(_e) {
                 navigation.navigate(target, {
                   cameraResult: {
                     uri: photoPreview.uri,

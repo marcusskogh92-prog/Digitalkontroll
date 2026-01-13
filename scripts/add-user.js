@@ -82,7 +82,7 @@ async function main() {
     try {
       userRecord = await auth.getUserByEmail(email);
       console.log('User already exists:', userRecord.uid);
-    } catch(e) {
+    } catch(_e) {
       userRecord = await auth.createUser({
         email,
         password,
@@ -137,7 +137,7 @@ async function main() {
     console.log('Done.');
     process.exit(0);
   } catch(e) {
-      console.error('Error:', _err);
+    console.error('Error:', e);
     process.exit(1);
   }
 }

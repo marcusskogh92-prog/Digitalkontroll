@@ -22,13 +22,10 @@ import {
     View
 } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
+import { v4 as uuidv4 } from 'uuid';
 import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
-// Note: `expo-file-system` is used only on native; avoid static top-level import
-// so web builds don't attempt to resolve native-only exports. Load dynamically
-// inside functions when needed.
-let FileSystem = null;
 
 import ArbetsberedningScreen from './ArbetsberedningScreen';
 import ControlDetails from './ControlDetails';
@@ -41,6 +38,49 @@ import SkyddsrondScreen from './SkyddsrondScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '../components/HeaderComponents';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+// Note: `expo-file-system` is used only on native; avoid static top-level import
+// so web builds don't attempt to resolve native-only exports. Load dynamically
+// inside functions when needed.
+let FileSystem = null;
+
+// Optional project-level summary HTML builder — not present in this repo by default.
+const buildSummaryHtml = null;
+
+// Minimal normalizeControl used across screens to ensure expected fields exist
+function normalizeControl(obj) {
+  const c = { ...(obj || {}) };
+  c.materialDesc = c.materialDesc || c.material || '';
+  c.qualityDesc = c.qualityDesc || '';
+  c.coverageDesc = c.coverageDesc || '';
+  if (c.mottagningsSignature && !c.mottagningsSignatures) c.mottagningsSignatures = [];
+  if (!c.mottagningsSignatures) c.mottagningsSignatures = [];
+  if (!Array.isArray(c.checklist)) c.checklist = [];
+  return c;
+}
+
+// Persist a draft object by merging with existing matching draft(s) in AsyncStorage
+const persistDraftObject = async (draftObj) => {
+  let arr = [];
+  try {
+    const raw = await AsyncStorage.getItem('draft_controls');
+    if (raw) arr = JSON.parse(raw) || [];
+  } catch(_e) { arr = []; }
+  let idx = -1;
+  if (draftObj && draftObj.id) {
+    idx = arr.findIndex(c => c.id === draftObj.id && c.project?.id === draftObj.project?.id && c.type === draftObj.type);
+  }
+  if (idx === -1 && draftObj && draftObj.project) {
+    idx = arr.findIndex(c => c.project?.id === draftObj.project?.id && c.type === draftObj.type);
+  }
+  if (idx !== -1) {
+    // naive merge: shallow merge existing with incoming
+    arr[idx] = { ...(arr[idx] || {}), ...(draftObj || {}) };
+  } else {
+    arr.push(draftObj);
+  }
+  try { await AsyncStorage.setItem('draft_controls', JSON.stringify(arr)); } catch(_e) {}
+  return arr;
+};
 
 // Utility: read a file URI as base64 if possible
 async function readUriAsBase64(uri) {
@@ -50,7 +90,7 @@ async function readUriAsBase64(uri) {
     if (!FileSystem) {
       try {
         FileSystem = await import('expo-file-system');
-      } catch (e) {
+      } catch (_e) {
         FileSystem = null;
       }
     }
@@ -82,7 +122,7 @@ async function toDataUri(uri) {
       try {
         // Ensure FileSystem is available
         if (!FileSystem) {
-          try { FileSystem = await import('expo-file-system'); } catch(e) { FileSystem = null; }
+          try { FileSystem = await import('expo-file-system'); } catch(_e) { FileSystem = null; }
         }
         const fileName = 'pdf-img-' + (Math.random().toString(36).slice(2, 9)) + '.jpg';
         const baseDir = (FileSystem && (FileSystem.cacheDirectory || FileSystem.documentDirectory)) ? (FileSystem.cacheDirectory || FileSystem.documentDirectory) : null;
@@ -94,7 +134,7 @@ async function toDataUri(uri) {
             if (b2) return 'data:image/jpeg;base64,' + b2;
           }
         }
-      } catch(e) {}
+      } catch(_e) {}
     }
   } catch(e) {
     console.warn('[PDF] toDataUri failed for', uri, e);
@@ -122,7 +162,7 @@ async function embedImagesInControl(ctrl) {
             const src = p.uri || p;
             const d = await toDataUri(src);
             return Object.assign({}, p, { uri: d || src });
-          } catch(e) { return p; }
+          } catch(_e) { return p; }
         }));
         c[field] = mapped;
       }
@@ -138,7 +178,7 @@ async function embedImagesInControl(ctrl) {
             return Object.assign({}, s, { uri: d || s.uri });
           }
           return s;
-        } catch(e) { return s; }
+        } catch(_e) { return s; }
       }));
       c.mottagningsSignatures = sigs;
     }
@@ -159,14 +199,14 @@ async function embedImagesInControl(ctrl) {
                   const src = it.uri || it;
                   const d = await toDataUri(src);
                   return (typeof it === 'string') ? (d || src) : Object.assign({}, it, { uri: d || src });
-                } catch(e) { return it; }
+                } catch(_e) { return it; }
               }));
             }
             try {
               const src = entry.uri || entry;
               const d = await toDataUri(src);
               return (typeof entry === 'string') ? (d || src) : Object.assign({}, entry, { uri: d || src });
-            } catch(e) { return entry; }
+            } catch(_e) { return entry; }
           }));
           c.checklist[si].photos = newPhotos;
         }
@@ -316,7 +356,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               try {
                 profile = await fetchCompanyProfile(companyId);
                 if (profile) setCompanyProfile(profile);
-              } catch(e) {}
+              } catch(_e) {}
             }
             const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
             const companyLogoFromProfile = profile?.logoUrl || null;
@@ -349,7 +389,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     logoBase64 = await readUriAsBase64(local);
                     if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                   }
-                } catch(e) {
+                } catch(_e) {
                   // ignore
                 }
               } else {
@@ -392,7 +432,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                 throw new Error('printToFileAsync returned no uri');
               }
             } catch(e) {
-              console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', err);
+              console.warn('[PDF] printToFileAsync with logo/fallback failed, retrying without logo', e);
               try {
                 let html2 = null;
                 if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
@@ -439,7 +479,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             try {
               profile = await fetchCompanyProfile(companyId);
               if (profile) setCompanyProfile(profile);
-            } catch(e) {}
+            } catch(_e) {}
           }
           const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
           const companyLogoFromProfile = profile?.logoUrl || null;
@@ -469,7 +509,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   logoBase64 = await readUriAsBase64(local);
                   if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                 }
-              } catch(e) {}
+              } catch(_e) {}
             } else {
               logoForPrint = 'data:image/png;base64,' + logoBase64;
             }
@@ -506,7 +546,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               throw new Error('printToFileAsync returned no uri');
             }
           } catch(e) {
-            console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', err);
+            console.warn('[PDF] printToFileAsync with logo failed or HTML invalid, retrying without logo', e);
             try {
               let html2 = null;
               if (typeof buildSummaryHtml === 'function') html2 = buildSummaryHtml(exportFilter, null);
@@ -547,7 +587,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   // Destructure navigation params
   const { project, companyId, initialCreator, selectedAction } = route.params || {};
   const [inlineControl, setInlineControl] = useState(null);
-  const openInlineControl = (type, initialValues) => {
+  const openInlineControl = useCallback((type, initialValues) => {
     if (!type) return;
     // Freeze the project snapshot at time of opening so the form can't "jump"
     // if parent selection changes.
@@ -556,22 +596,25 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       if (scrollRef?.current && typeof scrollRef.current.scrollTo === 'function') {
         scrollRef.current.scrollTo({ y: 0, animated: false });
       }
-    } catch(e) {}
-  };
-  const closeInlineControl = () => setInlineControl(null);
+    } catch(_e) {}
+  }, [project]);
+  const closeInlineControl = useCallback(() => setInlineControl(null), []);
+
+  const onInlineLockChange = route?.params?.onInlineLockChange;
+  const inlineControlType = inlineControl?.type;
 
   // Inform parent (HomeScreen) when an inline FORM is open on web.
   // This is used to lock the project tree so the user can't switch projects mid-control.
   useEffect(() => {
     try {
       const isWeb = Platform.OS === 'web';
-      const isInlineFormOpen = isWeb && !!(inlineControl && inlineControl.type && inlineControl.type !== 'ControlDetails');
-      const cb = route?.params?.onInlineLockChange;
+      const isInlineFormOpen = isWeb && !!(inlineControlType && inlineControlType !== 'ControlDetails');
+      const cb = onInlineLockChange;
       // Backwards-compatible: allow both prop injection patterns
       // 1) route.params.onInlineLockChange (if parent can't pass real props)
       if (typeof cb === 'function') cb(isInlineFormOpen);
-    } catch(e) {}
-  }, [inlineControl?.type]);
+    } catch(_e) {}
+  }, [inlineControlType, onInlineLockChange]);
 
   // When HomeScreen passes a selectedAction (e.g. open a draft from the dashboard),
   // process it once and open the corresponding inline control.
@@ -587,10 +630,10 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         openInlineControl(selectedAction.type, selectedAction.initialValues || undefined);
       }
       if (selectedAction.kind === 'openControlDetails' && selectedAction.control) {
-        try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch(e) {}
+        try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch(_e) {}
       }
-    } catch(e) {}
-  }, [selectedAction?.id]);
+    } catch(_e) {}
+  }, [openInlineControl, selectedAction]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
   const [companyAdmins, setCompanyAdmins] = useState([]);
   const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
@@ -674,7 +717,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch(e) { /* ignore Firestore errors - we already have local fallback */ }
+    } catch(_e) { /* ignore Firestore errors - we already have local fallback */ }
 
     // Fetch remote drafts too so a draft created in app can be finished on web
     try {
@@ -686,7 +729,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }
         });
       }
-    } catch(e) { /* ignore */ }
+    } catch(_e) { /* ignore */ }
     // Sort controls by date (prefer date || savedAt || createdAt) descending
     allControls.sort((a,b) => {
       const ta = new Date(a.date || a.savedAt || a.createdAt || 0).getTime() || 0;
@@ -725,17 +768,14 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   React.useEffect(() => {
     setEditableProject(normalizeProject(project));
     setOriginalProjectId(project?.id || null);
-  }, [project?.id]);
-  const [showControlPicker, setShowControlPicker] = useState(false);
+  }, [project]);
   const [showForm, setShowForm] = useState(false);
   const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
   const [expandedByType, setExpandedByType] = useState({});
   const [editingInfo, setEditingInfo] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
-  const [selectedControls, setSelectedControls] = useState([]);
-  const [expandedType, setExpandedType] = useState(null);
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
-  const [companyLogoUri, setCompanyLogoUri] = useState(null);
+  const [companyLogoUri] = useState(null);
   const [companyProfile, setCompanyProfile] = useState(null);
   const [skyddsrondWeeksPickerVisible, setSkyddsrondWeeksPickerVisible] = useState(false);
   const [projectInfoExpanded, setProjectInfoExpanded] = useState(false);
@@ -777,7 +817,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         if (typeof v === 'number') return v;
         const t = new Date(v).getTime();
         return Number.isFinite(t) ? t : 0;
-      } catch(e) {
+      } catch(_e) {
         return 0;
       }
     };
@@ -790,7 +830,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         const ts = toMs(c.date || c.savedAt || c.updatedAt || c.createdAt || null);
         if (ts > lastMs) lastMs = ts;
       });
-    } catch(e) {}
+    } catch(_e) {}
 
     const createdMs = toMs(editableProject?.createdAt || null);
     const firstDueMs = toMs(editableProject?.skyddsrondFirstDueDate || null);
@@ -807,7 +847,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       try {
         if (!ms) return '—';
         return new Date(ms).toLocaleDateString('sv-SE');
-      } catch(e) {
+      } catch(_e) {
         return '—';
       }
     };
@@ -1000,8 +1040,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     }
   };
   const [exportFilter, setExportFilter] = useState('Alla');
-  const [selectedControl, setSelectedControl] = useState(null);
-  const [showControlOptions, setShowControlOptions] = useState(false);
+  const [, setSelectedControl] = useState(null);
+  const [, setShowControlOptions] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ visible: false, control: null });
   const undoTimerRef = useRef(null);
@@ -1054,7 +1094,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             return;
           }
         }
-      } catch (e) {}
+      } catch (_e) {}
       // No saved prefs: default to first four visible control types (store key when möjligt)
       const defaults = (controlTypeOptions || []).slice(0, 4).map(o => o.key || o.type);
       setQuickControlSlots([
@@ -1071,7 +1111,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const persistQuickSlots = React.useCallback(async (slots) => {
     try {
       await AsyncStorage.setItem(quickSlotsStorageKey, JSON.stringify(slots));
-    } catch (e) {}
+    } catch (_e) {}
   }, [quickSlotsStorageKey]);
 
   const openQuickSlotConfig = (index) => {
@@ -1108,7 +1148,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
 
       // Best-effort: delete remote draft too
-      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch(e) {}
+      try { await deleteDraftControlFromFirestore(control.id, companyId); } catch(_e) {}
     } else {
       // Remove from completed_controls
       const completedRaw = await AsyncStorage.getItem('completed_controls');
@@ -1119,7 +1159,67 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       await AsyncStorage.setItem('completed_controls', JSON.stringify(completed));
 
       // Best-effort: delete remote control too
-      try { await deleteControlFromFirestore(control.id, companyId); } catch(e) {}
+      try { await deleteControlFromFirestore(control.id, companyId); } catch(_e) {}
+    }
+  };
+
+  // Create a new draft control locally and refresh list
+  const handleAddControl = async () => {
+    try {
+      if (!newControl || !newControl.type) {
+        setNotice({ visible: true, text: 'Välj en kontrolltyp' });
+        setTimeout(() => setNotice({ visible: false, text: '' }), 3000);
+        return;
+      }
+      const id = uuidv4();
+      const draft = normalizeControl({
+        ...newControl,
+        id,
+        project,
+        type: newControl.type,
+        status: 'UTKAST',
+        savedAt: new Date().toISOString(),
+        isDraft: true,
+      });
+      await persistDraftObject(draft);
+      setShowForm(false);
+      setNewControl({ type: '', date: '', description: '', byggdel: '' });
+      try { loadControls && loadControls(); } catch (_e) {}
+      setNotice({ visible: true, text: 'Utkast sparat' });
+      setTimeout(() => setNotice({ visible: false, text: '' }), 2500);
+    } catch (e) {
+      console.warn('[ProjectDetails] handleAddControl failed', e);
+      setNotice({ visible: true, text: 'Kunde inte skapa kontroll' });
+      setTimeout(() => setNotice({ visible: false, text: '' }), 3500);
+    }
+  };
+
+  // Undo a recently deleted control (restore into local storage)
+  const handleUndo = async () => {
+    try {
+      if (!undoState || !undoState.item) return;
+      const item = undoState.item;
+      if (item.isDraft) {
+        const raw = await AsyncStorage.getItem('draft_controls');
+        const arr = raw ? (JSON.parse(raw) || []) : [];
+        const idx = (typeof undoState.index === 'number' && undoState.index >= 0) ? undoState.index : arr.length;
+        arr.splice(idx, 0, item);
+        await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
+      } else {
+        const raw = await AsyncStorage.getItem('completed_controls');
+        const arr = raw ? (JSON.parse(raw) || []) : [];
+        const idx = (typeof undoState.index === 'number' && undoState.index >= 0) ? undoState.index : arr.length;
+        arr.splice(idx, 0, item);
+        await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+      }
+      setUndoState({ visible: false, item: null, index: -1 });
+      if (undoTimerRef.current) {
+        try { clearTimeout(undoTimerRef.current); } catch (_e) {}
+        undoTimerRef.current = null;
+      }
+      try { loadControls && loadControls(); } catch (_e) {}
+    } catch (e) {
+      console.warn('[ProjectDetails] handleUndo failed', e);
     }
   };
 
@@ -1159,7 +1259,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             window.dispatchEvent(new CustomEvent('dkInlineAttemptExit', { detail: { reason: 'headerBack' } }));
             return;
           }
-        } catch(e) {}
+        } catch(_e) {}
       }
 
       // For non-form inline views (e.g. ControlDetails), just go back to the project page.
@@ -2328,7 +2428,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   }
                 }
                 return { total, open };
-              } catch(e) {
+              } catch(_e) {
                 return { total: 0, open: 0 };
               }
             }
@@ -2339,13 +2439,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             {grouped.map(({ type, items }) => {
               const t = type;
               const typeMeta = (controlTypeOptions || []).find(o => o.type === t) || null;
-              let allHandled = true;
-              let anyDeviation = false;
               let anyOpenDeviation = false;
               if (t === 'Skyddsrond') {
                 const stats = (items || []).map(ctrl => getSkyddsrondDeviationStats(ctrl));
-                allHandled = stats.length > 0 && stats.every(s => s.total > 0 && s.open === 0);
-                anyDeviation = stats.some(s => s.total > 0);
                 anyOpenDeviation = stats.some(s => s.open > 0);
               }
               const expanded = expandedByType[t] ?? false;
@@ -2369,7 +2465,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                     {t === 'Skyddsrond' && anyOpenDeviation && (
                       <TouchableOpacity
                         onPress={(e) => {
-                          try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
+                          try { e && e.stopPropagation && e.stopPropagation(); } catch(_e) {}
                           // Expand the group so the problematic rond becomes visible (and highlighted).
                           setExpandedByType((prev) => ({ ...prev, [t]: true }));
                         }}
@@ -2418,7 +2514,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                             try {
                               const d = new Date(v);
                               if (!isNaN(d)) return d.toLocaleDateString('sv-SE');
-                            } catch(e) {}
+                            } catch(_e) {}
                             return null;
                           };
                           parsedDate = tryParse(item.date) || tryParse(item.dateValue) || tryParse(item.savedAt) || tryParse(item.createdAt) || tryParse(item.created) || '';
@@ -2563,7 +2659,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                   style={{ marginLeft: trailingIconMarginLeft, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FFD600', alignSelf: 'center' }}
                                   activeOpacity={0.85}
                                   onPress={(e) => {
-                                    try { e && e.stopPropagation && e.stopPropagation(); } catch(e) {}
+                                    try { e && e.stopPropagation && e.stopPropagation(); } catch(_e) {}
                                     navigation.navigate('ControlDetails', { control: item, project, companyId });
                                   }}
                                   accessibilityLabel="Åtgärda"
@@ -2581,6 +2677,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                     try {
                                       setExportingPdf(true);
                                       // Bygg HTML för EN kontroll
+                                      let companyNameForPdf = 'FÖRETAG AB';
                                       try {
                                         console.log('[PDF] using buildSummaryHtml?', typeof buildSummaryHtml);
                                         // Prepare logo (prefer company profile for PDF; try downloading + base64 embed)
@@ -2589,9 +2686,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                           try {
                                             profile = await fetchCompanyProfile(companyId);
                                             if (profile) setCompanyProfile(profile);
-                                          } catch(e) {}
+                                          } catch(_e) {}
                                         }
-                                        const companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
+                                        companyNameForPdf = profile?.name || profile?.companyName || project?.client || project?.name || 'FÖRETAG AB';
                                         const companyLogoFromProfile = profile?.logoUrl || null;
                                         let logoForPrint = companyLogoFromProfile || companyLogoUri || null;
                                         if (logoForPrint && /^https?:\/\//i.test(logoForPrint)) {
@@ -2617,7 +2714,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                                 logoBase64 = await readUriAsBase64(local);
                                                 if (logoBase64) logoForPrint = 'data:image/png;base64,' + logoBase64;
                                               }
-                                            } catch(e) { /* ignore */ }
+                                            } catch(_e) { /* ignore */ }
                                           } else {
                                             logoForPrint = 'data:image/png;base64,' + logoBase64;
                                           }
@@ -2660,7 +2757,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                           throw new Error('printToFileAsync returned no uri');
                                         }
                                       } catch(e) {
-                                        console.warn('[PDF] single-item PDF generation failed, retrying without logo', err);
+                                        console.warn('[PDF] single-item PDF generation failed, retrying without logo', e);
                                         try {
                                           let html2;
                                           if (typeof buildSummaryHtml === 'function') {

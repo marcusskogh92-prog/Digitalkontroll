@@ -5,12 +5,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, TextInput } from 'react-native';
-// Load ImagePicker dynamically inside handlers to avoid bundling native-only exports on web
-let ImagePicker = null;
 // import { Ionicons } from '@expo/vector-icons';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import SignatureModal from '../components/SignatureModal';
 import { resolveCompanyLogoUrl } from '../components/firebase';
+// Load ImagePicker dynamically inside handlers to avoid bundling native-only exports on web
+let ImagePicker = null;
 
 const CONTROL_TYPE_ICONS = {
   'Arbetsberedning': { icon: 'construct-outline', color: '#1976D2', label: 'Arbetsberedning' },
@@ -33,13 +33,7 @@ export default function ControlDetails({ route }) {
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const { control, project, companyId: routeCompanyId } = route.params || {};
-  if (!control) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: '#555' }}>Kunde inte hitta kontrollen.</Text>
-      </View>
-    );
-  }
+  // Note: do not return early here — Hooks must be called unconditionally.
 
   const [controlState, setControlState] = useState(control);
   useEffect(() => {
@@ -672,7 +666,7 @@ export default function ControlDetails({ route }) {
                             // Välj/tar foto
                             // Dynamically import ImagePicker for camera capture
                             if (!ImagePicker) {
-                              try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+                              try { ImagePicker = await import('expo-image-picker'); } catch(_e) { ImagePicker = null; }
                             }
                             const launch = (ImagePicker && typeof ImagePicker.launchCameraAsync === 'function') ? ImagePicker.launchCameraAsync : null;
                             const mediaTypes = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images) ? ImagePicker.MediaTypeOptions.Images : undefined;
@@ -879,6 +873,16 @@ export default function ControlDetails({ route }) {
 
     </View>
   );
+
+  // If no control was provided, show a friendly message (check placed after Hooks
+  // and pageContent so Hook call order remains stable for ESLint).
+  if (!control) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}> 
+        <Text style={{ color: '#555' }}>Kunde inte hitta kontrollen.</Text>
+      </View>
+    );
+  }
 
   if (Platform.OS === 'web') {
     return (

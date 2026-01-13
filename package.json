@@ -14,7 +14,7 @@
     "android": "expo start --android --port 8081",
     "ios": "expo start --ios --port 8081",
     "web": "expo start --web --port 8081",
-    "build": "expo build:web",
+    "build": "npx expo export --platform web",
     "lint": "expo lint"
   },
   "dependencies": {
