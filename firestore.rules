@@ -31,7 +31,31 @@ service cloud.firestore {
     // Company profile (public by convention)
     match /foretag/{company}/profil/{docId} {
       allow read: if true;
-      allow write: if isCompanyMember(company);
+      // Only allow creation of a new company profile by callers that are authorized to create companies.
+      // This requires either a superadmin claim or being an admin in MS Byggsystem.
+      allow create: if request.auth != null && !exists(/databases/$(database)/documents/foretag/$(company)/profil/$(docId))
+        && request.resource.data.companyName is string
+        && (
+          // superadmin claim
+          (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+          // or admin inside MS Byggsystem
+          || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+        );
+      // Allow updates both for members of the company and for global superadmins / MS Byggsystem-admins.
+      allow update, delete: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+            || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+          )
+        );
+    }
+
+    // Allow collection group queries on any "profil" subcollection (used to list companies
+    // by reading their public profiles). Read-only; writes are still governed by the more
+    // specific /foretag/{company}/profil/{docId} rule above.
+    match /{path=**}/profil/{docId} {
+      allow read: if true;
     }
 
     // Byggdel mall-register (company-scoped)
@@ -41,6 +65,37 @@ service cloud.firestore {
 
     // Byggdel hierarki (company-scoped)
     match /foretag/{company}/byggdel_hierarki/state {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika kontrolltyper (company-scoped)
+    // Används av adminvyn "Kontrolltyper" samt vid skapande av nya kontrollpunkter.
+    // Läsning tillåts både för medlemmar i företaget och för globala admins
+    // (superadmin eller MS Byggsystem-admin) så att centrala admins kan se
+    // vilka kontrolltyper som används hos alla företag.
+    match /foretag/{company}/kontrolltyper/{typeId} {
+      allow read: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            // Token-baserade superadmins
+            request.auth.token.superadmin == true ||
+            request.auth.token.role == 'superadmin' ||
+            // Admin i MS Byggsystem
+            (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+            // Whitelist specifika superadmin-mail för robusthet
+            request.auth.token.email == 'marcus@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem'
+          )
+        );
+      // Skriv-rättigheter lämnas företags-lokala; bara medlemmar kan ändra
+      // sina egna företags kontrolltyper.
+      allow write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika mallar (company-scoped)
+    // Används av adminvyn "Mallar" för att skapa och hantera mallar per kontrolltyp.
+    match /foretag/{company}/mallar/{mallId} {
       allow read, write: if isCompanyMember(company);
     }
 
@@ -58,6 +113,22 @@ service cloud.firestore {
     // Used by dashboard "Senaste aktivitet" (e.g. login events)
     match /foretag/{company}/activity/{eventId} {
       allow read, write: if isCompanyMember(company);
+    }
+
+    // Global admin audit log (read-only for superadmins / MS Byggsystem-admins)
+    match /admin_audit/{eventId} {
+      allow read: if request.auth != null && (
+        // Token-baserade superadmins
+        request.auth.token.superadmin == true ||
+        request.auth.token.role == 'superadmin' ||
+        // Admin i MS Byggsystem
+        (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+        // Whitelist specifika superadmin-mail så att läsrätt inte bryts om companyId-claimen skulle peka på annat företag.
+        request.auth.token.email == 'marcus@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem'
+      );
+      allow write: if false; // only server-side (admin SDK) writes
     }
 
     // Allow users to read/write their own profile doc

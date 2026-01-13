@@ -1,17 +1,36 @@
 {
+  "hosting": {
+    "public": "web-build",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "firestore": {
     "rules": "firestore.rules"
   },
   "storage": {
     "rules": "storage.rules"
-  }
-  ,
+  },
   "functions": {
     "source": "functions"
   },
   "emulators": {
     "functions": {
       "port": 5001
+    },
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8085
     },
     "ui": {
       "enabled": false,

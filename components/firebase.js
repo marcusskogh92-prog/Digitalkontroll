@@ -4,10 +4,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 // Firebase-konfiguration för DigitalKontroll
 const firebaseConfig = {
@@ -27,15 +27,16 @@ const app = initializeApp(firebaseConfig);
 export const storage = getStorage(app);
 
 // Initiera autentisering & Firestore
-// Use React Native AsyncStorage for Auth persistence when possible
-let _auth;
-try {
-  _auth = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
-} catch(e) {
-  // Fallback to default (web) auth for environments where initializeAuth isn't available
-  _auth = getAuth(app);
+// Webb: använd standard getAuth. Native: använd initializeAuth med AsyncStorage-persistens
+let auth;
+if (Platform.OS === 'web') {
+  auth = getAuth(app);
+} else {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage),
+  });
 }
-export const auth = _auth;
+export { auth };
 export const db = getFirestore(app);
 // Functions client
 let _functionsClient = null;
@@ -46,11 +47,49 @@ try {
 }
 export const functionsClient = _functionsClient;
 
+// Emulator connection disabled - using production Firebase
+// If running in a browser on localhost, connect the Functions client to the emulator
+/*
+try {
+  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      if (functionsClient && typeof connectFunctionsEmulator === 'function') {
+        // default emulator port used by firebase emulators: 5001
+        connectFunctionsEmulator(functionsClient, 'localhost', 5001);
+        console.log('[firebase] connected functions client to emulator at localhost:5001');
+      }
+    } catch (e) { console.warn('[firebase] could not connect functions emulator', e); }
+  }
+} catch(e) {}
+
+// Also connect Firestore and Auth clients to local emulators when running on localhost
+try {
+  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      if (typeof connectFirestoreEmulator === 'function' && db) {
+        // Firestore emulator in this project configured to 8085
+        connectFirestoreEmulator(db, 'localhost', 8085);
+        console.log('[firebase] connected firestore client to emulator at localhost:8085');
+      }
+    } catch (e) { console.warn('[firebase] could not connect firestore emulator', e); }
+    try {
+      if (typeof connectAuthEmulator === 'function' && auth) {
+        // Auth emulator default port 9099
+        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch(e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
+        console.log('[firebase] connected auth client to emulator at http://localhost:9099');
+      }
+    } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
+  }
+} catch(e) {}
+*/
+
 // Callable wrappers
-export async function createUserRemote({ companyId, email, displayName }) {
+export async function createUserRemote({ companyId, email, displayName, role }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'createUser');
-  const res = await fn({ companyId, email, displayName });
+  const payload = { companyId, email, displayName };
+  if (role !== undefined) payload.role = role;
+  const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
 
@@ -78,6 +117,109 @@ export async function adminFetchCompanyMembers(companyId) {
   const fn = httpsCallable(functionsClient, 'adminFetchCompanyMembers');
   const res = await fn({ companyId });
   return res && res.data ? res.data : res;
+}
+
+export async function provisionCompanyRemote({ companyId, companyName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'provisionCompany');
+  const res = await fn({ companyId, companyName });
+  return res && res.data ? res.data : res;
+}
+
+export async function setSuperadminRemote({ email, uid }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setSuperadmin');
+  const res = await fn({ email, uid });
+  return res && res.data ? res.data : res;
+}
+
+export async function setCompanyStatusRemote({ companyId, enabled, deleted }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyStatus');
+  const payload = { companyId };
+  if (enabled !== undefined) payload.enabled = enabled;
+  if (deleted !== undefined) payload.deleted = deleted;
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function setCompanyUserLimitRemote({ companyId, userLimit }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyUserLimit');
+  const payload = { companyId, userLimit };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function setCompanyNameRemote({ companyId, companyName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'setCompanyName');
+  const payload = { companyId, companyName };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function purgeCompanyRemote({ companyId }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'purgeCompany');
+  const payload = { companyId };
+  const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+export async function fetchAdminAuditForCompany(companyId, limitCount = 50) {
+  if (!db) throw new Error('Firestore not initialized');
+  const q = query(
+    collection(db, 'admin_audit'),
+    where('companyId', '==', companyId)
+  );
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    items.push({ id: docSnap.id, ...data });
+  });
+  // Sortera senaste först på klientsidan för att undvika composite index-krav
+  items.sort((a, b) => {
+    const ta = a && a.ts && typeof a.ts.toMillis === 'function' ? a.ts.toMillis() : 0;
+    const tb = b && b.ts && typeof b.ts.toMillis === 'function' ? b.ts.toMillis() : 0;
+    return tb - ta;
+  });
+  if (limitCount && items.length > limitCount) {
+    return items.slice(0, limitCount);
+  }
+  return items;
+}
+
+// Global admin audit fetcher. If companyId is provided, filters on that company,
+// otherwise returns latest events across all companies.
+export async function fetchAdminAuditEvents({ companyId = null, limitCount = 100 } = {}) {
+  if (!db) throw new Error('Firestore not initialized');
+  const baseCol = collection(db, 'admin_audit');
+  let q;
+  if (companyId) {
+    // Endast filter på companyId här; sortering sker i klienten för att
+    // undvika krav på composite-index (companyId + ts).
+    q = query(baseCol, where('companyId', '==', companyId));
+  } else {
+    q = query(baseCol, orderBy('ts', 'desc'), limit(limitCount));
+  }
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    items.push({ id: docSnap.id, ...data });
+  });
+  // Säkerställ konsekvent sortering (senaste först) även i filtrerat läge
+  items.sort((a, b) => {
+    const ta = a && a.ts && typeof a.ts.toMillis === 'function' ? a.ts.toMillis() : 0;
+    const tb = b && b.ts && typeof b.ts.toMillis === 'function' ? b.ts.toMillis() : 0;
+    return tb - ta;
+  });
+  if (limitCount && items.length > limitCount) {
+    return items.slice(0, limitCount);
+  }
+  return items;
 }
 
 async function getAuthDebugSnapshot() {
@@ -221,28 +363,36 @@ export async function fetchCompanyProfile(companyId) {
 // Fetch a flat list of companies (foretag). Returns array of { id, profile }
 export async function fetchCompanies() {
   try {
-    const baseRef = collection(db, 'foretag');
+    // Firestore rules do not allow listing /foretag docs directly, but
+    // profiles under /foretag/{company}/profil/{docId} are world-readable.
+    // Use a collection group on "profil" and then map each "public" doc
+    // back to its company id.
+    const baseRef = collectionGroup(db, 'profil');
     const snap = await getDocs(baseRef);
-    const ids = [];
-    snap.forEach(d => ids.push(d.id));
-    // Fetch profiles in parallel
-    const out = await Promise.all(ids.map(async (id) => {
+    const out = [];
+
+    snap.forEach((d) => {
       try {
-        const pref = doc(db, 'foretag', id, 'profil', 'public');
-        const ps = await getDoc(pref);
-        return { id, profile: ps.exists() ? ps.data() : null };
-      } catch(e) {
-        return { id, profile: null };
+        if (!d || d.id !== 'public') return; // only use the public profile docs
+        const profilCol = d.ref.parent; // .../foretag/{company}/profil
+        const companyDoc = profilCol && profilCol.parent; // .../foretag/{company}
+        const companyId = companyDoc && companyDoc.id ? companyDoc.id : null;
+        if (!companyId) return;
+        out.push({ id: companyId, profile: d.data() || null });
+      } catch (e) {
+        // Ignore individual mapping errors; continue with others
       }
-    }));
+    });
+
     // Sort by display name if available, otherwise by id
     out.sort((a, b) => {
       const an = String((a.profile && (a.profile.companyName || a.profile.name)) || a.id || '').toLowerCase();
       const bn = String((b.profile && (b.profile.companyName || b.profile.name)) || b.id || '').toLowerCase();
       return an.localeCompare(bn, undefined, { sensitivity: 'base' });
     });
+
     return out;
-  } catch(e) {
+  } catch (e) {
     return [];
   }
 }
@@ -276,6 +426,15 @@ export async function resolveCompanyLogoUrl(companyId) {
 
       for (const b of bucketCandidates.length > 0 ? bucketCandidates : ['']) {
         try {
+          // On web prefer the public GCS URL (avoids tokenized REST calls that sometimes 403 in browsers)
+          if (Platform && Platform.OS === 'web' && b) {
+            try {
+              const publicUrl = 'https://storage.googleapis.com/' + b + '/' + encodeURI(fullPath.replace(/^\/+/, ''));
+              return publicUrl;
+            } catch (e) {
+              // fall back to SDK below
+            }
+          }
           const st = b ? getStorage(app, `gs://${b}`) : storage;
           const r = storageRef(st, fullPath);
           const https = await getDownloadURL(r);
@@ -953,6 +1112,282 @@ export async function saveByggdelHierarchy({ momentsByGroup }, companyIdOverride
   } catch(e) {
     return false;
   }
+}
+
+// Default kontrolltyper (globala standarder) som alltid finns tillgängliga.
+// Dessa kan kompletteras med företags-specifika kontrolltyper i
+// /foretag/{companyId}/kontrolltyper.
+export const DEFAULT_CONTROL_TYPES = [
+  { key: 'arbetsberedning', name: 'Arbetsberedning', icon: 'construct-outline', color: '#1976D2', order: 10, builtin: true },
+  { key: 'egenkontroll', name: 'Egenkontroll', icon: 'checkmark-done-outline', color: '#388E3C', order: 20, builtin: true },
+  { key: 'fuktmatning', name: 'Fuktmätning', icon: 'water-outline', color: '#0288D1', order: 30, builtin: true },
+  { key: 'mottagningskontroll', name: 'Mottagningskontroll', icon: 'checkbox-outline', color: '#7B1FA2', order: 40, builtin: true },
+  { key: 'riskbedomning', name: 'Riskbedömning', icon: 'warning-outline', color: '#FFD600', order: 50, builtin: true },
+  { key: 'skyddsrond', name: 'Skyddsrond', icon: 'shield-half-outline', color: '#388E3C', order: 60, builtin: true },
+];
+
+export async function fetchCompanyControlTypes(companyIdOverride) {
+  const base = DEFAULT_CONTROL_TYPES.slice();
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) return base;
+  try {
+    const colRef = collection(db, 'foretag', companyId, 'kontrolltyper');
+    const snap = await getDocs(colRef);
+    const extras = [];
+    snap.forEach((docSnap) => {
+      try {
+        const data = docSnap.data() || {};
+        const key = String(data.key || docSnap.id || data.name || '').trim() || `ct_${docSnap.id}`;
+        // Bygg en patch som bara innehåller de fält som faktiskt finns på dokumentet
+        // så att vi inte råkar skriva över standardvärden (namn/ikon/färg) när en
+        // override bara vill sätta t.ex. `hidden: true`.
+        const patch = { key, builtin: false, id: docSnap.id };
+        if (Object.prototype.hasOwnProperty.call(data, 'name') || Object.prototype.hasOwnProperty.call(data, 'title')) {
+          const name = String(data.name || data.title || key).trim();
+          if (name) patch.name = name;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'icon')) {
+          const icon = String(data.icon || '').trim();
+          if (icon) patch.icon = icon;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'color')) {
+          const color = String(data.color || '').trim();
+          if (color) patch.color = color;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'order') && typeof data.order === 'number' && Number.isFinite(data.order)) {
+          patch.order = data.order;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, 'hidden')) {
+          patch.hidden = !!data.hidden;
+        }
+        extras.push(patch);
+      } catch (_e) {}
+    });
+    if (!extras.length) return base;
+    const byKey = new Map();
+    base.forEach((t) => { byKey.set(String(t.key || t.name).toLowerCase(), t); });
+    // Overlay företags-specifika overrides ovanpå defaulttyperna i stället
+    // för att ersätta dem helt. På så sätt kan en override som bara sätter
+    // t.ex. `hidden: true` återanvända defaultens namn, ikon och färg.
+    extras.forEach((t) => {
+      const k = String(t.key || t.name).toLowerCase();
+      const existing = byKey.get(k) || {};
+      byKey.set(k, { ...existing, ...t });
+    });
+    const merged = Array.from(byKey.values());
+    merged.sort((a, b) => {
+      const ao = typeof a.order === 'number' ? a.order : 9999;
+      const bo = typeof b.order === 'number' ? b.order : 9999;
+      if (ao !== bo) return ao - bo;
+      const an = String(a.name || '').toLowerCase();
+      const bn = String(b.name || '').toLowerCase();
+      return an.localeCompare(bn, 'sv');
+    });
+    return merged;
+  } catch (_e) {
+    return base;
+  }
+}
+
+// Skapa en ny företags-specifik kontrolltyp under /foretag/{companyId}/kontrolltyper.
+// Minimal payload: { name }. Optionellt: { key, icon, color, order }.
+export async function createCompanyControlType(payload, companyIdOverride) {
+  if (!payload || !payload.name) throw new Error('Namn på kontrolltyp saknas.');
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  const name = String(payload.name || '').trim();
+  if (!name) throw new Error('Namn på kontrolltyp saknas.');
+  const keyRaw = String(payload.key || '').trim();
+  const key = keyRaw || name.toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+  const icon = String(payload.icon || '').trim() || 'document-text-outline';
+  const color = String(payload.color || '').trim() || '#455A64';
+  const order = (typeof payload.order === 'number' && Number.isFinite(payload.order)) ? payload.order : null;
+  try {
+    const colRef = collection(db, 'foretag', companyId, 'kontrolltyper');
+    const docRef = await addDoc(colRef, sanitizeForFirestore({
+      key,
+      name,
+      icon,
+      color,
+      ...(order !== null ? { order } : {}),
+      createdAt: serverTimestamp(),
+    }));
+    return { id: docRef.id, key, name, icon, color, order };
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte skapa kontrolltyp.');
+  }
+}
+
+// Uppdatera en befintlig företags-specifik kontrolltyp.
+// Payload ska innehålla antingen { id } eller { key } och valfria fält att uppdatera: { name, icon, color, order, hidden }.
+export async function updateCompanyControlType(payload, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  let docId = String(payload?.id || '').trim();
+  if (!docId) {
+    const keyRaw = String(payload?.key || '').trim();
+    if (!keyRaw) throw new Error('ID eller nyckel för kontrolltyp saknas.');
+    // Normalisera docId från key på samma sätt som createCompanyControlType gör för key.
+    docId = keyRaw.toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+    if (!docId) throw new Error('Ogiltig nyckel för kontrolltyp.');
+  }
+
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    const name = String(payload.name || '').trim();
+    if (!name) throw new Error('Namn på kontrolltyp saknas.');
+    patch.name = name;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'icon')) {
+    patch.icon = String(payload.icon || '').trim() || 'document-text-outline';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'color')) {
+    patch.color = String(payload.color || '').trim() || '#455A64';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'order')) {
+    if (typeof payload.order === 'number' && Number.isFinite(payload.order)) {
+      patch.order = payload.order;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'hidden')) {
+    patch.hidden = !!payload.hidden;
+  }
+
+  if (Object.keys(patch).length === 0) return true;
+
+  patch.updatedAt = serverTimestamp();
+
+  try {
+    const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
+    await setDoc(ref, sanitizeForFirestore(patch), { merge: true });
+    return true;
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte uppdatera kontrolltyp.');
+  }
+}
+
+// Radera en företags-specifik kontrolltyp.
+export async function deleteCompanyControlType(payload, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, payload);
+  if (!companyId) throw new Error('Kunde inte avgöra företag för kontrolltypen.');
+  const docId = String(payload?.id || '').trim();
+  if (!docId) throw new Error('ID för kontrolltyp saknas.');
+  try {
+    const ref = doc(db, 'foretag', companyId, 'kontrolltyper', docId);
+    await deleteDoc(ref);
+    return true;
+  } catch (e) {
+    throw new Error(e?.message || 'Kunde inte radera kontrolltyp.');
+  }
+}
+
+export async function fetchCompanyMallar(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'mallar'));
+    const out = [];
+    snap.forEach(docSnap => {
+      const d = docSnap.data() || {};
+      out.push(Object.assign({}, d, { id: docSnap.id }));
+    });
+    out.sort((a, b) => {
+      const at = String(a && (a.title ?? '')).trim();
+      const bt = String(b && (b.title ?? '')).trim();
+      return at.localeCompare(bt, 'sv');
+    });
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function createCompanyMall({ title, description, controlType, layout, version }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const t = String(title || '').trim();
+  const desc = String(description || '').trim();
+  const ct = String(controlType || '').trim();
+  const layoutData = layout || null;
+  const versionNumber = Number.isFinite(Number(version)) && Number(version) > 0 ? Number(version) : 1;
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
+  if (!t) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const colRef = collection(db, 'foretag', companyId, 'mallar');
+  const payload = {
+    title: t,
+    description: desc,
+    controlType: ct || null,
+    layout: layoutData,
+    createdBy: createdBy || null,
+    hidden: false,
+    version: versionNumber,
+    createdAt: serverTimestamp(),
+  };
+  const docRef = await addDoc(colRef, payload);
+  return docRef.id;
+}
+
+// Uppdatera en företagsmall (merge)
+// Exempel: updateCompanyMall({ id, patch: { hidden: true } })
+export async function updateCompanyMall({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const mallId = String(id || '').trim();
+  if (!mallId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'mallar', mallId);
+  await updateDoc(ref, safePatch);
+  return true;
+}
+
+export async function deleteCompanyMall({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const mallId = String(id || '').trim();
+  if (!mallId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  await deleteDoc(doc(db, 'foretag', companyId, 'mallar', mallId));
+  return true;
 }
 
 // Byggdel mall-register per företag

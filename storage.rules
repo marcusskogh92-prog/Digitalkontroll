@@ -6,12 +6,22 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    // Branding/logo assets.
-    // You stated it's OK if the company logo is publicly readable.
-    // This enables reading logo files stored under these common prefixes.
-    match /foretag/{companyId}/branding/{allPaths=**} {
-      allow read: if request.auth != null && request.auth.token.companyId == companyId;
-      allow write: if false;
+    // Branding/logo assets lagras nu under "company-logos/{companyId}/...".
+    // De får vara publikt läsbara (används i toppheadern utan auth), men
+    // uppladdning kräver inloggad användare som tillhör företaget eller
+    // superadmin / MS Byggsystem-admin.
+    match /company-logos/{companyId}/{allPaths=**} {
+      // Alla får läsa loggor.
+      allow read: if true;
+
+      // Skriv endast om inloggad och antingen medlem i företaget eller
+      // global admin/superadmin.
+      allow write: if request.auth != null && (
+        request.auth.token.companyId == companyId
+        || request.auth.token.superadmin == true
+        || request.auth.token.role == 'superadmin'
+        || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+      );
     }
 
     // Legacy/older convention currently used in your bucket.

@@ -3,9 +3,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, TextInput } from 'react-native';
+// Load ImagePicker dynamically inside handlers to avoid bundling native-only exports on web
+let ImagePicker = null;
 // import { Ionicons } from '@expo/vector-icons';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import SignatureModal from '../components/SignatureModal';
@@ -669,8 +670,14 @@ export default function ControlDetails({ route }) {
                           style={{ backgroundColor: '#1976D2', borderRadius: 50, padding: 10, marginRight: 10 }}
                           onPress={async () => {
                             // Välj/tar foto
-                            const result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
-                            if (!result.canceled && result.assets && result.assets.length > 0) {
+                            // Dynamically import ImagePicker for camera capture
+                            if (!ImagePicker) {
+                              try { ImagePicker = await import('expo-image-picker'); } catch(e) { ImagePicker = null; }
+                            }
+                            const launch = (ImagePicker && typeof ImagePicker.launchCameraAsync === 'function') ? ImagePicker.launchCameraAsync : null;
+                            const mediaTypes = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images) ? ImagePicker.MediaTypeOptions.Images : undefined;
+                            const result = launch ? await launch({ mediaTypes: mediaTypes, quality: 0.7 }) : null;
+                            if (result && !result.canceled && result.assets && result.assets.length > 0) {
                               setActionModal(a => ({ ...a, img: result.assets[0].uri }));
                             }
                           }}
@@ -859,7 +866,8 @@ export default function ControlDetails({ route }) {
                 {selectedPhoto && (
                   <Image
                     source={{ uri: selectedPhoto }}
-                    style={{ width: '100%', height: 350, borderRadius: 12, resizeMode: 'contain', backgroundColor: '#000' }}
+                    style={{ width: '100%', height: 350, borderRadius: 12, backgroundColor: '#000' }}
+                    resizeMode="contain"
                   />
                 )}
                 <Text style={{ color: '#fff', marginTop: 12, textAlign: 'center' }}>Tryck utanför bilden för att stänga</Text>

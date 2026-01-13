@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState } from 'react';
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, ImageBackground, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { auth, saveCompanyProfile } from '../components/firebase';
+import { auth, fetchAdminAuditForCompany, fetchCompanyProfile, resolveCompanyLogoUrl, saveCompanyProfile, storage } from '../components/firebase';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
@@ -28,6 +29,11 @@ export default function ManageCompany({ navigation }) {
   const [paymentTerms, setPaymentTerms] = useState('30');
   const [invoiceMethod, setInvoiceMethod] = useState('email');
   const [loading, setLoading] = useState(false);
+  const [logoUrl, setLogoUrl] = useState('');
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [auditEvents, setAuditEvents] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     // Keep header consistent with project views (search + logos)
@@ -51,6 +57,7 @@ export default function ManageCompany({ navigation }) {
 
   // Decide if interactive tools (manage company/users) should be shown
   const [allowedTools, setAllowedTools] = useState(false);
+  const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [supportMenuOpen, setSupportMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   useEffect(() => {
@@ -59,8 +66,12 @@ export default function ManageCompany({ navigation }) {
     (async () => {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
-        if (email === 'marcus.skogh@msbyggsystem.se') {
-          if (mounted) setAllowedTools(true);
+        const isEmailSuperadmin = email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.com' || email === 'marcus.skogh@msbyggsystem';
+        if (email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se') {
+          if (mounted) {
+            setAllowedTools(true);
+            setShowHeaderUserMenu(true);
+          }
           return;
         }
         let tokenRes = null;
@@ -68,33 +79,144 @@ export default function ManageCompany({ navigation }) {
         const claims = tokenRes?.claims || {};
         const companyFromClaims = String(claims?.companyId || '').trim();
         const isAdminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
+        const isSuperClaim = !!(claims && (claims.superadmin === true || claims.role === 'superadmin'));
         const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
         const companyId = companyFromClaims || stored || '';
+        const allowHeader = isEmailSuperadmin || isSuperClaim || isAdminClaim;
         if (companyId === 'MS Byggsystem' && isAdminClaim) {
           if (mounted) setAllowedTools(true);
-          return;
         }
+        if (mounted) setShowHeaderUserMenu(!!allowHeader);
+        return;
       } catch(_e) {}
-      if (mounted) setAllowedTools(false);
+      if (mounted) {
+        setAllowedTools(false);
+        setShowHeaderUserMenu(false);
+      }
     })();
     return () => { mounted = false; };
   }, []);
+
+  // Lyssna på global "hem"-händelse från ProjectSidebar (webb)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (typeof window === 'undefined') return undefined;
+
+    const handler = () => {
+      try {
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+      } catch (_e) {}
+    };
+
+    window.addEventListener('dkGoHome', handler);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+    };
+  }, [navigation]);
 
   const handleSave = async () => {
     if (!companyId) return Alert.alert('Fel', 'Ange ett företags-ID');
     const limitNum = parseInt(String(userLimit || '0'), 10) || 0;
     setLoading(true);
     try {
-      const ok = await saveCompanyProfile(String(companyId).trim(), { companyName: String(companyName || '').trim(), userLimit: limitNum });
+      const trimmedId = String(companyId).trim();
+      const trimmedName = String(companyName || '').trim();
+      const ok = await saveCompanyProfile(trimmedId, { companyName: trimmedName, userLimit: limitNum });
       if (ok) {
         Alert.alert('Sparat', 'Företagsprofil uppdaterad.');
-        setCompanyId(''); setCompanyName(''); setUserLimit('10');
+        // Inform sidebar (web) so it can refresh the visible company profile immediately
+        try {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+              detail: {
+                companyId: trimmedId,
+                profile: { companyName: trimmedName, userLimit: limitNum, logoUrl: logoUrl || undefined },
+              },
+            }));
+          }
+        } catch (_e) {}
+        // Läs tillbaka profilen från Firestore så formuläret visar faktiskt sparat värde
+        try {
+          const latest = await fetchCompanyProfile(trimmedId);
+          if (latest) {
+            setCompanyId(trimmedId);
+            setCompanyName(latest.companyName || trimmedName);
+            setUserLimit(typeof latest.userLimit !== 'undefined' && latest.userLimit !== null ? String(latest.userLimit) : String(limitNum));
+            setLogoUrl(latest.logoUrl || '');
+          } else {
+            setCompanyId(trimmedId);
+            setCompanyName(trimmedName);
+            setUserLimit(String(limitNum));
+          }
+        } catch (_e) {
+          setCompanyId(trimmedId);
+          setCompanyName(trimmedName);
+          setUserLimit(String(limitNum));
+        }
       } else {
         Alert.alert('Fel', 'Kunde inte spara företagsprofil.');
       }
     } catch (e) {
       Alert.alert('Fel', String(e?.message || e));
     } finally { setLoading(false); }
+  };
+
+  const handleLogoFileChange = async (event) => {
+    try {
+      if (!companyId) {
+        Alert.alert('Fel', 'Välj först ett företag i listan till vänster.');
+        return;
+      }
+      const file = event?.target?.files && event.target.files[0] ? event.target.files[0] : null;
+      if (!file) return;
+      // Visa en direktförhandsvisning på webben medan uppladdning pågår
+      try {
+        if (Platform.OS === 'web' && typeof URL !== 'undefined' && URL.createObjectURL) {
+          const localPreview = URL.createObjectURL(file);
+          if (localPreview) {
+            setLogoUrl(localPreview);
+          }
+        }
+      } catch (_e) {}
+      setLogoUploading(true);
+      const safeCompanyId = String(companyId).trim();
+      const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${Date.now()}_${file.name}`;
+      const ref = storageRef(storage, path);
+      await uploadBytes(ref, file);
+      const url = await getDownloadURL(ref);
+      const ok = await saveCompanyProfile(safeCompanyId, { logoUrl: url });
+      if (!ok) {
+        throw new Error('Kunde inte spara företagsprofil (logoUrl).');
+      }
+      // Försök alltid använda samma logik som i headern (hanterar gs://-URL:er)
+      try {
+        const resolved = await resolveCompanyLogoUrl(safeCompanyId);
+        setLogoUrl((resolved || url || '').trim());
+      } catch (_e) {
+        setLogoUrl(url || '');
+      }
+      // Inform sidebar / other views about updated profile
+      try {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+            detail: {
+              companyId: safeCompanyId,
+              profile: { logoUrl: url },
+            },
+          }));
+        }
+      } catch (_e) {}
+      Alert.alert('Logga uppdaterad', 'Företagsloggan har sparats.');
+    } catch (e) {
+      Alert.alert('Fel', 'Kunde inte ladda upp loggan: ' + String(e?.message || e));
+    } finally {
+      setLogoUploading(false);
+      try {
+        if (event?.target) {
+          event.target.value = '';
+        }
+      } catch (_e) {}
+    }
   };
 
   // Web: render inside the central dashboard area so layout and background remain consistent
@@ -141,15 +263,50 @@ export default function ManageCompany({ navigation }) {
         setBillingReference(prof?.billingReference || '');
         setPaymentTerms(prof?.paymentTerms ? String(prof.paymentTerms) : '30');
         setInvoiceMethod(prof?.invoiceMethod || 'email');
+        // Förhandsläs logga: om det är en gammal gs://-URL vill vi omvandla den till https.
+        (async () => {
+          try {
+            const resolved = await resolveCompanyLogoUrl(cid);
+            if (resolved) {
+              setLogoUrl(resolved);
+            } else {
+              setLogoUrl(prof?.logoUrl || '');
+            }
+          } catch (_e) {
+            setLogoUrl(prof?.logoUrl || '');
+          }
+        })();
+
+        // Hämta senaste admin-loggposter för företaget (endast webb)
+        if (Platform.OS === 'web' && cid) {
+          (async () => {
+            try {
+              setAuditLoading(true);
+              const items = await fetchAdminAuditForCompany(cid, 50).catch(() => []);
+              setAuditEvents(Array.isArray(items) ? items : []);
+            } catch (_e) {
+              setAuditEvents([]);
+            } finally {
+              setAuditLoading(false);
+            }
+          })();
+        } else {
+          setAuditEvents([]);
+        }
       } catch (e) {}
     };
 
+    const hasSelectedCompany = !!(String(companyId || '').trim() || String(companyName || '').trim());
+    const formDisabled = !hasSelectedCompany;
+
     return (
       <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
-        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
+        <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         <MainLayout
           onSelectProject={handleSelectCompany}
           sidebarTitle="Företagslista"
+          sidebarIconName="business"
+          sidebarIconColor="#2E7D32"
           sidebarSearchPlaceholder="sök företag"
           sidebarCompaniesMode={true}
           sidebarShowMembers={allowedTools}
@@ -158,7 +315,7 @@ export default function ManageCompany({ navigation }) {
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>
-                    {allowedTools ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
+                    {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
                   </View>
                   {allowedTools ? (
                     <TouchableOpacity
@@ -189,7 +346,7 @@ export default function ManageCompany({ navigation }) {
         >
           <View style={dashboardContainerStyle}>
             <View style={dashboardColumnsStyle}>
-              <View style={{ flex: 1, minWidth: 360, marginRight: 16 }}>
+              <View style={{ width: 640, maxWidth: 640, minWidth: 360, marginRight: 24 }}>
                 <View style={[dashboardCardStyle, { alignSelf: 'flex-start', maxWidth: 600 }] }>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
                     <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
@@ -204,41 +361,182 @@ export default function ManageCompany({ navigation }) {
                   </View>
 
                   <View style={{ maxWidth: 520 }}>
+                  {formDisabled && (
+                    <View style={{
+                      width: '84%',
+                      marginLeft: '8%',
+                      marginBottom: 12,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      backgroundColor: '#FFF8E1',
+                      borderWidth: 1,
+                      borderColor: '#FFE082',
+                    }}>
+                      <Text style={{ fontSize: 13, color: '#5D4037' }}>
+                        Välj ett företag i listan till vänster för att visa och ändra dess företagsprofil.
+                      </Text>
+                    </View>
+                  )}
                   <View style={{ paddingVertical: 6, width: '100%', alignItems: 'flex-start' }}>
                     <Text style={{ marginBottom: 6, marginLeft: '8%' }}>Företags-ID (kort identifierare)</Text>
-                    <TextInput value={companyId} onChangeText={setCompanyId} placeholder="foretag-id" style={{ width: '84%', marginLeft: '8%', borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6 }} />
+                    <TextInput
+                      value={companyId}
+                      editable={false}
+                      placeholder="foretag-id"
+                      style={{
+                        width: '84%',
+                        marginLeft: '8%',
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        padding: 8,
+                        borderRadius: 6,
+                        backgroundColor: '#f5f5f5',
+                        color: '#555',
+                      }}
+                    />
                   </View>
 
                   <View style={{ paddingVertical: 6, width: '100%', alignItems: 'flex-start' }}>
                     <Text style={{ marginBottom: 6, marginLeft: '8%' }}>Företagsnamn</Text>
-                    <TextInput value={companyName} onChangeText={setCompanyName} placeholder="Företagsnamn" style={{ width: '84%', marginLeft: '8%', borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6 }} />
+                    <TextInput
+                      value={companyName}
+                      editable={false}
+                      placeholder="Företagsnamn"
+                      style={{
+                        width: '84%',
+                        marginLeft: '8%',
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        padding: 8,
+                        borderRadius: 6,
+                        backgroundColor: '#f5f5f5',
+                        color: '#555',
+                      }}
+                    />
                   </View>
 
                   <View style={{ paddingVertical: 6, width: '100%', alignItems: 'flex-start' }}>
-                    <Text style={{ marginBottom: 6, marginLeft: '8%' }}>Antal användare (userLimit)</Text>
-                    <TextInput value={String(userLimit)} onChangeText={setUserLimit} placeholder="10" keyboardType="numeric" style={{ width: '84%', marginLeft: '8%', borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6 }} />
-                    <View style={{ marginTop: 12, width: '100%', alignItems: 'flex-start' }}>
-                      <TouchableOpacity onPress={handleSave} style={{ backgroundColor: '#1976D2', paddingVertical: 12, borderRadius: 8, alignItems: 'center', width: '84%', marginLeft: '8%' }}>
-                        <Text style={{ color: '#fff' }}>{loading ? 'Sparar...' : 'Spara företag'}</Text>
-                      </TouchableOpacity>
+                    <Text style={{ marginBottom: 6, marginLeft: '8%' }}>Licenser (userLimit)</Text>
+                    <View
+                      style={{
+                        width: '84%',
+                        marginLeft: '8%',
+                        paddingVertical: 10,
+                        paddingHorizontal: 8,
+                        borderRadius: 6,
+                        backgroundColor: '#f5f5f5',
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                      }}
+                    >
+                      <Text style={{ color: '#333' }}>
+                        {hasSelectedCompany
+                          ? `Max antal användare: ${userLimit !== undefined && userLimit !== null ? String(userLimit) : '—'}`
+                          : 'Ingen företag valt ännu.'}
+                      </Text>
+                      <Text style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
+                        Ändra userLimit via högerklick på företaget i företagslistan till vänster.
+                      </Text>
                     </View>
                   </View>
                   </View>
 
                   <View style={{ paddingTop: 12 }}>
-                    <Text style={{ color: '#666', fontSize: 13 }}>Obs: detta uppdaterar endast företagsprofil i Firestore (`foretag/{companyId}/profil/public`). För att koppla användare till Auth krävs server‑funktioner (Cloud Functions) som skapar/ta bort Auth‑konton.</Text>
+                    <Text style={{ color: '#666', fontSize: 13 }}>Obs: företagsprofilen lagras i Firestore (foretag/&lt;företags‑ID&gt;/profil/public). Max antal användare (userLimit) ändras via högerklick på företag i listan till vänster.</Text>
                   </View>
+                  {hasSelectedCompany ? (
+                    <View style={{ marginTop: 16 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Senaste åtgärder (admin-logg)</Text>
+                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, maxHeight: 260, overflow: 'auto', backgroundColor: '#fafafa' }}>
+                        {auditLoading ? (
+                          <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
+                        ) : (Array.isArray(auditEvents) && auditEvents.length > 0 ? (
+                          auditEvents.map((ev) => {
+                            const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
+                            const tsText = ts ? ts.toLocaleString('sv-SE') : '';
+                            const type = String(ev?.type || '').trim();
+                            let label = type;
+                            if (type === 'createUser') label = 'Skapa användare';
+                            else if (type === 'updateUser') label = 'Uppdatera användare';
+                            else if (type === 'deleteUser') label = 'Ta bort användare';
+                            else if (type === 'setCompanyUserLimit') label = 'Ändra antal användare (userLimit)';
+                            else if (type === 'setCompanyName') label = 'Ändra företagsnamn';
+                            else if (type === 'setCompanyStatus') label = 'Ändra status/dölj företag';
+                            else if (type === 'provisionCompany') label = 'Skapa företag';
+                            else if (type === 'purgeCompany') label = 'Permanent radering av företag';
+
+                            return (
+                              <View key={ev.id} style={{ paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+                                <Text style={{ fontSize: 13, fontWeight: '600', color: '#333' }}>{label}</Text>
+                                {tsText ? <Text style={{ fontSize: 12, color: '#777' }}>{tsText}</Text> : null}
+                              </View>
+                            );
+                          })
+                        ) : (
+                          <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
                 </View>
               </View>
 
-              <View style={{ width: 220, minWidth: 200 }}>
-                <View style={[dashboardCardStyle, { padding: 8, marginBottom: 16 }]}>
-                  <Text style={dashboardSectionTitleStyle}>Företagsinformation</Text>
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={{ color: '#777' }}>Företagsinformation och metadata visas här.</Text>
-                  </View>
+              <View style={{ width: 320, maxWidth: 360 }}>
+                <View style={[dashboardCardStyle, { alignSelf: 'flex-start' }] }>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#222', marginBottom: 10 }}>Företagslogga</Text>
+                  {hasSelectedCompany ? (
+                    <>
+                      <View style={{ marginBottom: 12, alignItems: 'center', justifyContent: 'center' }}>
+                        {logoUrl ? (
+                          <img
+                            src={logoUrl}
+                            alt="Företagslogga"
+                            style={{ maxHeight: 80, maxWidth: 260, objectFit: 'contain', borderRadius: 6, border: '1px solid #eee', backgroundColor: '#fff', padding: 4 }}
+                          />
+                        ) : (
+                          <View style={{ height: 80, width: '100%', borderRadius: 6, borderWidth: 1, borderColor: '#eee', backgroundColor: '#fafafa', alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 12, color: '#999' }}>Ingen logga uppladdad ännu.</Text>
+                          </View>
+                        )}
+                      </View>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              if (fileInputRef.current) fileInputRef.current.click();
+                            } catch (_e) {}
+                          }}
+                          disabled={logoUploading}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #ccc',
+                            backgroundColor: '#fafafa',
+                            cursor: logoUploading ? 'default' : 'pointer',
+                            fontSize: 13,
+                          }}
+                        >
+                          {logoUploading ? 'Laddar upp logga…' : 'Byt logga'}
+                        </button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleLogoFileChange}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <Text style={{ fontSize: 13, color: '#666' }}>
+                      Välj ett företag i listan till vänster för att visa och ändra företagsloggan.
+                    </Text>
+                  )}
                 </View>
               </View>
+
             </View>
           </View>
       </MainLayout>

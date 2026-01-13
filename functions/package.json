@@ -1,12 +1,20 @@
 {
   "name": "functions",
-  "description": "Cloud Functions for DigitalKontroll",
+  "description": "Cloud Functions for Digitalkontroll",
   "private": true,
   "engines": {
-    "node": "18"
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions,firestore,auth",
+    "deploy": "firebase deploy --only functions"
   },
   "dependencies": {
-    "firebase-admin": "^11.10.0",
-    "firebase-functions": "^4.4.1"
+    "firebase-admin": "^11.11.0",
+    "firebase-functions": "^5.1.0",
+    "firebase-tools": "^15.2.1",
+    "@types/markdown-it": "^14.1.2",
+    "markdown-it": "^14.1.0",
+    "picomatch": "^4.0.3"
   }
 }
