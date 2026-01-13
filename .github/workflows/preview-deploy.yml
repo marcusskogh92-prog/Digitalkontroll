@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
       - name: Install expo-cli
-        run: npm install -g expo-cli
+        run: npm install -g expo-cli@^6
       - name: Diagnose environment
         run: |
           set -euo pipefail
