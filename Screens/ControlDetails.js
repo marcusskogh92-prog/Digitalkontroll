@@ -5,12 +5,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, TextInput } from 'react-native';
-// Load ImagePicker dynamically inside handlers to avoid bundling native-only exports on web
-let ImagePicker = null;
 // import { Ionicons } from '@expo/vector-icons';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import SignatureModal from '../components/SignatureModal';
 import { resolveCompanyLogoUrl } from '../components/firebase';
+// Load ImagePicker dynamically inside handlers to avoid bundling native-only exports on web
+let ImagePicker = null;
 
 const CONTROL_TYPE_ICONS = {
   'Arbetsberedning': { icon: 'construct-outline', color: '#1976D2', label: 'Arbetsberedning' },

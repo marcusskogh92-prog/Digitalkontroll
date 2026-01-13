@@ -25,10 +25,6 @@ import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
-// Note: `expo-file-system` is used only on native; avoid static top-level import
-// so web builds don't attempt to resolve native-only exports. Load dynamically
-// inside functions when needed.
-let FileSystem = null;
 
 import ArbetsberedningScreen from './ArbetsberedningScreen';
 import ControlDetails from './ControlDetails';
@@ -41,6 +37,10 @@ import SkyddsrondScreen from './SkyddsrondScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '../components/HeaderComponents';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+// Note: `expo-file-system` is used only on native; avoid static top-level import
+// so web builds don't attempt to resolve native-only exports. Load dynamically
+// inside functions when needed.
+let FileSystem = null;
 
 // Utility: read a file URI as base64 if possible
 async function readUriAsBase64(uri) {
