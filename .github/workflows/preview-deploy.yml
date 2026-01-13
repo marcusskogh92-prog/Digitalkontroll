@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
       - name: Build web bundle
-        run: npm run build
+        run: npx expo export:web
       - name: Deploy to Firebase preview channel
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
