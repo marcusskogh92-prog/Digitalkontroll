@@ -53,11 +53,20 @@ Thumbs.db
 .env.production
 .env*.local
 
+# Service account keys (do not commit)
+/konton/*.json
+
+# Local onboarding imports (may contain real emails/passwords)
+/data/import*.csv
+
 # TypeScript
 *.tsbuildinfo
 
 # Examples / generated
 app-example
+
+# Generated eslint reports
+eslint-*.json
 
 # Generated native folders (if not managed)
 /ios

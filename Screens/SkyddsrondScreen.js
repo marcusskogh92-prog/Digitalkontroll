@@ -2,6 +2,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import BaseControlForm from '../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 // Skyddsrond checklist config: sections with control points
 const SKYDDSROND_CHECKLIST = [
   {
@@ -110,10 +112,21 @@ function getWeekAndYear(dateInput) {
 
 
 
-export default function SkyddsrondScreen({ date, participants = [] }) {
+export default function SkyddsrondScreen({
+  date,
+  participants = [],
+  project: projectProp,
+  initialValues: initialValuesProp,
+  onExit,
+  onFinished,
+}) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues || {};
+  const project = projectProp ?? route.params?.project;
+  const initialValuesRaw = (initialValuesProp ?? route.params?.initialValues) || {};
+  const initialValues = {
+    ...initialValuesRaw,
+    mottagningsSignatures: initialValuesRaw.mottagningsSignatures || [],
+  };
   const { week, year } = getWeekAndYear(date);
   const LABELS = {
     title: `Skyddsrond ${year} V.${week < 10 ? '0' + week : week}`,
@@ -125,15 +138,44 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
     try {
       const completed = {
         ...data,
+        project: data.project || project,
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
+        type: 'Skyddsrond',
         id: data.id || require('uuid').v4(),
       };
+      // Try saving to Firestore first (best-effort). If Firestore fails, fall back to local AsyncStorage.
+      try {
+        const ok = await saveControlToFirestore(completed);
+        if (!ok) throw new Error('Firestore save failed');
+      } catch(_e) {
+        // fallback to local storage below
+      }
       const existing = await AsyncStorage.getItem('completed_controls');
       let arr = [];
       if (existing) arr = JSON.parse(existing);
-      arr.push(completed);
+      // Ersätt befintlig kontroll med samma id, annars lägg till
+      const idx = arr.findIndex(c => c.id === completed.id);
+      if (idx !== -1) {
+        arr[idx] = completed;
+      } else {
+        arr.push(completed);
+      }
       await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
+      // Log activity (best-effort)
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
       // Remove any matching drafts for this project+type
       try {
         const draftRaw = await AsyncStorage.getItem('draft_controls');
@@ -147,9 +189,9 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
           }
           await AsyncStorage.setItem('draft_controls', JSON.stringify(drafts));
         }
-      } catch (e) {}
-      alert('Kontrollen har sparats som utförd!');
-    } catch (e) {
+      } catch(_e) {}
+      // ...existing code...
+    } catch(e) {
       alert('Kunde inte spara kontrollen: ' + e.message);
     }
   };
@@ -158,7 +200,29 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
     // Persistence is handled centrally in BaseControlForm.saveDraftControl().
     // This screen should not write to AsyncStorage to avoid overwriting richer
     // draft objects maintained by the form (which include photos, participants).
-    try { console.log('[SkyddsrondScreen] handleSaveDraft received draft id:', data && data.id); } catch (e) {}
+    try {
+      const draft = {
+        ...data,
+        project: data.project || project,
+        status: 'UTKAST',
+        savedAt: new Date().toISOString(),
+        type: 'Skyddsrond',
+        id: data.id || require('uuid').v4(),
+      };
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: draft.type || 'Kontroll',
+          kind: 'draft',
+          projectId: draft.project?.id || null,
+          projectName: draft.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
+    } catch(_e) {}
   };
 
   const WEATHER_OPTIONS = [
@@ -182,6 +246,8 @@ export default function SkyddsrondScreen({ date, participants = [] }) {
       onSaveDraft={handleSaveDraft}
       weatherOptions={WEATHER_OPTIONS}
       checklistConfig={SKYDDSROND_CHECKLIST}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

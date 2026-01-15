@@ -1,6 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
+import { v4 as uuidv4 } from 'uuid';
 import BaseControlForm from '../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 
 const LABELS = {
   title: 'Arbetsberedning',
@@ -25,54 +27,38 @@ const ARBETSBEREDNING_CHECKLIST = [
   { label: 'Avslut & överlämning', points: ['Återställning av plats', 'Borttagning av temporära skydd', 'Överlämningsrapport klar'] },
 ];
 
-export default function ArbetsberedningScreen({ date, participants = [] }) {
+export default function ArbetsberedningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = initialValuesProp ?? route.params?.initialValues;
 
   const handleSave = async (data) => {
     try {
       const completed = {
         ...data,
+        project: data.project || project,
         status: 'UTFÖRD',
         savedAt: new Date().toISOString(),
         type: 'Arbetsberedning',
-        id: data.id || require('uuid').v4(),
+        id: data.id || uuidv4(),
       };
-      const existing = await AsyncStorage.getItem('completed_controls');
-      let arr = [];
-      if (existing) arr = JSON.parse(existing);
-      arr.push(completed);
-      await AsyncStorage.setItem('completed_controls', JSON.stringify(arr));
-    } catch (e) {
-      alert('Kunde inte spara kontrollen: ' + e.message);
-    }
-  };
-
-  const handleSaveDraft = async (data) => {
-    try {
-      const draft = {
-        ...data,
-        status: 'UTKAST',
-        savedAt: new Date().toISOString(),
-        type: 'Arbetsberedning',
-        id: data.id || require('uuid').v4(),
-      };
-      let arr = [];
-      const existing = await AsyncStorage.getItem('draft_controls');
-      if (existing) arr = JSON.parse(existing);
-      // Ersätt om samma projekt+typ+id redan finns, annars lägg till
-      const idx = arr.findIndex(
-        c => c.project?.id === project?.id && c.type === 'Arbetsberedning' && c.id === draft.id
-      );
-      if (idx !== -1) {
-        arr[idx] = draft;
-      } else {
-        arr.push(draft);
-      }
-      await AsyncStorage.setItem('draft_controls', JSON.stringify(arr));
-    } catch (e) {
-      // Hantera fel
+      // Central helper handles permission-denied and local fallback.
+      await saveControlToFirestore(completed);
+      try {
+        const user = auth?.currentUser;
+        const actorName = user ? (user.displayName || formatPersonName(user.email || user)) : null;
+        await logCompanyActivity({
+          type: completed.type || 'Kontroll',
+          kind: 'completed',
+          projectId: completed.project?.id || null,
+          projectName: completed.project?.name || null,
+          actorName: actorName || null,
+          actorEmail: user?.email || null,
+          uid: user?.uid || null,
+        });
+      } catch(_e) {}
+    } catch(e) {
+      alert('Kunde inte spara kontrollen: ' + (e && e.message ? e.message : String(e)));
     }
   };
 
@@ -85,8 +71,9 @@ export default function ArbetsberedningScreen({ date, participants = [] }) {
       participants={participants}
       project={project}
       onSave={handleSave}
-      onSaveDraft={handleSaveDraft}
       initialValues={initialValues}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

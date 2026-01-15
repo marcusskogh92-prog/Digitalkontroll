@@ -1,10 +1,13 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
 import * as CameraModule from 'expo-camera';
 import { Camera } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// Load ImagePicker dynamically in handlers to avoid bundling native-only exports on web
+let ImagePicker = null;
 
 const PRIMARY = '#263238';
 
@@ -24,115 +27,159 @@ export default function CameraCapture() {
   // Resolve Camera component robustly across Expo versions / bundlers
   // We will pick the first entry that is actually a renderable component (function/class)
   let CameraComponent = null;
+  let resolvedInfo = { type: 'unknown', keys: [] };
   try {
     // Prefer CameraView if available (some builds expose CameraView as the host component)
-    if (CameraModule && CameraModule.CameraView) CameraComponent = CameraModule.CameraView;
-    else if (typeof Camera === 'function') CameraComponent = Camera;
-    else if (CameraModule) {
-      if (typeof CameraModule.Camera === 'function') CameraComponent = CameraModule.Camera;
-      else if (typeof CameraModule.default === 'function') CameraComponent = CameraModule.default;
-      else if (CameraModule.Camera) CameraComponent = CameraModule.Camera; // fallback even if object
-      else CameraComponent = null;
+    if (CameraModule && CameraModule.CameraView) {
+      CameraComponent = CameraModule.CameraView;
+      resolvedInfo = { type: 'CameraView', keys: Object.keys(CameraModule || {}) };
+    } else if (CameraModule && CameraModule.Camera) {
+      CameraComponent = CameraModule.Camera;
+      resolvedInfo = { type: 'Camera', keys: Object.keys(CameraModule || {}) };
+    } else if (Camera) {
+      CameraComponent = Camera;
+      resolvedInfo = { type: 'expo-camera Camera', keys: [] };
+    } else {
+      resolvedInfo = { type: 'none', keys: Object.keys(CameraModule || {}) };
     }
-  } catch (e) {
-    CameraComponent = null;
+  } catch(e) {
+    resolvedInfo = { type: 'error', keys: Object.keys(CameraModule || {}), error: String(e) };
   }
-  // Log resolved shape to help debug incorrect module shapes at runtime
-  try { console.log('[CameraCapture] Resolved CameraComponent type:', typeof CameraComponent, 'keys:', CameraModule && Object.keys(CameraModule || {})); } catch (e) {}
-  try { if (CameraComponent && typeof CameraComponent === 'object') console.warn('[CameraCapture] CameraComponent resolved to object — attempting to use CameraView fallback if available'); } catch (e) {}
-  const resolvedInfo = (() => {
+  const handlePickFromLibrary = async () => {
     try {
-      return { type: typeof CameraComponent, keys: CameraModule ? Object.keys(CameraModule || {}) : [] };
-    } catch (e) {
-      return { type: typeof CameraComponent, keys: [] };
-    }
-  })();
-
-  // Exposed permission check so UI can retry if needed
-  const checkCameraPermission = async () => {
-    try {
-      let perm = null;
-      const tryFns = [
-        'getCameraPermissionsAsync',
-        'requestCameraPermissionsAsync',
-        'getPermissionsAsync',
-        'requestPermissionsAsync'
-      ];
-      for (const fn of tryFns) {
-        try {
-          if (CameraModule && typeof CameraModule[fn] === 'function') {
-            perm = await CameraModule[fn]();
-            if (perm) break;
-          }
-          if (CameraModule && CameraModule.Camera && typeof CameraModule.Camera[fn] === 'function') {
-            perm = await CameraModule.Camera[fn]();
-            if (perm) break;
-          }
-        } catch (e) {}
+      if (!ImagePicker) {
+        try { ImagePicker = await import('expo-image-picker'); } catch(_e) { ImagePicker = null; }
       }
-      console.log('[CameraCapture] camera permission result:', perm);
-      if (!perm) {
-        console.warn('[CameraCapture] No camera permission API available on this platform');
-        setHasPermission(false);
-        Alert.alert('Kamerabehörighet', 'Kan inte kontrollera kamerabehörighet på denna plattform.');
+      let perm = null;
+      if (ImagePicker && typeof ImagePicker.getMediaLibraryPermissionsAsync === 'function') {
+        perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+      }
+      if (!perm || !(perm.granted === true || perm.status === 'granted')) {
+        perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      }
+      const ok = (perm && (perm.granted === true || perm.status === 'granted'));
+      if (!ok) {
+        Alert.alert('Behöver tillgång till bildbiblioteket för att välja bilder.');
         return;
       }
-      const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
-      setHasPermission(status === 'granted');
-      if (status !== 'granted') {
-        Alert.alert('Kamerabehörighet krävs', 'Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet om du vill ta foto.', [{ text: 'OK', onPress: () => {} }]);
+      const mediaTypesOption = (ImagePicker && ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
+        ? ImagePicker.MediaTypeOptions.Images
+        : (ImagePicker && ImagePicker.MediaType && ImagePicker.MediaType.Images)
+          ? ImagePicker.MediaType.Images
+          : undefined;
+      const pickerOptions = { quality: 0.8 };
+      if (mediaTypesOption) pickerOptions.mediaTypes = mediaTypesOption;
+      const res = (ImagePicker && typeof ImagePicker.launchImageLibraryAsync === 'function') ? await ImagePicker.launchImageLibraryAsync(pickerOptions) : null;
+      const extractAssets = (r) => {
+        if (!r) return [];
+        if (Array.isArray(r.assets) && r.assets.length) return r.assets;
+        if (Array.isArray(r.selectedAssets) && r.selectedAssets.length) return r.selectedAssets;
+        if (r.uri) return [{ uri: r.uri }];
+        if (r.cancelled === false && r.uri) return [{ uri: r.uri }];
+        return [];
+      };
+      const assets = extractAssets(res);
+      if (assets && assets.length > 0) {
+        // Skapa samma payload som vid foto
+        const photos = assets.map(a => {
+          const uri = a?.uri || a?.uriString || a?.localUri || (a?.base64 ? `data:image/jpeg;base64,${a.base64}` : null);
+          return uri ? { uri, comment: '' } : null;
+        }).filter(Boolean);
+        if (photos.length > 0) {
+          const target = route.params?.returnScreen || 'SkyddsrondScreen';
+          const payload = {
+            cameraResult: {
+              uri: photos[0].uri, // För kompatibilitet, men vi skickar alla i returnedMottagningsPhotos
+              sectionIdx,
+              pointIdx,
+              returnedMottagningsPhotos: (route.params?.mottagningsPhotos || []).concat(photos),
+            },
+            project,
+          };
+          const returnKey = route.params?.returnKey;
+            if (returnKey) {
+            try {
+              navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
+            } catch(_e) {}
+            try {
+              (async () => {
+                try {
+                  const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
+                  const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
+                  pending.push(payload.cameraResult);
+                  await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
+                } catch(_e) {}
+              })();
+            } catch(_e) {}
+            setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
+          } else {
+            try {
+              const state = navigation.getState && navigation.getState();
+              if (state && Array.isArray(state.routes)) {
+                const idx = state.index != null ? state.index : state.routes.findIndex(r => r.key === route.key);
+                const prevRoute = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
+                if (prevRoute && prevRoute.key) {
+                  try {
+                    navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
+                  } catch(_e) {}
+                  try {
+                    (async () => {
+                      const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
+                      const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
+                      pending.push(payload.cameraResult);
+                      await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
+                    })();
+                  } catch(_e) {}
+                  setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
+                } else {
+                  navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+                }
+              } else {
+                navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+              }
+            } catch(_e) {
+              navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+            }
+          }
+        }
       }
-    } catch (err) {
-      console.error('[CameraCapture] permission check error', err);
-      Alert.alert('Fel vid kontroll av kamerabehörighet', String(err?.message || err));
-      setHasPermission(false);
+    } catch(e) {
+      Alert.alert('Kunde inte välja bild: ' + (e?.message || e));
     }
   };
 
-  useEffect(() => {
-    const handleOrientation = () => {
-      const { width, height } = Dimensions.get('window');
-      setOrientation(width > height ? 'landscape' : 'portrait');
-    };
-    const subscription = Dimensions.addEventListener('change', handleOrientation);
-    handleOrientation();
-    return () => {
-      if (subscription && typeof subscription.remove === 'function') {
-        subscription.remove();
-      } else if (typeof subscription === 'function') {
-        subscription();
-      }
-    };
-  }, []);
+  // Ta bort automatisk kamerabehörighetskontroll vid mount
 
-  useEffect(() => {
-    (async () => {
-      if (cameraViewRef.current) {
-        try {
-          const desiredRatio = orientation === 'portrait' ? '3:4' : '4:3';
-          const sizes = await cameraViewRef.current.getAvailablePictureSizesAsync(desiredRatio);
-          if (sizes && sizes.length > 0) {
-            const sorted = sizes.sort((a, b) => {
-              const [aw, ah] = a.split('x').map(Number);
-              const [bw, bh] = b.split('x').map(Number);
-              return bw * bh - aw * ah;
-            });
-            setPictureSize(sorted[0]);
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    })();
-  }, [cameraViewRef.current, orientation]);
-
-  useEffect(() => {
-    // call the permission check that is declared below
-    if (typeof checkCameraPermission === 'function') checkCameraPermission();
-  }, []);
 
   const handleCapture = async () => {
     try {
+      // Kontrollera kamerabehörighet först
+      let perm = null;
+      try {
+        if (Camera && typeof Camera.getCameraPermissionsAsync === 'function') {
+          perm = await Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await Camera.requestCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.getPermissionsAsync === 'function') {
+          perm = await Camera.getPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestPermissionsAsync === 'function') {
+          perm = await Camera.requestPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.getCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.requestCameraPermissionsAsync();
+        }
+      } catch(_e) {}
+      const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
+      if (status !== 'granted') {
+        Alert.alert('Kamerabehörighet krävs', 'Appen har inte tillgång till kameran. Gå till inställningar och ge behörighet om du vill ta foto.', [{ text: 'OK', onPress: () => {} }]);
+        return;
+      }
       if (!cameraRef || isCapturing) return;
       setIsCapturing(true);
       const options = { quality: 0.8 };
@@ -166,7 +213,7 @@ export default function CameraCapture() {
 
       setPhotoPreview(finalPhoto);
       setPhotoComment('');
-    } catch (e) {
+    } catch(e) {
       Alert.alert('Fel vid fotografering', String(e?.message || e));
     } finally {
       setIsCapturing(false);
@@ -177,9 +224,39 @@ export default function CameraCapture() {
     // placeholder for autoSave behavior
   }, [route.params?.autoSave]);
 
-  if (hasPermission === null) {
-    return <View style={styles.container}><Text style={{ color: '#666' }}>Begär behörighet... (se logg för detaljer)</Text></View>;
-  }
+  const checkCameraPermission = async () => {
+    try {
+      let perm = null;
+      try {
+        if (Camera && typeof Camera.getCameraPermissionsAsync === 'function') {
+          perm = await Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await Camera.requestCameraPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.getPermissionsAsync === 'function') {
+          perm = await Camera.getPermissionsAsync();
+        }
+        if (!perm && Camera && typeof Camera.requestPermissionsAsync === 'function') {
+          perm = await Camera.requestPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.getCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.getCameraPermissionsAsync();
+        }
+        if (!perm && CameraModule && CameraModule.Camera && typeof CameraModule.Camera.requestCameraPermissionsAsync === 'function') {
+          perm = await CameraModule.Camera.requestCameraPermissionsAsync();
+        }
+      } catch(_e) {}
+      const status = perm && (perm.status || (perm.granted ? 'granted' : 'denied'));
+      setHasPermission(status === 'granted' ? true : false);
+      return status === 'granted';
+    } catch(_e) {
+      setHasPermission(false);
+      return false;
+    }
+  };
+
+  // Visa endast fallback om hasPermission === false
   if (hasPermission === false) {
     return (
       <View style={styles.container}>
@@ -218,9 +295,9 @@ export default function CameraCapture() {
             marginBottom: 12,
             maxWidth: 420,
             maxHeight: 420,
-            resizeMode: 'contain',
             backgroundColor: '#111',
           }}
+          resizeMode="contain"
         />
           <View style={{ width: '92%', marginTop: 12 }}>
           <Text style={{ color: '#fff', marginBottom: 6 }}>Kommentar</Text>
@@ -234,10 +311,10 @@ export default function CameraCapture() {
             blurOnSubmit={true}
             onFocus={() => {
               // Delay to allow keyboard to open then scroll the input into view
-              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch (e) {} }, 120);
+              setTimeout(() => { try { scrollRef.current && scrollRef.current.scrollToEnd({ animated: true }); } catch(_e) {} }, 120);
             }}
             returnKeyType="done"
-            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch (e) {} }}
+            onSubmitEditing={() => { try { /* dismiss keyboard */ } catch(_e) {} }}
             style={{ backgroundColor: 'rgba(255,255,255,0.06)', padding: 8, borderRadius: 8, color: '#fff', minHeight: 48 }}
           />
         </View>
@@ -254,21 +331,97 @@ export default function CameraCapture() {
             style={[styles.previewButton, styles.previewButtonSave]}
             onPress={() => {
               const target = route.params?.returnScreen || 'SkyddsrondScreen';
-              navigation.navigate(target, {
-                cameraResult: {
-                  uri: photoPreview.uri,
-                  sectionIdx,
-                  pointIdx,
-                  returnedMottagningsPhotos: (route.params?.mottagningsPhotos || []).concat({ uri: photoPreview.uri, comment: photoComment || '' }),
-                },
-                project,
-                savedChecklist: route.params?.savedChecklist
-              });
+              // Merge params into the existing route instead of pushing a new instance
+              try {
+                  // If caller provided `returnKey`, set params directly on that route (no remount).
+                  const payload = {
+                    cameraResult: {
+                      uri: photoPreview.uri,
+                      sectionIdx,
+                      pointIdx,
+                      returnedMottagningsPhotos: (route.params?.mottagningsPhotos || []).concat({ uri: photoPreview.uri, comment: photoComment || '' }),
+                    },
+                    project,
+                  };
+                  // Removed debug logging
+                  try {
+                    const returnKey = route.params?.returnKey;
+                    if (returnKey) {
+                      try {
+                        navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: returnKey }));
+                      } catch(_e) {}
+                      try {
+                        const state = navigation.getState && navigation.getState();
+                        if (state && Array.isArray(state.routes)) {
+                          const idx = state.index != null ? state.index : state.routes.findIndex(r => r.key === route.key);
+                          const prevRoute = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
+                          if (prevRoute && prevRoute.key) {
+                            try {
+                              navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
+                            } catch(_e) {}
+                          }
+                        }
+                      } catch(_e) {}
+                      try {
+                        (async () => {
+                          try {
+                            const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
+                            const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
+                            pending.push(payload.cameraResult);
+                            await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
+                          } catch(_e) {}
+                        })();
+                      } catch(_e) {}
+                      setTimeout(() => {
+                        try { navigation.goBack(); } catch(_e) {};
+                      }, 300);
+                    } else {
+                      try {
+                        const state = navigation.getState && navigation.getState();
+                        if (state && Array.isArray(state.routes)) {
+                          const idx = state.index != null ? state.index : state.routes.findIndex(r => r.key === route.key);
+                          const prevRoute = (typeof idx === 'number' && idx > 0) ? state.routes[idx - 1] : null;
+                            if (prevRoute && prevRoute.key) {
+                            try {
+                              navigation.dispatch(CommonActions.setParams({ params: { cameraResult: payload.cameraResult }, key: prevRoute.key }));
+                            } catch(_e) {}
+                            try {
+                              (async () => {
+                                const pendingRaw = await AsyncStorage.getItem('pending_camera_photos');
+                                const pending = pendingRaw ? JSON.parse(pendingRaw) : [];
+                                pending.push(payload.cameraResult);
+                                await AsyncStorage.setItem('pending_camera_photos', JSON.stringify(pending));
+                              })();
+                            } catch(_e) {}
+                            setTimeout(() => { try { navigation.goBack(); } catch(_e) {} }, 300);
+                          } else {
+                            navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+                          }
+                        } else {
+                          navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+                        }
+                      } catch(_e) {
+                        navigation.navigate({ name: target, params: { cameraResult: payload.cameraResult }, merge: true });
+                      }
+                    }
+                  } catch(_e) {
+                    navigation.navigate(target, payload);
+                  }
+              } catch(_e) {
+                navigation.navigate(target, {
+                  cameraResult: {
+                    uri: photoPreview.uri,
+                    sectionIdx,
+                    pointIdx,
+                    returnedMottagningsPhotos: (route.params?.mottagningsPhotos || []).concat({ uri: photoPreview.uri, comment: photoComment || '' }),
+                  },
+                  project,
+                });
+              }
             }}
             activeOpacity={0.8}
           >
-            <MaterialIcons name="check-circle" size={22} color="#fff" style={{ marginBottom: 2 }} />
-            <Text style={styles.previewButtonTextSave}>Spara</Text>
+            <MaterialIcons name="save" size={28} color="#fff" style={{ marginBottom: 2 }} />
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -305,7 +458,7 @@ export default function CameraCapture() {
       </TouchableOpacity>
       {/* Stor foto-knapp: mitten nedtill (porträtt) eller mitten till höger (landskap) */}
       {orientation === 'portrait' ? (
-        <View style={styles.cameraButtonBarPortrait} pointerEvents="box-none">
+        <View style={[styles.cameraButtonBarPortrait, { pointerEvents: 'box-none' }] }>
           <TouchableOpacity
             style={styles.cameraButton}
             onPress={handleCapture}
@@ -314,9 +467,19 @@ export default function CameraCapture() {
           >
             <MaterialIcons name="photo-camera" size={44} color="#fff" />
           </TouchableOpacity>
+          <View style={[styles.libraryButtonWrapperPortrait, { pointerEvents: 'box-none' }] }>
+            <TouchableOpacity
+              style={[styles.cameraButton, styles.libraryButton]}
+              onPress={handlePickFromLibrary}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="photo-library" size={28} color={PRIMARY} />
+              <Text style={{ color: PRIMARY, fontWeight: 'bold', fontSize: 10, marginTop: 2 }}>Bibliotek</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
-        <View style={styles.cameraButtonBarLandscape} pointerEvents="box-none">
+        <View style={[styles.cameraButtonBarLandscape, { pointerEvents: 'box-none' }] }>
           <TouchableOpacity
             style={styles.cameraButton}
             onPress={handleCapture}
@@ -325,6 +488,16 @@ export default function CameraCapture() {
           >
             <MaterialIcons name="photo-camera" size={44} color="#fff" />
           </TouchableOpacity>
+          <View style={[styles.libraryButtonWrapperLandscape, { pointerEvents: 'box-none' }] }>
+            <TouchableOpacity
+              style={[styles.cameraButton, styles.libraryButton]}
+              onPress={handlePickFromLibrary}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="photo-library" size={28} color={PRIMARY} />
+              <Text style={{ color: PRIMARY, fontWeight: 'bold', fontSize: 10, marginTop: 2 }}>Bibliotek</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </View>
@@ -400,6 +573,42 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 5,
     pointerEvents: 'box-none',
+  },
+  libraryButtonWrapperPortrait: {
+    position: 'absolute',
+    right: 24,
+    bottom: 0,
+    zIndex: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'box-none',
+  },
+  libraryButtonWrapperLandscape: {
+    position: 'absolute',
+    right: 24,
+    top: '60%',
+    zIndex: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'box-none',
+  },
+  libraryButton: {
+    backgroundColor: '#fff',
+    borderColor: PRIMARY,
+    marginTop: 0,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    minWidth: 0,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
   },
   cameraButtonBarLandscape: {
     position: 'absolute',

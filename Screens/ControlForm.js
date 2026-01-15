@@ -35,17 +35,21 @@ const CHECKLIST_CONFIG = [
 
 // Duplicate CHECKLIST_CONFIG declaration removed.
 
-const LABELS = {
+const DEFAULT_LABELS = {
   title: 'Mottagningskontroll',
   saveButton: 'Spara',
   saveDraftButton: 'Spara och slutför senare',
 };
 
 
-export default function ControlForm({ date, participants = [] }) {
+export default function ControlForm({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
-  const project = route.params?.project;
-  const initialValues = route.params?.initialValues;
+  const project = projectProp ?? route.params?.project;
+  const initialValues = initialValuesProp ?? route.params?.initialValues;
+  const routeControlType = route.params?.controlType;
+  const labels = routeControlType
+    ? { ...DEFAULT_LABELS, title: routeControlType }
+    : DEFAULT_LABELS;
   return (
     <BaseControlForm
       date={date}
@@ -54,8 +58,10 @@ export default function ControlForm({ date, participants = [] }) {
       checklistConfig={CHECKLIST_CONFIG}
       controlType="Mottagningskontroll"
       project={project}
-      labels={LABELS}
+      labels={labels}
       initialValues={initialValues}
+      onExit={onExit}
+      onFinished={onFinished}
     />
   );
 }

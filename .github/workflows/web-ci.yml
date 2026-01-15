@@ -1,0 +1,31 @@
+name: Web CI (build + smoke)
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  web-build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+      - name: Install Playwright (Chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Build web bundle (includes icon/font verification)
+        env:
+          EXPO_NO_TELEMETRY: '1'
+        run: npm run build
+
+      - name: Run smoke test
+        env:
+          CI: '1'
+        run: npm run test:smoke:web

@@ -1,0 +1,3 @@
+# Ignore package-lock to let Cloud Build generate it
+package-lock.json
+node_modules/

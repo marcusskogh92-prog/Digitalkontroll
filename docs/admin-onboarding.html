@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DigitalKontroll – Adminmall (Företag & användare)</title>
+  <style>
+    :root {
+      --text: #111;
+      --muted: #555;
+      --border: #ddd;
+      --bg: #fff;
+      --bg2: #f7f7f7;
+    }
+    html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+    body { margin: 32px; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    h2 { margin: 24px 0 8px; font-size: 16px; }
+    p, li { line-height: 1.45; font-size: 13px; }
+    .muted { color: var(--muted); }
+    .box { border: 1px solid var(--border); background: var(--bg2); padding: 12px 14px; border-radius: 10px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
+    pre { margin: 10px 0; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 10px; overflow: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { border: 1px solid var(--border); padding: 8px; text-align: left; font-size: 12px; }
+    th { background: var(--bg2); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media print {
+      body { margin: 14mm; }
+      a { color: inherit; text-decoration: none; }
+      .no-print { display: none; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>DigitalKontroll – Adminmall (Företag & användare)</h1>
+  <p class="muted">Syfte: skapa nytt företag och lägga till användare så att allt i appen/webben hamnar under rätt <code>companyId</code> i Firestore.</p>
+
+  <div class="box">
+    <p><b>Viktigt</b></p>
+    <ul>
+      <li>All data ligger under: <code>foretag/{companyId}/...</code></li>
+      <li>Åtkomst styrs av <code>companyId</code> (custom claim) och/eller <code>users/{uid}.companyId</code> (fallback).</li>
+      <li>Ni har valt modellen “1 inlogg per företag” (ingen cross-company).</li>
+    </ul>
+  </div>
+
+  <h2>Förberedelser (engångs)</h2>
+  <ol>
+    <li>Se till att du har en service account JSON för Firebase-projektet (exempel ligger i <code>konton/</code>).</li>
+    <li>Öppna PowerShell i projektmappen.</li>
+  </ol>
+
+  <div class="grid">
+    <div class="box">
+      <p><b>Alternativ A – kör med flagga</b> (rekommenderat)</p>
+      <pre>node scripts/provision-company.js --serviceAccount=./konton/XXXX.json --company=ACME --adminEmail=owner@acme.se --adminPassword=BytMig123!</pre>
+    </div>
+    <div class="box">
+      <p><b>Alternativ B – miljövariabel</b></p>
+      <pre>$env:GOOGLE_APPLICATION_CREDENTIALS = "C:\\path\\to\\service-account.json"
+node scripts/list-foretag.js</pre>
+    </div>
+  </div>
+
+  <h2>1) Skapa nytt företag + admin-användare</h2>
+  <p>Detta skapar/uppdaterar:</p>
+  <ul>
+    <li><code>foretag/{companyId}</code> (företagsdokument)</li>
+    <li><code>foretag/{companyId}/mallar</code> (minst en mall)</li>
+    <li>Auth-användare + custom claims: <code>{ companyId, role: "admin", admin: true }</code></li>
+    <li><code>users/{uid}</code> med <code>companyId</code> och roll</li>
+  </ul>
+
+  <pre>npm run admin:provision-company -- --serviceAccount=./konton/XXXX.json --company=ACME --adminEmail=owner@acme.se --adminPassword=BytMig123!</pre>
+
+  <p class="muted">Tips: <code>companyId</code> bör vara kort, stabil och utan mellanslag (t.ex. <code>acme</code> eller <code>ms-bygg</code>).</p>
+
+  <h2>2) Lägg till fler användare till ett företag</h2>
+  <p>Skapar användaren i Firebase Auth (om den inte finns), sätter claims och skriver <code>users/{uid}</code>.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Fält</th>
+        <th>Exempel</th>
+        <th>Notering</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--email</code></td>
+        <td><code>anstalld@acme.se</code></td>
+        <td>Unikt per användare</td>
+      </tr>
+      <tr>
+        <td><code>--password</code></td>
+        <td><code>Valfritt123!</code></td>
+        <td>Om du utelämnar genereras ett lösenord</td>
+      </tr>
+      <tr>
+        <td><code>--company</code></td>
+        <td><code>ACME</code></td>
+        <td>Måste matcha företagets <code>companyId</code></td>
+      </tr>
+      <tr>
+        <td><code>--role</code></td>
+        <td><code>user</code> / <code>admin</code></td>
+        <td>Roll i <code>users/{uid}</code></td>
+      </tr>
+      <tr>
+        <td><code>--admin</code></td>
+        <td><code>true</code> / <code>false</code></td>
+        <td>Sätter claim <code>admin</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <pre>npm run admin:add-user -- --serviceAccount=./konton/XXXX.json --email=anstalld@acme.se --company=ACME --role=user --admin=false</pre>
+
+  <h2>3) Verifiera att allt blev rätt</h2>
+  <ol>
+    <li>Logga in i app/webb med användaren.</li>
+    <li>På HomeScreen: tryck <b>Visa auth-info</b> och kontrollera att <code>claims.companyId</code> matchar företagets <code>companyId</code>.</li>
+    <li>Skapa ett utkast i appen och kontrollera att det syns på webben.</li>
+  </ol>
+
+  <h2>4) (Valfritt) Visa/dölj kontrolltyper per företag</h2>
+  <p class="muted">Som standard (om fältet saknas) visas alla 6 kontrolltyper. Om du sätter en lista i profilen visas bara de som ingår.</p>
+  <p>Fält i Firestore:</p>
+  <ul>
+    <li><code>foretag/{companyId}/profil/public.enabledControlTypes</code> = lista av kontrolltyper</li>
+  </ul>
+
+  <p><b>Bygg (standard)</b>: ska ha alla 6 kontrolltyper:</p>
+  <pre>node scripts/set-enabled-control-types.js --serviceAccount=./konton/XXXX.json --company=ACME --types=Arbetsberedning,Egenkontroll,Fuktmätning,Mottagningskontroll,Riskbedömning,Skyddsrond</pre>
+
+  <p class="muted">Obs: om du sätter <code>--types=</code> (tom lista) blir det inga valbara kontrolltyper i “Välj kontrolltyp”.</p>
+
+  <h2>5) Företagslogga (rekommenderad placering)</h2>
+  <p>Loggan ska <b>inte</b> ligga som base64 i Firestore. Lägg själva bilden i <b>Firebase Storage</b> och spara bara en URL (eller path) i Firestore.</p>
+  <ul>
+    <li><b>Storage</b>: <code>foretag/{companyId}/branding/logo.png</code></li>
+    <li><b>Firestore</b>: <code>foretag/{companyId}/profil/public.logoUrl</code> (en https-URL till loggan)</li>
+  </ul>
+  <p class="muted">Appen använder <code>profil/public.logoUrl</code> för PDF-export/branding. Eftersom företag sällan byter logga är det helt OK att du lägger in den manuellt vid behov.</p>
+
+  <h2>6) Importera flera företag + användare från Excel (CSV)</h2>
+  <p>Om du vill “städa upp” och lägga in flera företag/användare snabbt är det enklast att exportera från Excel till CSV och köra ett script.</p>
+
+  <p><b>Steg i Excel</b>:</p>
+  <ol>
+    <li>Skapa en tabell med kolumnerna nedan.</li>
+    <li>Exportera som CSV. (I Sverige blir delimiter ofta <code>;</code>.)</li>
+  </ol>
+
+  <p><b>Rekommenderat CSV-format (med header)</b>:</p>
+  <pre>companyId;companyName;email;firstName;lastName;role;admin;password;logoUrl;enabledControlTypes</pre>
+
+  <p><b>Exempel</b>:</p>
+  <pre>ms-bygg;MS Byggsystem;anna@msbygg.se;Anna;Andersson;admin;true;BytMig123!;;Arbetsberedning,Egenkontroll
+ms-bygg;MS Byggsystem;erik@msbygg.se;Erik;Eriksson;user;false;;;Arbetsberedning,Egenkontroll
+demo-service;Demo-service;demo@demo.local;Demo;Admin;admin;true;Demo12345!;;</pre>
+
+  <p><b>Kör importen</b>:</p>
+  <pre>npm run admin:import-companies-users -- --serviceAccount=./konton/XXXX.json --file=./data/import.csv --delimiter=;
+
+# testläge utan att skriva:
+npm run admin:import-companies-users -- --serviceAccount=./konton/XXXX.json --file=./data/import.csv --delimiter=; --dryRun=true</pre>
+
+  <p class="muted">Tips: om du lämnar <code>password</code> tomt så skapas ett slumpat lösenord och skrivs ut i terminalen (spara det).</p>
+
+  <h2>Felsökning (snabbt)</h2>
+  <ul>
+    <li>Om du får “servern nekade skrivning” – öppna HomeScreen och tryck <b>Visa senaste FS-fel</b>.</li>
+    <li>Om claims inte slår igenom direkt – logga ut/in eller tryck <b>Uppdatera token & synka</b>.</li>
+  </ul>
+
+  <h2>Borttagning (senare)</h2>
+  <p class="muted">Vi kan ta detta när ni vill. Rekommendation: gör borttagning via admin-script eller adminvy, med tydlig “dry-run” och backup, eftersom det påverkar både Auth och Firestore-data.</p>
+
+  <p class="no-print muted">För att få en PDF: öppna denna fil i valfri webbläsare och välj “Skriv ut” → “Spara som PDF”.</p>
+</body>
+</html>

@@ -1,32 +1,170 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Använd foretag/{companyId} och svenska undermappar
-    match /foretag/{companyId} {
-      allow read, write: if isAuthorized(companyId);
-      match /hierarki/{docId} {
-        allow read, write: if isAuthorized(companyId);
-      }
-      match /profil/{docId} {
-        allow read, write: if isAuthorized(companyId);
-      }
+    function isCompanyMember(company) {
+      return request.auth != null
+        && (
+          request.auth.token.companyId == company
+          || (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == company
+          )
+        );
     }
 
+    function isGlobalAdmin() {
+      return request.auth != null
+        && (
+          // Token-baserade superadmins
+          request.auth.token.superadmin == true ||
+          request.auth.token.role == 'superadmin' ||
+          // Admin i MS Byggsystem
+          (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+          // Whitelist specifika superadmin-mail för robusthet
+          request.auth.token.email == 'marcus@msbyggsystem.se' ||
+          request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+          request.auth.token.email == 'marcus.skogh@msbyggsystem'
+        );
+    }
+
+    // Allow read for hierarchy; writes only when authenticated and token.companyId matches path
+    match /foretag/{company}/hierarki/state {
+      allow read: if true;
+      allow write: if isCompanyMember(company);
+    }
+
+    // Controls (completed)
+    match /foretag/{company}/controls/{controlId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Controls (drafts)
+    match /foretag/{company}/draft_controls/{draftId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Company profile (public by convention)
+    match /foretag/{company}/profil/{docId} {
+      allow read: if true;
+      // Only allow creation of a new company profile by callers that are authorized to create companies.
+      // This requires either a superadmin claim or being an admin in MS Byggsystem.
+      allow create: if request.auth != null && !exists(/databases/$(database)/documents/foretag/$(company)/profil/$(docId))
+        && request.resource.data.companyName is string
+        && (
+          // superadmin claim
+          (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+          // or admin inside MS Byggsystem
+          || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+        );
+      // Allow updates both for members of the company and for global superadmins / MS Byggsystem-admins.
+      allow update, delete: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            (request.auth.token.superadmin == true) || (request.auth.token.role == 'superadmin')
+            || (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin'))
+          )
+        );
+    }
+
+    // Allow collection group queries on any "profil" subcollection (used to list companies
+    // by reading their public profiles). Read-only; writes are still governed by the more
+    // specific /foretag/{company}/profil/{docId} rule above.
+    match /{path=**}/profil/{docId} {
+      allow read: if true;
+    }
+
+    // Byggdel mall-register (company-scoped)
+    match /foretag/{company}/byggdel_mallar/{mallId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Byggdel hierarki (company-scoped)
+    match /foretag/{company}/byggdel_hierarki/state {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika kontrolltyper (company-scoped)
+    // Används av adminvyn "Kontrolltyper" samt vid skapande av nya kontrollpunkter.
+    // Läsning tillåts både för medlemmar i företaget och för globala admins
+    // (superadmin eller MS Byggsystem-admin) så att centrala admins kan se
+    // vilka kontrolltyper som används hos alla företag.
+    match /foretag/{company}/kontrolltyper/{typeId} {
+      allow read: if isCompanyMember(company)
+        || (
+          request.auth != null && (
+            // Token-baserade superadmins
+            request.auth.token.superadmin == true ||
+            request.auth.token.role == 'superadmin' ||
+            // Admin i MS Byggsystem
+            (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+            // Whitelist specifika superadmin-mail för robusthet
+            request.auth.token.email == 'marcus@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+            request.auth.token.email == 'marcus.skogh@msbyggsystem'
+          )
+        );
+      // Skriv-rättigheter lämnas företags-lokala; bara medlemmar kan ändra
+      // sina egna företags kontrolltyper.
+      allow write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika mallar (company-scoped)
+    // Används av adminvyn "Mallar" för att skapa och hantera mallar per kontrolltyp.
+    match /foretag/{company}/mallar/{mallId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Kontaktregister (company-scoped)
+    // Varje företag har sitt eget register: foretag/{company}/kontakter/{contactId}
+    // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera kontakter för alla företag.
+    match /foretag/{company}/kontakter/{contactId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Company members directory (company-scoped)
+    // Used for listing admins/roles in the app without enabling cross-company user queries.
+    match /foretag/{company}/members/{uid} {
+      allow read: if isCompanyMember(company);
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && isCompanyMember(company);
+      allow delete: if false;
+    }
+
+    // Company activity feed (company-scoped)
+    // Used by dashboard "Senaste aktivitet" (e.g. login events)
+    match /foretag/{company}/activity/{eventId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Global admin audit log (read-only for superadmins / MS Byggsystem-admins)
+    match /admin_audit/{eventId} {
+      allow read: if request.auth != null && (
+        // Token-baserade superadmins
+        request.auth.token.superadmin == true ||
+        request.auth.token.role == 'superadmin' ||
+        // Admin i MS Byggsystem
+        (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+        // Whitelist specifika superadmin-mail så att läsrätt inte bryts om companyId-claimen skulle peka på annat företag.
+        request.auth.token.email == 'marcus@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+        request.auth.token.email == 'marcus.skogh@msbyggsystem'
+      );
+      allow write: if false; // only server-side (admin SDK) writes
+    }
+
+    // Allow users to read/write their own profile doc
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid;
-    }
-
-    function isAuthorized(companyId) {
-      return request.auth != null && userCompanyId() == companyId;
-    }
-
-    function userCompanyId() {
-      // Försök först med custom claims, fall tillbaka till users/{uid}.companyId
-      return request.auth.token.companyId != null
-        ? request.auth.token.companyId
-        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
+      // Users may update their own profile, but may NOT change companyId client-side.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.companyId != null
+        && request.resource.data.companyId == request.auth.token.companyId;
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.companyId == resource.data.companyId;
+      allow delete: if false;
     }
   }
 }
