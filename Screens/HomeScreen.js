@@ -6,7 +6,6 @@ import { Alert, Animated, Easing, Image, ImageBackground, Keyboard, KeyboardAvoi
 import ContextMenu from '../components/ContextMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenu from '../components/HeaderUserMenu';
-import WebBreadcrumbInline from '../components/WebBreadcrumbInline';
 import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
@@ -65,7 +64,7 @@ export default function HomeScreen({ navigation, route }) {
   const [spinSidebarFilter, setSpinSidebarFilter] = useState(0);
   const [spinSidebarHome, setSpinSidebarHome] = useState(0);
   const [spinSidebarRefresh, setSpinSidebarRefresh] = useState(0);
-  const { height: windowHeight } = useWindowDimensions();
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const [headerHeight, setHeaderHeight] = useState(0);
   const leftTreeScrollRef = useRef(null);
   const rightPaneScrollRef = useRef(null);
@@ -242,16 +241,19 @@ export default function HomeScreen({ navigation, route }) {
     }
   }
 
-  // Filtrera bort projekt med namnet '22 test' vid render
-  React.useEffect(() => {
-    setHierarchy(prev => prev.map(main => ({
-      ...main,
-      children: main.children.map(sub => ({
-        ...sub,
-        children: sub.children ? sub.children.filter(child => !(child.type === 'project' && child.name.trim().toLowerCase() === '22 test')) : []
-      }))
-    })));
-  }, []);
+  // DISABLED: Filtrera bort projekt med namnet '22 test' vid render
+  // Detta var en cleanup-kod som automatiskt raderade projekt vid varje mount,
+  // vilket kunde orsaka dataförlust. Borttagen för att förhindra oavsiktlig radering.
+  // Om cleanup behövs, gör det manuellt eller med en explicit admin-funktion.
+  // React.useEffect(() => {
+  //   setHierarchy(prev => prev.map(main => ({
+  //     ...main,
+  //     children: main.children.map(sub => ({
+  //       ...sub,
+  //       children: sub.children ? sub.children.filter(child => !(child.type === 'project' && child.name.trim().toLowerCase() === '22 test')) : []
+  //     }))
+  //   })));
+  // }, []);
   // State för nytt projekt-modal i undermapp
   const [newProjectModal, setNewProjectModal] = useState({ visible: false, parentSubId: null });
   const [newProjectName, setNewProjectName] = useState("");
@@ -280,10 +282,21 @@ export default function HomeScreen({ navigation, route }) {
   const companyAdminsUnsubRef = useRef(null);
   const [companyAdminsPermissionDenied, setCompanyAdminsPermissionDenied] = useState(false);
 
+  // All company members (for participants dropdown - includes both admins and regular users)
+  const [companyMembers, setCompanyMembers] = useState([]);
+  const [loadingCompanyMembers, setLoadingCompanyMembers] = useState(false);
+  const [companyMembersPermissionDenied, setCompanyMembersPermissionDenied] = useState(false);
+
   const [newProjectSkyddsrondEnabled, setNewProjectSkyddsrondEnabled] = useState(false);
   const [newProjectSkyddsrondWeeks, setNewProjectSkyddsrondWeeks] = useState(2);
   const [newProjectSkyddsrondFirstDueDate, setNewProjectSkyddsrondFirstDueDate] = useState('');
   const [skyddsrondWeeksPickerVisible, setSkyddsrondWeeksPickerVisible] = useState(false);
+  // States for form improvements
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [focusedInput, setFocusedInput] = useState(null);
+  const [hoveredSkyddsrondBtn, setHoveredSkyddsrondBtn] = useState(false);
+  const [responsibleDropdownOpen, setResponsibleDropdownOpen] = useState(false);
+  const responsibleDropdownRef = useRef(null);
 
   const newProjectSkyddsrondFirstDueTrim = String(newProjectSkyddsrondFirstDueDate || '').trim();
   const newProjectSkyddsrondFirstDueValid = (!newProjectSkyddsrondEnabled)
@@ -311,6 +324,9 @@ export default function HomeScreen({ navigation, route }) {
     try { setSkyddsrondWeeksPickerVisible(false); } catch(_e) {}
     try { setNewProjectParticipants([]); } catch(_e) {}
     try { setParticipantsPickerVisible(false); } catch(_e) {}
+    try { setCreatingProject(false); } catch(_e) {}
+    try { setFocusedInput(null); } catch(_e) {}
+    try { setHoveredSkyddsrondBtn(false); } catch(_e) {}
     // Best-effort: dismiss keyboard on native
     try { if (Platform.OS !== 'web') Keyboard.dismiss(); } catch(_e) {}
   }, []);
@@ -338,8 +354,15 @@ export default function HomeScreen({ navigation, route }) {
           });
         }
       } catch(_e) {}
-      const admins = await fetchCompanyMembers(routeCompanyId, { role: 'admin' });
-      setCompanyAdmins(Array.isArray(admins) ? admins : []);
+      // Fetch both admin and superadmin users for responsible person dropdown
+      const [admins, superadmins] = await Promise.all([
+        fetchCompanyMembers(routeCompanyId, { role: 'admin' }),
+        fetchCompanyMembers(routeCompanyId, { role: 'superadmin' })
+      ]);
+      // Combine and deduplicate by id
+      const allAdmins = [...(Array.isArray(admins) ? admins : []), ...(Array.isArray(superadmins) ? superadmins : [])];
+      const uniqueAdmins = allAdmins.filter((m, idx, arr) => arr.findIndex(x => x.id === m.id) === idx);
+      setCompanyAdmins(uniqueAdmins);
       setCompanyAdminsLastFetchAt(Date.now());
     } catch(_e) {
       const msg = String(_e?.message || _e || '').toLowerCase();
@@ -350,6 +373,25 @@ export default function HomeScreen({ navigation, route }) {
     }
   }, [routeCompanyId, loadingCompanyAdmins]);
 
+  // Load all company members for participants dropdown
+  const loadCompanyMembers = React.useCallback(async ({ force = false } = {}) => {
+    if (loadingCompanyMembers && !force) return;
+    if (!routeCompanyId) return;
+    setLoadingCompanyMembers(true);
+    setCompanyMembersPermissionDenied(false);
+    try {
+      // Fetch ALL members (no role filter) for participants
+      const allMembers = await fetchCompanyMembers(routeCompanyId); // No role filter = all members
+      setCompanyMembers(Array.isArray(allMembers) ? allMembers : []);
+    } catch(_e) {
+      const msg = String(_e?.message || _e || '').toLowerCase();
+      if (_e?.code === 'permission-denied' || msg.includes('permission')) setCompanyMembersPermissionDenied(true);
+      setCompanyMembers([]);
+    } finally {
+      setLoadingCompanyMembers(false);
+    }
+  }, [routeCompanyId, loadingCompanyMembers]);
+
   // If the create-project modal opens before companyId is ready, onShow can early-return.
   // This effect ensures admins are fetched as soon as companyId is available while the modal is open.
   React.useEffect(() => {
@@ -359,6 +401,17 @@ export default function HomeScreen({ navigation, route }) {
     if (companyAdmins && companyAdmins.length > 0) return;
     if (loadingCompanyAdmins) return;
     loadCompanyAdmins({ force: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newProjectModal?.visible, routeCompanyId]);
+
+  // Load all company members when modal opens (for participants)
+  React.useEffect(() => {
+    if (!newProjectModal?.visible) return;
+    if (!routeCompanyId) return;
+    // Avoid refetch loop; only fetch if we have nothing yet.
+    if (companyMembers && companyMembers.length > 0) return;
+    if (loadingCompanyMembers) return;
+    loadCompanyMembers({ force: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newProjectModal?.visible, routeCompanyId]);
 
@@ -377,19 +430,71 @@ export default function HomeScreen({ navigation, route }) {
     try {
       if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current();
     } catch(_e) {}
-    companyAdminsUnsubRef.current = subscribeCompanyMembers(routeCompanyId, {
-      role: 'admin',
-      onData: (admins) => {
-        setCompanyAdmins(Array.isArray(admins) ? admins : []);
+    // Subscribe to both admin and superadmin users
+    const unsubs = [];
+    let adminData = [];
+    let superadminData = [];
+    
+    const updateAdmins = () => {
+      const allAdmins = [...adminData, ...superadminData];
+      const uniqueAdmins = allAdmins.filter((m, idx, arr) => arr.findIndex(x => x.id === m.id) === idx);
+      setCompanyAdmins(uniqueAdmins);
         setCompanyAdminsLastFetchAt(Date.now());
         setLoadingCompanyAdmins(false);
+    };
+    
+    const unsubAdmin = subscribeCompanyMembers(routeCompanyId, {
+      role: 'admin',
+      onData: (admins) => {
+        adminData = Array.isArray(admins) ? admins : [];
+        updateAdmins();
       },
       onError: (err) => {
+        adminData = [];
+        updateAdmins();
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (err?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
+      }
+    });
+    unsubs.push(unsubAdmin);
+    
+    const unsubSuperadmin = subscribeCompanyMembers(routeCompanyId, {
+      role: 'superadmin',
+      onData: (admins) => {
+        superadminData = Array.isArray(admins) ? admins : [];
+        updateAdmins();
+      },
+      onError: (err) => {
+        superadminData = [];
+        updateAdmins();
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (err?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
+      }
+    });
+    unsubs.push(unsubSuperadmin);
+    
+    companyAdminsUnsubRef.current = () => {
+      unsubs.forEach(unsub => { try { if (typeof unsub === 'function') unsub(); } catch(_e) {} });
+    };
+    
+    // Initial load
+    (async () => {
+      setLoadingCompanyAdmins(true);
+      setCompanyAdminsPermissionDenied(false);
+      try {
+        const [admins, superadmins] = await Promise.all([
+          fetchCompanyMembers(routeCompanyId, { role: 'admin' }),
+          fetchCompanyMembers(routeCompanyId, { role: 'superadmin' })
+        ]);
+        adminData = Array.isArray(admins) ? admins : [];
+        superadminData = Array.isArray(superadmins) ? superadmins : [];
+        updateAdmins();
+      } catch (err) {
         const msg = String(err?.message || err || '').toLowerCase();
         if (err?.code === 'permission-denied' || msg.includes('permission')) setCompanyAdminsPermissionDenied(true);
         setLoadingCompanyAdmins(false);
       }
-    });
+    })();
 
     return () => {
       try { if (companyAdminsUnsubRef.current) companyAdminsUnsubRef.current(); } catch(_e) {}
@@ -478,6 +583,85 @@ export default function HomeScreen({ navigation, route }) {
     return true;
   }, []);
 
+  // Calculate canCreate outside modal for use in useEffect (must be after isProjectNumberUnique)
+  const canCreateProject = React.useMemo(() => {
+    return (
+      String(newProjectName ?? '').trim() !== ''
+      && String(newProjectNumber ?? '').trim() !== ''
+      && isProjectNumberUnique(newProjectNumber)
+      && !!newProjectResponsible
+      && (!!newProjectSkyddsrondFirstDueValid)
+    );
+  }, [newProjectName, newProjectNumber, newProjectResponsible, newProjectSkyddsrondFirstDueValid, isProjectNumberUnique]);
+
+  // Close dropdown when clicking outside (web only)
+  React.useEffect(() => {
+    if (!isBrowserEnv || !responsibleDropdownOpen) return;
+    
+    const handleClickOutside = (e) => {
+      if (responsibleDropdownRef.current && !responsibleDropdownRef.current.contains(e.target)) {
+        setResponsibleDropdownOpen(false);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [responsibleDropdownOpen, isBrowserEnv]);
+
+  // Close dropdown when modal closes
+  React.useEffect(() => {
+    if (!newProjectModal.visible) {
+      setResponsibleDropdownOpen(false);
+    }
+  }, [newProjectModal.visible]);
+
+  // Keyboard event handler for web (Enter to submit)
+  React.useEffect(() => {
+    if (!isBrowserEnv || !newProjectModal.visible) return;
+    
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd + Enter to submit
+        e.preventDefault();
+        if (canCreateProject && !creatingProject) {
+          // Find and click the create button
+          setTimeout(() => {
+            try {
+              const buttons = Array.from(document.querySelectorAll('button, [role="button"], [data-create-project-btn]'));
+              const createBtn = buttons.find(b => {
+                const text = b.textContent || b.innerText || '';
+                return text.includes('Skapa') && !b.disabled && !b.hasAttribute('disabled');
+              });
+              if (createBtn) {
+                createBtn.click();
+              }
+            } catch(_e) {}
+          }, 10);
+        }
+      } else if (e.key === 'Escape') {
+        // Escape to close dropdown or modal
+        if (responsibleDropdownOpen) {
+          setResponsibleDropdownOpen(false);
+          e.preventDefault();
+        } else if (!creatingProject) {
+          setNewProjectModal({ visible: false, parentSubId: null });
+          resetProjectFields();
+        }
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [newProjectModal.visible, canCreateProject, creatingProject, isBrowserEnv]);
+
   const newProjectModalComponent = (
     <Modal
       visible={newProjectModal.visible}
@@ -488,6 +672,7 @@ export default function HomeScreen({ navigation, route }) {
         await loadCompanyAdmins({ force: false });
       }}
       onRequestClose={() => {
+        if (creatingProject) return;
         setNewProjectModal({ visible: false, parentSubId: null });
         resetProjectFields();
         setNewProjectKeyboardLockHeight(0);
@@ -503,12 +688,14 @@ export default function HomeScreen({ navigation, route }) {
             }}
           />
           {(() => {
+            const isSmallScreen = windowWidth < 900;
             const cardStyle = {
               backgroundColor: '#fff',
               borderRadius: 18,
-              width: 980,
+              width: 1050,
               maxWidth: '96%',
-              height: 740,
+              minWidth: Platform.OS === 'web' ? 600 : 340,
+              height: isSmallScreen ? 'auto' : 740,
               maxHeight: '90%',
               shadowColor: '#000',
               shadowOffset: { width: 0, height: 8 },
@@ -540,9 +727,21 @@ export default function HomeScreen({ navigation, route }) {
               fontSize: 13,
               backgroundColor: '#fff',
               color: '#111',
+              ...(Platform.OS === 'web' ? {
+                transition: 'border-color 0.2s, box-shadow 0.2s',
+                outline: 'none',
+              } : {}),
             };
 
-            const requiredBorder = (ok) => ({ borderColor: ok ? '#E2E8F0' : '#EF4444' });
+            const requiredBorder = (ok, isFocused = false) => {
+              if (isFocused && ok) {
+                return { 
+                  borderColor: '#1976D2', 
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)' } : {}),
+                };
+              }
+              return { borderColor: ok ? '#E2E8F0' : '#EF4444' };
+            };
 
             const initials = (person) => {
               const name = String(person?.displayName || person?.name || person?.email || '').trim();
@@ -566,20 +765,16 @@ export default function HomeScreen({ navigation, route }) {
             };
 
             const q = String(newProjectParticipantsSearch || '').trim().toLowerCase();
-            const visibleAdmins = (companyAdmins || []).filter((m) => {
+            // Use companyMembers (all users) for participants, not just admins
+            const visibleMembers = (companyMembers || []).filter((m) => {
               if (!q) return true;
               const n = String(m?.displayName || m?.name || '').toLowerCase();
               const e = String(m?.email || '').toLowerCase();
               return n.includes(q) || e.includes(q);
             });
 
-            const canCreate = (
-              String(newProjectName ?? '').trim() !== ''
-              && String(newProjectNumber ?? '').trim() !== ''
-              && isProjectNumberUnique(newProjectNumber)
-              && !!newProjectResponsible
-              && (!!newProjectSkyddsrondFirstDueValid)
-            );
+            // Use canCreateProject from outer scope
+            const canCreate = canCreateProject;
 
             return (
               <View style={cardStyle}>
@@ -597,47 +792,96 @@ export default function HomeScreen({ navigation, route }) {
                   </TouchableOpacity>
                 </View>
 
-                <View style={{ flex: 1, flexDirection: 'row' }}>
+                <View style={{ 
+                  flex: 1, 
+                  flexDirection: Platform.OS === 'web' ? (isSmallScreen ? 'column' : 'row') : 'row',
+                }}>
                   {/* Left column */}
-                  <View style={{ flex: 1, borderRightWidth: 1, borderRightColor: '#E6E8EC', backgroundColor: '#fff' }}>
+                  <View style={{ 
+                    flex: 1, 
+                    borderRightWidth: Platform.OS === 'web' && !isSmallScreen ? 1 : 0,
+                    borderBottomWidth: Platform.OS === 'web' && isSmallScreen ? 1 : 0,
+                    borderRightColor: '#E6E8EC',
+                    borderBottomColor: '#E6E8EC',
+                    backgroundColor: '#fff' 
+                  }}>
                     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 18, paddingBottom: 22 }}>
                       <Text style={sectionTitle}>Projektinformation</Text>
 
+                      <View style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                       <Text style={labelStyle}>Projektnummer *</Text>
+                          {String(newProjectNumber ?? '').trim() !== '' && isProjectNumberUnique(newProjectNumber) ? (
+                            <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                          ) : null}
+                        </View>
                       <TextInput
                         value={newProjectNumber}
                         onChangeText={(v) => {
                           const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
                           setNewProjectNumber(String(next));
                         }}
+                          onFocus={() => setFocusedInput('projectNumber')}
+                          onBlur={() => setFocusedInput(null)}
+                          onSubmitEditing={() => {
+                            // Move focus to project name on Enter (native)
+                            if (Platform.OS !== 'web') {
+                              // Focus will be handled by returnKeyType on native
+                            }
+                          }}
+                          returnKeyType="next"
+                          blurOnSubmit={false}
                         placeholder="Projektnummer..."
                         placeholderTextColor="#94A3B8"
                         style={{
                           ...inputStyleBase,
-                          ...requiredBorder(String(newProjectNumber ?? '').trim() !== '' && isProjectNumberUnique(newProjectNumber)),
+                            ...requiredBorder(
+                              String(newProjectNumber ?? '').trim() !== '' && isProjectNumberUnique(newProjectNumber),
+                              focusedInput === 'projectNumber'
+                            ),
                           color: (!isProjectNumberUnique(newProjectNumber) && String(newProjectNumber ?? '').trim() !== '') ? '#B91C1C' : '#111',
-                          marginBottom: 10,
                         }}
                         autoFocus
                       />
                       {String(newProjectNumber ?? '').trim() !== '' && !isProjectNumberUnique(newProjectNumber) ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: -4, marginBottom: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                           <Ionicons name="warning" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
                           <Text style={{ color: '#B91C1C', fontSize: 12, fontWeight: '700' }}>Projektnummer används redan.</Text>
                         </View>
                       ) : null}
+                      </View>
 
+                      <View style={{ marginBottom: 12 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                       <Text style={labelStyle}>Projektnamn *</Text>
+                          {String(newProjectName ?? '').trim() !== '' ? (
+                            <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                          ) : null}
+                        </View>
                       <TextInput
                         value={newProjectName}
                         onChangeText={(v) => {
                           const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
                           setNewProjectName(String(next));
                         }}
+                          onFocus={() => setFocusedInput('projectName')}
+                          onBlur={() => setFocusedInput(null)}
+                          onSubmitEditing={() => {
+                            // If form is valid, create project on Enter (native)
+                            if (canCreate && !creatingProject && Platform.OS !== 'web') {
+                              // Will be handled by the button's onPress
+                            }
+                          }}
+                          returnKeyType={canCreate ? "done" : "next"}
+                          blurOnSubmit={true}
                         placeholder="Projektnamn..."
                         placeholderTextColor="#94A3B8"
-                        style={{ ...inputStyleBase, ...requiredBorder(String(newProjectName ?? '').trim() !== ''), marginBottom: 12 }}
+                          style={{ 
+                            ...inputStyleBase, 
+                            ...requiredBorder(String(newProjectName ?? '').trim() !== '', focusedInput === 'projectName'),
+                          }}
                       />
+                      </View>
 
                       <Text style={labelStyle}>Kund</Text>
                       <TextInput
@@ -715,7 +959,14 @@ export default function HomeScreen({ navigation, route }) {
                     <View style={{ flex: 1, padding: 18, paddingBottom: 10 }}>
                       <Text style={sectionTitle}>Ansvariga och deltagare</Text>
 
-                      <Text style={labelStyle}>Ansvarig</Text>
+                      <View style={{ marginBottom: 12, position: 'relative', zIndex: responsibleDropdownOpen ? 1000 : 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={labelStyle}>Ansvarig *</Text>
+                          {newProjectResponsible ? (
+                            <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                          ) : null}
+                        </View>
+                        <View style={{ position: 'relative', zIndex: responsibleDropdownOpen ? 1001 : 1 }} ref={responsibleDropdownRef}>
                       <TouchableOpacity
                         style={{
                           ...inputStyleBase,
@@ -723,21 +974,183 @@ export default function HomeScreen({ navigation, route }) {
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          marginBottom: 12,
-                        }}
-                        onPress={() => setResponsiblePickerVisible(true)}
+                              ...(focusedInput === 'responsible' && newProjectResponsible ? {
+                                borderColor: '#1976D2',
+                                ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)' } : {}),
+                              } : {}),
+                              ...(responsibleDropdownOpen && Platform.OS === 'web' ? {
+                                borderColor: '#1976D2',
+                                borderBottomLeftRadius: 0,
+                                borderBottomRightRadius: 0,
+                                boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)',
+                              } : {}),
+                            }}
+                            onPress={() => {
+                              if (Platform.OS === 'web') {
+                                setFocusedInput('responsible');
+                                setResponsibleDropdownOpen(!responsibleDropdownOpen);
+                              } else {
+                                setResponsiblePickerVisible(true);
+                              }
+                            }}
                         activeOpacity={0.8}
                       >
                         <Text style={{ fontSize: 13, color: newProjectResponsible ? '#111' : '#94A3B8', fontWeight: '700' }} numberOfLines={1}>
                           {newProjectResponsible ? formatPersonName(newProjectResponsible) : 'Välj ansvarig...'}
                         </Text>
-                        <Ionicons name="chevron-down" size={16} color="#111" />
+                            <Ionicons 
+                              name={responsibleDropdownOpen ? "chevron-up" : "chevron-down"} 
+                              size={16} 
+                              color="#111" 
+                            />
                       </TouchableOpacity>
-                      {!newProjectResponsible ? (
-                        <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: -6, marginBottom: 10, fontWeight: '700' }}>
+
+                          {/* Web dropdown menu */}
+                          {Platform.OS === 'web' && responsibleDropdownOpen && (
+                            <View
+                              style={{
+                                position: 'absolute',
+                                top: '100%',
+                                left: 0,
+                                right: 0,
+                                backgroundColor: '#fff',
+                                borderWidth: 1,
+                                borderColor: '#1976D2',
+                                borderTopWidth: 0,
+                                borderRadius: 10,
+                                borderTopLeftRadius: 0,
+                                borderTopRightRadius: 0,
+                                maxHeight: 280,
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 4 },
+                                shadowOpacity: 0.15,
+                                shadowRadius: 12,
+                                elevation: 8,
+                                zIndex: 1002,
+                                overflow: 'hidden',
+                                ...(Platform.OS === 'web' ? {
+                                  opacity: 1,
+                                  backgroundColor: '#ffffff',
+                                } : {}),
+                              }}
+                            >
+                              {loadingCompanyAdmins ? (
+                                <View style={{ padding: 16, alignItems: 'center' }}>
+                                  <Text style={{ color: '#64748b', fontSize: 13 }}>Laddar...</Text>
+                                </View>
+                              ) : companyAdminsPermissionDenied ? (
+                                <View style={{ padding: 16 }}>
+                                  <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>
+                                    Saknar behörighet att läsa användare.
+                                  </Text>
+                                </View>
+                              ) : companyAdmins.length === 0 ? (
+                                <View style={{ padding: 16 }}>
+                                  <Text style={{ color: '#64748b', fontSize: 13 }}>Inga admins hittades.</Text>
+                                </View>
+                              ) : (
+                                <ScrollView 
+                                  style={{ 
+                                    maxHeight: 280,
+                                    backgroundColor: '#fff',
+                                  }}
+                                  contentContainerStyle={{
+                                    paddingBottom: 4,
+                                  }}
+                                  nestedScrollEnabled
+                                >
+                                  {companyAdmins.map((m) => {
+                                    const isSelected = newProjectResponsible && (
+                                      (newProjectResponsible.uid || newProjectResponsible.id) === (m.uid || m.id)
+                                    );
+                                    return (
+                                      <TouchableOpacity
+                                        key={m.id || m.uid || m.email}
+                                        style={{
+                                          paddingVertical: 12,
+                                          paddingHorizontal: 12,
+                                          borderBottomWidth: 1,
+                                          borderBottomColor: '#EEF0F3',
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          gap: 10,
+                                          backgroundColor: isSelected ? '#EFF6FF' : '#fff',
+                                          ...(Platform.OS === 'web' ? {
+                                            cursor: 'pointer',
+                                            transition: 'background-color 0.15s',
+                                            opacity: 1,
+                                          } : {}),
+                                        }}
+                                        onPress={() => {
+                                          setNewProjectResponsible({
+                                            uid: m.uid || m.id,
+                                            displayName: m.displayName || null,
+                                            email: m.email || null,
+                                            role: m.role || null,
+                                          });
+                                          setResponsibleDropdownOpen(false);
+                                          setFocusedInput(null);
+                                        }}
+                                        activeOpacity={0.7}
+                                        onMouseEnter={Platform.OS === 'web' ? (e) => {
+                                          if (!isSelected && e?.currentTarget) {
+                                            e.currentTarget.style.backgroundColor = '#F8FAFC';
+                                          }
+                                        } : undefined}
+                                        onMouseLeave={Platform.OS === 'web' ? (e) => {
+                                          if (!isSelected && e?.currentTarget) {
+                                            e.currentTarget.style.backgroundColor = '#fff';
+                                          }
+                                        } : undefined}
+                                      >
+                                        <View style={{ 
+                                          width: 24, 
+                                          height: 24, 
+                                          borderRadius: 12, 
+                                          backgroundColor: '#1E40AF', 
+                                          alignItems: 'center', 
+                                          justifyContent: 'center' 
+                                        }}>
+                                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 10 }}>
+                                            {(() => {
+                                              const name = String(m?.displayName || m?.name || m?.email || '').trim();
+                                              if (!name) return '?';
+                                              const parts = name.split(/\s+/).filter(Boolean);
+                                              const a = (parts[0] || '').slice(0, 1);
+                                              const b = (parts[1] || '').slice(0, 1);
+                                              return (a + b).toUpperCase();
+                                            })()}
+                                          </Text>
+                                        </View>
+                                        <View style={{ flex: 1, minWidth: 0 }}>
+                                          <Text 
+                                            numberOfLines={1} 
+                                            style={{ 
+                                              fontSize: 13, 
+                                              fontWeight: isSelected ? '700' : '600', 
+                                              color: '#111' 
+                                            }}
+                                          >
+                                            {formatPersonName(m)}
+                                          </Text>
+                                        </View>
+                                        {isSelected && (
+                                          <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                                        )}
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </ScrollView>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                        {!newProjectResponsible && !responsibleDropdownOpen ? (
+                          <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 6, fontWeight: '700' }}>
                           Du måste välja ansvarig.
                         </Text>
                       ) : null}
+                      </View>
 
                       <Text style={labelStyle}>Deltagare</Text>
                       <View style={{ ...inputStyleBase, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -752,21 +1165,45 @@ export default function HomeScreen({ navigation, route }) {
                       </View>
 
                       <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', flex: 1, minHeight: 260 }}>
-                        {loadingCompanyAdmins ? (
+                        {loadingCompanyMembers ? (
                           <View style={{ padding: 12 }}>
                             <Text style={{ color: '#64748b', fontSize: 13 }}>Laddar…</Text>
                           </View>
-                        ) : companyAdminsPermissionDenied ? (
+                        ) : companyMembersPermissionDenied ? (
                           <View style={{ padding: 12 }}>
                             <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>Saknar behörighet att läsa användare.</Text>
                           </View>
-                        ) : visibleAdmins.length === 0 ? (
+                        ) : visibleMembers.length === 0 ? (
                           <View style={{ padding: 12 }}>
                             <Text style={{ color: '#64748b', fontSize: 13 }}>Inga träffar.</Text>
                           </View>
                         ) : (
-                          <ScrollView style={{ flex: 1 }}>
-                            {visibleAdmins.slice(0, 200).map((m) => {
+                          <ScrollView 
+                            style={{ flex: 1 }}
+                            contentContainerStyle={Platform.OS === 'web' ? {
+                              scrollbarWidth: 'thin',
+                              scrollbarColor: '#CBD5E1 #F1F5F9',
+                            } : {}}
+                          >
+                            {Platform.OS === 'web' && (
+                              <style>{`
+                                ::-webkit-scrollbar {
+                                  width: 8px;
+                                }
+                                ::-webkit-scrollbar-track {
+                                  background: #F1F5F9;
+                                  border-radius: 4px;
+                                }
+                                ::-webkit-scrollbar-thumb {
+                                  background: #CBD5E1;
+                                  border-radius: 4px;
+                                }
+                                ::-webkit-scrollbar-thumb:hover {
+                                  background: #94A3B8;
+                                }
+                              `}</style>
+                            )}
+                            {visibleMembers.slice(0, 200).map((m) => {
                               const id = m.id || m.uid || m.email;
                               const selected = !!(newProjectParticipants || []).find((p) => (p.uid || p.id) === (m.uid || m.id));
                               return (
@@ -817,12 +1254,12 @@ export default function HomeScreen({ navigation, route }) {
                       </TouchableOpacity>
                     </View>
 
-                    <View style={{ paddingHorizontal: 24, paddingBottom: 16, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E6E8EC', backgroundColor: '#fff', position: 'relative' }}>
+                    <View style={{ paddingHorizontal: 24, paddingBottom: 24, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E6E8EC', backgroundColor: '#fff', position: 'relative' }}>
                       {newProjectAdvancedOpen ? (
                         <View
                           style={{
                             position: 'absolute',
-                            right: 24,
+                            left: 24,
                             bottom: 66,
                             width: 340,
                             backgroundColor: '#fff',
@@ -872,18 +1309,30 @@ export default function HomeScreen({ navigation, route }) {
                             <Ionicons name="chevron-down" size={16} color="#111" />
                           </TouchableOpacity>
 
-                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Första skyddsrond senast</Text>
+                          <View style={{ marginBottom: 0 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155' }}>Första skyddsrond senast *</Text>
+                              {newProjectSkyddsrondEnabled && newProjectSkyddsrondFirstDueValid ? (
+                                <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                              ) : null}
+                            </View>
                           <TextInput
                             value={newProjectSkyddsrondFirstDueDate}
                             onChangeText={(v) => {
                               const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
                               setNewProjectSkyddsrondFirstDueDate(String(next));
                             }}
+                              onFocus={() => setFocusedInput('skyddsrondDate')}
+                              onBlur={() => setFocusedInput(null)}
                             placeholder="YYYY-MM-DD"
                             placeholderTextColor="#94A3B8"
                             editable={!!newProjectSkyddsrondEnabled}
                             style={{
                               ...inputStyleBase,
+                                ...requiredBorder(
+                                  newProjectSkyddsrondFirstDueValid || !newProjectSkyddsrondEnabled,
+                                  focusedInput === 'skyddsrondDate' && newProjectSkyddsrondEnabled
+                                ),
                               ...((!newProjectSkyddsrondFirstDueValid && newProjectSkyddsrondEnabled) ? { borderColor: '#EF4444' } : {}),
                               opacity: newProjectSkyddsrondEnabled ? 1 : 0.5,
                             }}
@@ -894,6 +1343,7 @@ export default function HomeScreen({ navigation, route }) {
                               Ange datum (YYYY-MM-DD).
                             </Text>
                           ) : null}
+                          </View>
                         </View>
                       ) : null}
 
@@ -905,38 +1355,78 @@ export default function HomeScreen({ navigation, route }) {
                             }
                             setNewProjectAdvancedOpen((v) => !v ? true : !v);
                           }}
+                          onMouseEnter={Platform.OS === 'web' ? () => setHoveredSkyddsrondBtn(true) : undefined}
+                          onMouseLeave={Platform.OS === 'web' ? () => setHoveredSkyddsrondBtn(false) : undefined}
                           style={{
-                            borderWidth: 1,
-                            borderColor: newProjectSkyddsrondEnabled ? '#93C5FD' : '#E2E8F0',
-                            backgroundColor: newProjectSkyddsrondEnabled ? '#EFF6FF' : '#fff',
+                            borderWidth: 2,
+                            borderColor: newProjectSkyddsrondEnabled ? '#3B82F6' : (hoveredSkyddsrondBtn ? '#93C5FD' : '#E2E8F0'),
+                            backgroundColor: newProjectSkyddsrondEnabled ? '#EFF6FF' : (hoveredSkyddsrondBtn ? '#F8FAFC' : '#fff'),
                             borderRadius: 999,
-                            paddingVertical: 9,
-                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
                             flexDirection: 'row',
                             alignItems: 'center',
                             gap: 8,
+                            ...(Platform.OS === 'web' ? {
+                              transition: 'all 0.2s',
+                              transform: hoveredSkyddsrondBtn ? 'scale(1.02)' : 'scale(1)',
+                              boxShadow: newProjectSkyddsrondEnabled ? '0 2px 8px rgba(59, 130, 246, 0.2)' : 'none',
+                            } : {}),
                           }}
                           activeOpacity={0.85}
                         >
-                          <Ionicons name="shield-checkmark" size={16} color={newProjectSkyddsrondEnabled ? '#1D4ED8' : '#64748b'} />
-                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#0F172A' }}>{newProjectSkyddsrondEnabled ? 'Skyddsronder: På' : 'Aktivera skyddsronder'}</Text>
-                          <Ionicons name={newProjectAdvancedOpen ? 'chevron-down' : 'chevron-up'} size={14} color="#0F172A" />
+                          <Ionicons 
+                            name={newProjectSkyddsrondEnabled ? "shield-checkmark" : "shield-outline"} 
+                            size={18} 
+                            color={newProjectSkyddsrondEnabled ? '#1D4ED8' : '#64748b'} 
+                          />
+                          <Text style={{ 
+                            fontSize: 13, 
+                            fontWeight: newProjectSkyddsrondEnabled ? '600' : '500', 
+                            color: newProjectSkyddsrondEnabled ? '#1D4ED8' : '#0F172A' 
+                          }}>
+                            {newProjectSkyddsrondEnabled ? 'Skyddsronder: Aktiva' : 'Aktivera skyddsronder'}
+                          </Text>
+                          <Ionicons 
+                            name={newProjectAdvancedOpen ? 'chevron-down' : 'chevron-up'} 
+                            size={14} 
+                            color={newProjectSkyddsrondEnabled ? '#1D4ED8' : '#0F172A'} 
+                          />
                         </TouchableOpacity>
 
-                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
                         <TouchableOpacity
+                          disabled={creatingProject}
                           onPress={() => {
+                            if (creatingProject) return;
                             setNewProjectModal({ visible: false, parentSubId: null });
                             resetProjectFields();
                           }}
-                          style={{ backgroundColor: '#E5E7EB', borderRadius: 10, paddingVertical: 11, paddingHorizontal: 18, minWidth: 120, alignItems: 'center' }}
+                          style={{ 
+                            backgroundColor: '#E5E7EB', 
+                            borderRadius: 10, 
+                            paddingVertical: 12, 
+                            paddingHorizontal: 18, 
+                            minWidth: 110, 
+                            alignItems: 'center',
+                            opacity: creatingProject ? 0.5 : 1,
+                            ...(Platform.OS === 'web' ? {
+                              transition: 'background-color 0.2s',
+                              cursor: creatingProject ? 'not-allowed' : 'pointer',
+                            } : {}),
+                          }}
+                          activeOpacity={0.8}
                         >
                           <Text style={{ color: '#111', fontWeight: '800', fontSize: 14 }}>Avbryt</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                          disabled={!canCreate}
-                          onPress={() => {
+                          data-create-project-btn={Platform.OS === 'web' ? true : undefined}
+                          disabled={!canCreate || creatingProject}
+                          onPress={async () => {
+                            if (creatingProject || !canCreate) return;
+                            setCreatingProject(true);
+                            try {
                             // Insert new project into selected subfolder
                             setHierarchy(prev => prev.map(main => ({
                               ...main,
@@ -977,20 +1467,59 @@ export default function HomeScreen({ navigation, route }) {
                                   : sub
                               )
                             })));
+                              // Wait a moment for hierarchy to update and save
+                              await new Promise(resolve => setTimeout(resolve, 300));
                             setNewProjectModal({ visible: false, parentSubId: null });
                             resetProjectFields();
+                            setCreatingProject(false);
+                            } catch (error) {
+                              console.error('Error creating project:', error);
+                              setCreatingProject(false);
+                            }
                           }}
                           style={{
-                            backgroundColor: '#4F7DB6',
+                            backgroundColor: (canCreate && !creatingProject) ? '#1976D2' : '#94A3B8',
                             borderRadius: 10,
-                            paddingVertical: 11,
+                            paddingVertical: 12,
                             paddingHorizontal: 18,
-                            minWidth: 140,
+                            minWidth: 110,
                             alignItems: 'center',
-                            opacity: canCreate ? 1 : 0.45,
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            gap: 8,
+                            opacity: (canCreate && !creatingProject) ? 1 : 0.6,
+                            ...(Platform.OS === 'web' && canCreate && !creatingProject ? {
+                              transition: 'background-color 0.2s, transform 0.1s',
+                              cursor: 'pointer',
+                            } : {}),
                           }}
+                          activeOpacity={0.85}
                         >
-                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>Skapa</Text>
+                          {creatingProject ? (
+                            <>
+                              <View style={{ 
+                                width: 16, 
+                                height: 16, 
+                                borderWidth: 2, 
+                                borderColor: '#fff', 
+                                borderTopColor: 'transparent', 
+                                borderRadius: 8,
+                                ...(Platform.OS === 'web' ? {
+                                  animation: 'spin 0.8s linear infinite',
+                                } : {}),
+                              }} />
+                              {Platform.OS === 'web' && (
+                                <style>{`
+                                  @keyframes spin {
+                                    to { transform: rotate(360deg); }
+                                  }
+                                `}</style>
+                              )}
+                              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Skapar...</Text>
+                            </>
+                          ) : (
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Skapa</Text>
+                          )}
                         </TouchableOpacity>
                         </View>
                       </View>
@@ -2936,8 +3465,8 @@ export default function HomeScreen({ navigation, route }) {
   const didInitialLoadRef = React.useRef(false);
   const loadedHierarchyForCompanyRef = useRef(null);
 
-  // Left column resizer state (default 320)
-  const [leftWidth, setLeftWidth] = useState(320);
+  // Left column resizer state (default 300 för bättre bredd på web)
+  const [leftWidth, setLeftWidth] = useState(300);
   const leftWidthRef = useRef(leftWidth);
   useEffect(() => { leftWidthRef.current = leftWidth; }, [leftWidth]);
   const initialLeftRef = useRef(0);
@@ -2950,7 +3479,13 @@ export default function HomeScreen({ navigation, route }) {
 
   // PanResponder for resizing the left column (works on web + native)
   const panResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: (evt, gestureState) => true,
+    onStartShouldSetPanResponder: () => false, // Låt ScrollView hantera först
+    onMoveShouldSetPanResponder: (evt, gestureState) => {
+      // Aktivera bara om det är en tydlig horisontell drag (minst 10px och mer horisontell än vertikal)
+      const dx = Math.abs(gestureState.dx || 0);
+      const dy = Math.abs(gestureState.dy || 0);
+      return dx > 10 && dx > dy * 1.5; // Kräv att horisontell rörelse är minst 1.5x större än vertikal
+    },
     onPanResponderGrant: () => {
       initialLeftRef.current = leftWidthRef.current;
     },
@@ -2965,7 +3500,13 @@ export default function HomeScreen({ navigation, route }) {
 
   // PanResponder for resizing the right column (works on web + native)
   const panResponderRight = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: (evt, gestureState) => true,
+    onStartShouldSetPanResponder: () => false, // Låt ScrollView hantera först
+    onMoveShouldSetPanResponder: (evt, gestureState) => {
+      // Aktivera bara om det är en tydlig horisontell drag (minst 10px och mer horisontell än vertikal)
+      const dx = Math.abs(gestureState.dx || 0);
+      const dy = Math.abs(gestureState.dy || 0);
+      return dx > 10 && dx > dy * 1.5; // Kräv att horisontell rörelse är minst 1.5x större än vertikal
+    },
     onPanResponderGrant: () => {
       initialRightRef.current = rightWidthRef.current;
     },
@@ -2979,12 +3520,12 @@ export default function HomeScreen({ navigation, route }) {
     onPanResponderTerminate: () => {},
   })).current;
 
-  // Ensure panes start at their minimum widths on web after first mount
+  // Ensure panes start at reasonable widths on web after first mount
   const initialPaneWidthsSetRef = useRef(false);
   useEffect(() => {
     if (Platform.OS === 'web' && !initialPaneWidthsSetRef.current) {
-      setLeftWidth(240); // left min
-      setRightWidth(340); // right min
+      setLeftWidth(300); // Startbredd för left panel
+      setRightWidth(420); // Behåll default
       initialPaneWidthsSetRef.current = true;
     }
   }, []);
@@ -3105,6 +3646,15 @@ export default function HomeScreen({ navigation, route }) {
     if (!companyId) return;
     // don't save before initial load finished (avoid overwriting server with empty on mount)
     if (!didInitialLoadRef.current) return;
+    
+    // SÄKERHET: Validera att hierarkin inte är tom innan sparande
+    const hierarchyArray = Array.isArray(hierarchy) ? hierarchy : [];
+    if (hierarchyArray.length === 0) {
+      // Om hierarkin är tom, försök ladda från server först
+      // Detta förhindrar att tom hierarki skriver över befintlig data
+      return;
+    }
+    
     (async () => {
       try {
         const res = await saveHierarchy(companyId, hierarchy);
@@ -3114,6 +3664,9 @@ export default function HomeScreen({ navigation, route }) {
           try {
             await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
             setLocalFallbackExists(true);
+            if (Platform.OS === 'web') {
+              console.warn('[HomeScreen] Kunde inte spara hierarki till Firestore, sparad lokalt som backup');
+            }
           } catch(_e) {}
         } else {
           // On successful cloud save, also clear local fallback
@@ -3123,6 +3676,7 @@ export default function HomeScreen({ navigation, route }) {
           } catch(_e) {}
         }
       } catch(_e) {
+        console.error('[HomeScreen] Fel vid sparande av hierarki:', _e);
         try {
           await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
           setLocalFallbackExists(true);
@@ -3132,10 +3686,13 @@ export default function HomeScreen({ navigation, route }) {
      
   }, [hierarchy, companyId]);
 
-  // Remove all top-level folders named 'test' after initial load
-  React.useEffect(() => {
-    setHierarchy(prev => prev.filter(folder => folder.name.trim().toLowerCase() !== 'test'));
-  }, []);
+  // DISABLED: Remove all top-level folders named 'test' after initial load
+  // Detta var en cleanup-kod som automatiskt raderade mappar vid varje mount,
+  // vilket kunde orsaka dataförlust. Borttagen för att förhindra oavsiktlig radering.
+  // Om cleanup behövs, gör det manuellt eller med en explicit admin-funktion.
+  // React.useEffect(() => {
+  //   setHierarchy(prev => prev.filter(folder => folder.name.trim().toLowerCase() !== 'test'));
+  // }, []);
   // Search modal state
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -3715,7 +4272,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
   // eslint-disable-next-line react-hooks/exhaustive-deps
     const ActivityPanel = React.useCallback(() => {
       return (
-        <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flex: 1, minWidth: 0, position: 'relative' }}>
           {/* Moved Overview: show Översikt at top of right-hand panel */}
           <Text style={dashboardSectionTitleStyle}>Översikt</Text>
           <View
@@ -3780,24 +4337,38 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   const ov = dashboardCardLayoutRef.current.overview;
                   const rKey = dashboardDropdownRowKey;
                   const rowLayout = rKey ? dashboardStatRowLayoutRef.current[`overview:${rKey}`] : null;
-                  // compute left/width and use bottom to overlap the button (dropdown bottom == row top)
-                  if (rowLayout && typeof rowLayout.x === 'number' && typeof rowLayout.width === 'number' && ov && typeof ov.height === 'number' && typeof rowLayout.y === 'number') {
-                    // Align dropdown top to the row's bottom so it falls downwards
-                    const NUDGE_DOWN = 28; // small downward nudge so header/title remains visible
-                    const topPos = Math.max(0, rowLayout.y + rowLayout.height + NUDGE_DOWN);
-                    console.log && console.log('dashboard overlay positioning (exact, top)', { ovHeight: ov.height, rowY: rowLayout.y, rowHeight: rowLayout.height, topPos, nudge: NUDGE_DOWN });
-                    return { position: 'absolute', left: rowLayout.x, width: rowLayout.width, top: topPos, zIndex: 20 };
+                  // compute left/width and position dropdown directly below the clicked row
+                  if (rowLayout && typeof rowLayout.x === 'number' && typeof rowLayout.width === 'number' && ov && typeof ov.height === 'number' && typeof rowLayout.y === 'number' && typeof ov.y === 'number') {
+                    // Align dropdown top to the row's bottom with small gap
+                    // rowLayout.y is relative to card's content area
+                    // ov.y is the card's position relative to ActivityPanel
+                    const GAP = 0; // No gap - dropdown directly below the row
+                    const cardTop = ov.y || 0; // Card's top position in ActivityPanel
+                    const cardPadding = 12; // padding from dashboardCardStyle
+                    // Position dropdown directly below the clicked row
+                    const topPos = cardTop + cardPadding + rowLayout.y + rowLayout.height + GAP;
+                    console.log && console.log('dashboard overlay positioning (exact, top)', { cardTop, cardPadding, ovHeight: ov.height, rowY: rowLayout.y, rowHeight: rowLayout.height, topPos, gap: GAP });
+                    return { position: 'absolute', left: (ov.x || 0) + cardPadding + rowLayout.x, width: rowLayout.width, top: topPos, zIndex: 20 };
                   }
 
                   // fallback: full card width (use top so overlay appears under the card)
                   if (ov && typeof ov.width === 'number' && typeof ov.height === 'number') {
-                    return { position: 'absolute', left: 0, width: ov.width, top: ov.height, zIndex: 20 };
+                    return { position: 'absolute', left: 0, width: ov.width, top: ov.height + 4, zIndex: 20 };
                   }
                 } catch (e) {}
                 return { position: 'absolute', left: 0, right: 0, top: 54, zIndex: 20 };
               })()}
             >
-              <View style={[dashboardCardStyle, { paddingTop: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}> 
+              <View style={[dashboardCardStyle, { 
+                paddingTop: 8, 
+                marginTop: 4,
+                boxShadow: Platform.OS === 'web' ? '0px 4px 12px rgba(0,0,0,0.1)' : undefined,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.1,
+                shadowRadius: 12,
+                elevation: 4,
+              }]}> 
                 <ScrollView style={{ maxHeight: Math.max(180, (webPaneHeight || 640) - 220 - 24), paddingTop: 0 }}>
                   {dashboardLoading ? <Text style={dashboardEmptyTextStyle}>Laddar…</Text> : (
                     (() => {
@@ -4732,13 +5303,6 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               ) : null}
             </View>
 
-            {Platform.OS === 'web' ? (
-              <View style={{ marginTop: 10, marginLeft: 8, marginRight: 8, alignSelf: 'stretch', maxWidth: 1180 }}>
-                <View style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0', paddingVertical: 10, paddingHorizontal: 12, alignSelf: 'flex-start' }}>
-                  <WebBreadcrumbInline navigation={navigation} preferHomeSegments maxWidth={760} />
-                </View>
-              </View>
-            ) : null}
             {canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1565C0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
@@ -4956,7 +5520,24 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     {/* Draggable handle - sits above the divider */}
                     <View
                   {...(panResponder && panResponder.panHandlers)}
-                  style={Platform.OS === 'web' ? { position: 'absolute', right: -8, top: 0, bottom: 0, width: 16, cursor: 'col-resize', zIndex: 9 } : { position: 'absolute', right: -12, top: 0, bottom: 0, width: 24, zIndex: 9 }}
+                  style={Platform.OS === 'web' ? { 
+                    position: 'absolute', 
+                    right: -8, 
+                    top: 0, 
+                    bottom: 0, 
+                    width: 16, 
+                    cursor: 'col-resize', 
+                    zIndex: 9,
+                    // Förhindra att handle blockerar scroll
+                    pointerEvents: 'auto',
+                  } : { 
+                    position: 'absolute', 
+                    right: -12, 
+                    top: 0, 
+                    bottom: 0, 
+                    width: 24, 
+                    zIndex: 9 
+                  }}
                     />
               <View style={{ paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 2, borderColor: '#e0e0e0', marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -5052,7 +5633,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   
                 </View>
               </View>
-              <ScrollView ref={leftTreeScrollRef} style={{ flex: 1 }}>
+              <ScrollView 
+                ref={leftTreeScrollRef} 
+                style={{ flex: 1 }}
+                scrollEnabled={true}
+                nestedScrollEnabled={true}
+              >
                 {loadingHierarchy || hierarchy.length === 0 ? (
                   <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
                     Inga mappar eller projekt skapade ännu.
@@ -5373,9 +5959,42 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                 <View style={{ marginBottom: 14, marginTop: 2 }}>
                                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36, flexWrap: 'wrap' }}>
                                     <TouchableOpacity
-                                      activeOpacity={0.9}
+                                      activeOpacity={0.85}
                                       onPress={() => { console.log('Dashboard button 1 clicked'); }}
-                                      style={{ borderRadius: 14, overflow: 'hidden', width: 380, height: 180, backgroundColor: '#fff' }}
+                                      style={{
+                                        borderRadius: 14,
+                                        overflow: 'hidden',
+                                        width: 380,
+                                        height: 180,
+                                        backgroundColor: '#fff',
+                                        shadowColor: '#000',
+                                        shadowOffset: { width: 0, height: 4 },
+                                        shadowOpacity: 0.1,
+                                        shadowRadius: 8,
+                                        elevation: 4,
+                                        ...(Platform.OS === 'web' ? {
+                                          transition: 'transform 0.2s, box-shadow 0.2s',
+                                          cursor: 'pointer',
+                                        } : {}),
+                                      }}
+                                      onMouseEnter={Platform.OS === 'web' ? (e) => {
+                                        try {
+                                          const target = e?.currentTarget;
+                                          if (target) {
+                                            target.style.transform = 'scale(1.02)';
+                                            target.style.boxShadow = '0px 8px 16px rgba(0,0,0,0.15)';
+                                          }
+                                        } catch(_e) {}
+                                      } : undefined}
+                                      onMouseLeave={Platform.OS === 'web' ? (e) => {
+                                        try {
+                                          const target = e?.currentTarget;
+                                          if (target) {
+                                            target.style.transform = 'scale(1)';
+                                            target.style.boxShadow = '0px 4px 8px rgba(0,0,0,0.1)';
+                                          }
+                                        } catch(_e) {}
+                                      } : undefined}
                                     >
                                       <Image
                                         source={dashboardBtn1Url && !dashboardBtn1Failed ? { uri: dashboardBtn1Url } : require('../assets/images/partial-react-logo.png')}
@@ -5387,9 +6006,42 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                     </TouchableOpacity>
 
                                     <TouchableOpacity
-                                      activeOpacity={0.9}
+                                      activeOpacity={0.85}
                                       onPress={() => { console.log('Dashboard button 2 clicked'); }}
-                                      style={{ borderRadius: 14, overflow: 'hidden', width: 380, height: 180, backgroundColor: '#fff' }}
+                                      style={{
+                                        borderRadius: 14,
+                                        overflow: 'hidden',
+                                        width: 380,
+                                        height: 180,
+                                        backgroundColor: '#fff',
+                                        shadowColor: '#000',
+                                        shadowOffset: { width: 0, height: 4 },
+                                        shadowOpacity: 0.1,
+                                        shadowRadius: 8,
+                                        elevation: 4,
+                                        ...(Platform.OS === 'web' ? {
+                                          transition: 'transform 0.2s, box-shadow 0.2s',
+                                          cursor: 'pointer',
+                                        } : {}),
+                                      }}
+                                      onMouseEnter={Platform.OS === 'web' ? (e) => {
+                                        try {
+                                          const target = e?.currentTarget;
+                                          if (target) {
+                                            target.style.transform = 'scale(1.02)';
+                                            target.style.boxShadow = '0px 8px 16px rgba(0,0,0,0.15)';
+                                          }
+                                        } catch(_e) {}
+                                      } : undefined}
+                                      onMouseLeave={Platform.OS === 'web' ? (e) => {
+                                        try {
+                                          const target = e?.currentTarget;
+                                          if (target) {
+                                            target.style.transform = 'scale(1)';
+                                            target.style.boxShadow = '0px 4px 8px rgba(0,0,0,0.1)';
+                                          }
+                                        } catch(_e) {}
+                                      } : undefined}
                                     >
                                       <Image
                                         source={dashboardBtn2Url && !dashboardBtn2Failed ? { uri: dashboardBtn2Url } : require('../assets/images/partial-react-logo.png')}
@@ -5410,7 +6062,30 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                   {dashboardLoading ? (
                                     <Text style={dashboardEmptyTextStyle}>Laddar…</Text>
                                   ) : (dashboardRecentProjects || []).length === 0 ? (
-                                    <Text style={dashboardEmptyTextStyle}>Inga senaste projekt ännu.</Text>
+                                    <View style={{ padding: 20, alignItems: 'center' }}>
+                                      <Ionicons name="folder-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
+                                      <Text style={[dashboardEmptyTextStyle, { fontSize: 15, textAlign: 'center', marginBottom: 8 }]}>Inga senaste projekt ännu</Text>
+                                      <Text style={[dashboardMetaTextStyle, { textAlign: 'center', marginBottom: 16 }]}>Skapa ditt första projekt genom att välja en mapp i sidopanelen till vänster</Text>
+                                      <TouchableOpacity
+                                        onPress={() => {
+                                          if (Platform.OS === 'web') {
+                                            try { document.querySelector('[data-sidebar="new-project"]')?.click(); } catch(_e) {}
+                                          }
+                                        }}
+                                        style={{
+                                          backgroundColor: '#1976D2',
+                                          paddingVertical: 10,
+                                          paddingHorizontal: 20,
+                                          borderRadius: 8,
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                        }}
+                                      >
+                                        <Ionicons name="add" size={18} color="#fff" />
+                                        <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Skapa nytt projekt</Text>
+                                      </TouchableOpacity>
+                                    </View>
                                   ) : (
                                     (dashboardRecentProjects || []).map((entry, idx) => (
                                       <TouchableOpacity
@@ -5438,9 +6113,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                               <View style={{ width: 320, minWidth: 280, position: 'relative' }}>
                                 {/* Overview moved to right-hand ActivityPanel on web */}
 
-                                <Text style={[dashboardSectionTitleStyle, { marginTop: 12 }]}>Påminnelser</Text>
+                                <Text style={[dashboardSectionTitleStyle, { marginTop: 12, marginBottom: 8, zIndex: 10, position: 'relative' }]}>Påminnelser</Text>
                                 <View
-                                  style={[dashboardCardStyle, { padding: 16, marginBottom: 16 }]}
+                                  style={[dashboardCardStyle, { padding: 16, marginBottom: 16, position: 'relative' }]}
                                   onLayout={Platform.OS === 'web' ? (e) => { dashboardCardLayoutRef.current.reminders = e?.nativeEvent?.layout || null; } : undefined}
                                 >
                                   {[
@@ -5498,7 +6173,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                   })}
                                 </View>
 
-                                {/* Web-only: dropdown overlay for Reminders (renders in center column) */}
+                                {/* Web-only: dropdown overlay for Reminders (renders in center column, below the card) */}
                                 {Platform.OS === 'web' && dashboardFocus && dashboardDropdownAnchor === 'reminders' ? (
                                   <View
                                     style={(function() {
@@ -5506,21 +6181,39 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                         const card = dashboardCardLayoutRef && dashboardCardLayoutRef.current && dashboardCardLayoutRef.current.reminders;
                                         const rKey = dashboardDropdownRowKey;
                                         const rowLayout = rKey ? dashboardStatRowLayoutRef.current[`reminders:${rKey}`] : null;
-                                        const NUDGE_DOWN = 28; // small downward nudge so header/title remains visible
-                                        // align to row/button when possible and position dropdown below the row (dropdown top == row bottom + nudge)
-                                        if (rowLayout && typeof rowLayout.x === 'number' && typeof rowLayout.width === 'number' && card && typeof rowLayout.y === 'number' && typeof rowLayout.height === 'number') {
-                                          const topPos = rowLayout.y + rowLayout.height + NUDGE_DOWN;
-                                          console.log && console.log('dashboard reminders overlay positioning (top)', { cardHeight: card.height, rowY: rowLayout.y, rowHeight: rowLayout.height, top: topPos });
-                                          return { position: 'absolute', left: rowLayout.x, width: rowLayout.width, top: topPos, zIndex: 20 };
+                                        const GAP = 0; // No gap - dropdown directly below the row
+                                        // align to row/button when possible and position dropdown directly below the clicked row
+                                        if (rowLayout && typeof rowLayout.x === 'number' && typeof rowLayout.width === 'number' && card && typeof rowLayout.y === 'number' && typeof rowLayout.height === 'number' && typeof card.y === 'number') {
+                                          // rowLayout.y is relative to card's content area (includes card padding)
+                                          // card.y is the card's position relative to its parent container
+                                          // Calculate absolute position: card top + card padding + row position in card + row height + gap
+                                          const cardTop = card.y || 0; // Card's top position in parent
+                                          const cardPadding = 16; // padding from dashboardCardStyle
+                                          // Position dropdown directly below the clicked row
+                                          const topPos = cardTop + cardPadding + rowLayout.y + rowLayout.height + GAP;
+                                          console.log && console.log('dashboard reminders overlay positioning (top)', { cardTop, cardPadding, cardHeight: card.height, rowY: rowLayout.y, rowHeight: rowLayout.height, topPos });
+                                          return { position: 'absolute', left: (card.x || 0) + cardPadding + rowLayout.x, width: rowLayout.width, top: topPos, zIndex: 20 };
                                         }
 
                                         // fallback: place dropdown under the card
-                                        if (card && typeof card.width === 'number' && typeof card.height === 'number') return { position: 'absolute', left: 0, width: card.width, top: card.height, zIndex: 20 };
+                                        if (card && typeof card.width === 'number' && typeof card.height === 'number' && typeof card.y === 'number') {
+                                          const cardTop = card.y || 0;
+                                          return { position: 'absolute', left: card.x || 0, width: card.width, top: cardTop + card.height + 4, zIndex: 20 };
+                                        }
                                       } catch (e) {}
                                       return { position: 'absolute', left: 0, right: 0, top: 218, zIndex: 20 };
                                     })()}
                                   >
-                                    <View style={[dashboardCardStyle, { paddingTop: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}> 
+                                    <View style={[dashboardCardStyle, { 
+                                      paddingTop: 8, 
+                                      marginTop: 4,
+                                      boxShadow: Platform.OS === 'web' ? '0px 4px 12px rgba(0,0,0,0.1)' : undefined,
+                                      shadowColor: '#000',
+                                      shadowOffset: { width: 0, height: 4 },
+                                      shadowOpacity: 0.1,
+                                      shadowRadius: 12,
+                                      elevation: 4,
+                                    }]}> 
                                       <ScrollView
                                         style={{
                                           maxHeight: Math.max(
@@ -5540,7 +6233,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
 
                                             if (focus === 'activeProjects') {
                                               const items = Array.isArray(dashboardActiveProjectsList) ? dashboardActiveProjectsList : [];
-                                              if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga pågående projekt.</Text>;
+                                              if (items.length === 0) return (
+                                                <View style={{ padding: 16, alignItems: 'center' }}>
+                                                  <Ionicons name="folder-open-outline" size={32} color="#ccc" style={{ marginBottom: 8 }} />
+                                                  <Text style={[dashboardEmptyTextStyle, { fontSize: 14, textAlign: 'center' }]}>Inga pågående projekt</Text>
+                                                </View>
+                                              );
                                               return items.map((p, idx) => (
                                                 <TouchableOpacity
                                                   key={`${p.id}-${idx}`}
@@ -5558,7 +6256,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                                 ? (Array.isArray(dashboardControlsToSignItems) ? dashboardControlsToSignItems : [])
                                                 : (Array.isArray(dashboardDraftItems) ? dashboardDraftItems : []);
 
-                                              if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga utkast.</Text>;
+                                              if (items.length === 0) return (
+                                                <View style={{ padding: 16, alignItems: 'center' }}>
+                                                  <Ionicons name="document-text-outline" size={32} color="#ccc" style={{ marginBottom: 8 }} />
+                                                  <Text style={[dashboardEmptyTextStyle, { fontSize: 14, textAlign: 'center' }]}>Inga {focus === 'controlsToSign' ? 'kontroller att signera' : 'utkast'} ännu</Text>
+                                                </View>
+                                              );
                                               return items.map((d, idx) => {
                                                 const pid = d?.project?.id || d?.projectId || d?.project || null;
                                                 const projectId = pid ? String(pid) : '';
@@ -5594,7 +6297,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
 
                                             if (focus === 'openDeviations') {
                                               const items = Array.isArray(dashboardOpenDeviationItems) ? dashboardOpenDeviationItems : [];
-                                              if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga öppna avvikelser.</Text>;
+                                              if (items.length === 0) return (
+                                                <View style={{ padding: 16, alignItems: 'center' }}>
+                                                  <Ionicons name="checkmark-circle-outline" size={32} color="#43A047" style={{ marginBottom: 8 }} />
+                                                  <Text style={[dashboardEmptyTextStyle, { fontSize: 14, textAlign: 'center', color: '#43A047' }]}>Inga öppna avvikelser - allt ser bra ut!</Text>
+                                                </View>
+                                              );
                                               return items.map((entry, idx) => {
                                                 const c = entry?.control;
                                                 const pid = c?.project?.id || c?.projectId || c?.project || null;
@@ -5634,7 +6342,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
 
                                             if (focus === 'upcomingSkyddsrond') {
                                               const items = Array.isArray(dashboardUpcomingSkyddsrondItems) ? dashboardUpcomingSkyddsrondItems : [];
-                                              if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga kommande skyddsronder.</Text>;
+                                              if (items.length === 0) return (
+                                                <View style={{ padding: 16, alignItems: 'center' }}>
+                                                  <Ionicons name="calendar-outline" size={32} color="#ccc" style={{ marginBottom: 8 }} />
+                                                  <Text style={[dashboardEmptyTextStyle, { fontSize: 14, textAlign: 'center' }]}>Inga kommande skyddsronder</Text>
+                                                </View>
+                                              );
                                               return items.map((entry, idx) => {
                                                 const p = entry?.project;
                                                 const dueMs = Number(entry?.nextDueMs || 0);
@@ -5694,9 +6407,32 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     {/* Draggable handle - sits above the left divider of the right panel */}
                     <View
                       {...(panResponderRight && panResponderRight.panHandlers)}
-                      style={Platform.OS === 'web' ? { position: 'absolute', left: -8, top: 0, bottom: 0, width: 16, cursor: 'col-resize', zIndex: 9 } : { position: 'absolute', left: -12, top: 0, bottom: 0, width: 24, zIndex: 9 }}
+                      style={Platform.OS === 'web' ? { 
+                        position: 'absolute', 
+                        left: -8, 
+                        top: 0, 
+                        bottom: 0, 
+                        width: 16, 
+                        cursor: 'col-resize', 
+                        zIndex: 9,
+                        // Förhindra att handle blockerar scroll
+                        pointerEvents: 'auto',
+                      } : { 
+                        position: 'absolute', 
+                        left: -12, 
+                        top: 0, 
+                        bottom: 0, 
+                        width: 24, 
+                        zIndex: 9 
+                      }}
                     />
-                    <ScrollView ref={activityScrollRef} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }}>
+                    <ScrollView 
+                      ref={activityScrollRef} 
+                      style={{ flex: 1 }} 
+                      contentContainerStyle={{ paddingBottom: 24 }}
+                      scrollEnabled={true}
+                      nestedScrollEnabled={true}
+                    >
                       <ActivityPanel />
                     </ScrollView>
                     <TouchableOpacity
@@ -5734,7 +6470,30 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                               {dashboardLoading ? (
                                 <Text style={dashboardEmptyTextStyle}>Laddar…</Text>
                               ) : (dashboardRecentProjects || []).length === 0 ? (
-                                <Text style={dashboardEmptyTextStyle}>Inga senaste projekt ännu.</Text>
+                                <View style={{ padding: 20, alignItems: 'center' }}>
+                                  <Ionicons name="folder-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
+                                  <Text style={[dashboardEmptyTextStyle, { fontSize: 15, textAlign: 'center', marginBottom: 8 }]}>Inga senaste projekt ännu</Text>
+                                  <Text style={[dashboardMetaTextStyle, { textAlign: 'center', marginBottom: 16 }]}>Skapa ditt första projekt genom att välja en mapp i sidopanelen till vänster</Text>
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      if (Platform.OS === 'web') {
+                                        try { document.querySelector('[data-sidebar="new-project"]')?.click(); } catch(_e) {}
+                                      }
+                                    }}
+                                    style={{
+                                      backgroundColor: '#1976D2',
+                                      paddingVertical: 10,
+                                      paddingHorizontal: 20,
+                                      borderRadius: 8,
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <Ionicons name="add" size={18} color="#fff" />
+                                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Skapa nytt projekt</Text>
+                                  </TouchableOpacity>
+                                </View>
                               ) : (
                                 (dashboardRecentProjects || []).map((entry, idx) => (
                                   <TouchableOpacity

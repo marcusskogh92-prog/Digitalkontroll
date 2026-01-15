@@ -19,6 +19,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
@@ -37,7 +38,6 @@ import SkyddsrondScreen from './SkyddsrondScreen';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
-import WebBreadcrumbInline from '../components/WebBreadcrumbInline';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
 // so web builds don't attempt to resolve native-only exports. Load dynamically
@@ -57,6 +57,14 @@ function normalizeControl(obj) {
   if (!c.mottagningsSignatures) c.mottagningsSignatures = [];
   if (!Array.isArray(c.checklist)) c.checklist = [];
   return c;
+}
+
+// Normalize project data - format ansvarig name
+function normalizeProject(p) {
+  if (!p || typeof p !== 'object') return p;
+  const formatted = formatPersonName(p.ansvarig || '');
+  if (!formatted || formatted === p.ansvarig) return p;
+  return { ...p, ansvarig: formatted };
 }
 
 // Persist a draft object by merging with existing matching draft(s) in AsyncStorage
@@ -287,6 +295,7 @@ const styles = StyleSheet.create({
 });
 
 export default function ProjectDetails({ route, navigation, inlineClose, refreshNonce }) {
+  const { width: windowWidth } = useWindowDimensions();
               const [showControlTypeModal, setShowControlTypeModal] = useState(false);
             const [showDeleteModal, setShowDeleteModal] = useState(false);
             const [showDeleteWarning, setShowDeleteWarning] = useState(false);
@@ -644,11 +653,29 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [companyAdmins, setCompanyAdmins] = useState([]);
   const [loadingCompanyAdmins, setLoadingCompanyAdmins] = useState(false);
   const [companyAdminsError, setCompanyAdminsError] = useState(null);
+  
+  // States for editing project info modal
+  const [editingInfo, setEditingInfo] = useState(false);
+  const [editableProject, setEditableProject] = useState(() => normalizeProject(project));
+  const [originalProjectId, setOriginalProjectId] = useState(project?.id || null);
+  
+  // States for participants (deltagare)
+  const [editProjectParticipants, setEditProjectParticipants] = useState([]);
+  const [editProjectParticipantsSearch, setEditProjectParticipantsSearch] = useState('');
+  const [companyMembers, setCompanyMembers] = useState([]);
+  const [loadingCompanyMembers, setLoadingCompanyMembers] = useState(false);
+  const [companyMembersPermissionDenied, setCompanyMembersPermissionDenied] = useState(false);
+  const [responsibleDropdownOpen, setResponsibleDropdownOpen] = useState(false);
+  const responsibleDropdownRef = useRef(null);
+  const [focusedInput, setFocusedInput] = useState(null);
+  const [participantsDropdownOpen, setParticipantsDropdownOpen] = useState(false);
+  const participantsDropdownRef = useRef(null);
 
+  // Load company admins (for responsible dropdown) - fetch both admin and superadmin
   useEffect(() => {
     let cancelled = false;
     const loadAdmins = async () => {
-      if (!adminPickerVisible) return;
+      if (!editingInfo && !responsibleDropdownOpen) return;
       if (!companyId) {
         setCompanyAdmins([]);
         setCompanyAdminsError('Saknar företag (companyId).');
@@ -658,13 +685,15 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       setLoadingCompanyAdmins(true);
       setCompanyAdminsError(null);
       try {
-        const members = await fetchCompanyMembers(companyId);
-        const admins = (Array.isArray(members) ? members : [])
-          .filter(m => String(m?.role || '').toLowerCase() === 'admin')
-          .slice()
-          .sort((a, b) => formatPersonName(a).localeCompare(formatPersonName(b), 'sv'));
-
-        if (!cancelled) setCompanyAdmins(admins);
+        // Fetch both admin and superadmin users for responsible person dropdown
+        const [admins, superadmins] = await Promise.all([
+          fetchCompanyMembers(companyId, { role: 'admin' }),
+          fetchCompanyMembers(companyId, { role: 'superadmin' })
+        ]);
+        // Combine and deduplicate by id
+        const allAdmins = [...(Array.isArray(admins) ? admins : []), ...(Array.isArray(superadmins) ? superadmins : [])];
+        const uniqueAdmins = allAdmins.filter((m, idx, arr) => arr.findIndex(x => x.id === m.id) === idx);
+        if (!cancelled) setCompanyAdmins(uniqueAdmins);
       } catch(e) {
         if (!cancelled) {
           setCompanyAdmins([]);
@@ -682,7 +711,82 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     return () => {
       cancelled = true;
     };
-  }, [adminPickerVisible, companyId]);
+  }, [editingInfo, responsibleDropdownOpen, companyId]);
+
+  // Load all company members (for participants dropdown)
+  useEffect(() => {
+    let cancelled = false;
+    const loadMembers = async () => {
+      if (!editingInfo) return;
+      if (!companyId) {
+        setCompanyMembers([]);
+        setCompanyMembersPermissionDenied(false);
+        return;
+      }
+
+      setLoadingCompanyMembers(true);
+      setCompanyMembersPermissionDenied(false);
+      try {
+        // Fetch ALL members (no role filter) for participants
+        const allMembers = await fetchCompanyMembers(companyId);
+        if (!cancelled) setCompanyMembers(Array.isArray(allMembers) ? allMembers : []);
+      } catch(e) {
+        if (!cancelled) {
+          const msg = String(e?.message || e || '').toLowerCase();
+          if (e?.code === 'permission-denied' || msg.includes('permission')) {
+            setCompanyMembersPermissionDenied(true);
+          }
+          setCompanyMembers([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingCompanyMembers(false);
+      }
+    };
+
+    loadMembers();
+    return () => {
+      cancelled = true;
+    };
+  }, [editingInfo, companyId]);
+
+  // Initialize participants from editableProject when modal opens
+  useEffect(() => {
+    if (editingInfo && editableProject?.participants) {
+      const participants = Array.isArray(editableProject.participants) 
+        ? editableProject.participants.map(p => ({
+            uid: p.uid || p.id,
+            displayName: p.displayName || p.name || null,
+            email: p.email || null,
+            role: p.role || null,
+          }))
+        : [];
+      setEditProjectParticipants(participants);
+    } else if (!editingInfo) {
+      setEditProjectParticipants([]);
+      setEditProjectParticipantsSearch('');
+    }
+  }, [editingInfo, editableProject?.participants]);
+
+  // Handle click outside for responsible and participants dropdowns (web only)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    
+    const handleClickOutside = (e) => {
+      if (responsibleDropdownRef.current && !responsibleDropdownRef.current.contains(e.target)) {
+        setResponsibleDropdownOpen(false);
+      }
+      if (participantsDropdownRef.current && !participantsDropdownRef.current.contains(e.target)) {
+        setParticipantsDropdownOpen(false);
+      }
+    };
+
+    if (responsibleDropdownOpen || participantsDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [responsibleDropdownOpen, participantsDropdownOpen]);
   const hasValidProject = !!(project && typeof project === 'object' && project.id);
   const [controls, setControls] = useState([]);
   // Sökfält för kontroller
@@ -759,16 +863,6 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     loadControls();
     return unsubscribe;
   }, [navigation, loadControls]);
-  const normalizeProject = (p) => {
-    if (!p || typeof p !== 'object') return p;
-    const formatted = formatPersonName(p.ansvarig || '');
-    if (!formatted || formatted === p.ansvarig) return p;
-    return { ...p, ansvarig: formatted };
-  };
-
-  const [editableProject, setEditableProject] = useState(() => normalizeProject(project));
-    // Store original id for update (keep up to date when route.project changes)
-    const [originalProjectId, setOriginalProjectId] = useState(project?.id || null);
 
   // Update editableProject when parent passes a new project (e.g., selecting another project inline)
   React.useEffect(() => {
@@ -778,7 +872,6 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [showForm, setShowForm] = useState(false);
   const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
   const [expandedByType, setExpandedByType] = useState({});
-  const [editingInfo, setEditingInfo] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const [companyLogoUri] = useState(null);
@@ -1412,19 +1505,12 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               <Ionicons name="chevron-back" size={20} color="#1976D2" />
             </TouchableOpacity>
           )}
-          {Platform.OS === 'web' ? (
-            <WebBreadcrumbInline
-              navigation={navigation}
-              label={`${String(editableProject?.id || '').trim()} — ${String(editableProject?.name || '').trim()}`.trim() || 'Projekt'}
-              preferHomeSegments
-              maxWidth={760}
-            />
-          ) : (
+          {Platform.OS !== 'web' ? (
             <>
               <Ionicons name="document-text-outline" size={20} color="#1976D2" style={{ marginRight: 6 }} />
               <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#333', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">Projektinformation</Text>
             </>
-          )}
+          ) : null}
         </View>
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', gap: 12 }}>
@@ -1542,10 +1628,1045 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         </View>
       </View>
 
-      {/* Modal för ändra projektinfo - uppdaterad layout liknande nya modaler (t.ex. Ny mall) */}
+      {/* Modal för ändra projektinfo - uppdaterad layout liknande Skapa nytt projekt */}
       <Modal visible={editingInfo} transparent animationType="fade" onRequestClose={() => setEditingInfo(false)}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 18, minWidth: 320, maxWidth: 420, maxHeight: '75%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
+        {Platform.OS === 'web' ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Pressable
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
+              onPress={() => setEditingInfo(false)}
+            />
+            {(() => {
+              const isSmallScreen = windowWidth < 900;
+              const cardStyle = {
+                backgroundColor: '#fff',
+                borderRadius: 18,
+                width: 1050,
+                maxWidth: '96%',
+                minWidth: Platform.OS === 'web' ? 600 : 340,
+                height: isSmallScreen ? 'auto' : 740,
+                maxHeight: '90%',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.18,
+                shadowRadius: 18,
+                elevation: 12,
+                overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
+              };
+
+              const headerStyle = {
+                height: 56,
+                borderBottomWidth: 1,
+                borderBottomColor: '#E6E8EC',
+                backgroundColor: '#F8FAFC',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 16,
+              };
+
+              const sectionTitle = { fontSize: 13, fontWeight: '500', color: '#111', marginBottom: 10 };
+              const labelStyle = { fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 };
+              const inputStyleBase = {
+                borderWidth: 1,
+                borderColor: '#E2E8F0',
+                borderRadius: 10,
+                paddingVertical: 9,
+                paddingHorizontal: 10,
+                fontSize: 13,
+                backgroundColor: '#fff',
+                color: '#111',
+                ...(Platform.OS === 'web' ? {
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                  outline: 'none',
+                } : {}),
+              };
+
+              const requiredBorder = (ok, isFocused = false) => {
+                if (isFocused && ok) {
+                  return { 
+                    borderColor: '#1976D2', 
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)' } : {}),
+                  };
+                }
+                return { borderColor: ok ? '#E2E8F0' : '#EF4444' };
+              };
+
+              const initials = (person) => {
+                const name = String(person?.displayName || person?.name || person?.email || '').trim();
+                if (!name) return '?';
+                const parts = name.split(/\s+/).filter(Boolean);
+                const a = (parts[0] || '').slice(0, 1);
+                const b = (parts[1] || '').slice(0, 1);
+                return (a + b).toUpperCase();
+              };
+
+              const toggleParticipant = (m) => {
+                try {
+                  const id = (m.uid || m.id);
+                  const exists = (editProjectParticipants || []).find((p) => (p.uid || p.id) === id);
+                  if (exists) {
+                    setEditProjectParticipants((prev) => (prev || []).filter((p) => (p.uid || p.id) !== id));
+                  } else {
+                    setEditProjectParticipants((prev) => ([...(prev || []), { uid: id, displayName: m.displayName || null, email: m.email || null, role: m.role || null }]));
+                  }
+                } catch (_e) {}
+              };
+
+              const q = String(editProjectParticipantsSearch || '').trim().toLowerCase();
+              const visibleMembers = (companyMembers || []).filter((m) => {
+                if (!q) return true;
+                const n = String(m?.displayName || m?.name || '').toLowerCase();
+                const e = String(m?.email || '').toLowerCase();
+                return n.includes(q) || e.includes(q);
+              });
+
+              // Helper to get address fields (handle both old string format and new object format)
+              const getAddressStreet = () => {
+                if (editableProject?.address?.street) return editableProject.address.street;
+                if (editableProject?.adress) return editableProject.adress; // Old format
+                return '';
+              };
+              const getAddressPostal = () => editableProject?.address?.postalCode || '';
+              const getAddressCity = () => editableProject?.address?.city || '';
+              const getClientContactName = () => editableProject?.clientContact?.name || '';
+              const getClientContactPhone = () => editableProject?.clientContact?.phone || '';
+              const getClientContactEmail = () => editableProject?.clientContact?.email || '';
+
+              return (
+                <View style={cardStyle}>
+                  <View style={headerStyle}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#111' }}>Projektinformation</Text>
+                    <TouchableOpacity
+                      style={{ position: 'absolute', right: 12, top: 10, padding: 6 }}
+                      onPress={() => setEditingInfo(false)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      <Ionicons name="close" size={22} color="#111" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={{ 
+                    flex: 1, 
+                    flexDirection: Platform.OS === 'web' ? (isSmallScreen ? 'column' : 'row') : 'row',
+                  }}>
+                    {/* Left column */}
+                    <View style={{ 
+                      flex: 1, 
+                      borderRightWidth: Platform.OS === 'web' && !isSmallScreen ? 1 : 0,
+                      borderBottomWidth: Platform.OS === 'web' && isSmallScreen ? 1 : 0,
+                      borderRightColor: '#E6E8EC',
+                      borderBottomColor: '#E6E8EC',
+                      backgroundColor: '#fff' 
+                    }}>
+                      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 18, paddingBottom: 22 }}>
+                        <Text style={sectionTitle}>Projektinformation</Text>
+
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={labelStyle}>Projektnummer *</Text>
+                          <TextInput
+                            value={editableProject?.id || ''}
+                            onChangeText={(v) => setEditableProject(p => ({ ...p, id: v }))}
+                            onFocus={() => setFocusedInput('projectNumber')}
+                            onBlur={() => setFocusedInput(null)}
+                            placeholder="Projektnummer..."
+                            placeholderTextColor="#94A3B8"
+                            style={{
+                              ...inputStyleBase,
+                              ...requiredBorder(String(editableProject?.id || '').trim() !== '', focusedInput === 'projectNumber'),
+                            }}
+                            autoCapitalize="none"
+                          />
+                        </View>
+
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={labelStyle}>Projektnamn *</Text>
+                          <TextInput
+                            value={editableProject?.name || ''}
+                            onChangeText={(v) => setEditableProject(p => ({ ...p, name: v }))}
+                            onFocus={() => setFocusedInput('projectName')}
+                            onBlur={() => setFocusedInput(null)}
+                            placeholder="Projektnamn..."
+                            placeholderTextColor="#94A3B8"
+                            style={{
+                              ...inputStyleBase,
+                              ...requiredBorder(String(editableProject?.name || '').trim() !== '', focusedInput === 'projectName'),
+                            }}
+                            autoCapitalize="words"
+                          />
+                        </View>
+
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={labelStyle}>Skapad</Text>
+                          <TouchableOpacity
+                            activeOpacity={1}
+                            onLongPress={() => setCanEditCreated(true)}
+                            delayLongPress={2000}
+                          >
+                            <TextInput
+                              style={{
+                                ...inputStyleBase,
+                                backgroundColor: canEditCreated ? '#fff' : '#F1F5F9',
+                                color: canEditCreated ? '#111' : '#64748B',
+                                pointerEvents: 'none',
+                              }}
+                              value={editableProject?.createdAt ? new Date(editableProject.createdAt).toISOString().slice(0, 10) : ''}
+                              editable={false}
+                              placeholder="YYYY-MM-DD"
+                              placeholderTextColor="#94A3B8"
+                            />
+                            {!canEditCreated && (
+                              <Text style={{ fontSize: 11, color: '#64748B', marginTop: 4, textAlign: 'center' }}>
+                                Håll in 2 sekunder för att ändra datum
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                          {canEditCreated && (
+                            <Modal visible={canEditCreated} transparent animationType="fade" onRequestClose={() => setCanEditCreated(false)}>
+                              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.30)' }}>
+                                <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, minWidth: 260, maxWidth: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
+                                  <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj nytt skapad-datum</Text>
+                                  <TextInput
+                                    style={{ borderWidth: 1, borderColor: '#1976D2', borderRadius: 8, padding: 10, fontSize: 16, backgroundColor: '#fafafa', color: '#222', marginBottom: 12 }}
+                                    value={editableProject?.createdAt ? new Date(editableProject.createdAt).toISOString().slice(0, 10) : ''}
+                                    onChangeText={v => {
+                                      const today = new Date();
+                                      const inputDate = new Date(v);
+                                      if (inputDate > today) return;
+                                      setEditableProject(p => ({ ...p, createdAt: v }));
+                                    }}
+                                    placeholder="YYYY-MM-DD"
+                                    placeholderTextColor="#bbb"
+                                    keyboardType="numeric"
+                                  />
+                                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                                    <TouchableOpacity
+                                      style={{ backgroundColor: '#1976D2', borderRadius: 8, padding: 12, alignItems: 'center', flex: 1, marginRight: 8 }}
+                                      onPress={() => setCanEditCreated(false)}
+                                    >
+                                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Spara</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, alignItems: 'center', flex: 1, marginLeft: 8 }}
+                                      onPress={() => setCanEditCreated(false)}
+                                    >
+                                      <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              </View>
+                            </Modal>
+                          )}
+                        </View>
+
+                        <Text style={labelStyle}>Kund</Text>
+                        <TextInput
+                          value={editableProject?.customer || editableProject?.client || ''}
+                          onChangeText={(v) => setEditableProject(p => ({ ...p, customer: v, client: v }))}
+                          placeholder="Kundens företagsnamn..."
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 14 }}
+                        />
+
+                        <Text style={{ ...labelStyle, marginBottom: 8 }}>Uppgifter till projektansvarig hos beställaren</Text>
+                        <TextInput
+                          value={getClientContactName()}
+                          onChangeText={(v) => setEditableProject(p => ({
+                            ...p,
+                            clientContact: {
+                              ...(p?.clientContact || {}),
+                              name: v,
+                            },
+                          }))}
+                          placeholder="Namn"
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 10 }}
+                        />
+                        <TextInput
+                          value={getClientContactPhone()}
+                          onChangeText={(v) => setEditableProject(p => ({
+                            ...p,
+                            clientContact: {
+                              ...(p?.clientContact || {}),
+                              phone: v,
+                            },
+                          }))}
+                          placeholder="Telefonnummer"
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 10 }}
+                        />
+                        <TextInput
+                          value={getClientContactEmail()}
+                          onChangeText={(v) => setEditableProject(p => ({
+                            ...p,
+                            clientContact: {
+                              ...(p?.clientContact || {}),
+                              email: v,
+                            },
+                          }))}
+                          placeholder="namn@foretag.se"
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 14 }}
+                        />
+
+                        <Text style={labelStyle}>Adress</Text>
+                        <TextInput
+                          value={getAddressStreet()}
+                          onChangeText={(v) => setEditableProject(p => ({
+                            ...p,
+                            address: {
+                              ...(p?.address || {}),
+                              street: v,
+                            },
+                            adress: v, // Keep old format for compatibility
+                          }))}
+                          placeholder="Gata och nr..."
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 10 }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                          <TextInput
+                            value={getAddressPostal()}
+                            onChangeText={(v) => setEditableProject(p => ({
+                              ...p,
+                              address: {
+                                ...(p?.address || {}),
+                                postalCode: v,
+                              },
+                            }))}
+                            placeholder="Postnummer"
+                            placeholderTextColor="#94A3B8"
+                            style={{ ...inputStyleBase, flex: 0.45 }}
+                          />
+                          <TextInput
+                            value={getAddressCity()}
+                            onChangeText={(v) => setEditableProject(p => ({
+                              ...p,
+                              address: {
+                                ...(p?.address || {}),
+                                city: v,
+                              },
+                            }))}
+                            placeholder="Ort"
+                            placeholderTextColor="#94A3B8"
+                            style={{ ...inputStyleBase, flex: 0.55 }}
+                          />
+                        </View>
+                        <TextInput
+                          value={editableProject?.propertyDesignation || editableProject?.fastighetsbeteckning || ''}
+                          onChangeText={(v) => setEditableProject(p => ({ ...p, propertyDesignation: v, fastighetsbeteckning: v }))}
+                          placeholder="Fastighetsbeteckning"
+                          placeholderTextColor="#94A3B8"
+                          style={{ ...inputStyleBase, marginBottom: 14 }}
+                        />
+                      </ScrollView>
+                    </View>
+
+                    {/* Right column */}
+                    <View style={{ flex: 1, backgroundColor: '#fff', overflow: 'visible' }}>
+                      <View style={{ flex: 1, padding: 18, paddingBottom: 10, overflow: 'visible' }}>
+                        <Text style={sectionTitle}>Ansvariga och deltagare</Text>
+
+                        <View style={{ marginBottom: 12, position: 'relative', zIndex: responsibleDropdownOpen ? 1000 : 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <Text style={labelStyle}>Ansvarig *</Text>
+                            {editableProject?.ansvarig ? (
+                              <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                            ) : null}
+                          </View>
+                          <View style={{ position: 'relative', zIndex: responsibleDropdownOpen ? 1001 : 1 }} ref={responsibleDropdownRef}>
+                            <TouchableOpacity
+                              style={{
+                                ...inputStyleBase,
+                                ...(editableProject?.ansvarig ? {} : { borderColor: '#EF4444' }),
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                ...(focusedInput === 'responsible' && editableProject?.ansvarig ? {
+                                  borderColor: '#1976D2',
+                                  ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)' } : {}),
+                                } : {}),
+                                ...(responsibleDropdownOpen && Platform.OS === 'web' ? {
+                                  borderColor: '#1976D2',
+                                  borderBottomLeftRadius: 0,
+                                  borderBottomRightRadius: 0,
+                                  boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)',
+                                } : {}),
+                              }}
+                              onPress={() => {
+                                if (Platform.OS === 'web') {
+                                  setFocusedInput('responsible');
+                                  setResponsibleDropdownOpen(!responsibleDropdownOpen);
+                                } else {
+                                  setAdminPickerVisible(true);
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13, color: editableProject?.ansvarig ? '#111' : '#94A3B8', fontWeight: '700' }} numberOfLines={1}>
+                                {editableProject?.ansvarig ? formatPersonName(editableProject.ansvarig) : 'Välj ansvarig...'}
+                              </Text>
+                              <Ionicons 
+                                name={responsibleDropdownOpen ? "chevron-up" : "chevron-down"} 
+                                size={16} 
+                                color="#111" 
+                              />
+                            </TouchableOpacity>
+
+                            {/* Web dropdown menu */}
+                            {Platform.OS === 'web' && responsibleDropdownOpen && (
+                              <View
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: 0,
+                                  right: 0,
+                                  backgroundColor: '#fff',
+                                  borderWidth: 1,
+                                  borderColor: '#1976D2',
+                                  borderTopWidth: 0,
+                                  borderRadius: 10,
+                                  borderTopLeftRadius: 0,
+                                  borderTopRightRadius: 0,
+                                  maxHeight: 280,
+                                  shadowColor: '#000',
+                                  shadowOffset: { width: 0, height: 4 },
+                                  shadowOpacity: 0.15,
+                                  shadowRadius: 12,
+                                  elevation: 8,
+                                  zIndex: 1002,
+                                  overflow: 'hidden',
+                                  ...(Platform.OS === 'web' ? {
+                                    opacity: 1,
+                                    backgroundColor: '#ffffff',
+                                  } : {}),
+                                }}
+                              >
+                                {loadingCompanyAdmins ? (
+                                  <View style={{ padding: 16, alignItems: 'center' }}>
+                                    <Text style={{ color: '#64748b', fontSize: 13 }}>Laddar...</Text>
+                                  </View>
+                                ) : companyAdminsError ? (
+                                  <View style={{ padding: 16 }}>
+                                    <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>
+                                      {companyAdminsError}
+                                    </Text>
+                                  </View>
+                                ) : companyAdmins.length === 0 ? (
+                                  <View style={{ padding: 16 }}>
+                                    <Text style={{ color: '#64748b', fontSize: 13 }}>Inga admins hittades.</Text>
+                                  </View>
+                                ) : (
+                                  <ScrollView 
+                                    style={{ 
+                                      maxHeight: 280,
+                                      backgroundColor: '#fff',
+                                    }}
+                                    contentContainerStyle={{
+                                      paddingBottom: 4,
+                                    }}
+                                    nestedScrollEnabled
+                                  >
+                                    {companyAdmins.map((m) => {
+                                      const isSelected = editableProject?.ansvarigId && (
+                                        editableProject.ansvarigId === (m.uid || m.id)
+                                      );
+                                      return (
+                                        <TouchableOpacity
+                                          key={m.id || m.uid || m.email}
+                                          style={{
+                                            paddingVertical: 12,
+                                            paddingHorizontal: 12,
+                                            borderBottomWidth: 1,
+                                            borderBottomColor: '#EEF0F3',
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            gap: 10,
+                                            backgroundColor: isSelected ? '#EFF6FF' : '#fff',
+                                            ...(Platform.OS === 'web' ? {
+                                              cursor: 'pointer',
+                                              transition: 'background-color 0.15s',
+                                              opacity: 1,
+                                            } : {}),
+                                          }}
+                                          onPress={() => {
+                                            const uid = m.uid || m.id || null;
+                                            const name = formatPersonName(m);
+                                            setEditableProject(p => ({
+                                              ...(p || {}),
+                                              ansvarig: name,
+                                              ansvarigId: uid,
+                                            }));
+                                            setResponsibleDropdownOpen(false);
+                                            setFocusedInput(null);
+                                          }}
+                                          activeOpacity={0.7}
+                                        >
+                                          <View style={{ 
+                                            width: 24, 
+                                            height: 24, 
+                                            borderRadius: 12, 
+                                            backgroundColor: '#1E40AF', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center' 
+                                          }}>
+                                            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 10 }}>
+                                              {initials(m)}
+                                            </Text>
+                                          </View>
+                                          <View style={{ flex: 1, minWidth: 0 }}>
+                                            <Text 
+                                              numberOfLines={1} 
+                                              style={{ 
+                                                fontSize: 13, 
+                                                fontWeight: isSelected ? '700' : '600', 
+                                                color: '#111' 
+                                              }}
+                                            >
+                                              {formatPersonName(m)}
+                                            </Text>
+                                          </View>
+                                          {isSelected && (
+                                            <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                                          )}
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </ScrollView>
+                                )}
+                              </View>
+                            )}
+                          </View>
+                          {!editableProject?.ansvarig && !responsibleDropdownOpen ? (
+                            <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 6, fontWeight: '700' }}>
+                              Du måste välja ansvarig.
+                            </Text>
+                          ) : null}
+                        </View>
+
+                        {/* Native admin picker modal */}
+                        {Platform.OS !== 'web' && (
+                          <Modal
+                            visible={adminPickerVisible}
+                            transparent
+                            animationType="fade"
+                            onRequestClose={() => setAdminPickerVisible(false)}
+                          >
+                            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'center', alignItems: 'center', padding: 18 }}>
+                              <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, minWidth: 280, maxWidth: 360 }}>
+                                <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 10, textAlign: 'center' }}>
+                                  Välj ansvarig
+                                </Text>
+
+                                {loadingCompanyAdmins ? (
+                                  <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 8 }}>
+                                    Laddar...
+                                  </Text>
+                                ) : (companyAdminsError ? (
+                                  <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                                    {companyAdminsError}
+                                  </Text>
+                                ) : (companyAdmins.length === 0 ? (
+                                  <Text style={{ color: '#D32F2F', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+                                    Inga admins hittades i företaget.
+                                  </Text>
+                                ) : (
+                                  companyAdmins.length <= 5 ? (
+                                    <View>
+                                      {companyAdmins.map((m) => (
+                                        <TouchableOpacity
+                                          key={m.id || m.uid || m.email}
+                                          style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                                          onPress={() => {
+                                            const uid = m.uid || m.id || null;
+                                            const name = formatPersonName(m);
+                                            setEditableProject(p => ({
+                                              ...(p || {}),
+                                              ansvarig: name,
+                                              ansvarigId: uid,
+                                            }));
+                                            setAdminPickerVisible(false);
+                                          }}
+                                        >
+                                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                                            {formatPersonName(m)}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      ))}
+                                    </View>
+                                  ) : (
+                                    <ScrollView style={{ maxHeight: 260 }}>
+                                      {companyAdmins.map((m) => (
+                                        <TouchableOpacity
+                                          key={m.id || m.uid || m.email}
+                                          style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee' }}
+                                          onPress={() => {
+                                            const uid = m.uid || m.id || null;
+                                            const name = formatPersonName(m);
+                                            setEditableProject(p => ({
+                                              ...(p || {}),
+                                              ansvarig: name,
+                                              ansvarigId: uid,
+                                            }));
+                                            setAdminPickerVisible(false);
+                                          }}
+                                        >
+                                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                                            {formatPersonName(m)}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      ))}
+                                    </ScrollView>
+                                  )
+                                )))}
+
+                                <TouchableOpacity
+                                  style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                                  onPress={() => setAdminPickerVisible(false)}
+                                >
+                                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </Modal>
+                        )}
+
+                        <View style={{ marginBottom: 12, position: 'relative', zIndex: participantsDropdownOpen ? 2000 : 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <Text style={labelStyle}>Deltagare</Text>
+                            {(editProjectParticipants || []).length > 0 && (
+                              <View style={{ marginLeft: 8, backgroundColor: '#2563EB', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 }}>
+                                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{(editProjectParticipants || []).length}</Text>
+                              </View>
+                            )}
+                          </View>
+                          <View style={{ position: 'relative', zIndex: participantsDropdownOpen ? 2001 : 1 }} ref={participantsDropdownRef}>
+                            <TouchableOpacity
+                              style={{
+                                ...inputStyleBase,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                ...(participantsDropdownOpen && Platform.OS === 'web' ? {
+                                  borderColor: '#1976D2',
+                                  borderBottomLeftRadius: 0,
+                                  borderBottomRightRadius: 0,
+                                  boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.1)',
+                                } : {}),
+                              }}
+                              onPress={() => {
+                                if (Platform.OS === 'web') {
+                                  setParticipantsDropdownOpen(!participantsDropdownOpen);
+                                }
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <Text style={{ fontSize: 13, color: (editProjectParticipants || []).length > 0 ? '#111' : '#94A3B8', fontWeight: '700' }} numberOfLines={1}>
+                                {(editProjectParticipants || []).length > 0 
+                                  ? `${(editProjectParticipants || []).length} ${(editProjectParticipants || []).length === 1 ? 'deltagare vald' : 'deltagare valda'}`
+                                  : 'Välj deltagare...'}
+                              </Text>
+                              <Ionicons 
+                                name={participantsDropdownOpen ? "chevron-up" : "chevron-down"} 
+                                size={16} 
+                                color="#111" 
+                              />
+                            </TouchableOpacity>
+
+                            {/* Web dropdown menu */}
+                            {Platform.OS === 'web' && participantsDropdownOpen && (
+                              <View
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: 0,
+                                  right: 0,
+                                  backgroundColor: '#fff',
+                                  borderWidth: 1,
+                                  borderColor: '#1976D2',
+                                  borderTopWidth: 0,
+                                  borderRadius: 10,
+                                  borderTopLeftRadius: 0,
+                                  borderTopRightRadius: 0,
+                                  maxHeight: 750,
+                                  minHeight: 200,
+                                  shadowColor: '#000',
+                                  shadowOffset: { width: 0, height: 4 },
+                                  shadowOpacity: 0.15,
+                                  shadowRadius: 12,
+                                  elevation: 8,
+                                  zIndex: 2002,
+                                  overflow: 'hidden',
+                                  ...(Platform.OS === 'web' ? {
+                                    opacity: 1,
+                                    backgroundColor: '#ffffff',
+                                  } : {}),
+                                }}
+                              >
+                                {/* Search field inside dropdown */}
+                                <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E8EC', backgroundColor: '#F8FAFC' }}>
+                                  <View style={{ ...inputStyleBase, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 0 }}>
+                                    <Ionicons name="search" size={16} color="#64748b" />
+                                    <TextInput
+                                      value={editProjectParticipantsSearch}
+                                      onChangeText={(v) => setEditProjectParticipantsSearch(typeof v === 'string' ? v : (v?.target?.value ?? ''))}
+                                      placeholder="Sök användare..."
+                                      placeholderTextColor="#94A3B8"
+                                      style={{ flex: 1, fontSize: 13, color: '#111' }}
+                                      autoFocus
+                                    />
+                                  </View>
+                                </View>
+
+                                {/* Members list */}
+                                {loadingCompanyMembers ? (
+                                  <View style={{ padding: 16, alignItems: 'center' }}>
+                                    <Text style={{ color: '#64748b', fontSize: 13 }}>Laddar…</Text>
+                                  </View>
+                                ) : companyMembersPermissionDenied ? (
+                                  <View style={{ padding: 16 }}>
+                                    <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>Saknar behörighet att läsa användare.</Text>
+                                  </View>
+                                ) : visibleMembers.length === 0 ? (
+                                  <View style={{ padding: 16 }}>
+                                    <Text style={{ color: '#64748b', fontSize: 13 }}>Inga träffar.</Text>
+                                  </View>
+                                ) : (
+                                  <ScrollView 
+                                    style={{ 
+                                      flex: 1,
+                                      backgroundColor: '#fff',
+                                      maxHeight: 670,
+                                    }}
+                                    contentContainerStyle={{
+                                      paddingBottom: 4,
+                                    }}
+                                    nestedScrollEnabled
+                                  >
+                                    {(() => {
+                                      const selectedIds = new Set((editProjectParticipants || []).map(p => p.uid || p.id));
+                                      const sorted = [...visibleMembers].sort((a, b) => {
+                                        const aSelected = selectedIds.has(a.uid || a.id);
+                                        const bSelected = selectedIds.has(b.uid || b.id);
+                                        if (aSelected && !bSelected) return -1;
+                                        if (!aSelected && bSelected) return 1;
+                                        return formatPersonName(a).localeCompare(formatPersonName(b), 'sv');
+                                      });
+                                      return sorted.slice(0, 200).map((m) => {
+                                        const id = m.id || m.uid || m.email;
+                                        const selected = selectedIds.has(m.uid || m.id);
+                                        return (
+                                          <TouchableOpacity
+                                            key={id}
+                                            onPress={() => {
+                                              toggleParticipant(m);
+                                            }}
+                                            style={{
+                                              paddingVertical: 12,
+                                              paddingHorizontal: 12,
+                                              borderBottomWidth: 1,
+                                              borderBottomColor: '#EEF0F3',
+                                              flexDirection: 'row',
+                                              alignItems: 'center',
+                                              gap: 10,
+                                              backgroundColor: selected ? '#EFF6FF' : '#fff',
+                                              ...(Platform.OS === 'web' ? {
+                                                cursor: 'pointer',
+                                                transition: 'background-color 0.15s',
+                                                opacity: 1,
+                                              } : {}),
+                                            }}
+                                            activeOpacity={0.7}
+                                          >
+                                            <View style={{ 
+                                              width: 32, 
+                                              height: 32, 
+                                              borderRadius: 16, 
+                                              backgroundColor: selected ? '#2563EB' : '#1E40AF', 
+                                              alignItems: 'center', 
+                                              justifyContent: 'center' 
+                                            }}>
+                                              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>
+                                                {initials(m)}
+                                              </Text>
+                                            </View>
+                                            <View style={{ flex: 1, minWidth: 0 }}>
+                                              <Text 
+                                                numberOfLines={1} 
+                                                style={{ 
+                                                  fontSize: 13, 
+                                                  fontWeight: selected ? '800' : '600', 
+                                                  color: '#111' 
+                                                }}
+                                              >
+                                                {formatPersonName(m)}
+                                              </Text>
+                                              <Text 
+                                                numberOfLines={1} 
+                                                style={{ 
+                                                  fontSize: 12, 
+                                                  color: '#64748b' 
+                                                }}
+                                              >
+                                                {String(m?.role || '').trim() || 'Användare'}
+                                              </Text>
+                                            </View>
+                                            {selected && (
+                                              <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                                            )}
+                                          </TouchableOpacity>
+                                        );
+                                      });
+                                    })()}
+                                  </ScrollView>
+                                )}
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={{ paddingHorizontal: 24, paddingBottom: 24, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E6E8EC', backgroundColor: '#fff', position: 'relative', zIndex: 1 }}>
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Status</Text>
+                          <View style={{ flexDirection: 'row', gap: 10 }}>
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 10,
+                                backgroundColor: editableProject?.status !== 'completed' ? '#E8F5E9' : '#fff',
+                                borderWidth: editableProject?.status !== 'completed' ? 2 : 1,
+                                borderColor: editableProject?.status !== 'completed' ? '#43A047' : '#E2E8F0',
+                              }}
+                              onPress={() => setEditableProject(p => ({ ...p, status: 'ongoing' }))}
+                              activeOpacity={0.8}
+                            >
+                              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#43A047', marginRight: 8 }} />
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>Pågående</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                flex: 1,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                                borderRadius: 10,
+                                backgroundColor: editableProject?.status === 'completed' ? '#F5F5F5' : '#fff',
+                                borderWidth: editableProject?.status === 'completed' ? 2 : 1,
+                                borderColor: editableProject?.status === 'completed' ? '#222' : '#E2E8F0',
+                              }}
+                              onPress={() => setEditableProject(p => ({ ...p, status: 'completed' }))}
+                              activeOpacity={0.8}
+                            >
+                              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#222', marginRight: 8 }} />
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>Avslutat</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Skyddsronder</Text>
+                          {(() => {
+                            const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                            const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                            const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                            return (
+                              <View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                  <Text style={{ fontSize: 13, color: '#111' }}>Aktiva</Text>
+                                  <Switch
+                                    value={isEnabled}
+                                    onValueChange={(v) => setEditableProject(p => ({ ...p, skyddsrondEnabled: !!v }))}
+                                  />
+                                </View>
+
+                                <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Veckor mellan skyddsronder</Text>
+                                <TouchableOpacity
+                                  style={{
+                                    ...inputStyleBase,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    opacity: isEnabled ? 1 : 0.5,
+                                    marginBottom: 10,
+                                  }}
+                                  disabled={!isEnabled}
+                                  onPress={() => setSkyddsrondWeeksPickerVisible(true)}
+                                  activeOpacity={0.8}
+                                >
+                                  <Text style={{ fontSize: 13, color: '#111', fontWeight: '500' }}>{String(editableProject?.skyddsrondIntervalWeeks || 2)}</Text>
+                                  <Ionicons name="chevron-down" size={16} color="#111" />
+                                </TouchableOpacity>
+
+                                <View style={{ marginBottom: 0 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155' }}>Första skyddsrond senast *</Text>
+                                    {isEnabled && isFirstDueValid ? (
+                                      <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                                    ) : null}
+                                  </View>
+                                  <TextInput
+                                    value={firstDueTrim}
+                                    onChangeText={(v) => {
+                                      const next = typeof v === 'string' ? v : (v?.target?.value ?? '');
+                                      setEditableProject(p => ({ ...p, skyddsrondFirstDueDate: String(next) }));
+                                    }}
+                                    onFocus={() => setFocusedInput('skyddsrondDate')}
+                                    onBlur={() => setFocusedInput(null)}
+                                    placeholder="YYYY-MM-DD"
+                                    placeholderTextColor="#94A3B8"
+                                    editable={isEnabled}
+                                    style={{
+                                      ...inputStyleBase,
+                                      ...requiredBorder(
+                                        isFirstDueValid || !isEnabled,
+                                        focusedInput === 'skyddsrondDate' && isEnabled
+                                      ),
+                                      ...((!isFirstDueValid && isEnabled) ? { borderColor: '#EF4444' } : {}),
+                                      opacity: isEnabled ? 1 : 0.5,
+                                    }}
+                                  />
+
+                                  {isEnabled && !isFirstDueValid ? (
+                                    <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 6, fontWeight: '500' }}>
+                                      Ange datum (YYYY-MM-DD).
+                                    </Text>
+                                  ) : null}
+                                </View>
+                              </View>
+                            );
+                          })()}
+                        </View>
+
+                        <Modal
+                          visible={skyddsrondWeeksPickerVisible}
+                          transparent
+                          animationType="fade"
+                          onRequestClose={() => setSkyddsrondWeeksPickerVisible(false)}
+                        >
+                          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.30)' }}>
+                            <Pressable
+                              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                              onPress={() => setSkyddsrondWeeksPickerVisible(false)}
+                            />
+                            <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                              <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                                Veckor mellan skyddsronder
+                              </Text>
+                              {[1, 2, 3, 4].map((w) => (
+                                <TouchableOpacity
+                                  key={String(w)}
+                                  style={{ paddingVertical: 12, borderBottomWidth: 1, borderColor: '#eee' }}
+                                  onPress={() => {
+                                    setEditableProject(p => ({ ...p, skyddsrondIntervalWeeks: w }));
+                                    setSkyddsrondWeeksPickerVisible(false);
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>{w}</Text>
+                                </TouchableOpacity>
+                              ))}
+                              <TouchableOpacity
+                                style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
+                                onPress={() => setSkyddsrondWeeksPickerVisible(false)}
+                              >
+                                <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </Modal>
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                          <TouchableOpacity
+                            onPress={() => setEditingInfo(false)}
+                            style={{ 
+                              backgroundColor: '#E5E7EB', 
+                              borderRadius: 10, 
+                              paddingVertical: 12, 
+                              paddingHorizontal: 18, 
+                              minWidth: 110, 
+                              alignItems: 'center',
+                              ...(Platform.OS === 'web' ? {
+                                transition: 'background-color 0.2s',
+                                cursor: 'pointer',
+                              } : {}),
+                            }}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={{ color: '#111', fontWeight: '800', fontSize: 14 }}>Avbryt</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => {
+                              const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                              const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                              const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                              if (!isFirstDueValid) return;
+
+                              const sanitizedProject = {
+                                ...editableProject,
+                                skyddsrondFirstDueDate: isEnabled ? (firstDueTrim || null) : null,
+                                participants: (editProjectParticipants || []).map(p => ({ 
+                                  uid: p.uid || p.id, 
+                                  displayName: p.displayName || null, 
+                                  email: p.email || null 
+                                })),
+                              };
+                              if (typeof navigation?.setParams === 'function') {
+                                navigation.setParams({ project: sanitizedProject });
+                              }
+                              emitProjectUpdated({ ...sanitizedProject, originalId: originalProjectId });
+                              setEditingInfo(false);
+                            }}
+                            style={{
+                              backgroundColor: '#1976D2',
+                              borderRadius: 10,
+                              paddingVertical: 12,
+                              paddingHorizontal: 18,
+                              minWidth: 110,
+                              alignItems: 'center',
+                              ...(Platform.OS === 'web' ? {
+                                transition: 'background-color 0.2s, transform 0.1s',
+                                cursor: 'pointer',
+                              } : {}),
+                            }}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Spara</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity
+                          onPress={() => {
+                            setEditingInfo(false);
+                            if ((controls || []).length === 0) {
+                              setShowDeleteModal(true);
+                            } else {
+                              setShowDeleteWarning(true);
+                            }
+                          }}
+                          style={{ marginTop: 12, paddingVertical: 10, alignItems: 'center' }}
+                          activeOpacity={0.85}
+                          accessibilityLabel="Radera projekt"
+                        >
+                          <Text style={{ color: '#D32F2F', fontSize: 13, fontWeight: '600' }}>Radera projekt</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              );
+            })()}
+          </View>
+        ) : (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 18, minWidth: 320, maxWidth: 420, maxHeight: '75%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 10 }}>
             {/* Header med ikon, titel och stäng-kryss i samma stil som Ny mall-modal */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
               <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#1976D2', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
@@ -1959,6 +3080,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             </TouchableOpacity>
           </View>
         </View>
+        )}
       </Modal>
       {/* Knapprad med horisontella linjer */}
       <View style={{ marginBottom: 12 }}>

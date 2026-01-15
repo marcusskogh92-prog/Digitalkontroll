@@ -7,7 +7,6 @@ import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompani
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
-import WebBreadcrumbHeader from '../components/WebBreadcrumbHeader';
 
 export default function ManageCompany({ navigation }) {
   const [companyId, setCompanyId] = useState('');
@@ -496,14 +495,7 @@ export default function ManageCompany({ navigation }) {
             <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 980, maxWidth: '100%' }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  {Platform.OS === 'web' ? (
-                    <WebBreadcrumbHeader
-                      navigation={navigation}
-                      label="Företag"
-                      iconName="business"
-                      iconColor="#2E7D32"
-                    />
-                  ) : (
+                  {Platform.OS !== 'web' ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
                       <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                         <Ionicons name="chevron-back" size={20} color="#222" />
@@ -515,7 +507,7 @@ export default function ManageCompany({ navigation }) {
                         <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Företag</Text>
                       </View>
                     </View>
-                  )}
+                  ) : null}
                 </View>
               </View>
 

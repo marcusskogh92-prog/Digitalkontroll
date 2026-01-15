@@ -6,7 +6,6 @@ import { auth, fetchAdminAuditEvents } from '../components/firebase';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
-import WebBreadcrumbInline from '../components/WebBreadcrumbInline';
 
 export default function AdminAuditLog({ navigation }) {
   const [allowedTools, setAllowedTools] = useState(false);
@@ -177,9 +176,6 @@ export default function AdminAuditLog({ navigation }) {
                     <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Adminlogg</Text>
                   </View>
                 </View>
-                {Platform.OS === 'web' ? (
-                  <WebBreadcrumbInline navigation={navigation} label="Adminlogg" />
-                ) : null}
               </View>
 
               <View style={{ marginBottom: 8 }}>

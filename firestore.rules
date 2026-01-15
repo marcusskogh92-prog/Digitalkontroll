@@ -32,6 +32,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isCompanyMember(company);
     }
+    
+    // Backup documents for hierarchy (automatic backups before saves)
+    match /foretag/{company}/hierarki/backup_{backupId} {
+      allow read: if isCompanyMember(company);
+      allow write: if isCompanyMember(company);
+    }
 
     // Controls (completed)
     match /foretag/{company}/controls/{controlId} {

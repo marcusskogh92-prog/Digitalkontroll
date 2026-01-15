@@ -20,7 +20,6 @@ import {
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
-import WebBreadcrumbHeader from '../components/WebBreadcrumbHeader';
 
 // Ikonuppsättning för nya kontrolltyper (ca 36 bygg-/kontrollrelaterade varianter)
 const CONTROL_TYPE_ICON_CHOICES = [
@@ -701,14 +700,7 @@ export default function ManageControlTypes({ route, navigation }) {
             <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 1040, maxWidth: '100%' }] }>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  {Platform.OS === 'web' ? (
-                    <WebBreadcrumbHeader
-                      navigation={navigation}
-                      label="Kontrolltyper"
-                      iconName="options-outline"
-                      iconColor="#6A1B9A"
-                    />
-                  ) : (
+                  {Platform.OS !== 'web' ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
                       <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                         <Ionicons name="chevron-back" size={20} color="#222" />
@@ -720,7 +712,7 @@ export default function ManageControlTypes({ route, navigation }) {
                         <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Kontrolltyper</Text>
                       </View>
                     </View>
-                  )}
+                  ) : null}
                 </View>
               </View>
 

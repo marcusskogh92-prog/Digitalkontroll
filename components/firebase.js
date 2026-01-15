@@ -367,10 +367,67 @@ export async function saveHierarchy(companyId, items) {
   if (!companyId) return false;
   try {
     const ref = doc(db, 'foretag', companyId, 'hierarki', 'state');
-    // write items with server timestamp
+    
+    // SÄKERHET: Skapa backup innan vi skriver över data
+    // Hämta befintlig hierarki först
+    try {
+      const existingSnap = await getDoc(ref);
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data();
+        const existingItems = Array.isArray(existingData?.items) ? existingData.items : [];
+        
+        // VALIDERING: Förhindra att tom hierarki skriver över befintlig data
+        // Om den nya hierarkin är tom men det fanns data tidigare, avbryt
+        const newItems = Array.isArray(items) ? items : [];
+        if (newItems.length === 0 && existingItems.length > 0) {
+          console.warn('[saveHierarchy] Förhindrade att skriva över befintlig hierarki med tom array');
+          return false;
+        }
+        
+        // Skapa backup i Firestore (spara senaste versionen)
+        if (existingItems.length > 0) {
+          const backupRef = doc(db, 'foretag', companyId, 'hierarki', 'backup_' + Date.now());
+          try {
+            await setDoc(backupRef, {
+              items: existingItems,
+              backedUpAt: serverTimestamp(),
+              reason: 'pre_save_backup'
+            });
+            // Behåll bara de 5 senaste backup:erna (rensar gamla)
+            // Detta görs i bakgrunden så det blockerar inte huvudoperationen
+            setTimeout(async () => {
+              try {
+                const backupsRef = collection(db, 'foretag', companyId, 'hierarki');
+                const backupsQuery = query(backupsRef, where('reason', '==', 'pre_save_backup'), orderBy('backedUpAt', 'desc'));
+                const backupsSnap = await getDocs(backupsQuery);
+                const backups = [];
+                backupsSnap.forEach(d => backups.push({ id: d.id, ...d.data() }));
+                // Ta bort alla utom de 5 senaste
+                if (backups.length > 5) {
+                  for (let i = 5; i < backups.length; i++) {
+                    try {
+                      await deleteDoc(doc(backupsRef, backups[i].id));
+                    } catch(_e) {}
+                  }
+                }
+              } catch(_e) {}
+            }, 100);
+          } catch(_e) {
+            // Backup misslyckades, men fortsätt ändå med huvudoperationen
+            console.warn('[saveHierarchy] Backup misslyckades:', _e);
+          }
+        }
+      }
+    } catch(_e) {
+      // Om vi inte kan läsa befintlig data, fortsätt ändå
+      console.warn('[saveHierarchy] Kunde inte läsa befintlig hierarki för backup:', _e);
+    }
+    
+    // Skriv den nya hierarkin
     await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
     return true;
   } catch(_e) {
+    console.error('[saveHierarchy] Fel vid sparande:', _e);
     return false;
   }
 }
@@ -1508,7 +1565,7 @@ export async function deleteCompanyMall({ id }, companyIdOverride) {
 
 // Kontaktregister per företag
 // Data model: foretag/{companyId}/kontakter/{contactId}
-// Fields: { name, companyName, role, phone, email, createdAt, updatedAt, createdBy? }
+// Fields: { name, companyName (systemföretag), contactCompanyName (företag kontakten jobbar på), role, phone, email, createdAt, updatedAt, createdBy? }
 export async function fetchCompanyContacts(companyIdOverride) {
   try {
     const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -1563,7 +1620,7 @@ export async function fetchAllCompanyContacts({ max = 2000 } = {}) {
   }
 }
 
-export async function createCompanyContact({ name, companyName, role, phone, email }, companyIdOverride) {
+export async function createCompanyContact({ name, companyName, contactCompanyName, role, phone, email }, companyIdOverride) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
   if (!companyId) {
     const err = new Error('no_company');
@@ -1578,7 +1635,8 @@ export async function createCompanyContact({ name, companyName, role, phone, ema
   }
   const payload = {
     name: n,
-    companyName: String(companyName || '').trim() || String(companyId || '').trim(),
+    companyName: String(companyName || '').trim() || String(companyId || '').trim(), // Systemföretag som äger kontakten
+    contactCompanyName: String(contactCompanyName || '').trim(), // Företag som kontakten jobbar på (kan vara externt)
     role: String(role || '').trim(),
     phone: String(phone || '').trim(),
     email: String(email || '').trim(),
@@ -1626,6 +1684,9 @@ export async function updateCompanyContact({ id, patch }, companyIdOverride) {
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'companyName')) {
     safePatch.companyName = String(safePatch.companyName || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'contactCompanyName')) {
+    safePatch.contactCompanyName = String(safePatch.contactCompanyName || '').trim();
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'role')) {
     safePatch.role = String(safePatch.role || '').trim();
