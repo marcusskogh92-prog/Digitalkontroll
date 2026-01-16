@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
-import BaseControlForm from '../components/BaseControlForm';
-import { auth, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import BaseControlForm from '../../../../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore } from '../../../../components/firebase';
+import { formatPersonName } from '../../../../components/formatPersonName';
 
 const LABELS = {
   title: 'Riskbedömning',
@@ -13,7 +13,7 @@ const LABELS = {
 
 
 
-export default function RiskbedömningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
+export default function RiskbedömningControl({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
   const project = projectProp ?? route.params?.project;
   // Se till att initialValues alltid har mottagningsSignatures för att visa signatursektionen

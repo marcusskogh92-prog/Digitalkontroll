@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
-import BaseControlForm from '../components/BaseControlForm';
-import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import BaseControlForm from '../../../../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../../../../components/firebase';
+import { formatPersonName } from '../../../../components/formatPersonName';
 
 const LABELS = {
   title: 'Egenkontroll',
@@ -10,7 +10,7 @@ const LABELS = {
   saveDraftButton: 'Spara och slutför senare',
 };
 
-export default function EgenkontrollScreen({
+export default function EgenkontrollControl({
   date,
   participants = [],
   project: projectProp,

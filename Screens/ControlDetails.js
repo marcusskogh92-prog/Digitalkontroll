@@ -308,17 +308,19 @@ export default function ControlDetails({ route }) {
             </View>
             <TouchableOpacity
               onPress={() => {
-                let screen = null;
-                switch (type) {
-                  case 'Riskbedömning': screen = 'RiskbedömningScreen'; break;
-                  case 'Arbetsberedning': screen = 'ArbetsberedningScreen'; break;
-                  case 'Egenkontroll': screen = 'EgenkontrollScreen'; break;
-                  case 'Fuktmätning': screen = 'FuktmätningScreen'; break;
-                  case 'Mottagningskontroll': screen = 'MottagningskontrollScreen'; break;
-                  case 'Skyddsrond': screen = 'SkyddsrondScreen'; break;
-                  default: screen = null;
+                // Map control types to KMA control keys
+                const controlTypeMap = {
+                  'Riskbedömning': 'riskbedömning',
+                  'Arbetsberedning': 'arbetsberedning',
+                  'Egenkontroll': 'egenkontroll',
+                  'Fuktmätning': 'fuktmätning',
+                  'Mottagningskontroll': 'mottagningskontroll',
+                  'Skyddsrond': 'skyddsrond',
+                };
+                const controlTypeKey = controlTypeMap[type];
+                if (controlTypeKey) {
+                  navigation.navigate('KMAScreen', { initialValues: safeControl, project, controlType: controlTypeKey });
                 }
-                if (screen) navigation.navigate(screen, { initialValues: safeControl, project });
               }}
               style={[styles.headerActionBtn, { marginLeft: 8 }]}
               accessibilityLabel="Redigera kontroll"

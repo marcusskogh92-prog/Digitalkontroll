@@ -6,6 +6,7 @@ import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-
 import ContextMenu from './ContextMenu';
 import { auth } from './firebase';
 import { formatPersonName } from './formatPersonName';
+import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
 
 let createPortal = null;
 if (Platform.OS === 'web') {
@@ -13,7 +14,7 @@ if (Platform.OS === 'web') {
 }
 let portalRootId = 'dk-header-portal';
 
-export default function HeaderUserMenu() {
+export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
   const navigation = useNavigation();
   const btnRef = useRef(null);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -21,6 +22,14 @@ export default function HeaderUserMenu() {
   const [roleLabel, setRoleLabel] = useState('');
   const chevronSpinAnim = useRef(new Animated.Value(0)).current;
   const chevronDeg = useRef(0);
+  const [currentPhase, setCurrentPhase] = useState(selectedPhase || DEFAULT_PHASE);
+  
+  // Synka med prop när den ändras
+  useEffect(() => {
+    if (selectedPhase) {
+      setCurrentPhase(selectedPhase);
+    }
+  }, [selectedPhase]);
 
   const openMenu = () => {
     try {
@@ -85,22 +94,21 @@ export default function HeaderUserMenu() {
   }, []);
 
   const menuItems = [];
-  const isSuperOrMsAdmin = isOwner || isMsAdmin;
-  // För superadmin: visa samma admin-menypunkter som tidigare
-  if (isSuperadmin) {
-    if (isSuperOrMsAdmin) {
-      menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-    }
-    if (isOwner || isCompanyAdmin) {
-      menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
-    }
-  }
-
-  // Admin + superadmin: kontaktregister (navigerar till sida)
-  if (isCompanyAdmin || isSuperadmin) {
-    menuItems.push({ key: 'contact_registry', label: isSuperadmin ? 'Kontaktregister (alla företag)' : 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#0f172a" /> });
-  }
+  
+  // Lägg till fas-väljare först
+  menuItems.push({ key: 'phase_separator', label: 'Projektskede', isSeparator: true });
+  PROJECT_PHASES.forEach(phase => {
+    const isSelected = currentPhase === phase.key;
+    menuItems.push({ 
+      key: `phase_${phase.key}`, 
+      label: phase.name, 
+      icon: <Ionicons name={phase.icon} size={16} color={phase.color} />,
+      isSelected: isSelected,
+      phaseColor: phase.color
+    });
+  });
+  
+  menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
 
   // Alla roller (superadmin, admin, användare) ska kunna logga ut här
   menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
@@ -114,18 +122,22 @@ export default function HeaderUserMenu() {
       onClose={() => setMenuVisible(false)}
       onSelect={async (it) => {
         try {
-          setMenuVisible(false);
           if (!it) return;
-          const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-          if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
-          if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
-          if (it.key === 'manage_control_types') return navigation.navigate('ManageControlTypes', { companyId: cid });
-          if (it.key === 'contact_registry') {
-            return navigation.navigate('ContactRegistry', {
-              companyId: cid,
-              allCompanies: !!isSuperadmin,
-            });
+          
+          // Hantera fas-väljare (stäng inte menyn direkt)
+          if (it.key && it.key.startsWith('phase_')) {
+            const phaseKey = it.key.replace('phase_', '');
+            setCurrentPhase(phaseKey);
+            if (onPhaseChange) {
+              onPhaseChange(phaseKey);
+            }
+            // Uppdatera menyn men stäng inte
+            return;
           }
+          
+          // För andra val, stäng menyn
+          setMenuVisible(false);
+          
           if (it.key === 'logout') {
             try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
             try { await auth.signOut(); } catch(_e) {}

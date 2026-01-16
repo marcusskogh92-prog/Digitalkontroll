@@ -34,9 +34,9 @@ service cloud.firestore {
     }
     
     // Backup documents for hierarchy (automatic backups before saves)
-    match /foretag/{company}/hierarki/backup_{backupId} {
-      allow read: if isCompanyMember(company);
-      allow write: if isCompanyMember(company);
+    match /foretag/{company}/hierarki/{backupId} {
+      allow read: if isCompanyMember(company) && backupId.matches('backup_.*');
+      allow write: if isCompanyMember(company) && backupId.matches('backup_.*');
     }
 
     // Controls (completed)
@@ -117,6 +117,12 @@ service cloud.firestore {
     // Företags-specifika mallar (company-scoped)
     // Används av adminvyn "Mallar" för att skapa och hantera mallar per kontrolltyp.
     match /foretag/{company}/mallar/{mallId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Företags-specifika kontrolltyp-mappar (company-scoped)
+    // Används för att organisera mallar per kontrolltyp i mappar.
+    match /foretag/{company}/kontrolltyp_mappar/{folderId} {
       allow read, write: if isCompanyMember(company);
     }
 

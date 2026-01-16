@@ -1,6 +1,6 @@
 import ProjectSidebar from './ProjectSidebar';
 
-const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle, sidebarSearchPlaceholder, sidebarCompaniesMode, sidebarShowMembers = false, topBar = null, sidebarRestrictCompanyId = null, sidebarHideCompanyActions = false, sidebarAutoExpandMembers = false, sidebarSearchMembersOnly = false, sidebarAllowCompanyManagementActions = true, sidebarIconName = null, sidebarIconColor = null, sidebarControlTypesMode = false }) => {
+const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle, sidebarSearchPlaceholder, sidebarCompaniesMode, sidebarShowMembers = false, topBar = null, sidebarRestrictCompanyId = null, sidebarHideCompanyActions = false, sidebarAutoExpandMembers = false, sidebarSearchMembersOnly = false, sidebarAllowCompanyManagementActions = true, sidebarIconName = null, sidebarIconColor = null, sidebarControlTypesMode = false, sidebarSelectedCompanyId = null, sidebarOnAddMainFolder = null }) => {
   const topBarHeight = topBar ? 96 : 0;
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6fa', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif' }}>
@@ -20,6 +20,8 @@ const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle
           memberSearchMode={sidebarSearchMembersOnly}
           allowCompanyManagementActions={sidebarAllowCompanyManagementActions}
           controlTypesMode={sidebarControlTypesMode}
+          selectedCompanyId={sidebarSelectedCompanyId}
+          onAddMainFolder={sidebarOnAddMainFolder}
         />
         <div style={{ flex: 1, padding: 32, overflow: 'auto' }}>
           {children}

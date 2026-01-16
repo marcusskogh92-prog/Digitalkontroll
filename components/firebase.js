@@ -1243,6 +1243,9 @@ export async function fetchCompanyControlTypes(companyIdOverride) {
         if (Object.prototype.hasOwnProperty.call(data, 'hidden')) {
           patch.hidden = !!data.hidden;
         }
+        if (Object.prototype.hasOwnProperty.call(data, 'foldersEnabled')) {
+          patch.foldersEnabled = !!data.foldersEnabled;
+        }
         extras.push(patch);
       } catch (_e) {}
     });
@@ -1334,6 +1337,9 @@ export async function updateCompanyControlType(payload, companyIdOverride) {
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'hidden')) {
     patch.hidden = !!payload.hidden;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'foldersEnabled')) {
+    patch.foldersEnabled = !!payload.foldersEnabled;
   }
 
   if (Object.keys(patch).length === 0) return true;

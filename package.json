@@ -13,7 +13,7 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android --port 8081",
     "ios": "expo start --ios --port 8081",
-    "web": "expo start --web --port 8081",
+    "web": "expo start --web --port 3000",
     "build": "npx expo export --platform web --output-dir web-build && node ./scripts/verify-web-build.js",
     "build:web": "npx expo export --platform web --output-dir web-build",
     "verify:web": "node ./scripts/verify-web-build.js",

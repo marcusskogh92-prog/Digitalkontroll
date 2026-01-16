@@ -1,8 +1,8 @@
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
-import BaseControlForm from '../components/BaseControlForm';
-import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import BaseControlForm from '../../../../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../../../../components/firebase';
+import { formatPersonName } from '../../../../components/formatPersonName';
 
 const LABELS = {
   title: 'Arbetsberedning',
@@ -27,7 +27,7 @@ const ARBETSBEREDNING_CHECKLIST = [
   { label: 'Avslut & överlämning', points: ['Återställning av plats', 'Borttagning av temporära skydd', 'Överlämningsrapport klar'] },
 ];
 
-export default function ArbetsberedningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
+export default function ArbetsberedningControl({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
   const project = projectProp ?? route.params?.project;
   const initialValues = initialValuesProp ?? route.params?.initialValues;

@@ -12,23 +12,18 @@ import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
-import ArbetsberedningScreen from './Screens/ArbetsberedningScreen';
 import CameraCapture from './Screens/CameraCapture';
 import ContactRegistryScreen from './Screens/ContactRegistryScreen';
 import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
-import EgenkontrollScreen from './Screens/EgenkontrollScreen';
-import FuktmätningScreen from './Screens/FuktmätningScreen';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
 import ManageCompany from './Screens/ManageCompany';
 import ManageControlTypes from './Screens/ManageControlTypes';
 import ManageUsers from './Screens/ManageUsers';
-import MottagningskontrollScreen from './Screens/MottagningskontrollScreen';
 import ProjectDetails from './Screens/ProjectDetails';
-import RiskbedömningScreen from './Screens/RiskbedömningScreen';
-import SkyddsrondScreen from './Screens/SkyddsrondScreen';
 import TemplateControlScreen from './Screens/TemplateControlScreen';
+import KMAScreen from './features/kma/screens/KMAScreen';
 
 const Stack = createStackNavigator();
 
@@ -385,88 +380,18 @@ export default function App() {
               headerBackTitleVisible: false,
               headerBackTitle: '',
             })} />
-            <Stack.Screen name="ArbetsberedningScreen" component={ArbetsberedningScreen} options={({ navigation }) => {
+            <Stack.Screen name="KMAScreen" component={KMAScreen} options={({ navigation }) => {
               const isWeb = Platform.OS === 'web';
               if (isWeb) {
                 return ({
+                  title: 'KMA',
                   headerBackTitleVisible: false,
                   headerBackTitle: '',
                 });
               }
 
               return ({
-                headerBackTitleVisible: false,
-                headerBackTitle: '',
-                headerLeft: () => (
-                  <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Tillbaka"
-                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
-                  >
-                    <Ionicons name="chevron-back" size={30} color="#000" />
-                  </TouchableOpacity>
-                ),
-              });
-            }} />
-            <Stack.Screen name="RiskbedömningScreen" component={RiskbedömningScreen} options={({ navigation }) => {
-              const isWeb = Platform.OS === 'web';
-              if (isWeb) {
-                return ({
-                  headerBackTitleVisible: false,
-                  headerBackTitle: '',
-                });
-              }
-
-              return ({
-                headerBackTitleVisible: false,
-                headerBackTitle: '',
-                headerLeft: () => (
-                  <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Tillbaka"
-                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
-                  >
-                    <Ionicons name="chevron-back" size={30} color="#000" />
-                  </TouchableOpacity>
-                ),
-              });
-            }} />
-            <Stack.Screen name="FuktmätningScreen" component={FuktmätningScreen} options={({ navigation }) => {
-              const isWeb = Platform.OS === 'web';
-              if (isWeb) {
-                return ({
-                  headerBackTitleVisible: false,
-                  headerBackTitle: '',
-                });
-              }
-
-              return ({
-                headerBackTitleVisible: false,
-                headerBackTitle: '',
-                headerLeft: () => (
-                  <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Tillbaka"
-                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
-                  >
-                    <Ionicons name="chevron-back" size={30} color="#000" />
-                  </TouchableOpacity>
-                ),
-              });
-            }} />
-            <Stack.Screen name="EgenkontrollScreen" component={EgenkontrollScreen} options={({ navigation }) => {
-              const isWeb = Platform.OS === 'web';
-              if (isWeb) {
-                return ({
-                  headerBackTitleVisible: false,
-                  headerBackTitle: '',
-                });
-              }
-
-              return ({
+                title: 'KMA',
                 headerBackTitleVisible: false,
                 headerBackTitle: '',
                 headerLeft: () => (
@@ -640,55 +565,7 @@ export default function App() {
                 });
               }}
             />
-            <Stack.Screen name="SkyddsrondScreen" component={SkyddsrondScreen} options={({ navigation }) => {
-              const isWeb = Platform.OS === 'web';
-              if (isWeb) {
-                return ({
-                  headerBackTitleVisible: false,
-                  headerBackTitle: '',
-                });
-              }
-
-              return ({
-                headerBackTitleVisible: false,
-                headerBackTitle: '',
-                headerLeft: () => (
-                  <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Tillbaka"
-                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
-                  >
-                    <Ionicons name="chevron-back" size={30} color="#000" />
-                  </TouchableOpacity>
-                ),
-              });
-            }} />
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
-            <Stack.Screen name="MottagningskontrollScreen" component={MottagningskontrollScreen} options={({ navigation }) => {
-              const isWeb = Platform.OS === 'web';
-              if (isWeb) {
-                return ({
-                  headerBackTitleVisible: false,
-                  headerBackTitle: '',
-                });
-              }
-
-              return ({
-                headerBackTitleVisible: false,
-                headerBackTitle: '',
-                headerLeft: () => (
-                  <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Tillbaka"
-                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
-                  >
-                    <Ionicons name="chevron-back" size={30} color="#000" />
-                  </TouchableOpacity>
-                ),
-              });
-            }} />
           </Stack.Navigator>
         </NavigationContainer>
       </GestureHandlerRootView>

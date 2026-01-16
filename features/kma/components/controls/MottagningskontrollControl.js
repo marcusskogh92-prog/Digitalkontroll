@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
 import { v4 as uuidv4 } from 'uuid';
-import BaseControlForm from '../components/BaseControlForm';
-import { auth, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import BaseControlForm from '../../../../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore } from '../../../../components/firebase';
+import { formatPersonName } from '../../../../components/formatPersonName';
 
 const LABELS = {
   title: 'Mottagningskontroll',
@@ -11,7 +11,7 @@ const LABELS = {
   saveDraftButton: 'Spara och slutför senare',
 };
 
-export default function MottagningskontrollScreen({
+export default function MottagningskontrollControl({
   date,
   participants = [],
   project: projectProp,

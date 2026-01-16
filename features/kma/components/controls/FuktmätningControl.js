@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRoute } from '@react-navigation/native';
-import BaseControlForm from '../components/BaseControlForm';
-import { auth, logCompanyActivity, saveControlToFirestore } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import BaseControlForm from '../../../../components/BaseControlForm';
+import { auth, logCompanyActivity, saveControlToFirestore } from '../../../../components/firebase';
+import { formatPersonName } from '../../../../components/formatPersonName';
 
 const LABELS = {
   title: 'Fuktmätning',
@@ -10,7 +10,7 @@ const LABELS = {
   saveDraftButton: 'Spara och slutför senare',
 };
 
-export default function FuktmätningScreen({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
+export default function FuktmätningControl({ date, participants = [], project: projectProp, initialValues: initialValuesProp, onExit, onFinished }) {
   const route = useRoute();
   const project = projectProp ?? route.params?.project;
   const initialValues = (initialValuesProp ?? route.params?.initialValues) || undefined;

@@ -28,13 +28,15 @@ import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated } from '../components/projectBus';
 
-import ArbetsberedningScreen from './ArbetsberedningScreen';
 import ControlDetails from './ControlDetails';
-import EgenkontrollScreen from './EgenkontrollScreen';
-import FuktmätningScreen from './FuktmätningScreen';
-import MottagningskontrollScreen from './MottagningskontrollScreen';
-import RiskbedömningScreen from './RiskbedömningScreen';
-import SkyddsrondScreen from './SkyddsrondScreen';
+import {
+  ArbetsberedningControl,
+  EgenkontrollControl,
+  FuktmätningControl,
+  RiskbedömningControl,
+  SkyddsrondControl,
+  MottagningskontrollControl,
+} from '../features/kma/components/controls';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
@@ -647,6 +649,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       if (selectedAction.kind === 'openControlDetails' && selectedAction.control) {
         try { openInlineControl('ControlDetails', { control: selectedAction.control }); } catch(_e) {}
       }
+      // Överblick för eftermarknad: inget att göra här, hanteras i render
     } catch(_e) {}
   }, [openInlineControl, closeInlineControl, selectedAction]);
   const [adminPickerVisible, setAdminPickerVisible] = useState(false);
@@ -749,9 +752,10 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     };
   }, [editingInfo, companyId]);
 
-  // Initialize participants from editableProject when modal opens
+  // Initialize participants from editableProject when modal opens or overblick is shown
   useEffect(() => {
-    if (editingInfo && editableProject?.participants) {
+    const shouldLoadParticipants = editingInfo || (selectedAction?.kind === 'overblick');
+    if (shouldLoadParticipants && editableProject?.participants) {
       const participants = Array.isArray(editableProject.participants) 
         ? editableProject.participants.map(p => ({
             uid: p.uid || p.id,
@@ -761,11 +765,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           }))
         : [];
       setEditProjectParticipants(participants);
-    } else if (!editingInfo) {
+    } else if (!shouldLoadParticipants) {
       setEditProjectParticipants([]);
       setEditProjectParticipantsSearch('');
     }
-  }, [editingInfo, editableProject?.participants]);
+  }, [editingInfo, editableProject?.participants, selectedAction?.kind]);
 
   // Handle click outside for responsible and participants dropdowns (web only)
   useEffect(() => {
@@ -870,8 +874,6 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     setOriginalProjectId(project?.id || null);
   }, [project]);
   const [showForm, setShowForm] = useState(false);
-  const [newControl, setNewControl] = useState({ type: '', date: '', description: '', byggdel: '' });
-  const [expandedByType, setExpandedByType] = useState({});
   const [showSummary, setShowSummary] = useState(false);
   const [undoState, setUndoState] = useState({ visible: false, item: null, index: -1 });
   const [companyLogoUri] = useState(null);
@@ -1095,30 +1097,19 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
 
     switch (v) {
       case 'arbetsberedning':
-        if (Platform.OS === 'web') openInlineControl('Arbetsberedning');
-        else navigation.navigate('ArbetsberedningScreen', { project });
-        break;
       case 'riskbedömning':
       case 'riskbedomning':
-        if (Platform.OS === 'web') openInlineControl('Riskbedömning');
-        else navigation.navigate('RiskbedömningScreen', { project });
-        break;
       case 'fuktmätning':
       case 'fuktmatning':
-        if (Platform.OS === 'web') openInlineControl('Fuktmätning');
-        else navigation.navigate('FuktmätningScreen', { project });
-        break;
       case 'egenkontroll':
-        if (Platform.OS === 'web') openInlineControl('Egenkontroll');
-        else navigation.navigate('EgenkontrollScreen', { project });
-        break;
       case 'mottagningskontroll':
-        if (Platform.OS === 'web') openInlineControl('Mottagningskontroll');
-        else navigation.navigate('MottagningskontrollScreen', { project });
-        break;
       case 'skyddsrond':
-        if (Platform.OS === 'web') openInlineControl('Skyddsrond');
-        else navigation.navigate('SkyddsrondScreen', { project });
+        // Alla KMA-kontroller navigerar till KMAScreen
+        if (Platform.OS === 'web') {
+          openInlineControl(v === 'riskbedomning' ? 'Riskbedömning' : (v.charAt(0).toUpperCase() + v.slice(1)));
+        } else {
+          navigation.navigate('KMAScreen', { project, controlType: v });
+        }
         break;
       default:
         {
@@ -1440,17 +1431,17 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
 
     switch (inlineControl.type) {
       case 'Arbetsberedning':
-        return wrapInlineControlWithBack(<ArbetsberedningScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<ArbetsberedningControl {...commonProps} />);
       case 'Riskbedömning':
-        return wrapInlineControlWithBack(<RiskbedömningScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<RiskbedömningControl {...commonProps} />);
       case 'Fuktmätning':
-        return wrapInlineControlWithBack(<FuktmätningScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<FuktmätningControl {...commonProps} />);
       case 'Egenkontroll':
-        return wrapInlineControlWithBack(<EgenkontrollScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<EgenkontrollControl {...commonProps} />);
       case 'Mottagningskontroll':
-        return wrapInlineControlWithBack(<MottagningskontrollScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<MottagningskontrollControl {...commonProps} />);
       case 'Skyddsrond':
-        return wrapInlineControlWithBack(<SkyddsrondScreen {...commonProps} />);
+        return wrapInlineControlWithBack(<SkyddsrondControl {...commonProps} />);
       case 'ControlDetails':
         return wrapInlineControlWithBack(
           <ControlDetails
@@ -3082,10 +3073,250 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         </View>
         )}
       </Modal>
+      
+      {/* Överblick för eftermarknad: visa projektinformation direkt i mittenpanelen */}
+      {selectedAction?.kind === 'overblick' && Platform.OS === 'web' ? (
+        (() => {
+          // Återanvänd samma vy som redigeringsmodalen, men visa direkt i mittenpanelen
+          const showOverblickView = true;
+          if (!showOverblickView || !editableProject) return null;
+          
+          const sectionTitle = { fontSize: 13, fontWeight: '500', color: '#111', marginBottom: 10 };
+          const labelStyle = { fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 };
+          const inputStyleBase = {
+            borderWidth: 1,
+            borderColor: '#E2E8F0',
+            borderRadius: 10,
+            paddingVertical: 9,
+            paddingHorizontal: 10,
+            fontSize: 13,
+            backgroundColor: '#fff',
+            color: '#111',
+            ...(Platform.OS === 'web' ? {
+              transition: 'border-color 0.2s, box-shadow 0.2s',
+              outline: 'none',
+            } : {}),
+          };
+          
+          const getAddressStreet = () => {
+            if (editableProject?.address?.street) return editableProject.address.street;
+            if (editableProject?.adress) return editableProject.adress;
+            return '';
+          };
+          const getAddressPostal = () => editableProject?.address?.postalCode || '';
+          const getAddressCity = () => editableProject?.address?.city || '';
+          const getClientContactName = () => editableProject?.clientContact?.name || '';
+          const getClientContactPhone = () => editableProject?.clientContact?.phone || '';
+          const getClientContactEmail = () => editableProject?.clientContact?.email || '';
+          
+          return (
+            <View style={{ paddingBottom: 24 }}>
+              <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 20 }}>Överblick</Text>
+              
+              <View style={{ 
+                flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+                gap: 20,
+              }}>
+                {/* Left column */}
+                <View style={{ flex: 1 }}>
+                  <Text style={sectionTitle}>Projektinformation</Text>
+                  
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={labelStyle}>Projektnummer</Text>
+                    <TextInput
+                      value={editableProject?.id || ''}
+                      onChangeText={(v) => setEditableProject(p => ({ ...p, id: v }))}
+                      placeholder="Projektnummer..."
+                      placeholderTextColor="#94A3B8"
+                      style={inputStyleBase}
+                      editable={false}
+                    />
+                  </View>
+                  
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={labelStyle}>Projektnamn</Text>
+                    <TextInput
+                      value={editableProject?.name || ''}
+                      onChangeText={(v) => setEditableProject(p => ({ ...p, name: v }))}
+                      placeholder="Projektnamn..."
+                      placeholderTextColor="#94A3B8"
+                      style={inputStyleBase}
+                    />
+                  </View>
+                  
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={labelStyle}>Skapad</Text>
+                    <TextInput
+                      value={editableProject?.createdAt ? new Date(editableProject.createdAt).toISOString().slice(0, 10) : ''}
+                      editable={false}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#94A3B8"
+                      style={{ ...inputStyleBase, backgroundColor: '#F1F5F9', color: '#64748B' }}
+                    />
+                  </View>
+                  
+                  <Text style={labelStyle}>Kund</Text>
+                  <TextInput
+                    value={editableProject?.customer || editableProject?.client || ''}
+                    onChangeText={(v) => setEditableProject(p => ({ ...p, customer: v, client: v }))}
+                    placeholder="Kundens företagsnamn..."
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 14 }}
+                  />
+                  
+                  <Text style={{ ...labelStyle, marginBottom: 8 }}>Uppgifter till projektansvarig hos beställaren</Text>
+                  <TextInput
+                    value={getClientContactName()}
+                    onChangeText={(v) => setEditableProject(p => ({
+                      ...p,
+                      clientContact: { ...(p?.clientContact || {}), name: v },
+                    }))}
+                    placeholder="Namn"
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 10 }}
+                  />
+                  <TextInput
+                    value={getClientContactPhone()}
+                    onChangeText={(v) => setEditableProject(p => ({
+                      ...p,
+                      clientContact: { ...(p?.clientContact || {}), phone: v },
+                    }))}
+                    placeholder="Telefonnummer"
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 10 }}
+                  />
+                  <TextInput
+                    value={getClientContactEmail()}
+                    onChangeText={(v) => setEditableProject(p => ({
+                      ...p,
+                      clientContact: { ...(p?.clientContact || {}), email: v },
+                    }))}
+                    placeholder="namn@foretag.se"
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 14 }}
+                  />
+                  
+                  <Text style={labelStyle}>Adress</Text>
+                  <TextInput
+                    value={getAddressStreet()}
+                    onChangeText={(v) => setEditableProject(p => ({
+                      ...p,
+                      address: { ...(p?.address || {}), street: v },
+                      adress: v,
+                    }))}
+                    placeholder="Gata och nr..."
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 10 }}
+                  />
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                    <TextInput
+                      value={getAddressPostal()}
+                      onChangeText={(v) => setEditableProject(p => ({
+                        ...p,
+                        address: { ...(p?.address || {}), postalCode: v },
+                      }))}
+                      placeholder="Postnummer"
+                      placeholderTextColor="#94A3B8"
+                      style={{ ...inputStyleBase, flex: 0.45 }}
+                    />
+                    <TextInput
+                      value={getAddressCity()}
+                      onChangeText={(v) => setEditableProject(p => ({
+                        ...p,
+                        address: { ...(p?.address || {}), city: v },
+                      }))}
+                      placeholder="Ort"
+                      placeholderTextColor="#94A3B8"
+                      style={{ ...inputStyleBase, flex: 0.55 }}
+                    />
+                  </View>
+                  <TextInput
+                    value={editableProject?.propertyDesignation || editableProject?.fastighetsbeteckning || ''}
+                    onChangeText={(v) => setEditableProject(p => ({ ...p, propertyDesignation: v, fastighetsbeteckning: v }))}
+                    placeholder="Fastighetsbeteckning"
+                    placeholderTextColor="#94A3B8"
+                    style={{ ...inputStyleBase, marginBottom: 14 }}
+                  />
+                </View>
+                
+                {/* Right column */}
+                <View style={{ flex: 1 }}>
+                  <Text style={sectionTitle}>Ansvariga och deltagare</Text>
+                  
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={labelStyle}>Ansvarig</Text>
+                    <TextInput
+                      value={editableProject?.ansvarig || ''}
+                      editable={false}
+                      placeholder="Ansvarig..."
+                      placeholderTextColor="#94A3B8"
+                      style={{ ...inputStyleBase, backgroundColor: '#F1F5F9', color: '#64748B' }}
+                    />
+                  </View>
+                  
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={labelStyle}>Deltagare</Text>
+                    <TextInput
+                      value={(editProjectParticipants || []).map(p => formatPersonName(p)).join(', ') || ''}
+                      editable={false}
+                      placeholder="Inga deltagare valda..."
+                      placeholderTextColor="#94A3B8"
+                      multiline
+                      style={{ ...inputStyleBase, backgroundColor: '#F1F5F9', color: '#64748B', minHeight: 60 }}
+                    />
+                  </View>
+                  
+                  <View style={{ marginTop: 20, flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                        const isEnabled = editableProject?.skyddsrondEnabled !== false;
+                        const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
+                        if (!isFirstDueValid) return;
+                        
+                        const sanitizedProject = {
+                          ...editableProject,
+                          skyddsrondFirstDueDate: isEnabled ? (firstDueTrim || null) : null,
+                          participants: (editProjectParticipants || []).map(p => ({ 
+                            uid: p.uid || p.id, 
+                            displayName: p.displayName || null, 
+                            email: p.email || null 
+                          })),
+                        };
+                        if (typeof navigation?.setParams === 'function') {
+                          navigation.setParams({ project: sanitizedProject });
+                        }
+                        emitProjectUpdated({ ...sanitizedProject, originalId: originalProjectId });
+                      }}
+                      style={{
+                        backgroundColor: '#1976D2',
+                        borderRadius: 10,
+                        paddingVertical: 12,
+                        paddingHorizontal: 18,
+                        minWidth: 110,
+                        alignItems: 'center',
+                        ...(Platform.OS === 'web' ? {
+                          transition: 'background-color 0.2s',
+                          cursor: 'pointer',
+                        } : {}),
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Spara ändringar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          );
+        })()
+      ) : null}
+      
       {/* Knapprad med horisontella linjer */}
-      <View style={{ marginBottom: 12 }}>
-        <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 16, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
-        {Platform.OS === 'web' ? (
+      {selectedAction?.kind !== 'overblick' && (
+        <View style={{ marginBottom: 12 }}>
+          <View style={{ height: 1, backgroundColor: '#e0e0e0', marginBottom: 16, marginTop: 8, width: '110%', marginLeft: '-5%' }} />
+          {Platform.OS === 'web' ? (
           <>
             <View style={{ marginBottom: 8, alignItems: 'flex-start', paddingHorizontal: 0 }}>
               <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>Skapa kontroll:</Text>
@@ -3222,7 +3453,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         )}
         <View style={{ height: 1, backgroundColor: '#e0e0e0', marginTop: 16, width: '110%', marginLeft: '-5%' }} />
       </View>
+      )}
 
+      {selectedAction?.kind !== 'overblick' && (
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
 
       {/* Modal för val av kontrolltyp */}
@@ -3498,15 +3731,16 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   </View>
                 </View>
               </Modal>
-        <View style={{ marginTop: 0, marginBottom: 0, alignItems: 'flex-start' }}>
-          <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>
-            Utförda kontroller:
-          </Text>
-        </View>
-      </View>
+      {selectedAction?.kind !== 'overblick' && (
+        <>
+          <View style={{ marginTop: 0, marginBottom: 0, alignItems: 'flex-start' }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>
+              Utförda kontroller:
+            </Text>
+          </View>
 
-      {/* Sökfält för kontroller */}
-      <View style={{ marginBottom: 10 }}>
+        {/* Sökfält för kontroller */}
+        <View style={{ marginBottom: 10 }}>
         <TextInput
           style={[styles.input, { marginBottom: 0 }]}
           placeholder="Sök kontroller (t.ex. gips, arbetsmoment, leverans...)"
@@ -3716,27 +3950,27 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                                   switch (item.type) {
                                     case 'Arbetsberedning':
                                       if (Platform.OS === 'web') openInlineControl('Arbetsberedning', item);
-                                      else navigation.navigate('ArbetsberedningScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'arbetsberedning' });
                                       break;
                                     case 'Riskbedömning':
                                       if (Platform.OS === 'web') openInlineControl('Riskbedömning', item);
-                                      else navigation.navigate('RiskbedömningScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'riskbedömning' });
                                       break;
                                     case 'Fuktmätning':
                                       if (Platform.OS === 'web') openInlineControl('Fuktmätning', item);
-                                      else navigation.navigate('FuktmätningScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'fuktmätning' });
                                       break;
                                     case 'Egenkontroll':
                                       if (Platform.OS === 'web') openInlineControl('Egenkontroll', item);
-                                      else navigation.navigate('EgenkontrollScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'egenkontroll' });
                                       break;
                                     case 'Mottagningskontroll':
                                       if (Platform.OS === 'web') openInlineControl('Mottagningskontroll', item);
-                                      else navigation.navigate('MottagningskontrollScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'mottagningskontroll' });
                                       break;
                                     case 'Skyddsrond':
                                       if (Platform.OS === 'web') openInlineControl('Skyddsrond', item);
-                                      else navigation.navigate('SkyddsrondScreen', { initialValues: item, project });
+                                      else navigation.navigate('KMAScreen', { initialValues: item, project, controlType: 'skyddsrond' });
                                       break;
                                     default:
                                       if (Platform.OS === 'web') openInlineControl(item.type, item);
@@ -3999,6 +4233,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </View>
         );
       })()}
+        </>
+      )}
 
       {/* Formulär */}
       {showForm && (
@@ -4160,6 +4396,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
+      </View>
+      )}
+
     </ScrollView>
   );
 }

@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
+import { ensureProjectFunctions, DEFAULT_PROJECT_FUNCTIONS } from './common/ProjectTree/constants';
+import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
 import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 import UserEditModal from './UserEditModal';
 
@@ -32,7 +34,7 @@ const publishHomeBreadcrumbSegments = (segments) => {
   } catch (_e) {}
 };
 
-function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, iconName = null, iconColor = null, controlTypesMode = false }) {
+function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, iconName = null, iconColor = null, controlTypesMode = false, selectedCompanyId = null, selectedPhase: selectedPhaseProp, onPhaseChange, onAddMainFolder }) {
   // Legacy: "Mallar"-sidan är borttagen och vi vill inte att sidomenyn kan hamna i templates-läge.
   // Låt flaggan vara hårt avstängd även om någon råkar skicka props från äldre kod.
   const templatesMode = false;
@@ -41,8 +43,25 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [search, setSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
   const [expandedSubs, setExpandedSubs] = useState({});
+  const [expandedProjects, setExpandedProjects] = useState({});
   const [hierarchy, setHierarchy] = useState([]);
+  const [selectedPhase, setSelectedPhase] = useState(selectedPhaseProp || DEFAULT_PHASE);
   const [companies, setCompanies] = useState([]);
+  
+  // Synka med prop när den ändras
+  useEffect(() => {
+    if (selectedPhaseProp !== undefined) {
+      setSelectedPhase(selectedPhaseProp);
+    }
+  }, [selectedPhaseProp]);
+  
+  // När phase ändras lokalt, meddela parent
+  const handlePhaseChange = (phase) => {
+    setSelectedPhase(phase);
+    if (onPhaseChange) {
+      onPhaseChange(phase);
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [expandedCompanies, setExpandedCompanies] = useState({});
   const [membersByCompany, setMembersByCompany] = useState({});
@@ -385,6 +404,25 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     })();
   }, [companiesMode, autoExpandMembers, restrictCompanyId, companies, showMembers, membersByCompany]);
 
+  // Auto-expand selected company in controlTypesMode
+  useEffect(() => {
+    if (!controlTypesMode) return;
+    if (!companiesMode) return;
+    if (!selectedCompanyId) return;
+    if (!Array.isArray(companies) || companies.length === 0) return;
+
+    const cid = String(selectedCompanyId || '').trim();
+    if (!cid) return;
+
+    const hasCompany = companies.some(c => c && c.id === cid);
+    if (!hasCompany) return;
+
+    setExpandedCompanies(prev => {
+      if (prev && prev[cid]) return prev;
+      return { [cid]: true };
+    });
+  }, [controlTypesMode, companiesMode, selectedCompanyId, companies]);
+
   // If the current user är "global" admin (superadmin eller MS Byggsystem-admin),
   // prefetcha medlemmar för alla företag så vi kan visa användarantal i listan.
   // Vanliga företags-admins (t.ex. Wilzéns) räknas inte som global admin här.
@@ -640,18 +678,73 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
   const filterTree = (tree) => tree
     .map(group => {
+      // Filter by search for main folder name
+      const groupMatchesSearch = group.name.toLowerCase().includes(search.toLowerCase());
+      
       const filteredSubs = (group.children || []).map(sub => {
-        const filteredProjects = (sub.children || []).filter(project =>
-          project.name.toLowerCase().includes(search.toLowerCase()) ||
-          String(project.id).toLowerCase().includes(search.toLowerCase())
-        ).slice().sort(compareProjectsByNumber);
+        // Filter by search for sub folder name
+        const subMatchesSearch = sub.name.toLowerCase().includes(search.toLowerCase());
+        
+        const filteredProjects = (sub.children || []).filter(project => {
+          // Filter by search
+          const matchesSearch = project.name.toLowerCase().includes(search.toLowerCase()) ||
+            String(project.id).toLowerCase().includes(search.toLowerCase());
+          
+          // Filter by phase (only if not in companiesMode, showMembers, etc.)
+          if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
+            const projectPhase = project?.phase || sub?.phase || group?.phase || DEFAULT_PHASE;
+            const matchesPhase = projectPhase === selectedPhase;
+            return matchesSearch && matchesPhase;
+          }
+          
+          return matchesSearch;
+        }).slice().sort(compareProjectsByNumber);
+        
+        // Include sub folder if it has matching projects OR if sub folder name matches search
         return { ...sub, children: filteredProjects };
-      }).filter(sub => sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase()));
+      }).filter(sub => {
+        // Keep sub folder if it has matching projects OR if sub folder name matches search
+        return sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase());
+      });
+      
+      // Include main folder if it has matching sub folders OR if main folder name matches search
       return { ...group, children: filteredSubs };
     })
-    .filter(group => group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase()));
+    .filter(group => {
+      // Keep main folder if it has matching sub folders OR if main folder name matches search
+      return group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase());
+    });
 
-  const filteredGroups = filterTree(hierarchy);
+  // Filter hierarchy to selected phase (only if not in companiesMode, showMembers, etc.)
+  let phaseHierarchy = hierarchy;
+  if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
+    // Filter both folders and projects by phase metadata
+    phaseHierarchy = hierarchy
+      .filter(main => {
+        // Filter main folders by phase (if they have phase metadata)
+        const mainPhase = main?.phase || DEFAULT_PHASE;
+        return mainPhase === selectedPhase;
+      })
+      .map(main => ({
+        ...main,
+        children: (main.children || [])
+          .filter(sub => {
+            // Filter sub folders by phase (if they have phase metadata)
+            const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
+            return subPhase === selectedPhase;
+          })
+          .map(sub => ({
+            ...sub,
+            children: (sub.children || []).filter(project => {
+              // Filter projects by phase metadata
+              const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
+              return projectPhase === selectedPhase;
+            })
+          }))
+      }));
+  }
+  
+  const filteredGroups = filterTree(phaseHierarchy);
 
   const toggleGroup = (id) => {
     setExpandedGroups(prev => {
@@ -1007,62 +1100,148 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {iconName ? (
-            <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name={iconName} size={13} color="#fff" />
-            </div>
-          ) : null}
-          <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
-          {templatesMode && templateFetchErrorCount > 0 ? (
-            <span title={`Mallfel: ${templateFetchErrorCount}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, borderRadius: 999, padding: '0 6px', backgroundColor: '#D32F2F', color: '#fff', fontSize: 12, fontWeight: 700 }}>
-              {templateFetchErrorCount}
-            </span>
-          ) : null}
-        </div>
-        {companiesMode ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={() => {
-                setSpinHome(n => n + 1);
-                handleGoHome();
-              }}
-              accessibilityLabel="Hem"
-            >
-              <Ionicons
-                name="home-outline"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: `rotate(${spinHome * 360}deg)`,
-                  transition: 'transform 0.4s ease'
+      {(() => {
+        // Om vi är i projektläge, visa fas-knapp istället för "Projekt"-rubrik
+        if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
+          const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase) || PROJECT_PHASES[0];
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <button
+                onClick={() => {
+                  // Öppna dropdown för att välja fas (kan implementeras senare)
+                  // För nu, bara visa vald fas
                 }}
-              />
-            </TouchableOpacity>
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: `1px solid ${currentPhaseConfig.color}60`,
+                  backgroundColor: currentPhaseConfig.color + '15',
+                  cursor: 'pointer',
+                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                  fontSize: 14,
+                  fontWeight: 400,
+                  color: currentPhaseConfig.color,
+                  transition: 'all 0.2s',
+                  flex: 1,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = currentPhaseConfig.color + '25';
+                  e.currentTarget.style.borderColor = currentPhaseConfig.color + '80';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = currentPhaseConfig.color + '15';
+                  e.currentTarget.style.borderColor = currentPhaseConfig.color + '60';
+                }}
+              >
+                <Ionicons name={currentPhaseConfig.icon} size={16} color={currentPhaseConfig.color} />
+                <span>{currentPhaseConfig.name}</span>
+              </button>
+              
+              {/* Hem- och uppdatera-knappar */}
+              <TouchableOpacity
+                style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
+                onPress={() => {
+                  setSpinHome(n => n + 1);
+                  handleGoHome();
+                }}
+                accessibilityLabel="Hem"
+              >
+                <Ionicons
+                  name="home-outline"
+                  size={18}
+                  color={currentPhaseConfig.color}
+                  style={{
+                    transform: `rotate(${spinHome * 360}deg)`,
+                    transition: 'transform 0.4s ease'
+                  }}
+                />
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={() => {
-                setSpinRefresh(n => n + 1);
-                handleHardRefresh();
-              }}
-              accessibilityLabel="Uppdatera"
-            >
-              <Ionicons
-                name="refresh"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: `rotate(${spinRefresh * 360}deg)`,
-                  transition: 'transform 0.4s ease'
+              <TouchableOpacity
+                style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
+                onPress={() => {
+                  setSpinRefresh(n => n + 1);
+                  handleHardRefresh();
                 }}
-              />
-            </TouchableOpacity>
+                accessibilityLabel="Uppdatera"
+              >
+                <Ionicons
+                  name="refresh"
+                  size={18}
+                  color={currentPhaseConfig.color}
+                  style={{
+                    transform: `rotate(${spinRefresh * 360}deg)`,
+                    transition: 'transform 0.4s ease'
+                  }}
+                />
+              </TouchableOpacity>
+            </div>
+          );
+        }
+        
+        // Annars visa normal rubrik
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {iconName ? (
+                <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={iconName} size={13} color="#fff" />
+                </div>
+              ) : null}
+              <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+              {templatesMode && templateFetchErrorCount > 0 ? (
+                <span title={`Mallfel: ${templateFetchErrorCount}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, borderRadius: 999, padding: '0 6px', backgroundColor: '#D32F2F', color: '#fff', fontSize: 12, fontWeight: 700 }}>
+                  {templateFetchErrorCount}
+                </span>
+              ) : null}
+            </div>
+            {companiesMode ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
+                <TouchableOpacity
+                  style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+                  onPress={() => {
+                    setSpinHome(n => n + 1);
+                    handleGoHome();
+                  }}
+                  accessibilityLabel="Hem"
+                >
+                  <Ionicons
+                    name="home-outline"
+                    size={18}
+                    color="#1976D2"
+                    style={{
+                      transform: `rotate(${spinHome * 360}deg)`,
+                      transition: 'transform 0.4s ease'
+                    }}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+                  onPress={() => {
+                    setSpinRefresh(n => n + 1);
+                    handleHardRefresh();
+                  }}
+                  accessibilityLabel="Uppdatera"
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color="#1976D2"
+                    style={{
+                      transform: `rotate(${spinRefresh * 360}deg)`,
+                      transition: 'transform 0.4s ease'
+                    }}
+                  />
+                </TouchableOpacity>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        );
+      })()}
         {/* Toast/snackbar (döljs när dialogen för nytt företag är öppen) */}
         {toast.visible && !addDialogOpen ? (
           <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '8px 12px', borderRadius: 6, fontSize: 13, zIndex: 40 }}>
@@ -1345,12 +1524,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         const deleted = !!(company.profile && company.profile.deleted);
                         const isProtectedCompany = String(company.id || '').trim() === 'MS Byggsystem';
 
-                        // I Kontrolltyper-läget använder vi ett enklare menyupplägg
-                        // där huvudfokus är att lägga till kontrolltyper.
+                        // I Kontrolltyper-läget: ingen context-meny för företag (använd knappen i mittenpanelen istället)
                         if (controlTypesMode) {
-                          return [
-                            { key: 'addControlType', label: 'Lägg till kontrolltyp', icon: '➕' },
-                          ];
+                          return [];
                         }
 
                         // I Mallar-läget: företagsmenyn ska bara erbjuda "Lägg till mall".
@@ -2465,7 +2641,48 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       </> ) : (
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {filteredGroups.length === 0 && (
-            <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga projekt hittades.</li>
+            <li style={{ textAlign: 'center', marginTop: 24 }}>
+              {search.trim() === '' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                  <div style={{ color: '#888', fontSize: 15, marginBottom: 8 }}>Inga mappar ännu</div>
+                  {onAddMainFolder && (
+                    <button
+                      onClick={() => {
+                        if (onAddMainFolder) {
+                          onAddMainFolder();
+                        }
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        backgroundColor: '#1976D2',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '12px 20px',
+                        fontSize: 16,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#1565C0';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#1976D2';
+                      }}
+                    >
+                      <span style={{ fontSize: 20 }}>+</span>
+                      <span>Skapa mapp</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ color: '#888', fontSize: 15 }}>Inga projekt hittades.</div>
+              )}
+            </li>
           )}
           {filteredGroups.map(group => {
             const groupSpin = spinGroups[group.id] || 0;
@@ -2486,7 +2703,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 >
                   &gt;
                 </span>
-                <span style={{ fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, fontSize: 16, letterSpacing: 0.1 }}>{group.name}</span>
+                <span style={{ 
+                  fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', 
+                  fontWeight: expandedGroups[group.id] ? 700 : 400, 
+                  fontSize: 16, 
+                  letterSpacing: 0.1 
+                }}>{group.name}</span>
               </div>
               {expandedGroups[group.id] && group.children.length > 0 && (
                 <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
@@ -2509,45 +2731,140 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         >
                           &gt;
                         </span>
-                        <span style={{ fontWeight: 600, fontSize: 15 }}>{sub.name}</span>
+                        <span style={{ 
+                          fontWeight: expandedSubs[sub.id] ? 600 : 400, 
+                          fontSize: 15 
+                        }}>{sub.name}</span>
                       </div>
                       {expandedSubs[sub.id] && sub.children.length > 0 && (
                         <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                          {sub.children.map(project => (
-                            <li key={project.id}>
-                              <button
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  padding: 0,
-                                  cursor: 'pointer',
-                                  color: '#1976d2',
-                                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                                  fontSize: 15,
-                                  letterSpacing: 0.1,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  width: '100%',
-                                  justifyContent: 'space-between',
-                                }}
-                                onClick={() => {
-                                  try { setSelectedProjectBreadcrumb({ group, sub, project }); } catch (_e) {}
-                                  try {
-                                    publishHomeBreadcrumbSegments([
-                                      { label: 'Startsida', target: { kind: 'dashboard' } },
-                                      { label: String(group?.name || '').trim() || 'Huvudmapp', target: { kind: 'main', mainId: group?.id } },
-                                      { label: String(sub?.name || '').trim() || 'Undermapp', target: { kind: 'sub', mainId: group?.id, subId: sub?.id } },
-                                      { label: (String(project?.id || '').trim() && String(project?.name || '').trim()) ? `${String(project.id).trim()} — ${String(project.name).trim()}` : (String(project?.name || '').trim() || 'Projekt'), target: { kind: 'project', projectId: String(project?.id || '') } },
-                                    ]);
-                                  } catch (_e) {}
-                                  if (onSelectProject) onSelectProject(project);
-                                }}
-                              >
-                                <span>{project.name}</span>
-                                <span style={{ color: '#222', fontSize: 18, marginLeft: 8, display: 'inline-flex', alignItems: 'center' }}>&gt;</span>
-                              </button>
-                            </li>
-                          ))}
+                          {sub.children
+                            .filter(child => child.type === 'project')
+                            .map(project => {
+                              // Ensure project has functions
+                              const projectWithFunctions = ensureProjectFunctions(project);
+                              const hasFunctions = Array.isArray(projectWithFunctions.children) && 
+                                projectWithFunctions.children.some(child => child.type === 'projectFunction');
+                              const functions = hasFunctions 
+                                ? projectWithFunctions.children.filter(child => child.type === 'projectFunction')
+                                    .sort((a, b) => (a.order || 999) - (b.order || 999))
+                                : [];
+                              const isExpanded = expandedProjects[project.id] || false;
+                              
+                              return (
+                                <li key={project.id}>
+                                  <button
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      padding: 0,
+                                      cursor: 'pointer',
+                                      color: '#222',
+                                      fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                      fontSize: 15,
+                                      letterSpacing: 0.1,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      width: '100%',
+                                      justifyContent: 'space-between',
+                                    }}
+                                    onClick={() => {
+                                      if (hasFunctions) {
+                                        // Toggle expand/collapse if project has functions
+                                        setExpandedProjects(prev => ({
+                                          ...prev,
+                                          [project.id]: !prev[project.id]
+                                        }));
+                                      } else {
+                                        // Direct selection if no functions
+                                        try { setSelectedProjectBreadcrumb({ group, sub, project }); } catch (_e) {}
+                                        try {
+                                          publishHomeBreadcrumbSegments([
+                                            { label: 'Startsida', target: { kind: 'dashboard' } },
+                                            { label: String(group?.name || '').trim() || 'Huvudmapp', target: { kind: 'main', mainId: group?.id } },
+                                            { label: String(sub?.name || '').trim() || 'Undermapp', target: { kind: 'sub', mainId: group?.id, subId: sub?.id } },
+                                            { label: (String(project?.id || '').trim() && String(project?.name || '').trim()) ? `${String(project.id).trim()} — ${String(project.name).trim()}` : (String(project?.name || '').trim() || 'Projekt'), target: { kind: 'project', projectId: String(project?.id || '') } },
+                                          ]);
+                                        } catch (_e) {}
+                                        if (onSelectProject) onSelectProject(project);
+                                      }
+                                    }}
+                                  >
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      {hasFunctions && (
+                                        <span style={{ 
+                                          color: '#666', 
+                                          fontSize: 14,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                          transition: 'transform 0.2s ease',
+                                        }}>
+                                          ▶
+                                        </span>
+                                      )}
+                                      <span style={{ 
+                                        fontWeight: (selectedProjectBreadcrumb && selectedProjectBreadcrumb.project && selectedProjectBreadcrumb.project.id === project.id) ? 700 : 400 
+                                      }}>{project.name}</span>
+                                    </span>
+                                    {!hasFunctions && (
+                                      <span style={{ color: '#222', fontSize: 18, marginLeft: 8, display: 'inline-flex', alignItems: 'center' }}>&gt;</span>
+                                    )}
+                                  </button>
+                                  
+                                  {/* Show functions when expanded */}
+                                  {isExpanded && hasFunctions && functions.length > 0 && (
+                                    <ul style={{ listStyle: 'none', paddingLeft: 24, marginTop: 4 }}>
+                                      {functions.map((func) => (
+                                        <li key={func.id} style={{ marginBottom: 2 }}>
+                                          <button
+                                            style={{
+                                              background: 'none',
+                                              border: 'none',
+                                              padding: '4px 8px',
+                                              cursor: 'pointer',
+                                              color: '#444',
+                                              fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
+                                              fontSize: 14,
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              width: '100%',
+                                              gap: 6,
+                                              borderRadius: 4,
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              e.currentTarget.style.backgroundColor = '#f0f0f0';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.backgroundColor = 'transparent';
+                                            }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              // Handle function click
+                                              if (onSelectFunction) {
+                                                onSelectFunction(project, func);
+                                              } else if (onSelectProject) {
+                                                // Fallback: pass function info via project
+                                                onSelectProject({ ...project, selectedFunction: func });
+                                              }
+                                            }}
+                                          >
+                                            <span style={{ fontSize: 12, color: '#666' }}>
+                                              {func.icon === 'document-text-outline' && '📄'}
+                                              {func.icon === 'map-outline' && '🗺️'}
+                                              {func.icon === 'people-outline' && '👥'}
+                                              {func.icon === 'folder-outline' && '📁'}
+                                              {func.icon === 'shield-checkmark-outline' && '🛡️'}
+                                            </span>
+                                            <span>{func.name}</span>
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              );
+                            })}
                         </ul>
                       )}
                     </li>
