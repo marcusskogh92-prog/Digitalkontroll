@@ -493,9 +493,9 @@ export default function ManageCompany({ navigation }) {
         >
           <View style={dashboardContainerStyle}>
             <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 980, maxWidth: '100%' }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  {Platform.OS !== 'web' ? (
+              {Platform.OS !== 'web' ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
                       <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
                         <Ionicons name="chevron-back" size={20} color="#222" />
@@ -507,7 +507,21 @@ export default function ManageCompany({ navigation }) {
                         <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Företag</Text>
                       </View>
                     </View>
+                  </View>
+                </View>
+              ) : null}
+              <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {hasSelectedCompany && (companyName || companyId) ? (
+                    <>
+                      <Text style={{ fontSize: 15, fontWeight: '500', color: '#666' }}>{companyName || companyId}</Text>
+                      <Ionicons name="chevron-forward" size={14} color="#999" />
+                    </>
                   ) : null}
+                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="business" size={20} color="#1976D2" />
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#111' }}>Företag</Text>
                 </View>
               </View>
 

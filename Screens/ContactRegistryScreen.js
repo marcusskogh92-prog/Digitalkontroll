@@ -1069,27 +1069,6 @@ export default function ContactRegistryScreen({ navigation, route }) {
       >
         <View style={dashboardContainerStyle}>
           <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 1200, maxWidth: '100%' }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 10, gap: 12 }}>
-                <TouchableOpacity
-                onPress={loadContacts}
-                  style={{
-                  paddingVertical: 10, 
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                  backgroundColor: '#F1F5F9',
-                    borderWidth: 1,
-                  borderColor: '#E2E8F0',
-                  ...(Platform.OS === 'web' ? {
-                    transition: 'background-color 0.2s',
-                    cursor: 'pointer',
-                  } : {}),
-                }}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="refresh" size={18} color="#475569" />
-                </TouchableOpacity>
-            </View>
-
             {!hasSelectedCompany ? (
               <View style={{ 
                 paddingVertical: 16, 
@@ -1150,6 +1129,12 @@ export default function ContactRegistryScreen({ navigation, route }) {
               <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    {companyName ? (
+                      <>
+                        <Text style={{ fontSize: 15, fontWeight: '500', color: '#666' }}>{companyName}</Text>
+                        <Ionicons name="chevron-forward" size={14} color="#999" />
+                      </>
+                    ) : null}
                     <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
                       <Ionicons name="book-outline" size={20} color="#1976D2" />
                     </View>
@@ -1172,6 +1157,25 @@ export default function ContactRegistryScreen({ navigation, route }) {
                       placeholderTextColor="#94A3B8"
                   />
                 </View>
+                <TouchableOpacity
+                  onPress={loadContacts}
+                  style={{
+                    paddingVertical: 10, 
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: '#F1F5F9',
+                    borderWidth: 1,
+                    borderColor: '#E2E8F0',
+                    marginLeft: 12,
+                    ...(Platform.OS === 'web' ? {
+                      transition: 'background-color 0.2s',
+                      cursor: 'pointer',
+                    } : {}),
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="refresh" size={18} color="#475569" />
+                </TouchableOpacity>
                 </View>
               </View>
               <View style={{ padding: 18 }}>
