@@ -5,6 +5,7 @@
   "scripts": {
     "start": "expo start --port 8081",
     "firebase:deploy:storage": "npx firebase-tools deploy --only storage",
+    "firebase:deploy:rules": "npx firebase-tools deploy --only firestore:rules",
     "admin:provision-company": "node ./scripts/provision-company.js",
     "admin:add-user": "node ./scripts/add-user.js",
     "admin:set-company-claim": "node ./scripts/set-company-claim.js",
@@ -13,7 +14,8 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android --port 8081",
     "ios": "expo start --ios --port 8081",
-    "web": "expo start --web --port 3000",
+    "web": "expo start --web --port 19006",
+    "web:clear": "expo start --web --port 19006 --clear",
     "build": "npx expo export --platform web --output-dir web-build && node ./scripts/verify-web-build.js",
     "build:web": "npx expo export --platform web --output-dir web-build",
     "verify:web": "node ./scripts/verify-web-build.js",
@@ -63,7 +65,8 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "~0.21.0",
     "react-native-webview": "13.15.0",
-    "react-native-worklets": "0.5.1"
+    "react-native-worklets": "0.5.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

@@ -6,41 +6,42 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Easing,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  useWindowDimensions,
-  View
+    Animated,
+    Easing,
+    Image,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    useWindowDimensions,
+    View
 } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { formatPersonName } from '../components/formatPersonName';
 import { buildPdfHtmlForControl } from '../components/pdfExport';
-import { emitProjectUpdated } from '../components/projectBus';
+import { emitProjectUpdated, onProjectUpdated } from '../components/projectBus';
 
-import ControlDetails from './ControlDetails';
 import {
-  ArbetsberedningControl,
-  EgenkontrollControl,
-  FuktmätningControl,
-  RiskbedömningControl,
-  SkyddsrondControl,
-  MottagningskontrollControl,
+    ArbetsberedningControl,
+    EgenkontrollControl,
+    FuktmätningControl,
+    MottagningskontrollControl,
+    RiskbedömningControl,
+    SkyddsrondControl,
 } from '../features/kma/components/controls';
+import ControlDetails from './ControlDetails';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
 // so web builds don't attempt to resolve native-only exports. Load dynamically
 // inside functions when needed.
@@ -578,7 +579,103 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     const [notice, setNotice] = useState({ visible: false, text: '' });
     const scrollRef = useRef(null);
   // Destructure navigation params
-  const { project, companyId, initialCreator, selectedAction } = route.params || {};
+  const { project: initialProject, companyId, initialCreator, selectedAction } = route.params || {};
+  
+  // Local state for project that can be updated when project ID changes
+  const [project, setProject] = useState(initialProject);
+  
+  // Update project state when route params change
+  useEffect(() => {
+    if (initialProject) {
+      setProject(initialProject);
+    }
+  }, [initialProject]);
+  
+  // Listen for project updates (e.g., when project ID changes)
+  useEffect(() => {
+    if (!project?.id) return;
+    
+    const unsubscribe = onProjectUpdated((updatedProject) => {
+      if (!updatedProject || !updatedProject.id) return;
+      
+      // Check if this is the same project (by comparing IDs or old ID)
+      const currentId = String(project.id);
+      const newId = String(updatedProject.id);
+      
+      if (currentId === newId) {
+        // Same ID, just update the project
+        setProject(updatedProject);
+      } else if (updatedProject._idChanged && updatedProject._oldId) {
+        // Project ID changed - check if old ID matches current project
+        const oldId = String(updatedProject._oldId);
+        if (currentId === oldId) {
+          console.log('[ProjectDetails] Project ID changed, updating from', oldId, 'to', newId);
+          const updated = { ...updatedProject };
+          delete updated._oldId;
+          delete updated._idChanged;
+          setProject(updated);
+        }
+      }
+    });
+    
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [project?.id]);
+  
+  // Loading state for kalkylskede projects
+  // Check if project is in a phase that uses PhaseLayout
+  // All phases (kalkylskede, produktion, avslut, eftermarknad) should use PhaseLayout
+  let projectPhaseKey = null;
+  let PhaseLayoutComponent = null;
+  
+  if (project && companyId && project.id) {
+    try {
+      const projectPhase = getProjectPhase(project);
+      projectPhaseKey = projectPhase.key || (!project?.phase ? DEFAULT_PHASE : null);
+      
+      // Lazy load PhaseLayout for all phases
+      if (projectPhaseKey) {
+        try {
+          const phaseModule = require('../features/project-phases/phases/PhaseLayout');
+          PhaseLayoutComponent = phaseModule.default;
+        } catch (importErr) {
+          console.error('[ProjectDetails] Error importing PhaseLayout:', importErr);
+          projectPhaseKey = null; // Fall back to normal view
+        }
+      }
+    } catch (err) {
+      console.error('[ProjectDetails] Error checking phase:', err);
+      projectPhaseKey = null;
+    }
+  }
+  
+  // If project has a phase, render the PhaseLayout (full width, no internal leftpanel)
+  if (projectPhaseKey && companyId && project?.id && PhaseLayoutComponent) {
+    try {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#f4f6fa', width: '100%' }}>
+          <PhaseLayoutComponent
+            companyId={companyId}
+            projectId={project.id}
+            project={project}
+            phaseKey={projectPhaseKey}
+            hideLeftPanel={true}
+            externalActiveSection={route?.params?.phaseActiveSection}
+            externalActiveItem={route?.params?.phaseActiveItem}
+            onExternalSectionChange={route?.params?.onPhaseSectionChange}
+            onExternalItemChange={route?.params?.onPhaseItemChange}
+          />
+        </View>
+      );
+    } catch (err) {
+      console.error('[ProjectDetails] Error rendering PhaseLayout:', err);
+      // Fall through to normal rendering
+    }
+  }
+  
   const [inlineControl, setInlineControl] = useState(null);
   const openInlineControl = useCallback((type, initialValues) => {
     if (!type) return;
@@ -3456,7 +3553,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       )}
 
       {selectedAction?.kind !== 'overblick' && (
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
+        <>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
 
       {/* Modal för val av kontrolltyp */}
       <Modal
@@ -4233,7 +4331,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </View>
         );
       })()}
-        </>
+      </>
       )}
 
       {/* Formulär */}
@@ -4396,7 +4494,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
-      </View>
+        </View>
+        </>
       )}
 
     </ScrollView>

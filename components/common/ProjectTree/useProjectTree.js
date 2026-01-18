@@ -4,8 +4,9 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { ensureProjectFunctions } from './constants';
+import { getProjectPhase, DEFAULT_PHASE } from '../../../features/projects/constants';
 
-export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction }) {
+export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction, selectedPhase }) {
   const [expandedProjects, setExpandedProjects] = useState({});
 
   const toggleProject = useCallback((projectId) => {
@@ -15,15 +16,31 @@ export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction })
     }));
   }, []);
 
-  // Ensure all projects have functions
+  // Ensure all projects have functions (except kalkylskede projects)
   const hierarchyWithFunctions = useMemo(() => {
     if (!Array.isArray(hierarchy)) return hierarchy;
     
     const migrateProject = (node) => {
       if (node.type === 'project') {
+        // Check if project is in kalkylskede - don't add functions
+        const projectPhase = getProjectPhase(node);
+        const isKalkylskede = projectPhase.key === 'kalkylskede' || (!node?.phase && DEFAULT_PHASE === 'kalkylskede') || 
+                              (selectedPhase && selectedPhase === 'kalkylskede' && !node?.phase);
+        
+        if (isKalkylskede) {
+          // Remove all functions from kalkylskede projects
+          const nonFunctionChildren = (node.children || []).filter(c => c.type !== 'projectFunction');
+          return {
+            ...node,
+            phase: node.phase || 'kalkylskede',
+            expanded: false, // Never expand kalkylskede projects
+            children: nonFunctionChildren
+          };
+        }
+        
         const projectWithFunctions = ensureProjectFunctions(node);
-        // Preserve expanded state
-        if (expandedProjects[node.id] !== undefined) {
+        // Preserve expanded state (but not for kalkylskede)
+        if (expandedProjects[node.id] !== undefined && !isKalkylskede) {
           projectWithFunctions.expanded = expandedProjects[node.id];
         }
         return projectWithFunctions;
@@ -44,7 +61,7 @@ export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction })
         children: Array.isArray(sub.children) ? sub.children.map(migrateProject) : []
       })) : []
     }));
-  }, [hierarchy, expandedProjects]);
+  }, [hierarchy, expandedProjects, selectedPhase]);
 
   const handleProjectClick = useCallback((project) => {
     // Only toggle if project has functions

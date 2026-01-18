@@ -2,8 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, ImageBackground, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, purgeCompanyRemote, resolveCompanyLogoUrl, saveCompanyProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, storage } from '../components/firebase';
+import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Pressable, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteId, purgeCompanyRemote, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, storage, uploadCompanyLogo } from '../components/firebase';
+import { createCompanySiteWithStructure } from '../services/azure/siteService';
+import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
@@ -38,7 +40,17 @@ export default function ManageCompany({ navigation }) {
   const [auditLoading, setAuditLoading] = useState(false);
   const [companiesForAudit, setCompaniesForAudit] = useState([]);
   const [auditCompanyId, setAuditCompanyId] = useState('');
+  const [sharePointSiteId, setSharePointSiteId] = useState('');
+  const [sharePointSiteCreating, setSharePointSiteCreating] = useState(false);
+  const [sharePointSyncError, setSharePointSyncError] = useState(false);
   const fileInputRef = useRef(null);
+  
+  // Edit modal state
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editCompanyId, setEditCompanyId] = useState('');
+  const [editUserLimit, setEditUserLimit] = useState(10);
+  const editFileInputRef = useRef(null);
 
   // Keep selected companyId in local storage so global tools (e.g. kontaktregister i dropdown)
   // resolve the correct company.
@@ -54,6 +66,44 @@ export default function ManageCompany({ navigation }) {
       } catch (_e) {}
     })();
   }, [companyId]);
+
+  // Publish breadcrumb segments when company is selected (web only)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+
+    const publishBreadcrumb = () => {
+      try {
+        const segments = [];
+        segments.push({ label: 'Startsida', onPress: () => {
+          try {
+            navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+          } catch (_e) {
+            try { navigation.navigate('Home'); } catch (__e) {}
+          }
+        }});
+        segments.push({ label: 'Företag', onPress: () => {
+          try {
+            if (navigation?.navigate) navigation.navigate('ManageCompany');
+          } catch (_e) {}
+        }});
+        
+        if (companyName) {
+          segments.push({ label: companyName, onPress: () => {} });
+        }
+
+        // Dispatch window event
+        const evt = new CustomEvent('dkBreadcrumbUpdate', {
+          detail: { scope: 'manageCompany', segments },
+        });
+        window.dispatchEvent(evt);
+      } catch (_e) {
+        // Ignore errors
+      }
+    };
+
+    publishBreadcrumb();
+  }, [companyName, navigation]);
 
   // Web UX: show a clear loading overlay during Firebase/Cloud Function operations.
   const [busyCount, setBusyCount] = useState(0);
@@ -109,6 +159,114 @@ export default function ManageCompany({ navigation }) {
   };
 
   // Header is handled globally in App.js (web breadcrumb + logos).
+
+  // Helper component for info items
+  const InfoItem = ({ label, value }) => (
+    <View style={{ minWidth: 120 }}>
+      <Text style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>{label}</Text>
+      <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>{value}</Text>
+    </View>
+  );
+
+  // Open edit modal with current values
+  const openEditModal = () => {
+    setEditName(companyName || '');
+    setEditCompanyId(companyId || '');
+    setEditUserLimit(parseInt(userLimit || '10', 10));
+    setEditModalVisible(true);
+  };
+
+  // Save changes from edit modal
+  const handleSaveEditModal = async () => {
+    if (!companyId) return;
+    
+    const endBusy = beginBusy('Sparar ändringar...');
+    try {
+      // Update company name if changed
+      if (editName && editName !== companyName) {
+        const res = await setCompanyNameRemote({ companyId, companyName: editName });
+        const ok = !!(res && (res.ok === true || res.success === true));
+        if (!ok) {
+          try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra företagsnamn (servern avvisade ändringen).'); } catch (_e) {}
+          return;
+        }
+      }
+      
+      // Update userLimit if changed
+      if (editUserLimit !== parseInt(userLimit || '10', 10)) {
+        const res = await setCompanyUserLimitRemote({ companyId, userLimit: editUserLimit });
+        const ok = !!(res && (res.ok === true || res.success === true));
+        if (!ok) {
+          try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra antal användare (servern avvisade ändringen).'); } catch (_e) {}
+          return;
+        }
+      }
+      
+      // Reload data
+      await handleSelectCompany(companyId);
+      
+      setEditModalVisible(false);
+      try { if (typeof window !== 'undefined') window.alert('Ändringar sparade!'); } catch (_e) {}
+    } catch (e) {
+      console.error('Error saving company profile:', e);
+      try { 
+        if (typeof window !== 'undefined') {
+          window.alert('Kunde inte spara ändringar: ' + (e?.message || e));
+        }
+      } catch (_e) {}
+    } finally {
+      endBusy();
+    }
+  };
+
+  // Helper component for Action Cards
+  const ActionCard = ({ icon, title, text, button, color, onPress, disabled = false }) => {
+    const colorStyles = {
+      green: { bg: '#3f7f3f', hover: '#2d5d2d' },
+      red: { bg: '#C62828', hover: '#B71C1C' },
+      blue: { bg: '#1976D2', hover: '#1565C0' }
+    };
+    const style = colorStyles[color] || colorStyles.blue;
+
+    return (
+      <View style={{ 
+        flex: 1, 
+        minWidth: Platform.OS === 'web' ? 280 : '100%',
+        maxWidth: Platform.OS === 'web' ? 400 : '100%',
+        backgroundColor: '#fff', 
+        borderRadius: 16, 
+        padding: 24, 
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+        justifyContent: 'space-between'
+      }}>
+        <View style={{ gap: 12 }}>
+          <View>{icon}</View>
+          <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>{title}</Text>
+          <Text style={{ fontSize: 13, color: '#666' }}>{text}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={onPress}
+          disabled={disabled || busyCount > 0}
+          style={{
+            marginTop: 16,
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            borderRadius: 8,
+            backgroundColor: disabled ? '#ccc' : style.bg,
+            opacity: (disabled || busyCount > 0) ? 0.6 : 1,
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14, textAlign: 'center' }}>
+            {button}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   // Decide if interactive tools (manage company/users) should be shown
   const [allowedTools, setAllowedTools] = useState(false);
@@ -255,10 +413,8 @@ export default function ManageCompany({ navigation }) {
       } catch (_e) {}
       setLogoUploading(true);
       const safeCompanyId = String(companyId).trim();
-      const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${Date.now()}_${file.name}`;
-      const ref = storageRef(storage, path);
-      await uploadBytes(ref, file);
-      const url = await getDownloadURL(ref);
+      // Use uploadCompanyLogo which tries Azure first, then falls back to Firebase
+      const url = await uploadCompanyLogo({ companyId: safeCompanyId, file });
       const ok = await saveCompanyProfile(safeCompanyId, { logoUrl: url });
       if (!ok) {
         throw new Error('Kunde inte spara företagsprofil (logoUrl).');
@@ -340,6 +496,20 @@ export default function ManageCompany({ navigation }) {
         setUserLimit((prof && typeof prof.userLimit !== 'undefined') ? String(prof.userLimit) : '10');
         setCompanyEnabled(typeof prof?.enabled === 'boolean' ? !!prof.enabled : true);
         setCompanyDeleted(typeof prof?.deleted === 'boolean' ? !!prof.deleted : false);
+        // Load SharePoint site ID asynchronously
+        (async () => {
+          try {
+            const siteId = await getCompanySharePointSiteId(cid);
+            setSharePointSiteId(siteId || '');
+            // Reset error status when loading a company with active sync
+            if (siteId) {
+              setSharePointSyncError(false);
+            }
+          } catch (_e) {
+            setSharePointSiteId('');
+            setSharePointSyncError(false);
+          }
+        })();
         setOrgNumber(prof?.orgNumber || prof?.organisationsnummer || '');
         setCompanyForm(prof?.companyForm || prof?.företagsform || '');
         setStreetAddress(prof?.streetAddress || prof?.address || '');
@@ -436,7 +606,7 @@ export default function ManageCompany({ navigation }) {
     const statusLabel = companyEnabled ? 'Aktivt' : 'Pausat';
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         {(busyCount > 0 || loading || logoUploading) ? (
           <View
@@ -475,6 +645,9 @@ export default function ManageCompany({ navigation }) {
                   <View style={{ marginRight: 10 }}>
                     {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
                   </View>
+                  <View style={{ marginRight: 10 }}>
+                    <HeaderAdminMenu />
+                  </View>
                   {allowedTools ? (
                     <TouchableOpacity
                       style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
@@ -492,626 +665,424 @@ export default function ManageCompany({ navigation }) {
           }
         >
           <View style={dashboardContainerStyle}>
-            <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 980, maxWidth: '100%' }]}>
-              {Platform.OS !== 'web' ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
-                      <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
-                        <Ionicons name="chevron-back" size={20} color="#222" />
-                      </TouchableOpacity>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
-                        <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: '#2E7D32', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                          <Ionicons name="business" size={14} color="#fff" />
-                        </View>
-                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Företag</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              ) : null}
-              <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  {hasSelectedCompany && (companyName || companyId) ? (
-                    <>
-                      <Text style={{ fontSize: 15, fontWeight: '500', color: '#666' }}>{companyName || companyId}</Text>
-                      <Ionicons name="chevron-forward" size={14} color="#999" />
-                    </>
-                  ) : null}
-                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="business" size={20} color="#1976D2" />
-                  </View>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#111' }}>Företag</Text>
-                </View>
+            {!hasSelectedCompany ? (
+              <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, maxWidth: 600, alignSelf: 'center', width: '100%' }}>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#666', textAlign: 'center' }}>
+                  Välj ett företag i listan till vänster för att visa och ändra dess företagsprofil.
+                </Text>
               </View>
-
-              <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', flexDirection: 'row', minHeight: 520 }}>
-                <View style={{ flex: 1, padding: 16, backgroundColor: '#fff' }}>
-                  <View style={{ maxWidth: 560 }}>
-                    {formDisabled && (
-                      <View style={{
-                        width: '100%',
-                        marginBottom: 12,
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        borderRadius: 10,
-                        backgroundColor: '#FFF8E1',
-                        borderWidth: 1,
-                        borderColor: '#FFE082',
-                      }}>
-                        <Text style={{ fontSize: 13, color: '#5D4037' }}>
-                          Välj ett företag i listan till vänster för att visa och ändra dess företagsprofil.
-                        </Text>
-                      </View>
-                    )}
-
-                    <View style={{ paddingVertical: 6, width: '100%' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 6 }}>Företags-ID (kort identifierare)</Text>
-                      <TextInput
-                        value={companyId}
-                        editable={false}
-                        placeholder="foretag-id"
-                        style={{
-                          width: '100%',
-                          borderWidth: 1,
-                          borderColor: '#E6E8EC',
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#f5f5f5',
-                          color: '#555',
-                          fontSize: 14,
-                        }}
-                      />
+            ) : (
+              <>
+                <View style={{ width: '100%', maxWidth: 1200, alignSelf: 'center' }}>
+                {/* HEADER CARD */}
+                <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, marginBottom: 24 }}>
+                  <View style={{ flexDirection: Platform.OS === 'web' ? 'row' : 'column', gap: 24, alignItems: 'center' }}>
+                    {/* Logo/Image Section */}
+                    <View style={{ flex: Platform.OS === 'web' ? 0 : 1, alignItems: 'center', justifyContent: 'center', minWidth: Platform.OS === 'web' ? 200 : '100%' }}>
+                      {logoUrl ? (
+                        <Image 
+                          source={{ uri: logoUrl }} 
+                          style={{ width: 120, height: 120, borderRadius: 12, backgroundColor: '#f0f0f0' }} 
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View style={{ width: 120, height: 120, borderRadius: 12, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
+                          <Ionicons name="business" size={48} color="#ccc" />
+                        </View>
+                      )}
                     </View>
 
-                    <View style={{ paddingVertical: 6, width: '100%' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 6 }}>Företagsnamn</Text>
-                      <TextInput
-                        value={companyName}
-                        editable={false}
-                        placeholder="Företagsnamn"
-                        style={{
-                          width: '100%',
-                          borderWidth: 1,
-                          borderColor: '#E6E8EC',
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#f5f5f5',
-                          color: '#555',
-                          fontSize: 14,
-                        }}
-                      />
-                      {hasSelectedCompany && allowedTools ? (
-                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const endBusy = beginBusy('Sparar företagsnamn…');
-                              try {
-                                const compId = String(companyId || '').trim();
-                                if (!compId) return;
-                                const current = String(companyName || '').trim();
-                                const next = (typeof window !== 'undefined')
-                                  ? String(window.prompt('Nytt företagsnamn:', current) || '').trim()
-                                  : '';
-                                if (!next || next === current) return;
-                                const conf = (typeof window !== 'undefined')
-                                  ? window.confirm(`Byt företagsnamn för ${compId} till "${next}"?`)
-                                  : true;
-                                if (!conf) return;
-
-                                const res = await setCompanyNameRemote({ companyId: compId, companyName: next });
-                                const ok = !!(res && (res.ok === true || res.success === true));
-                                if (!ok) {
-                                  try { if (typeof window !== 'undefined') window.alert('Kunde inte byta företagsnamn (servern avvisade ändringen).'); } catch (_e) {}
-                                  return;
-                                }
-                                let latest = null;
-                                try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                                const nameNow = String((latest && (latest.companyName || latest.name)) || next).trim();
-                                setCompanyName(nameNow);
-                                try {
-                                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                    window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                      detail: {
-                                        companyId: compId,
-                                        profile: { companyName: nameNow },
-                                      },
-                                    }));
-                                  }
-                                } catch (_e) {}
-                                try {
-                                  if (isSuperadmin) {
-                                    const sameAsDropdown = String(auditCompanyId || '').trim() === compId;
-                                    await loadAuditForCompany(compId, 50, { setLogEvents: sameAsDropdown, setSelectedCompanyEvents: true });
-                                  }
-                                } catch (_e) {}
-                              } catch (e) {
-                                const rawCode = e && e.code ? String(e.code) : '';
-                                const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                                const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                                try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte byta företagsnamn: ' + combined); } catch (_e) {}
-                              } finally {
-                                endBusy();
-                              }
-                            }}
-                            style={{
-                              height: 34,
-                              borderRadius: 8,
-                              border: '1px solid #ccc',
-                              backgroundColor: '#fff',
-                              padding: '0 10px',
-                              cursor: 'pointer',
-                              fontSize: 13,
-                              fontWeight: 600,
-                            }}
-                          >
-                            Byt företagsnamn
-                          </button>
-                        </div>
-                      ) : null}
-                    </View>
-
-                    <View style={{ paddingVertical: 6, width: '100%' }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 6 }}>Licenser (userLimit)</Text>
-                      <View
-                        style={{
-                          width: '100%',
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 10,
-                          backgroundColor: '#f5f5f5',
-                          borderWidth: 1,
-                          borderColor: '#E6E8EC',
-                        }}
-                      >
-                        <Text style={{ color: '#333', fontSize: 13 }}>
-                          {hasSelectedCompany
-                            ? `Max antal användare: ${userLimit !== undefined && userLimit !== null ? String(userLimit) : '—'}`
-                            : 'Ingen företag valt ännu.'}
+                    {/* Info Section */}
+                    <View style={{ flex: 1, gap: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                        <Text style={{ fontSize: 24, fontWeight: '600', color: '#222', flex: 1, minWidth: 200 }}>
+                          {companyName || companyId}
                         </Text>
-                        {hasSelectedCompany && allowedTools ? (
-                          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const endBusy = beginBusy('Sparar userLimit…');
-                                try {
-                                  const compId = String(companyId || '').trim();
-                                  if (!compId) return;
-                                  const current = String(userLimit || '').trim();
-                                  const raw = (typeof window !== 'undefined')
-                                    ? String(window.prompt('Nytt max antal användare (userLimit):', current) || '').trim()
-                                    : '';
-                                  if (!raw || raw === current) return;
-                                  const nextNum = parseInt(raw, 10);
-                                  if (!Number.isFinite(nextNum) || Number.isNaN(nextNum) || nextNum < 0) {
-                                    try { if (typeof window !== 'undefined') window.alert('Ange ett giltigt tal (0 eller större).'); } catch (_e) {}
-                                    return;
-                                  }
-                                  const conf = (typeof window !== 'undefined')
-                                    ? window.confirm(`Sätta userLimit för ${compId} till ${nextNum}?`)
-                                    : true;
-                                  if (!conf) return;
-
-                                  const res = await setCompanyUserLimitRemote({ companyId: compId, userLimit: nextNum });
-                                  const ok = !!(res && (res.ok === true || res.success === true));
-                                  if (!ok) {
-                                    try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra userLimit (servern avvisade ändringen).'); } catch (_e) {}
-                                    return;
-                                  }
-                                  let latest = null;
-                                  try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                                  const limitNow = (latest && typeof latest.userLimit !== 'undefined' && latest.userLimit !== null)
-                                    ? String(latest.userLimit)
-                                    : String(nextNum);
-                                  setUserLimit(limitNow);
-                                  try {
-                                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                      window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                        detail: {
-                                          companyId: compId,
-                                          profile: { userLimit: nextNum },
-                                        },
-                                      }));
-                                    }
-                                  } catch (_e) {}
-                                  try {
-                                    if (isSuperadmin) {
-                                      const sameAsDropdown = String(auditCompanyId || '').trim() === compId;
-                                      await loadAuditForCompany(compId, 50, { setLogEvents: sameAsDropdown, setSelectedCompanyEvents: true });
-                                    }
-                                  } catch (_e) {}
-                                } catch (e) {
-                                  const rawCode = e && e.code ? String(e.code) : '';
-                                  const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                                  const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                                  try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte ändra userLimit: ' + combined); } catch (_e) {}
-                                } finally {
-                                  endBusy();
-                                }
-                              }}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          {hasSelectedCompany && allowedTools ? (
+                            <TouchableOpacity
+                              onPress={openEditModal}
                               style={{
-                                height: 34,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 4,
+                                paddingVertical: 6,
+                                paddingHorizontal: 12,
                                 borderRadius: 8,
-                                border: '1px solid #ccc',
+                                borderWidth: 1,
+                                borderColor: '#ddd',
                                 backgroundColor: '#fff',
-                                padding: '0 10px',
-                                cursor: 'pointer',
-                                fontSize: 13,
-                                fontWeight: 600,
                               }}
                             >
-                              Justera antal användare (userLimit)
-                            </button>
-                          </div>
-                        ) : (
-                          <Text style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
-                            Endast superadmin kan ändra userLimit.
-                          </Text>
-                        )}
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>
+                                Ändra
+                              </Text>
+                              <Ionicons name="chevron-down" size={14} color="#666" />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
                       </View>
-                    </View>
 
-                    <View style={{ paddingTop: 12 }}>
-                      <Text style={{ color: '#666', fontSize: 13 }}>Obs: företagsprofilen lagras i Firestore (foretag/&lt;företags‑ID&gt;/profil/public). Max antal användare (userLimit) ändras via högerklick på företag i listan till vänster.</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
+                        <InfoItem label="Företags-ID" value={companyId || '—'} />
+                        <InfoItem label="Användare" value={typeof companyMemberCount === 'number' ? `${companyMemberCount} st` : '—'} />
+                        <InfoItem label="Licenser" value={seatsLeft !== null ? `${seatsLeft} kvar` : (userLimit ? `${userLimit} totalt` : '—')} />
+                        <InfoItem label="Skapad" value={lastAuditText ? lastAuditText.split(' ')[0] : '—'} />
+                        <InfoItem label="Senast aktiv" value={lastAuditText ? lastAuditText.split(' ')[1] || '—' : '—'} />
+                      </View>
                     </View>
                   </View>
+                </View>
 
-                  {hasSelectedCompany && allowedTools ? (
-                    <View style={{ marginTop: 16, maxWidth: 680 }}>
-                      <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Inställningar</Text>
+                {/* ACTION CARDS */}
+                {hasSelectedCompany && allowedTools ? (
+                  <View style={{ 
+                    flexDirection: Platform.OS === 'web' ? 'row' : 'column', 
+                    gap: 24, 
+                    marginBottom: 24,
+                    flexWrap: 'wrap'
+                  }}>
+                    {/* Status Card */}
+                    <ActionCard
+                      icon={<Ionicons name="shield-checkmark" size={28} color={companyEnabled ? '#2E7D32' : '#C62828'} />}
+                      title="Aktivt"
+                      text={companyEnabled ? "Företaget är aktivt och kan användas." : "Företaget är pausat."}
+                      button={companyEnabled ? "Inaktivera företag" : "Aktivera företag"}
+                      color={companyEnabled ? "green" : "red"}
+                      onPress={async () => {
+                        if (!companyId) return;
+                        const wantEnable = !companyEnabled;
+                        const compId = String(companyId).trim();
+                        const label = wantEnable ? 'aktivera' : 'pausa';
+                        const message = wantEnable
+                          ? `Aktivera företaget ${compId}? Användare och admins får åtkomst igen.`
+                          : `Pausa företaget ${compId}? All data och kontroller sparas, men användare och admins kan inte logga in.`;
+                        const conf = (typeof window !== 'undefined') ? window.confirm(message) : true;
+                        if (!conf) return;
 
-                      {companyDeleted ? (
-                        <View style={{ borderWidth: 1, borderColor: '#FFE0B2', borderRadius: 10, padding: 12, backgroundColor: '#FFF8E1', marginBottom: 10 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                              <Ionicons name="eye-off" size={18} color="#EF6C00" />
-                              <View style={{ flex: 1, minWidth: 0 }}>
-                                <Text style={{ fontSize: 14, fontWeight: '800', color: '#E65100' }}>Företaget är DOLT i listan</Text>
-                                <Text style={{ fontSize: 12, color: '#8D6E63', marginTop: 2 }}>
-                                  Det visas bara när "Visa dolda företag" är ikryssat. Du kan göra det synligt igen även om det fortfarande är pausat.
-                                </Text>
-                              </View>
-                            </View>
-                            <TouchableOpacity
-                              onPress={async () => {
-                                if (!companyId) return;
-                                const compId = String(companyId).trim();
-                                const conf = (typeof window !== 'undefined')
-                                  ? window.confirm(`Gör företaget ${compId} synligt i listan igen?`)
-                                  : true;
-                                if (!conf) return;
-                                const endBusy = beginBusy('Gör synligt…');
-                                try {
-                                  const res = await setCompanyStatusRemote({ companyId: compId, deleted: false });
-                                  const ok = !!(res && (res.ok === true || res.success === true));
-                                  if (!ok) {
-                                    try { if (typeof window !== 'undefined') window.alert('Kunde inte göra företaget synligt (servern avvisade ändringen).'); } catch (_e) {}
-                                    return;
-                                  }
+                        const endBusy = beginBusy(wantEnable ? 'Aktiverar företag…' : 'Pausar företag…');
 
-                                  let latest = null;
-                                  try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                                  const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : false;
-                                  const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : companyEnabled;
-                                  setCompanyDeleted(deletedNow);
-                                  setCompanyEnabled(enabledNow);
-
-                                  try {
-                                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                      window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                        detail: { companyId: compId, profile: { deleted: deletedNow, enabled: enabledNow } },
-                                      }));
-                                    }
-                                  } catch (_e) {}
-
-                                  try { if (typeof window !== 'undefined') window.alert('Ok: företaget är nu synligt i listan.'); } catch (_e) {}
-                                } catch (e) {
-                                  const rawCode = e && e.code ? String(e.code) : '';
-                                  const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                                  const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                                  try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte göra synligt: ' + combined); } catch (_e) {}
-                                } finally {
-                                  endBusy();
-                                }
-                              }}
-                              style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#FFB74D', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 }}
-                            >
-                              <Text style={{ fontWeight: '800', color: '#E65100' }}>Gör synligt</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ) : null}
-
-                      {!companyDeleted && !companyEnabled ? (
-                        <TouchableOpacity
-                          onPress={async () => {
-                            if (!companyId) return;
-                            const compId = String(companyId).trim();
-                            const conf = (typeof window !== 'undefined')
-                              ? window.confirm(`Dölj företaget ${compId}? Det blir synligt igen via "Visa dolda företag" eller knappen "Gör synligt".`)
-                              : true;
-                            if (!conf) return;
-                            const endBusy = beginBusy('Döljer företag…');
-                            try {
-                              const res = await setCompanyStatusRemote({ companyId: compId, deleted: true, enabled: false });
-                              const ok = !!(res && (res.ok === true || res.success === true));
-                              if (!ok) {
-                                try { if (typeof window !== 'undefined') window.alert('Kunde inte dölja företaget (servern avvisade ändringen).'); } catch (_e) {}
-                                return;
-                              }
-
-                              let latest = null;
-                              try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                              const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : true;
-                              const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : false;
-                              setCompanyDeleted(deletedNow);
-                              setCompanyEnabled(enabledNow);
-
-                              try {
-                                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                  window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                    detail: { companyId: compId, profile: { deleted: deletedNow, enabled: enabledNow } },
-                                  }));
-                                }
-                              } catch (_e) {}
-
-                              try { if (typeof window !== 'undefined') window.alert('Ok: företaget är dolt i listan.'); } catch (_e) {}
-                            } catch (e) {
-                              const rawCode = e && e.code ? String(e.code) : '';
-                              const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                              const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                              try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte dölja: ' + combined); } catch (_e) {}
-                            } finally {
-                              endBusy();
-                            }
-                          }}
-                          style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 12, backgroundColor: '#F9FAFB', marginBottom: 10 }}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                              <Ionicons name="eye-off" size={16} color="#6B7280" />
-                              <View style={{ flex: 1, minWidth: 0 }}>
-                                <Text style={{ fontSize: 14, fontWeight: '700', color: '#374151' }}>Dölj företag</Text>
-                                <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Tillåtet endast när företaget är pausat/inaktivt.</Text>
-                              </View>
-                            </View>
-                            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
-                          </View>
-                        </TouchableOpacity>
-                      ) : null}
-
-                      <TouchableOpacity
-                        onPress={async () => {
-                          if (!companyId) return;
-                          const wantEnable = !companyEnabled;
-                          const compId = String(companyId).trim();
-                          const label = wantEnable ? 'aktivera' : 'pausa';
-                          const message = wantEnable
-                            ? `Aktivera företaget ${compId}? Användare och admins får åtkomst igen.`
-                            : `Pausa företaget ${compId}? All data och kontroller sparas, men användare och admins kan inte logga in.`;
-                          const conf = (typeof window !== 'undefined') ? window.confirm(message) : true;
-                          if (!conf) return;
-
-                          const endBusy = beginBusy(wantEnable ? 'Aktiverar företag…' : 'Pausar företag…');
-
-                          try {
-                            // Viktigt: om vi aktiverar ett dolt bolag ska det bli synligt igen.
-                            const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable, ...(wantEnable ? { deleted: false } : {}) });
-                            const ok = !!(res && (res.ok === true || res.success === true));
-                            if (!ok) {
-                              try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra företagsstatus (servern avvisade ändringen).'); } catch (_e) {}
-                              return;
-                            }
-
-                            // Läs tillbaka profil så status-pill och UI speglar servern
-                            let latest = null;
-                            try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                            const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : wantEnable;
-                            const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : (wantEnable ? false : companyDeleted);
-                            setCompanyEnabled(enabledNow);
-                            setCompanyDeleted(deletedNow);
-
-                            try {
-                              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                  detail: {
-                                    companyId: compId,
-                                    profile: { enabled: enabledNow, deleted: deletedNow },
-                                  },
-                                }));
-                              }
-                            } catch (_e) {}
-
-                            // Uppdatera loggvisning för valt företag
-                            try {
-                              if (isSuperadmin) {
-                                const sameAsDropdown = String(auditCompanyId || '').trim() === compId;
-                                loadAuditForCompany(compId, 50, { setLogEvents: sameAsDropdown, setSelectedCompanyEvents: true });
-                              }
-                            } catch (_e) {}
-
-                            try { if (typeof window !== 'undefined') window.alert(`Ok: företaget ${label}des.`); } catch (_e) {}
-                          } catch (e) {
-                            const rawCode = e && e.code ? String(e.code) : '';
-                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                            try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte ändra status: ' + combined); } catch (_e) {}
-                          } finally {
-                            endBusy();
-                          }
-                        }}
-                        style={{
-                          borderWidth: 1,
-                          borderColor: companyEnabled ? '#C8E6C9' : '#FFCDD2',
-                          borderRadius: 10,
-                          padding: 12,
-                          backgroundColor: companyEnabled ? '#F1F8E9' : '#FFEBEE',
-                          marginBottom: 10,
-                        }}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                            <Ionicons name={companyEnabled ? 'checkmark-circle' : 'close-circle'} size={18} color={companyEnabled ? '#2E7D32' : '#C62828'} />
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={{ fontSize: 14, fontWeight: '800', color: companyEnabled ? '#1B5E20' : '#B71C1C' }}>
-                                {companyEnabled ? 'Företaget är AKTIVT' : 'Företaget är INAKTIVT (pausat)'}
-                              </Text>
-                              <Text style={{ fontSize: 12, color: companyEnabled ? '#2E7D32' : '#C62828', marginTop: 2 }}>
-                                {companyEnabled
-                                  ? 'Klicka för att pausa. All data och kontroller sparas.'
-                                  : (companyDeleted ? 'Klicka för att aktivera och göra företaget synligt igen.' : 'Klicka för att aktivera. Användare och admins får åtkomst igen.')}
-                              </Text>
-                            </View>
-                          </View>
-                          <Ionicons name={companyEnabled ? 'pause' : 'play'} size={18} color={companyEnabled ? '#2E7D32' : '#C62828'} />
-                        </View>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        disabled={String(companyId || '').trim() === 'MS Byggsystem'}
-                        onPress={async () => {
-                          if (!companyId) return;
-                          const compId = String(companyId).trim();
-                          const compName = String(companyName || companyId || '').trim();
-                          if (compId === 'MS Byggsystem') {
-                            try { if (typeof window !== 'undefined') window.alert('MS Byggsystem kan aldrig raderas.'); } catch (_e) {}
+                        try {
+                          const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable, ...(wantEnable ? { deleted: false } : {}) });
+                          const ok = !!(res && (res.ok === true || res.success === true));
+                          if (!ok) {
+                            try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra företagsstatus (servern avvisade ändringen).'); } catch (_e) {}
                             return;
                           }
+
+                          let latest = null;
+                          try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
+                          const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : wantEnable;
+                          const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : (wantEnable ? false : companyDeleted);
+                          setCompanyEnabled(enabledNow);
+                          setCompanyDeleted(deletedNow);
+
+                          try {
+                            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                              window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+                                detail: {
+                                  companyId: compId,
+                                  profile: { enabled: enabledNow, deleted: deletedNow },
+                                },
+                              }));
+                            }
+                          } catch (_e) {}
+
+                          try {
+                            if (isSuperadmin) {
+                              const sameAsDropdown = String(auditCompanyId || '').trim() === compId;
+                              loadAuditForCompany(compId, 50, { setLogEvents: sameAsDropdown, setSelectedCompanyEvents: true });
+                            }
+                          } catch (_e) {}
+
+                          try { if (typeof window !== 'undefined') window.alert(`Ok: företaget ${label}des.`); } catch (_e) {}
+                        } catch (e) {
+                          const rawCode = e && e.code ? String(e.code) : '';
+                          const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                          const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                          try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte ändra status: ' + combined); } catch (_e) {}
+                        } finally {
+                          endBusy();
+                        }
+                      }}
+                    />
+
+                    {/* SharePoint Card */}
+                    <ActionCard
+                      icon={
+                        <View style={{ position: 'relative', width: 28, height: 28, alignItems: 'flex-start', justifyContent: 'flex-start' }}>
+                          <Ionicons name="cloud-outline" size={28} color="#1976D2" />
+                          {sharePointSiteId ? (
+                            <View style={{ position: 'absolute', top: -2, right: -4, flexDirection: 'row', gap: 2, alignItems: 'center' }}>
+                              {/* Status indicator (green check or red error) */}
+                              <View style={{ backgroundColor: sharePointSyncError ? '#C62828' : '#2E7D32', borderRadius: 10, width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
+                                <Ionicons name={sharePointSyncError ? "close" : "checkmark"} size={10} color="#fff" />
+                              </View>
+                              {/* Debug button */}
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  // Debug button - show SharePoint site info
+                                  if (!companyId) return;
+                                  const compId = String(companyId).trim();
+                                  try {
+                                    const profile = await fetchCompanyProfile(compId);
+                                    const siteId = profile?.sharePointSiteId || '';
+                                    const webUrl = profile?.sharePointWebUrl || '';
+                                    const debugInfo = `SharePoint Debug Info:\n\n` +
+                                      `Site ID: ${siteId || 'N/A'}\n` +
+                                      `Web URL: ${webUrl || 'N/A'}\n` +
+                                      `Company ID: ${compId}\n` +
+                                      `Status: ${siteId ? (sharePointSyncError ? 'Linked (Error)' : 'Linked') : 'Not linked'}\n\n` +
+                                      `Debug Actions:\n` +
+                                      `- Klicka OK för att testa error status\n` +
+                                      `(Detta är bara för test - error status kan återställas)`;
+                                    if (typeof window !== 'undefined') {
+                                      window.alert(debugInfo);
+                                      // Temporär test: Visa rött fel för test
+                                      const testError = window.confirm('Vill du testa rött fel-status? (Detta är bara för test)');
+                                      if (testError) {
+                                        setSharePointSyncError(true);
+                                        setTimeout(() => {
+                                          // Återställ efter 5 sekunder för demo
+                                          if (typeof window !== 'undefined') {
+                                            window.alert('Error status satt. Den återställs automatiskt efter 5 sekunder för demo.');
+                                          }
+                                          setTimeout(() => {
+                                            setSharePointSyncError(false);
+                                          }, 5000);
+                                        }, 100);
+                                      }
+                                    }
+                                  } catch (e) {
+                                    console.error('[SharePoint Debug] Error:', e);
+                                    try { if (typeof window !== 'undefined') window.alert('Debug info kunde inte hämtas: ' + (e?.message || e)); } catch (_e) {}
+                                  }
+                                }}
+                                style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}
+                                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                              >
+                                <Ionicons name="information-circle" size={14} color="#666" />
+                              </TouchableOpacity>
+                            </View>
+                          ) : null}
+                        </View>
+                      }
+                      title="SharePoint Site"
+                      text={sharePointSiteId ? (sharePointSyncError ? "SharePoint site är kopplad men synkar inte korrekt." : "SharePoint site är kopplad och synkar.") : "Koppla en SharePoint-site till företaget."}
+                      button={sharePointSiteId ? "Stäng av synkning" : "Skapa SharePoint Site"}
+                      color="blue"
+                      disabled={sharePointSiteCreating}
+                      onPress={async () => {
+                        if (!companyId) return;
+                        
+                        // If already connected, disconnect
+                        if (sharePointSiteId) {
+                          const compId = String(companyId).trim();
+                          const compName = String(companyName || companyId || '').trim();
+                          
                           const conf = (typeof window !== 'undefined')
-                            ? window.confirm(`Radera företaget "${compName}" (${compId}) permanent?\n\nDetta raderar företagets data permanent och går inte att ångra.`)
+                            ? window.confirm(`Stäng av SharePoint-synkning för "${compName}" (${compId})?\n\nDetta tar bort länken mellan företaget och SharePoint-site. Filer i SharePoint påverkas inte.`)
                             : true;
                           if (!conf) return;
 
-                          const endBusy = beginBusy('Raderar företag…');
-
+                          const endBusy = beginBusy('Stänger av synkning…');
+                          
                           try {
-                            const res = await purgeCompanyRemote({ companyId: compId });
-                            const ok = !!(res && (res.ok === true || res.success === true));
-                            if (!ok) {
-                              try { if (typeof window !== 'undefined') window.alert('Kunde inte radera företaget (servern avvisade ändringen).'); } catch (_e) {}
-                              return;
-                            }
-                            try { if (typeof window !== 'undefined') window.alert('Raderat. Klicka på uppdatera-ikonen i företagslistan för att uppdatera listan.'); } catch (_e) {}
-                            setCompanyId('');
-                            setCompanyName('');
-                            setUserLimit('10');
-                            setCompanyEnabled(true);
-                            setCompanyDeleted(false);
-                            setCompanyMemberCount(null);
-                            setAuditEvents([]);
-                            setAuditCompanyId('');
-                            setSelectedCompanyAuditEvents([]);
+                            // Remove SharePoint site link by setting siteId to null
+                            const { updateDoc, doc } = await import('firebase/firestore');
+                            const { db } = await import('../components/firebase');
+                            const ref = doc(db, 'foretag', compId, 'profil', 'public');
+                            await updateDoc(ref, { 
+                              sharePointSiteId: null,
+                              sharePointWebUrl: null,
+                              updatedAt: (await import('firebase/firestore')).serverTimestamp()
+                            });
+                            
+                            setSharePointSiteId('');
+                            
+                            try { if (typeof window !== 'undefined') window.alert('SharePoint-synkning är avstängd.'); } catch (_e) {}
                           } catch (e) {
-                            const rawCode = e && e.code ? String(e.code) : '';
-                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                            try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte radera företaget: ' + combined); } catch (_e) {}
+                            console.error('[ManageCompany] ⚠️ Failed to disconnect SharePoint site:', e);
+                            const errorMsg = e?.message || String(e);
+                            try { if (typeof window !== 'undefined') window.alert(`Kunde inte stänga av synkning: ${errorMsg}`); } catch (_e) {}
                           } finally {
                             endBusy();
                           }
-                        }}
-                        style={{ borderWidth: 1, borderColor: '#FFCDD2', borderRadius: 10, padding: 12, backgroundColor: '#fff', opacity: String(companyId || '').trim() === 'MS Byggsystem' ? 0.55 : 1 }}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                            <Ionicons name="trash" size={16} color="#C62828" />
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#C62828' }}>Radera företag</Text>
-                              <Text style={{ fontSize: 12, color: '#666', marginTop: 2 }}>Alla data kommer att raderas permanent.</Text>
-                            </View>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#999" />
-                        </View>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
+                          return;
+                        }
+                        
+                        // If not connected, create/link site (existing logic)
+                        const compId = String(companyId).trim();
+                        const compName = String(companyName || companyId || '').trim();
+                        
+                        const conf = (typeof window !== 'undefined')
+                          ? window.confirm(`Skapa SharePoint site för "${compName}" (${compId})?\n\nDetta kommer att skapa en ny SharePoint site automatiskt.`)
+                          : true;
+                        if (!conf) return;
 
-                <View style={{ width: 360, backgroundColor: '#F9FAFB', borderLeftWidth: 1, borderLeftColor: '#E6E8EC', padding: 16 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#222', marginBottom: 10 }}>Företagsprofil</Text>
-                  {hasSelectedCompany ? (
-                    <>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#222' }} numberOfLines={1}>{companyName || companyId}</Text>
-                          <Text style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{statusLabel}</Text>
-                        </View>
-                        <View style={{ alignSelf: 'flex-start', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, backgroundColor: statusLabel === 'Aktivt' ? '#E8F5E9' : (statusLabel === 'Pausat' ? '#FFEBEE' : '#F3F4F6') }}>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: statusLabel === 'Aktivt' ? '#2E7D32' : (statusLabel === 'Pausat' ? '#C62828' : '#6B7280') }}>{statusLabel}</Text>
-                        </View>
-                      </View>
+                        setSharePointSiteCreating(true);
+                        const endBusy = beginBusy('Skapar SharePoint site…');
 
-                      <View style={{ marginBottom: 12 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 6 }}>Användare</Text>
-                        <Text style={{ fontSize: 13, color: '#374151' }}>
-                          {typeof companyMemberCount === 'number' ? `${companyMemberCount} användare` : '— användare'}
-                          {seatsLeft !== null ? ` (${seatsLeft} licenser kvar)` : ''}
-                        </Text>
-                      </View>
+                        try {
+                          const { getStoredAccessToken } = await import('../services/azure/authService');
+                          const existingToken = await getStoredAccessToken();
+                          
+                          if (!existingToken) {
+                            try { if (typeof window !== 'undefined') window.alert('Du behöver autentisera med Microsoft/Azure först. Systemet kommer att omdirigera dig till inloggning...'); } catch (_e) {}
+                            const { getAccessToken } = await import('../services/azure/authService');
+                            await getAccessToken();
+                          }
 
-                      <View style={{ marginBottom: 12 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 6 }}>Senaste aktivitet</Text>
-                        <Text style={{ fontSize: 13, color: '#374151' }}>{lastAuditText || '—'}</Text>
-                      </View>
-
-                      <View style={{ marginBottom: 12, alignItems: 'center', justifyContent: 'center' }}>
-                        {logoUrl ? (
-                          <img
-                            src={logoUrl}
-                            alt="Företagslogga"
-                            style={{ maxHeight: 80, maxWidth: 260, objectFit: 'contain', borderRadius: 6, border: '1px solid #eee', backgroundColor: '#fff', padding: 4 }}
-                          />
-                        ) : (
-                          <View style={{ height: 80, width: '100%', borderRadius: 6, borderWidth: 1, borderColor: '#eee', backgroundColor: '#fafafa', alignItems: 'center', justifyContent: 'center' }}>
-                            <Text style={{ fontSize: 12, color: '#999' }}>Ingen logga uppladdad ännu.</Text>
-                          </View>
-                        )}
-                      </View>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => {
+                          const sanitizedId = compId
+                            .replace(/[^a-zA-Z0-9]/g, '')
+                            .replace(/\s+/g, '')
+                            .toLowerCase()
+                            .substring(0, 50);
+                          
+                          const { getSiteByUrl } = await import('../services/azure/siteService');
+                          const { getAzureConfig } = await import('../services/azure/config');
+                          const config = getAzureConfig();
+                          const hostname = new URL(config.sharePointSiteUrl).hostname;
+                          
+                          console.log('[ManageCompany] Looking for existing SharePoint site:', sanitizedId);
+                          const existingSite = await getSiteByUrl(sanitizedId, hostname);
+                          
+                          if (existingSite && existingSite.siteId) {
+                            console.log('[ManageCompany] ✅ Found existing SharePoint site:', existingSite.webUrl);
+                            
+                            await saveCompanySharePointSiteId(compId, existingSite.siteId, existingSite.webUrl);
+                            setSharePointSiteId(existingSite.siteId);
+                            setSharePointSyncError(false); // Reset error status when sync is activated
+                            
                             try {
-                              if (fileInputRef.current) fileInputRef.current.click();
-                            } catch (_e) {}
-                          }}
-                          disabled={logoUploading}
-                          style={{
-                            padding: '6px 10px',
-                            borderRadius: 8,
-                            border: '1px solid #ccc',
-                            backgroundColor: '#fafafa',
-                            cursor: logoUploading ? 'default' : 'pointer',
-                            fontSize: 13,
-                          }}
-                        >
-                          {logoUploading ? 'Laddar upp logga…' : 'Byt logga'}
-                        </button>
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept="image/*"
-                          style={{ display: 'none' }}
-                          onChange={handleLogoFileChange}
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <Text style={{ fontSize: 13, color: '#666' }}>
-                      Välj ett företag i listan till vänster för att visa och ändra företagsloggan.
-                    </Text>
-                  )}
-                </View>
-              </View>
+                              const { ensureCompanySiteStructure } = await import('../services/azure/siteService');
+                              await ensureCompanySiteStructure(existingSite.siteId, compId);
+                              console.log('[ManageCompany] ✅ Company folder structure created');
+                            } catch (structureError) {
+                              console.warn('[ManageCompany] ⚠️ Could not create company folder structure:', structureError);
+                            }
+                            
+                            try {
+                              const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+                              await ensureSystemFolderStructure();
+                              console.log('[ManageCompany] ✅ System folder structure ensured');
+                            } catch (systemStructureError) {
+                              console.warn('[ManageCompany] ⚠️ Could not ensure system folder structure:', systemStructureError);
+                            }
+                            
+                            try { if (typeof window !== 'undefined') window.alert(`SharePoint site länkad! URL: ${existingSite.webUrl}\n\nMappstruktur skapad.`); } catch (_e) {}
+                          } else {
+                            const manualMessage = `SharePoint site hittades inte för "${compName}".\n\n` +
+                              `Skapa site manuellt:\n` +
+                              `1. Gå till SharePoint Admin Center:\n` +
+                              `   https://admin.microsoft.com/sharepoint\n\n` +
+                              `2. Klicka "+ Skapa" och fyll i:\n\n` +
+                              `   📝 NAMN: "${compName}"\n` +
+                              `   📝 GRUPPENS E-POSTADRESS: "${compId.replace(/[^a-zA-Z0-9]/g, '')}"\n` +
+                              `   📝 WEBBPLATSADRESS: "${sanitizedId}"\n` +
+                              `   📝 GRUPPÄGARE: marcus@msbyggsystem.se\n\n` +
+                              `3. När site är skapad, kom tillbaka och klicka på "Skapa SharePoint Site" igen för att länka den.`;
+                            
+                            try { if (typeof window !== 'undefined') window.alert(manualMessage); } catch (_e) {}
+                          }
+                        } catch (e) {
+                          console.error('[ManageCompany] ⚠️ Failed to create SharePoint site:', e);
+                          const errorMsg = e?.message || String(e);
+                          const isAuthError = errorMsg.includes('access token') || errorMsg.includes('authenticate') || errorMsg.includes('Redirecting');
+                          
+                          if (isAuthError) {
+                            try { if (typeof window !== 'undefined') window.alert('Autentisering krävs. Du kommer att omdirigeras till Microsoft-inloggning...'); } catch (_e) {}
+                          } else {
+                            try { if (typeof window !== 'undefined') window.alert(`Kunde inte skapa SharePoint site: ${errorMsg}`); } catch (_e) {}
+                          }
+                        } finally {
+                          setSharePointSiteCreating(false);
+                          endBusy();
+                        }
+                      }}
+                    />
 
-              {isSuperadmin ? (
-                <View style={{ marginTop: 16 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
-                    <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 0 }}>Senaste åtgärder (admin-logg)</Text>
+                    {/* Delete Card */}
+                    <ActionCard
+                      icon={<Ionicons name="trash" size={28} color="#C62828" />}
+                      title="Radera företag"
+                      text="Ta bort företaget permanent."
+                      button="Radera företag"
+                      color="red"
+                      disabled={String(companyId || '').trim() === 'MS Byggsystem'}
+                      onPress={async () => {
+                        if (!companyId) return;
+                        const compId = String(companyId).trim();
+                        const compName = String(companyName || companyId || '').trim();
+                        if (compId === 'MS Byggsystem') {
+                          try { if (typeof window !== 'undefined') window.alert('MS Byggsystem kan aldrig raderas.'); } catch (_e) {}
+                          return;
+                        }
+                        // Extra säkerhet: Kräv bekräftelse med "RADERA"
+                        const confirmWord = 'RADERA';
+                        let conf = false;
+                        let confirmText = '';
+                        
+                        if (typeof window !== 'undefined') {
+                          const userConfirm = window.confirm(
+                            `Radera företaget "${compName}" (${compId}) permanent?\n\n` +
+                            `Detta raderar företagets data permanent och går inte att ångra.\n\n` +
+                            `Skriv "${confirmWord}" i nästa dialog för att bekräfta.`
+                          );
+                          if (!userConfirm) return;
+                          
+                          // Prompt för bekräftelsetext
+                          confirmText = window.prompt(
+                            `Bekräfta radering genom att skriva "${confirmWord}":\n\n` +
+                            `(Skriv exakt "${confirmWord}" för att fortsätta)`
+                          ) || '';
+                          conf = confirmText.trim().toUpperCase() === confirmWord;
+                        } else {
+                          conf = true; // Native fallback
+                        }
+                        
+                        if (!conf) {
+                          try { if (typeof window !== 'undefined') window.alert('Bekräftelsen matchade inte. Radering avbruten.'); } catch (_e) {}
+                          return;
+                        }
+
+                        const endBusy = beginBusy('Raderar företag…');
+
+                        try {
+                          const res = await purgeCompanyRemote({ companyId: compId });
+                          const ok = !!(res && (res.ok === true || res.success === true));
+                          if (!ok) {
+                            try { if (typeof window !== 'undefined') window.alert('Kunde inte radera företaget (servern avvisade ändringen).'); } catch (_e) {}
+                            return;
+                          }
+                          try { if (typeof window !== 'undefined') window.alert('Raderat. Klicka på uppdatera-ikonen i företagslistan för att uppdatera listan.'); } catch (_e) {}
+                          setCompanyId('');
+                          setCompanyName('');
+                          setUserLimit('10');
+                          setCompanyEnabled(true);
+                          setCompanyDeleted(false);
+                          setCompanyMemberCount(null);
+                          setAuditEvents([]);
+                          setAuditCompanyId('');
+                          setSelectedCompanyAuditEvents([]);
+                        } catch (e) {
+                          const rawCode = e && e.code ? String(e.code) : '';
+                          const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                          const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                          try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte radera företaget: ' + combined); } catch (_e) {}
+                        } finally {
+                          endBusy();
+                        }
+                      }}
+                    />
+                  </View>
+                ) : null}
+
+                {/* LOG SECTION */}
+                {isSuperadmin ? (
+                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>Senaste åtgärder</Text>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, color: '#666' }}>Företag:</span>
                       <select
@@ -1148,42 +1119,340 @@ export default function ManageCompany({ navigation }) {
                     </div>
                   </View>
 
-                  <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, maxHeight: 320, overflow: 'auto', backgroundColor: '#fafafa', width: '100%' }}>
-                    {!auditCompanyId ? (
-                      <Text style={{ fontSize: 13, color: '#666' }}>Välj ett företag för att se admin-loggen.</Text>
-                    ) : auditLoading ? (
-                      <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
-                    ) : (Array.isArray(auditEvents) && auditEvents.length > 0 ? (
-                      auditEvents.map((ev) => {
-                        const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
-                        const tsText = ts ? ts.toLocaleString('sv-SE') : '';
-                        const type = String(ev?.type || '').trim();
-                        let label = type;
-                        if (type === 'createUser') label = 'Skapa användare';
-                        else if (type === 'updateUser') label = 'Uppdatera användare';
-                        else if (type === 'deleteUser') label = 'Ta bort användare';
-                        else if (type === 'setCompanyUserLimit') label = 'Ändra antal användare (userLimit)';
-                        else if (type === 'setCompanyName') label = 'Ändra företagsnamn';
-                        else if (type === 'setCompanyStatus') label = 'Ändra status (pausa/aktivera)';
-                        else if (type === 'provisionCompany') label = 'Skapa företag';
-                        else if (type === 'purgeCompany') label = 'Permanent radering av företag';
+                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%', maxHeight: 400, overflowY: 'auto' }}>
+                        <View style={{ padding: 12, paddingBottom: 24 }}>
+                          {!auditCompanyId ? (
+                            <Text style={{ fontSize: 13, color: '#666' }}>Välj ett företag för att se admin-loggen.</Text>
+                          ) : auditLoading ? (
+                            <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
+                          ) : (Array.isArray(auditEvents) && auditEvents.length > 0 ? (
+                            <>
+                              {auditEvents.map((ev, index) => {
+                                const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
+                                const tsText = ts ? ts.toLocaleString('sv-SE') : '';
+                                const type = String(ev?.type || '').trim();
+                                let label = type;
+                                if (type === 'createUser') label = 'Skapa användare';
+                                else if (type === 'updateUser') label = 'Uppdatera användare';
+                                else if (type === 'deleteUser') label = 'Ta bort användare';
+                                else if (type === 'setCompanyUserLimit') label = 'Ändra antal användare (userLimit)';
+                                else if (type === 'setCompanyName') label = 'Ändra företagsnamn';
+                                else if (type === 'setCompanyStatus') label = 'Ändra status (pausa/aktivera)';
+                                else if (type === 'provisionCompany') label = 'Skapa företag';
+                                else if (type === 'purgeCompany') label = 'Permanent radering av företag';
 
-                        return (
-                          <View key={ev.id} style={{ paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-                            <Text style={{ fontSize: 13, fontWeight: '600', color: '#333' }}>{label}</Text>
-                            {tsText ? <Text style={{ fontSize: 12, color: '#777' }}>{tsText}</Text> : null}
-                          </View>
-                        );
-                      })
-                    ) : (
-                      <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
-                    ))}
-                  </View>
+                                return (
+                                  <View key={ev.id} style={{ paddingVertical: 8, borderBottomWidth: index === auditEvents.length - 1 ? 0 : 1, borderBottomColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                      <Ionicons name="checkmark-circle" size={16} color="#2E7D32" />
+                                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#333', flex: 1 }}>{label}</Text>
+                                    </View>
+                                    {tsText ? <Text style={{ fontSize: 12, color: '#777', flexShrink: 0 }}>{tsText}</Text> : null}
+                                  </View>
+                                );
+                              })}
+                            </>
+                          ) : (
+                            <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                  ) : null}
                 </View>
-              ) : null}
-            </View>
+                <View style={{ height: 100, minHeight: 100, width: '100%' }} />
+              </>
+            )}
           </View>
         </MainLayout>
+
+            {/* Edit Company Modal */}
+            <Modal
+          visible={editModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setEditModalVisible(false)}
+        >
+          <Pressable 
+            style={{ 
+              flex: 1, 
+              backgroundColor: 'rgba(0, 0, 0, 0.4)',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: 20
+            }}
+            onPress={() => setEditModalVisible(false)}
+          >
+            <Pressable 
+              style={{
+                backgroundColor: '#fff',
+                borderRadius: 14,
+                padding: 20,
+                width: Platform.OS === 'web' ? 520 : '100%',
+                maxWidth: 520,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                elevation: 5,
+              }}
+              onPress={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <View style={{ 
+                flexDirection: 'row', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                marginBottom: 20 
+              }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>
+                  Ändra företagsprofil
+                </Text>
+                <TouchableOpacity 
+                  onPress={() => setEditModalVisible(false)}
+                  style={{ padding: 4 }}
+                >
+                  <Ionicons name="close" size={24} color="#666" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Content */}
+              <ScrollView style={{ maxHeight: Platform.OS === 'web' ? 500 : 400 }}>
+                {/* Företagsnamn */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                    Företagsnamn
+                  </Text>
+                  <TextInput
+                    value={editName}
+                    onChangeText={setEditName}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: '#ddd',
+                      borderRadius: 8,
+                      padding: 10,
+                      fontSize: 14,
+                      backgroundColor: '#fff',
+                    }}
+                    placeholder="Företagsnamn"
+                  />
+                </View>
+
+                {/* Företags-ID */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                    Företags-ID
+                  </Text>
+                  <TextInput
+                    value={editCompanyId}
+                    onChangeText={setEditCompanyId}
+                    editable={false}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: '#ddd',
+                      borderRadius: 8,
+                      padding: 10,
+                      fontSize: 14,
+                      backgroundColor: '#f5f5f5',
+                      color: '#666',
+                    }}
+                    placeholder="Företags-ID"
+                  />
+                  <Text style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                    Företags-ID kan inte ändras (det är unikt identifierare)
+                  </Text>
+                </View>
+
+                {/* Logo */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                    Company Logo
+                  </Text>
+                  <View style={{ 
+                    flexDirection: 'row', 
+                    alignItems: 'center', 
+                    gap: 12,
+                    marginBottom: 12 
+                  }}>
+                    {logoUrl ? (
+                      <Image 
+                        source={{ uri: logoUrl }} 
+                        style={{ 
+                          width: 64, 
+                          height: 64, 
+                          borderRadius: 8,
+                          backgroundColor: '#f0f0f0'
+                        }} 
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <View style={{ 
+                        width: 64, 
+                        height: 64, 
+                        borderRadius: 8,
+                        backgroundColor: '#f0f0f0',
+                        justifyContent: 'center',
+                        alignItems: 'center'
+                      }}>
+                        <Ionicons name="business" size={32} color="#ccc" />
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web' && editFileInputRef.current) {
+                          editFileInputRef.current.click();
+                        }
+                      }}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        backgroundColor: '#fff',
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>
+                        Byt bild
+                      </Text>
+                      <Ionicons name="chevron-forward" size={14} color="#666" />
+                    </TouchableOpacity>
+                    {Platform.OS === 'web' && (
+                      <input
+                        ref={editFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file && companyId) {
+                            setLogoUploading(true);
+                            try {
+                              const url = await uploadCompanyLogo({ companyId, file });
+                              setLogoUrl(url);
+                              // Trigger refresh
+                              await handleSelectCompany(companyId);
+                            } catch (error) {
+                              console.error('Logo upload error:', error);
+                              try {
+                                if (typeof window !== 'undefined') {
+                                  window.alert('Kunde inte ladda upp logotyp: ' + (error?.message || error));
+                                }
+                              } catch (_e) {}
+                            } finally {
+                              setLogoUploading(false);
+                            }
+                          }
+                        }}
+                      />
+                    )}
+                  </View>
+                  {logoUploading && (
+                    <Text style={{ fontSize: 11, color: '#1976D2' }}>Laddar upp logotyp...</Text>
+                  )}
+                </View>
+
+                {/* Max antal användare */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                    Max antal användare
+                  </Text>
+                  <View style={{ 
+                    flexDirection: 'row', 
+                    alignItems: 'center', 
+                    gap: 12 
+                  }}>
+                    <TouchableOpacity
+                      onPress={() => setEditUserLimit(Math.max(1, editUserLimit - 1))}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        backgroundColor: '#fff',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>–</Text>
+                    </TouchableOpacity>
+                    
+                    <Text style={{ 
+                      fontSize: 16, 
+                      fontWeight: '600', 
+                      color: '#222',
+                      minWidth: 40,
+                      textAlign: 'center'
+                    }}>
+                      {editUserLimit}
+                    </Text>
+                    
+                    <TouchableOpacity
+                      onPress={() => setEditUserLimit(editUserLimit + 1)}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#ddd',
+                        backgroundColor: '#fff',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {/* Footer */}
+              <View style={{ 
+                flexDirection: 'row', 
+                justifyContent: 'flex-end', 
+                gap: 10,
+                marginTop: 20,
+                paddingTop: 20,
+                borderTopWidth: 1,
+                borderTopColor: '#eee'
+              }}>
+                <TouchableOpacity
+                  onPress={() => setEditModalVisible(false)}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#eee',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>
+                    Avbryt
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  onPress={handleSaveEditModal}
+                  disabled={busyCount > 0}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#3f7f3f',
+                    opacity: busyCount > 0 ? 0.6 : 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
+                    {busyCount > 0 ? 'Sparar...' : 'Spara ändringar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </RootContainer>
     );
   }

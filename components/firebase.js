@@ -7,6 +7,7 @@ import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndP
 import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { uploadFile as uploadFileToAzure, getFileUrl as getFileUrlFromAzure } from '../services/azure/fileService';
 import { Alert, Platform } from 'react-native';
 
 // Firebase-konfiguration för DigitalKontroll
@@ -123,12 +124,96 @@ export async function uploadUserAvatar({ companyId, uid, file }) {
   if (!companyId) throw new Error('companyId is required');
   if (!uid) throw new Error('uid is required');
   if (!file) throw new Error('file is required');
+  
   const safeName = String(file?.name || 'avatar').replace(/[^a-zA-Z0-9_.-]/g, '_');
-  const path = `user-avatars/${companyId}/${uid}/${Date.now()}_${safeName}`;
-  const r = storageRef(storage, path);
-  const contentType = String(file?.type || '').trim() || 'image/jpeg';
-  await uploadBytes(r, file, { contentType });
-  return await getDownloadURL(r);
+  const fileName = `${Date.now()}_${safeName}`;
+  const azurePath = `01-Company/${companyId}/Users/${uid}/${fileName}`;
+  
+  try {
+    // Admin files (logos, avatars) should always go to Digitalkontroll site (system), not company-specific sites
+    // Ensure system folder structure exists first
+    const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+    await ensureSystemFolderStructure();
+    
+    // Pass null for companyId to force use of global config (Digitalkontroll site)
+    // But still use companyId in the path for organization
+    const url = await uploadFileToAzure({
+      file,
+      path: azurePath,
+      companyId: null, // Don't use company-specific site for admin files
+      siteId: null, // Use global config (Digitalkontroll site)
+    });
+    console.log('[uploadUserAvatar] ✅ Uploaded to Azure (Digitalkontroll site):', url);
+    return url;
+  } catch (error) {
+    // Fallback to Firebase Storage (for backwards compatibility)
+    console.warn('[uploadUserAvatar] ⚠️ Azure upload failed, falling back to Firebase:', error);
+    const path = `user-avatars/${companyId}/${uid}/${fileName}`;
+    const r = storageRef(storage, path);
+    const contentType = String(file?.type || '').trim() || 'image/jpeg';
+    await uploadBytes(r, file, { contentType });
+    return await getDownloadURL(r);
+  }
+}
+
+/**
+ * Upload company logo to Azure (with fallback to Firebase Storage)
+ * @param {Object} options - Upload options
+ * @param {string} options.companyId - Company ID
+ * @param {File|Blob} options.file - Logo file
+ * @returns {Promise<string>} Logo URL
+ */
+export async function uploadCompanyLogo({ companyId, file }) {
+  if (!companyId) throw new Error('companyId is required');
+  if (!file) throw new Error('file is required');
+  
+  const safeCompanyId = String(companyId).trim();
+  const fileName = `${Date.now()}_${file.name}`;
+  const azurePath = `01-Company/${safeCompanyId}/Logos/${fileName}`;
+  
+  try {
+    // Admin files (logos, avatars) should always go to Digitalkontroll site (system), not company-specific sites
+    // Try to ensure system folder structure exists first (but don't fail if auth is not available)
+    try {
+      const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+      await ensureSystemFolderStructure();
+    } catch (folderError) {
+      // Folder structure creation failed (likely auth issue) - this is OK, uploadFile will create folders as needed
+      if (folderError?.message && !folderError.message.includes('Popup window was blocked')) {
+        console.warn('[uploadCompanyLogo] Warning ensuring folder structure:', folderError);
+      }
+    }
+    
+    // Pass null for companyId to force use of global config (Digitalkontroll site)
+    // But still use companyId in the path for organization
+    const url = await uploadFileToAzure({
+      file,
+      path: azurePath,
+      companyId: null, // Don't use company-specific site for admin files
+      siteId: null, // Use global config (Digitalkontroll site)
+    });
+    console.log('[uploadCompanyLogo] ✅ Uploaded to Azure (Digitalkontroll site):', url);
+    return url;
+  } catch (error) {
+    // Check if error is related to authentication/popup blocking
+    const isAuthError = error?.message && (
+      error.message.includes('Popup window was blocked') ||
+      error.message.includes('authenticate') ||
+      error.message.includes('access token')
+    );
+    
+    // Fallback to Firebase Storage (for backwards compatibility)
+    if (isAuthError) {
+      console.log('[uploadCompanyLogo] ℹ️ Azure authentication not available, using Firebase Storage (this is normal until you authenticate with SharePoint)');
+    } else {
+      console.warn('[uploadCompanyLogo] ⚠️ Azure upload failed, falling back to Firebase:', error);
+    }
+    
+    const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${fileName}`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file);
+    return await getDownloadURL(ref);
+  }
 }
 
 export async function adminFetchCompanyMembers(companyId) {
@@ -349,16 +434,164 @@ function sanitizeForFirestore(value) {
 
 // Helpers for syncing hierarchy per company
 export async function fetchHierarchy(companyId) {
-  if (!companyId) return [];
+  if (!companyId) {
+    console.log('[fetchHierarchy] No companyId provided');
+    return [];
+  }
   try {
+    console.log('[fetchHierarchy] Fetching hierarchy for company:', companyId);
     const ref = doc(db, 'foretag', companyId, 'hierarki', 'state');
     const snap = await getDoc(ref);
     if (snap.exists()) {
       const data = snap.data();
-      return Array.isArray(data.items) ? data.items : [];
+      console.log('[fetchHierarchy] Document exists, checking structure...');
+      
+      // Check if we have the new structure (items array)
+      const hasItems = Array.isArray(data.items) && data.items.length > 0;
+      const hasChildren = data.children && Array.isArray(data.children) && data.children.length > 0;
+      
+      // IMPORTANT: If both items and children exist, we have a mixed structure
+      // Check if children contains projects that are not in items
+      if (hasItems && hasChildren) {
+        console.warn('[fetchHierarchy] ⚠️ WARNING: Both items and children exist! This is a mixed structure.');
+        console.warn('[fetchHierarchy] ⚠️ Items has', data.items.length, 'items, children has', data.children.length, 'items');
+        
+        // Helper function to find all projects in a hierarchy
+        const findAllProjects = (items) => {
+          const projects = [];
+          const walk = (nodes) => {
+            if (!Array.isArray(nodes)) return;
+            nodes.forEach(node => {
+              if (node && node.type === 'project' && node.id) {
+                projects.push({ id: node.id, name: node.name });
+              }
+              if (node && node.children && Array.isArray(node.children)) {
+                walk(node.children);
+              }
+            });
+          };
+          walk(items);
+          return projects;
+        };
+        
+        const projectsInItems = findAllProjects(data.items);
+        const projectsInChildren = findAllProjects(data.children);
+        
+        console.log('[fetchHierarchy] Projects in items:', projectsInItems.map(p => p.id).join(', '));
+        console.log('[fetchHierarchy] Projects in children:', projectsInChildren.map(p => p.id).join(', '));
+        
+        // If children has projects that are not in items, we need to merge them
+        const missingProjects = projectsInChildren.filter(p => 
+          !projectsInItems.some(ip => String(ip.id).trim() === String(p.id).trim())
+        );
+        
+        if (missingProjects.length > 0) {
+          console.warn('[fetchHierarchy] ⚠️ Found', missingProjects.length, 'projects in children that are not in items:', missingProjects.map(p => p.id).join(', '));
+          console.warn('[fetchHierarchy] ⚠️ Using children as source and migrating to items...');
+          
+          // Use children as the source (it has the actual project data)
+          try {
+            await setDoc(ref, { 
+              items: data.children, 
+              updatedAt: serverTimestamp() 
+            }, { merge: false });
+            console.log('[fetchHierarchy] ✅ Migrated children to items - removed children from root');
+            return data.children;
+          } catch(migrateErr) {
+            console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+            // Return children anyway so the app can work
+            return data.children;
+          }
+        } else {
+          // All projects are in items, just remove children
+          console.warn('[fetchHierarchy] ⚠️ All projects are in items. Removing children from root...');
+          try {
+            await setDoc(ref, { 
+              items: data.items, 
+              updatedAt: serverTimestamp() 
+            }, { merge: false });
+            console.log('[fetchHierarchy] ✅ Migrated mixed structure - removed children from root');
+            return data.items;
+          } catch(migrateErr) {
+            console.error('[fetchHierarchy] ❌ Failed to migrate mixed structure:', migrateErr);
+            // Return items anyway
+            return data.items;
+          }
+        }
+      }
+      
+      if (hasItems) {
+        console.log('[fetchHierarchy] ✅ Found new structure with', data.items.length, 'items');
+        return data.items;
+      }
+      
+      // Check if we have old structure with children directly in document (not in items)
+      // This happens when data was saved incorrectly or migrated from old structure
+      if (hasChildren) {
+        console.warn('[fetchHierarchy] ⚠️ Found old structure (children directly in document, not in items). Migrating to new structure...');
+        console.log('[fetchHierarchy] Old structure has', data.children.length, 'children');
+        
+        // Migrate: wrap children in items array
+        const migratedItems = data.children;
+        
+        // Save the migrated structure (remove children from root, put in items)
+        try {
+          await setDoc(ref, { 
+            items: migratedItems, 
+            updatedAt: serverTimestamp() 
+          }, { merge: false });
+          console.log('[fetchHierarchy] ✅ Migrated old structure (children) to new structure (items)');
+          console.log('[fetchHierarchy] ✅ Migration complete. Project should now be in items array.');
+          return migratedItems;
+        } catch(migrateErr) {
+          console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+          // Return the children anyway so the app can work
+          return migratedItems;
+        }
+      }
+      
+      // Check if we have old structure (project directly in document)
+      // This is a migration case - convert old structure to new
+      if (data.type === 'project' && data.id) {
+        console.warn('[fetchHierarchy] ⚠️ Found old structure (project directly in document). Migrating to new structure...');
+        console.log('[fetchHierarchy] Old project data:', { id: data.id, name: data.name });
+        // Create a new structure with the project in items array
+        const migratedItems = [{
+          type: 'main',
+          id: 'main-migrated',
+          name: 'Migrerad',
+          children: [{
+            type: 'sub',
+            id: 'sub-migrated',
+            name: 'Migrerad',
+            children: [{
+              ...data,
+              // Keep all project fields
+            }]
+          }]
+        }];
+        
+        // Save the migrated structure
+        try {
+          await setDoc(ref, { items: migratedItems, updatedAt: serverTimestamp() }, { merge: false });
+          console.log('[fetchHierarchy] ✅ Migrated old structure to new structure');
+          return migratedItems;
+        } catch(migrateErr) {
+          console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+          // Return empty array if migration fails
+          return [];
+        }
+      }
+      
+      // No valid structure found
+      console.warn('[fetchHierarchy] ⚠️ No valid structure found in document');
+      return [];
+    } else {
+      console.log('[fetchHierarchy] Document does not exist');
     }
   } catch(_e) {
     // Silent fail -> caller can fall back to local storage
+    console.error('[fetchHierarchy] ❌ Error fetching hierarchy:', _e);
   }
   return [];
 }
@@ -374,7 +607,21 @@ export async function saveHierarchy(companyId, items) {
       const existingSnap = await getDoc(ref);
       if (existingSnap.exists()) {
         const existingData = existingSnap.data();
-        const existingItems = Array.isArray(existingData?.items) ? existingData.items : [];
+        let existingItems = Array.isArray(existingData?.items) ? existingData.items : [];
+        
+        // Handle old structure where project is directly in document
+        if (existingItems.length === 0 && existingData?.type === 'project' && existingData?.id) {
+          console.warn('[saveHierarchy] ⚠️ Found old structure (project directly in document). Will be migrated on next fetch.');
+          // Don't create backup for old structure - it will be migrated by fetchHierarchy
+          existingItems = [];
+        }
+        
+        // IMPORTANT: If children exists directly in document, we need to migrate it to items
+        // This happens when there's a mixed structure
+        if (existingItems.length === 0 && existingData?.children && Array.isArray(existingData.children) && existingData.children.length > 0) {
+          console.warn('[saveHierarchy] ⚠️ Found children in document but items is empty. Migrating children to items...');
+          existingItems = existingData.children;
+        }
         
         // VALIDERING: Förhindra att tom hierarki skriver över befintlig data
         // Om den nya hierarkin är tom men det fanns data tidigare, avbryt
@@ -394,24 +641,71 @@ export async function saveHierarchy(companyId, items) {
               reason: 'pre_save_backup'
             });
             // Behåll bara de 5 senaste backup:erna (rensar gamla)
-            // Detta görs i bakgrunden så det blockerar inte huvudoperationen
-            setTimeout(async () => {
+            // Kör asynkront så det inte blockerar huvudoperationen
+            // Behåll bara de 5 senaste backup:erna (rensar gamla)
+            // Kör asynkront så det inte blockerar huvudoperationen, men vänta lite för att säkerställa att backup sparades
+            // Backup-rensning körs asynkront i bakgrunden
+            // Kör direkt (inte setTimeout) för att säkerställa att den faktiskt körs
+            (async () => {
+              // Vänta lite för att säkerställa att backup sparades
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
               try {
+                console.log('[saveHierarchy] Startar backup-rensning...');
                 const backupsRef = collection(db, 'foretag', companyId, 'hierarki');
-                const backupsQuery = query(backupsRef, where('reason', '==', 'pre_save_backup'), orderBy('backedUpAt', 'desc'));
-                const backupsSnap = await getDocs(backupsQuery);
+                // Hämta alla backup-dokument (sortera efter ID som innehåller timestamp)
+                const backupsSnap = await getDocs(backupsRef);
                 const backups = [];
-                backupsSnap.forEach(d => backups.push({ id: d.id, ...d.data() }));
+                backupsSnap.forEach(d => {
+                  if (d.id.startsWith('backup_') && d.id !== 'state') {
+                    const timestamp = parseInt(d.id.replace('backup_', '')) || 0;
+                    backups.push({ id: d.id, timestamp });
+                  }
+                });
+                
+                console.log(`[saveHierarchy] Hittade ${backups.length} backup-filer`);
+                
+                // Sortera efter timestamp (nyaste först)
+                backups.sort((a, b) => b.timestamp - a.timestamp);
+                
                 // Ta bort alla utom de 5 senaste
                 if (backups.length > 5) {
+                  console.log(`[saveHierarchy] Rensar ${backups.length - 5} gamla backup-filer...`);
+                  let deletedCount = 0;
+                  let permissionErrors = 0;
                   for (let i = 5; i < backups.length; i++) {
                     try {
                       await deleteDoc(doc(backupsRef, backups[i].id));
-                    } catch(_e) {}
+                      deletedCount++;
+                      console.log(`[saveHierarchy] ✅ Raderade backup: ${backups[i].id}`);
+                    } catch(deleteErr) {
+                      // Check if it's a permission error
+                      if (deleteErr?.code === 'permission-denied') {
+                        permissionErrors++;
+                        console.log(`[saveHierarchy] ℹ️ Backup ${backups[i].id} kunde inte raderas (permissions)`);
+                      } else {
+                        console.warn(`[saveHierarchy] ⚠️ Kunde inte radera backup ${backups[i].id}:`, deleteErr);
+                      }
+                    }
                   }
+                  if (deletedCount > 0) {
+                    console.log(`[saveHierarchy] ✅ Backup-rensning klar. Raderade ${deletedCount} filer, behöll ${Math.min(5, backups.length)} backup-filer.`);
+                  }
+                  if (permissionErrors > 0) {
+                    console.log(`[saveHierarchy] ℹ️ ${permissionErrors} backup-filer kunde inte raderas automatiskt (permissions). De kan rensas manuellt i Firebase.`);
+                  }
+                } else {
+                  console.log(`[saveHierarchy] ✅ Inga backup-filer att rensa (${backups.length} totalt, max 5 tillåtet)`);
                 }
-              } catch(_e) {}
-            }, 100);
+              } catch(cleanupErr) {
+                // Don't log as error if it's just a permission issue
+                if (cleanupErr?.code === 'permission-denied') {
+                  console.log('[saveHierarchy] ℹ️ Backup-rensning kräver permissions (kan rensas manuellt i Firebase)');
+                } else {
+                  console.warn('[saveHierarchy] ⚠️ Backup-rensning misslyckades:', cleanupErr);
+                }
+              }
+            })();
           } catch(_e) {
             // Backup misslyckades, men fortsätt ändå med huvudoperationen
             console.warn('[saveHierarchy] Backup misslyckades:', _e);
@@ -424,7 +718,18 @@ export async function saveHierarchy(companyId, items) {
     }
     
     // Skriv den nya hierarkin
-    await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
+    // VIKTIGT: Använd { merge: false } för att ersätta hela dokumentet, inte bara uppdatera fält
+    // Detta säkerställer att items-arrayen uppdateras korrekt och tar bort gamla fält
+    // Rensa bort alla fält som inte ska finnas (t.ex. gamla projekt-fält direkt i dokumentet)
+    const cleanData = {
+      items: Array.isArray(items) ? items : [],
+      updatedAt: serverTimestamp()
+    };
+    
+    // Ta bort alla andra fält genom att använda merge: false
+    await setDoc(ref, cleanData, { merge: false });
+    console.log('[saveHierarchy] ✅ Hierarchy sparad till Firestore. Items count:', cleanData.items.length);
+    console.log('[saveHierarchy] ✅ Dokumentet har rensats - bara items och updatedAt finns kvar');
     return true;
   } catch(_e) {
     console.error('[saveHierarchy] Fel vid sparande:', _e);
@@ -441,6 +746,47 @@ export async function fetchCompanyProfile(companyId) {
     if (snap.exists()) return snap.data();
   } catch(_e) {}
   return null;
+}
+
+/**
+ * Get SharePoint Site ID for a company
+ * @param {string} companyId - Company ID
+ * @returns {Promise<string|null>} SharePoint Site ID or null if not configured
+ */
+export async function getCompanySharePointSiteId(companyId) {
+  if (!companyId) return null;
+  try {
+    const profile = await fetchCompanyProfile(companyId);
+    return profile?.sharePointSiteId || null;
+  } catch (error) {
+    console.warn('[getCompanySharePointSiteId] Error fetching site ID:', error);
+    return null;
+  }
+}
+
+/**
+ * Save SharePoint Site ID to company profile
+ * @param {string} companyId - Company ID
+ * @param {string} siteId - SharePoint Site ID
+ * @param {string} [webUrl] - SharePoint Site Web URL (optional)
+ * @returns {Promise<void>}
+ */
+export async function saveCompanySharePointSiteId(companyId, siteId, webUrl = null) {
+  if (!companyId || !siteId) {
+    throw new Error('Company ID and Site ID are required');
+  }
+  try {
+    const ref = doc(db, 'foretag', companyId, 'profil', 'public');
+    const updateData = { sharePointSiteId: siteId };
+    if (webUrl) {
+      updateData.sharePointWebUrl = webUrl;
+    }
+    await updateDoc(ref, updateData);
+    console.log(`[saveCompanySharePointSiteId] ✅ Saved SharePoint Site ID for company: ${companyId}`);
+  } catch (error) {
+    console.error('[saveCompanySharePointSiteId] Error saving site ID:', error);
+    throw error;
+  }
 }
 
 // Fetch a flat list of companies (foretag). Returns array of { id, profile }
@@ -1724,6 +2070,127 @@ export async function deleteCompanyContact({ id }, companyIdOverride) {
     throw err;
   }
   await deleteDoc(doc(db, 'foretag', companyId, 'kontakter', contactId));
+  return true;
+}
+
+// Leverantörer per företag
+// Data model: foretag/{companyId}/leverantorer/{supplierId} with fields:
+// { companyName: string, organizationNumber: string, vatNumber: string, address: string, category: string, createdAt, updatedAt }
+export async function fetchCompanySuppliers(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'leverantorer'));
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a?.companyName || '').trim();
+      const bn = String(b?.companyName || '').trim();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCompanySupplier({ companyName, organizationNumber, vatNumber, address, category }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const n = String(companyName || '').trim();
+  if (!n) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  const payload = {
+    companyName: n,
+    organizationNumber: String(organizationNumber || '').trim(),
+    vatNumber: String(vatNumber || '').trim(),
+    address: String(address || '').trim(),
+    category: String(category || '').trim(),
+    createdAt: serverTimestamp(),
+  };
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
+  if (createdBy) payload.createdBy = createdBy;
+
+  const colRef = collection(db, 'foretag', companyId, 'leverantorer');
+  const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
+  return docRef.id;
+}
+
+export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const supplierId = String(id || '').trim();
+  if (!supplierId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyName')) {
+    const n = String(safePatch.companyName || '').trim();
+    if (!n) throw new Error('Företagsnamn är obligatoriskt.');
+    safePatch.companyName = n;
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'organizationNumber')) {
+    safePatch.organizationNumber = String(safePatch.organizationNumber || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'vatNumber')) {
+    safePatch.vatNumber = String(safePatch.vatNumber || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'address')) {
+    safePatch.address = String(safePatch.address || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'category')) {
+    safePatch.category = String(safePatch.category || '').trim();
+  }
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'leverantorer', supplierId);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+export async function deleteCompanySupplier({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const supplierId = String(id || '').trim();
+  if (!supplierId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  await deleteDoc(doc(db, 'foretag', companyId, 'leverantorer', supplierId));
   return true;
 }
 

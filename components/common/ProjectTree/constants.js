@@ -121,12 +121,24 @@ export function getProjectFunctionsForPhase(phaseKey) {
 /**
  * Ensure project has default functions based on its phase
  * Uppdaterar funktionerna om projektets fas har ändrats
+ * NOTE: Kalkylskede-projekt ska INTE ha funktioner - de navigerar istället
  */
 export function ensureProjectFunctions(project) {
   if (!project || project.type !== 'project') return project;
   
-  // Hämta rätt funktioner baserat på projektets fas
+  // Kalkylskede-projekt ska INTE ha funktioner - de använder KalkylskedeLayout istället
   const phaseKey = project?.phase || DEFAULT_PHASE;
+  if (phaseKey === 'kalkylskede') {
+    // Ta bort alla funktioner från kalkylskede-projekt
+    const nonFunctionChildren = (project.children || []).filter(c => c.type !== 'projectFunction');
+    return {
+      ...project,
+      expanded: false, // Kalkylskede-projekt ska aldrig expanderas
+      children: nonFunctionChildren
+    };
+  }
+  
+  // Hämta rätt funktioner baserat på projektets fas
   const expectedFunctions = getProjectFunctionsForPhase(phaseKey);
   
   // Om projektet redan har children, kontrollera om det finns funktioner

@@ -59,6 +59,7 @@ export default function ProjectTree({
     hierarchy,
     onSelectProject,
     onSelectFunction,
+    selectedPhase,
   });
 
   if (!Array.isArray(hierarchyWithFunctions) || hierarchyWithFunctions.length === 0) {
@@ -103,6 +104,36 @@ export default function ProjectTree({
 
   return (
     <View>
+      {/* Add folder button at top */}
+      {onAddMainFolder && (
+        <TouchableOpacity
+          onPress={() => {
+            if (onAddMainFolder) {
+              onAddMainFolder();
+            }
+          }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#1976D2',
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            borderRadius: 8,
+            marginBottom: 12,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 4,
+            elevation: 2,
+          }}
+        >
+          <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 8 }} />
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+            Skapa mapp
+          </Text>
+        </TouchableOpacity>
+      )}
+      
       {[...hierarchyWithFunctions]
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
         .map((main) => {
@@ -221,22 +252,39 @@ export default function ProjectTree({
                               projects
                                 .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                                 .map((proj) => {
+                                  // Ensure phase is preserved - use project's phase or default based on selectedPhase or DEFAULT_PHASE
+                                  const { getProjectPhase, DEFAULT_PHASE } = require('../../../features/projects/constants');
+                                  const projectPhase = getProjectPhase(proj);
+                                  const effectivePhase = proj?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
+                                  
                                   const projectWithFunctions = {
                                     ...proj,
+                                    phase: effectivePhase, // Always ensure phase is set
                                     expanded: expandedProjects[proj.id] || false,
                                   };
+                                  
+                                  // Check if project is in kalkylskede - don't allow toggle for those
+                                  const isKalkylskede = projectPhase.key === 'kalkylskede' || (!proj?.phase && DEFAULT_PHASE === 'kalkylskede') || effectivePhase === 'kalkylskede';
+                                  
+                                  // For kalkylskede projects, force expanded to false (they navigate instead)
+                                  const effectiveExpanded = isKalkylskede ? false : projectWithFunctions.expanded;
                                   
                                   return (
                                     <ProjectTreeNode
                                       key={proj.id}
                                       project={projectWithFunctions}
-                                      isExpanded={projectWithFunctions.expanded}
-                                      onToggle={(projectId) => {
+                                      isExpanded={effectiveExpanded}
+                                      onToggle={isKalkylskede ? undefined : (projectId) => {
+                                        // Only allow toggle for non-kalkylskede projects
                                         handleProjectClick({ ...proj, id: projectId });
                                       }}
                                       onSelect={(project) => {
                                         if (onSelectProject) {
-                                          onSelectProject(project);
+                                          // Ensure phase is included when selecting project
+                                          onSelectProject({
+                                            ...project,
+                                            phase: project.phase || effectivePhase
+                                          });
                                         }
                                       }}
                                       onSelectFunction={handleFunctionClick}

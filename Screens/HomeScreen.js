@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDownloadURL, ref as storageRef } from 'firebase/storage';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
@@ -14,6 +14,8 @@ import { ensureProjectFunctions } from '../components/common/ProjectTree/constan
 import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
+import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
+import PhaseLeftPanel from '../features/project-phases/phases/kalkylskede/components/PhaseLeftPanel';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../features/projects/constants';
 import { useBreadcrumbNavigation } from '../hooks/common/useBreadcrumbNavigation';
 import { useHierarchyToggle } from '../hooks/common/useHierarchy';
@@ -36,8 +38,6 @@ const appVersion = getAppVersion();
 
 export default function HomeScreen({ navigation, route }) {
 
-  // Visible marker to confirm which bundle/source is running in web/native.
-  const BUILD_STAMP = 'DK-BUILD 2026-01-15 A';
 
   const [spinSidebarHome, setSpinSidebarHome] = useState(0);
   const [spinSidebarRefresh, setSpinSidebarRefresh] = useState(0);
@@ -195,6 +195,35 @@ export default function HomeScreen({ navigation, route }) {
     };
   }, []);
 
+  // Ensure SharePoint system folder structure exists (runs once on mount if user is logged in)
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = auth?.currentUser;
+        if (!user) return;
+        
+        // Try to ensure system folder structure in Digitalkontroll site
+        // This runs silently in the background - don't show errors to user
+        try {
+          const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+          await ensureSystemFolderStructure();
+          if (mounted) {
+            console.log('[HomeScreen] ✅ System folder structure ensured');
+          }
+        } catch (structureError) {
+          // Silently fail - structure will be created on-demand when files are uploaded
+          if (mounted && structureError?.message && !structureError.message.includes('Popup window was blocked') && !structureError.message.includes('Authentication not available')) {
+            console.warn('[HomeScreen] ⚠️ Could not ensure system folder structure:', structureError);
+          }
+        }
+      } catch (_e) {
+        // Ignore errors
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
   const routeCompanyId = route?.params?.companyId || null;
 
   const isAdminUser = !!(authClaims && (authClaims.admin === true || authClaims.role === 'admin'));
@@ -252,6 +281,10 @@ export default function HomeScreen({ navigation, route }) {
   // }, []);
   // State för nytt projekt-modal i undermapp (används bara för native)
   const [newProjectModal, setNewProjectModal] = useState({ visible: false, parentSubId: null });
+  // State för enkel modal för kalkylskede (bara projektnummer/namn)
+  const [simpleProjectModal, setSimpleProjectModal] = useState({ visible: false, parentSubId: null, parentMainId: null });
+  const [simpleProjectSuccessModal, setSimpleProjectSuccessModal] = useState(false);
+  const simpleProjectCreatedRef = React.useRef(null);
   // State för inline-projektskapande (web)
   const [creatingProjectInline, setCreatingProjectInline] = useState(null); // { parentType: 'main'|'sub', parentId: string, mainId?: string }
   const [newProjectName, setNewProjectName] = useState("");
@@ -597,6 +630,15 @@ export default function HomeScreen({ navigation, route }) {
     );
   }, [newProjectName, newProjectNumber, newProjectResponsible, newProjectSkyddsrondFirstDueValid, isProjectNumberUnique]);
 
+  // For simple modal (kalkylskede): only need project number and name
+  const canCreateSimpleProject = React.useMemo(() => {
+    return (
+      String(newProjectName ?? '').trim() !== ''
+      && String(newProjectNumber ?? '').trim() !== ''
+      && isProjectNumberUnique(newProjectNumber)
+    );
+  }, [newProjectName, newProjectNumber, isProjectNumberUnique]);
+
   // Close dropdown when clicking outside (web only)
   React.useEffect(() => {
     if (!isBrowserEnv || !responsibleDropdownOpen) return;
@@ -791,6 +833,48 @@ export default function HomeScreen({ navigation, route }) {
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedProjectPath, setSelectedProjectPath] = useState(null); // { mainId, subId, mainName?, subName?, projectId? }
   const selectedProjectRef = useRef(null);
+  
+  // Phase navigation state (for PhaseLeftPanel in leftpanel)
+  const [phaseActiveSection, setPhaseActiveSection] = useState(null);
+  const [phaseActiveItem, setPhaseActiveItem] = useState(null);
+  
+  // Get project phase for phase navigation
+  const projectPhase = selectedProject ? (() => {
+    try {
+      const phase = getProjectPhase(selectedProject);
+      console.log('[HomeScreen] getProjectPhase result:', phase);
+      return phase;
+    } catch (_e) {
+      console.error('[HomeScreen] Error getting project phase:', _e);
+      return null;
+    }
+  })() : null;
+  
+  const projectPhaseKey = projectPhase?.key || null;
+  console.log('[HomeScreen] projectPhaseKey:', projectPhaseKey, 'selectedProject:', selectedProject?.id);
+  
+  // Use phase navigation hook (will return null navigation if no phaseKey)
+  const { navigation: phaseNavigation, isLoading: phaseNavigationLoading } = usePhaseNavigation(
+    companyId,
+    selectedProject?.id || null,
+    projectPhaseKey
+  );
+  
+  console.log('[HomeScreen] phaseNavigation hook result:', {
+    hasNavigation: !!phaseNavigation,
+    isLoading: phaseNavigationLoading,
+    sectionsCount: phaseNavigation?.sections?.length || 0
+  });
+  
+  // Initialize active section when navigation loads (Översikt should be active from start, but no item selected to show summary)
+  React.useEffect(() => {
+    if (phaseNavigation && phaseNavigation.sections && phaseNavigation.sections.length > 0 && !phaseActiveSection) {
+      const firstSection = phaseNavigation.sections[0];
+      setPhaseActiveSection(firstSection.id);
+      // Don't auto-select first item - show section summary instead
+      setPhaseActiveItem(null);
+    }
+  }, [phaseNavigation, phaseActiveSection]);
   const [isInlineLocked, setIsInlineLocked] = useState(false);
   const pendingProjectSwitchRef = useRef(null);
   const pendingBreadcrumbNavRef = useRef(null); // { kind: 'dashboard'|'main'|'sub'|'project', mainId?, subId?, projectId? }
@@ -817,13 +901,49 @@ export default function HomeScreen({ navigation, route }) {
   // Selected phase for filtering (default: kalkylskede)
   const [selectedPhase, setSelectedPhase] = useState('kalkylskede');
   const [phaseChanging, setPhaseChanging] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState(null); // Store which phase is being loaded
   const phaseChangeSpinAnim = useRef(new Animated.Value(0)).current;
   
-  // Handler för fasbyte med loading indikator
-  const handlePhaseChange = React.useCallback((newPhase) => {
+  // Function to save all pending data before phase change
+  const saveAllPendingData = React.useCallback(async () => {
+    try {
+      const savePromises = [];
+      
+      // Save hierarchy if it exists and has changes
+      if (hierarchy && hierarchy.length > 0 && companyId) {
+        savePromises.push(saveHierarchy(companyId, hierarchy).catch(err => {
+          console.error('[HomeScreen] Error saving hierarchy:', err);
+          return false;
+        }));
+      }
+      
+      // Save any draft controls
+      // Note: This would need to be implemented based on your draft saving logic
+      
+      // Wait for all saves to complete
+      await Promise.all(savePromises);
+      console.log('[HomeScreen] All pending data saved');
+    } catch (error) {
+      console.error('[HomeScreen] Error saving pending data:', error);
+    }
+  }, [hierarchy, companyId]);
+  
+  // Handler för fasbyte med loading indikator och data-sparning
+  const handlePhaseChange = React.useCallback(async (newPhase) => {
     if (newPhase === selectedPhase) return;
+    
+    // Get phase name for loading message
+    const phaseConfig = PROJECT_PHASES.find(p => p.key === newPhase);
+    const phaseName = phaseConfig?.name || newPhase;
+    setLoadingPhase(newPhase);
     setPhaseChanging(true);
+    
+    // Save all pending data before changing phase
+    await saveAllPendingData();
+    
+    // Change phase
     setSelectedPhase(newPhase);
+    
     // Starta spinner animation
     phaseChangeSpinAnim.setValue(0);
     const animation = Animated.loop(
@@ -835,13 +955,15 @@ export default function HomeScreen({ navigation, route }) {
       })
     );
     animation.start();
-    // Visa loading i 1 sekund
+    
+    // Visa loading i minst 1 sekund för att användaren ska se meddelandet
     setTimeout(() => {
       animation.stop();
       phaseChangeSpinAnim.setValue(0);
       setPhaseChanging(false);
+      setLoadingPhase(null);
     }, 1000);
-  }, [selectedPhase, phaseChangeSpinAnim]);
+  }, [selectedPhase, phaseChangeSpinAnim, saveAllPendingData]);
 
   // Dashboard drill-down + hover (used mainly on web)
   const [dashboardFocus, setDashboardFocus] = useState(null); // 'activeProjects' | 'drafts' | 'controlsToSign' | 'upcomingSkyddsrond' | 'openDeviations'
@@ -946,13 +1068,43 @@ export default function HomeScreen({ navigation, route }) {
     const unsub = onProjectUpdated((updatedProject) => {
       try {
         if (!updatedProject || !updatedProject.id) return;
+        
+        // Check if project ID changed
+        const projectIdChanged = updatedProject._idChanged && updatedProject._oldId;
+        const oldId = projectIdChanged ? String(updatedProject._oldId) : null;
+        const newId = String(updatedProject.id);
+        
+        // Clean up temporary fields from updatedProject before using it
+        const cleanUpdatedProject = { ...updatedProject };
+        delete cleanUpdatedProject._oldId;
+        delete cleanUpdatedProject._idChanged;
+        
         setHierarchy((prev) => {
-            const walk = (nodes) => {
+          const walk = (nodes) => {
             const next = (nodes || []).map((n) => {
               if (!n) return n;
-              if (n.type === 'project' && String(n.id) === String(updatedProject.id)) {
-                return Object.assign({}, n, updatedProject);
+              
+              // If project ID changed, find project with old ID and replace it with new project
+              if (projectIdChanged && oldId) {
+                const nodeId = String(n.id || '');
+                if (n.type === 'project' && nodeId === oldId) {
+                  console.log('[HomeScreen] Found project with old ID in hierarchy, replacing with new ID:', oldId, '->', newId);
+                  // Replace old project with new project (keeping children if they exist)
+                  const newProject = { ...cleanUpdatedProject };
+                  // Preserve children if the old project had any
+                  if (n.children && Array.isArray(n.children)) {
+                    newProject.children = n.children;
+                  }
+                  return newProject;
+                }
+              } else {
+                // Normal update: find project with matching ID and update it
+                if (n.type === 'project' && String(n.id) === newId) {
+                  return Object.assign({}, n, cleanUpdatedProject);
+                }
               }
+              
+              // Recursively walk children
               if (Array.isArray(n.children) && n.children.length > 0) {
                 const newChildren = walk(n.children);
                 if (newChildren !== n.children) {
@@ -968,7 +1120,35 @@ export default function HomeScreen({ navigation, route }) {
           return newHierarchy;
         });
 
-        setSelectedProject((prev) => (prev && String(prev.id) === String(updatedProject.id) ? Object.assign({}, prev, updatedProject) : prev));
+        // Update selectedProject if it matches the updated project
+        // Handle case where project ID changed (old ID -> new ID)
+        setSelectedProject((prev) => {
+          if (!prev) return prev;
+          
+          // Check if this is the same project (by comparing IDs)
+          const prevId = String(prev.id);
+          const newId = String(updatedProject.id);
+          
+          // If IDs match, update the project
+          if (prevId === newId) {
+            return Object.assign({}, prev, updatedProject);
+          }
+          
+          // If project ID changed, check if prev.id matches the old ID
+          if (updatedProject._idChanged && updatedProject._oldId) {
+            const oldId = String(updatedProject._oldId);
+            if (prevId === oldId) {
+              console.log('[HomeScreen] Project ID changed, updating selectedProject from', oldId, 'to', newId);
+              // Update selectedProject with new ID
+              const updated = Object.assign({}, updatedProject);
+              delete updated._oldId; // Remove temporary fields
+              delete updated._idChanged;
+              return updated;
+            }
+          }
+          
+          return prev;
+        });
       } catch (e) {
         console.warn('onProjectUpdated handler error', e);
       }
@@ -1056,6 +1236,145 @@ export default function HomeScreen({ navigation, route }) {
     setSelectedProject(nextProject);
     if (clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
   }, [isInlineLocked]);
+
+  // Handle simple project creation for Kalkylskede (must be after requestProjectSwitch declaration)
+  const handleCreateSimpleProject = React.useCallback(async () => {
+    if (creatingProject || !canCreateSimpleProject) return;
+    setCreatingProject(true);
+    try {
+      const projectId = String(newProjectNumber ?? '').trim();
+      const projectName = String(newProjectName ?? '').trim();
+      const parentSubId = simpleProjectModal.parentSubId;
+      const parentMainId = simpleProjectModal.parentMainId;
+      let mainId = parentMainId || null;
+      let subId = parentSubId || null;
+      
+      // If no parentSubId, we need to create project in main folder (but this shouldn't happen in kalkylskede)
+      // For now, require parentSubId
+      if (!parentSubId) {
+        console.error('parentSubId is required. Projects must be created in a subfolder.');
+        setCreatingProject(false);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert('Projekt måste skapas i en undermapp. Skapa en undermapp först genom att högerklicka på huvudmappen och välja "Lägg till undermapp".');
+        } else {
+          Alert.alert('Fel', 'Projekt måste skapas i en undermapp. Skapa en undermapp först.');
+        }
+        return;
+      }
+      
+      // Insert new project into selected subfolder
+      setHierarchy(prev => {
+        const updated = prev.map(main => {
+          // If we have parentMainId, only process that main folder
+          if (parentMainId && main.id !== parentMainId) {
+            return main;
+          }
+          
+          return {
+            ...main,
+            children: main.children.map(sub =>
+              sub.id === parentSubId
+                ? {
+                    ...sub,
+                    children: [
+                      ...(sub.children || []),
+                      {
+                        id: projectId,
+                        name: projectName,
+                        type: 'project',
+                        status: 'ongoing',
+                        phase: selectedPhase || DEFAULT_PHASE,
+                        createdAt: new Date().toISOString(),
+                        createdBy: auth?.currentUser?.email || ''
+                      }
+                    ]
+                  }
+                : sub
+            )
+          };
+        });
+        
+        // Find mainId if not already set
+        if (!mainId) {
+          for (const main of updated) {
+            for (const sub of main.children || []) {
+              if (sub.id === parentSubId) {
+                mainId = main.id;
+                break;
+              }
+            }
+            if (mainId) break;
+          }
+        }
+        
+        return updated;
+      });
+      
+      // Store project info for callback
+      simpleProjectCreatedRef.current = { projectId, projectName, mainId, subId: parentSubId };
+      
+      // Wait a moment for hierarchy to update and save
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Show success popup
+      setCreatingProject(false);
+      setSimpleProjectSuccessModal(true);
+    } catch (error) {
+      console.error('Error creating simple project:', error);
+      setCreatingProject(false);
+    }
+  }, [creatingProject, canCreateSimpleProject, newProjectNumber, newProjectName, simpleProjectModal.parentSubId, selectedPhase, setHierarchy, auth?.currentUser?.email]);
+
+  // Handle simple project success modal close and navigation
+  const handleSimpleProjectSuccessClose = React.useCallback(() => {
+    setSimpleProjectSuccessModal(false);
+    const projectInfo = simpleProjectCreatedRef.current;
+    simpleProjectCreatedRef.current = null;
+    
+    // Close modal and reset fields
+    setSimpleProjectModal({ visible: false, parentSubId: null, parentMainId: null });
+    setNewProjectName('');
+    setNewProjectNumber('');
+    
+    // Find and open the created project
+    setTimeout(() => {
+      if (!projectInfo) return;
+      
+      const findProjectInHierarchy = (hierarchy, targetId) => {
+        for (const main of hierarchy || []) {
+          for (const sub of main.children || []) {
+            for (const project of sub.children || []) {
+              if (project.type === 'project' && String(project.id) === String(targetId)) {
+                return {
+                  project,
+                  mainId: main.id,
+                  subId: sub.id,
+                  mainName: main.name || '',
+                  subName: sub.name || ''
+                };
+              }
+            }
+          }
+        }
+        return null;
+      };
+
+      // Use hierarchyRef to get the latest hierarchy state
+      const currentHierarchy = hierarchyRef.current || [];
+      const found = findProjectInHierarchy(currentHierarchy, projectInfo.projectId);
+      if (found && found.project) {
+        requestProjectSwitch(found.project, {
+          selectedAction: null,
+          path: {
+            mainId: String(found.mainId),
+            subId: String(found.subId),
+            mainName: found.mainName,
+            subName: found.subName
+          }
+        });
+      }
+    }, 100);
+  }, [requestProjectSwitch]);
 
   const handleInlineViewChange = React.useCallback((payload) => {
     try {
@@ -2722,35 +3041,38 @@ export default function HomeScreen({ navigation, route }) {
           break;
         case 'addSub':
           // Öppna huvudmappen om den är stängd så att textrutan syns
-          const mainFolder = hierarchy.find(m => m.id === mainId);
-          if (mainFolder && !mainFolder.expanded) {
-            handleToggleMainFolder(mainId);
+          const mainFolderForSub = hierarchy.find(m => String(m.id) === String(mainId));
+          if (!mainFolderForSub) {
+            console.warn('[addSub] Main folder not found:', mainId, 'in hierarchy:', hierarchy.map(m => m.id));
+            break;
           }
-          setCreatingSubFolderForMainId(mainId);
-          setNewSubFolderName('');
+          const mainIdStr = String(mainId);
+          console.log('[addSub] Main folder found:', mainIdStr, 'expanded:', mainFolderForSub.expanded);
+          
+          // Öppna mappen om den är stängd (TextInput visas oavsett tack vare villkoret i render)
+          if (!mainFolderForSub.expanded) {
+            handleToggleMainFolder(mainIdStr);
+            // Sätt creating state efter en liten delay för att säkerställa att mappen öppnas först
+            setTimeout(() => {
+              console.log('[addSub] Setting creatingSubFolderForMainId to:', mainIdStr);
+              setCreatingSubFolderForMainId(mainIdStr);
+              setNewSubFolderName('');
+            }, 150);
+          } else {
+            // Mappen är redan öppen, sätt creating state med en liten delay för att säkerställa render
+            console.log('[addSub] Setting creatingSubFolderForMainId to:', mainIdStr, '(mappen är redan öppen)');
+            setTimeout(() => {
+              setCreatingSubFolderForMainId(mainIdStr);
+              setNewSubFolderName('');
+            }, 50);
+          }
           break;
         case 'addProject':
-          // Skapa projekt inline i mittenpanelen (web) eller visa modal (native)
-          if (Platform.OS === 'web') {
-            setCreatingProjectInline({ parentType: 'main', parentId: mainId, mainId: mainId });
-            setNewProjectName('');
-            setNewProjectNumber('');
-            resetProjectFields();
-            // Öppna projektet direkt i mittenpanelen
-            const tempProject = {
-              id: `temp-${Date.now()}`,
-              name: '',
-              type: 'project',
-              phase: selectedPhase,
-              isTemporary: true,
-            };
-            setSelectedProject(tempProject);
-            setSelectedProjectPath({ mainId: String(mainId), subId: null, mainName: hierarchy.find(m => m.id === mainId)?.name || '' });
+          // Projekter måste skapas i undermappar, inte direkt i huvudmappar
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert('Projekt måste skapas i en undermapp. Skapa en undermapp först genom att högerklicka på huvudmappen och välja "Lägg till undermapp".');
           } else {
-            // Native: använd modal
-            setNewProjectModal({ visible: true, parentMainId: mainId, parentSubId: null });
-            setNewProjectName('');
-            setNewProjectNumber('');
+            Alert.alert('Information', 'Projekt måste skapas i en undermapp. Skapa en undermapp först.');
           }
           break;
         case 'rename':
@@ -2767,31 +3089,12 @@ export default function HomeScreen({ navigation, route }) {
       const subId = t.subId;
       switch (item.key) {
         case 'addProject':
-          // Skapa projekt inline i mittenpanelen (web) eller visa modal (native)
-          if (Platform.OS === 'web') {
-            setCreatingProjectInline({ parentType: 'sub', parentId: subId, mainId: mainId });
+          // Visa enkel modal för kalkylskede, fullständig modal för andra faser
+          if (selectedPhase === 'kalkylskede') {
+            setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainId });
             setNewProjectName('');
             setNewProjectNumber('');
-            resetProjectFields();
-            // Öppna projektet direkt i mittenpanelen
-            const tempProject = {
-              id: `temp-${Date.now()}`,
-              name: '',
-              type: 'project',
-              phase: selectedPhase,
-              isTemporary: true,
-            };
-            setSelectedProject(tempProject);
-            const mainFolder = hierarchy.find(m => m.id === mainId);
-            const subFolder = mainFolder?.children?.find(s => s.id === subId);
-            setSelectedProjectPath({ 
-              mainId: String(mainId), 
-              subId: String(subId), 
-              mainName: mainFolder?.name || '',
-              subName: subFolder?.name || ''
-            });
           } else {
-            // Native: använd modal
             setNewProjectModal({ visible: true, parentSubId: subId });
             setNewProjectName('');
             setNewProjectNumber('');
@@ -3604,13 +3907,337 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
         isProjectNumberUnique={isProjectNumberUnique}
         canCreateProject={canCreateProject}
         setHierarchy={setHierarchy}
+        onProjectCreated={({ projectId, projectName, mainId, subId }) => {
+          // Find the created project in hierarchy and open it
+          const findProjectInHierarchy = (hierarchy, targetId) => {
+            for (const main of hierarchy || []) {
+              for (const sub of main.children || []) {
+                for (const project of sub.children || []) {
+                  if (project.type === 'project' && String(project.id) === String(targetId)) {
+                    return {
+                      project,
+                      mainId: main.id,
+                      subId: sub.id,
+                      mainName: main.name || '',
+                      subName: sub.name || ''
+                    };
+                  }
+                }
+              }
+            }
+            return null;
+          };
+
+          // Wait a bit for hierarchy to update, then find and open project
+          setTimeout(() => {
+            const found = findProjectInHierarchy(hierarchy, projectId);
+            if (found && found.project) {
+              requestProjectSwitch(found.project, {
+                selectedAction: null,
+                path: {
+                  mainId: String(found.mainId),
+                  subId: String(found.subId),
+                  mainName: found.mainName,
+                  subName: found.subName
+                }
+              });
+            }
+          }, 100);
+        }}
         // Platform and environment
         isBrowserEnv={isBrowserEnv}
         windowWidth={windowWidth}
         nativeKeyboardHeight={nativeKeyboardHeight}
         nativeKeyboardHeightRef={nativeKeyboardHeightRef}
-        buildStamp={BUILD_STAMP}
       />
+      
+      {/* Simple Project Modal for Kalkylskede */}
+      <Modal
+        visible={simpleProjectModal.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setSimpleProjectModal({ visible: false, parentSubId: null, parentMainId: null });
+          setNewProjectName('');
+          setNewProjectNumber('');
+        }}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
+          <Pressable
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+            onPress={() => {
+              setSimpleProjectModal({ visible: false, parentSubId: null, parentMainId: null });
+              setNewProjectName('');
+              setNewProjectNumber('');
+            }}
+          />
+          <View style={{ 
+            backgroundColor: '#fff', 
+            borderRadius: 18, 
+            padding: 24, 
+            width: Platform.OS === 'web' ? 500 : 340, 
+            maxWidth: '90%',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+            elevation: 6,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ fontSize: 20, fontWeight: '700', color: '#111' }}>Skapa nytt projekt</Text>
+              <TouchableOpacity
+                style={{ padding: 4 }}
+                onPress={() => {
+                  setSimpleProjectModal({ visible: false, parentSubId: null, parentMainId: null });
+                  setNewProjectName('');
+                  setNewProjectNumber('');
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color="#111" />
+              </TouchableOpacity>
+            </View>
+            
+            <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>
+              Ange projektnummer och projektnamn för att skapa ett projekt i systemet.
+            </Text>
+
+            <View style={{ marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155' }}>Projektnummer *</Text>
+                {String(newProjectNumber ?? '').trim() !== '' && isProjectNumberUnique(newProjectNumber) ? (
+                  <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                ) : null}
+              </View>
+              <TextInput
+                value={newProjectNumber}
+                onChangeText={(v) => setNewProjectNumber(typeof v === 'string' ? v : (v?.target?.value ?? ''))}
+                placeholder="T.ex. 2026-001"
+                placeholderTextColor="#94A3B8"
+                style={{
+                  borderWidth: 1,
+                  borderColor: String(newProjectNumber ?? '').trim() !== '' && isProjectNumberUnique(newProjectNumber) ? '#E2E8F0' : '#EF4444',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  fontSize: 14,
+                  backgroundColor: '#fff',
+                  color: '#111',
+                  ...(Platform.OS === 'web' ? {
+                    outline: 'none',
+                  } : {}),
+                }}
+                autoFocus
+              />
+              {String(newProjectNumber ?? '').trim() !== '' && !isProjectNumberUnique(newProjectNumber) ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                  <Ionicons name="warning" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#B91C1C', fontSize: 12, fontWeight: '700' }}>Projektnummer används redan.</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={{ marginBottom: 24 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155' }}>Projektnamn *</Text>
+                {String(newProjectName ?? '').trim() !== '' ? (
+                  <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 6 }} />
+                ) : null}
+              </View>
+              <TextInput
+                value={newProjectName}
+                onChangeText={(v) => setNewProjectName(typeof v === 'string' ? v : (v?.target?.value ?? ''))}
+                placeholder="T.ex. Opus Bilprovning"
+                placeholderTextColor="#94A3B8"
+                style={{
+                  borderWidth: 1,
+                  borderColor: String(newProjectName ?? '').trim() !== '' ? '#E2E8F0' : '#EF4444',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  fontSize: 14,
+                  backgroundColor: '#fff',
+                  color: '#111',
+                  ...(Platform.OS === 'web' ? {
+                    outline: 'none',
+                  } : {}),
+                }}
+                onSubmitEditing={() => {
+                  if (canCreateSimpleProject && !creatingProject) {
+                    handleCreateSimpleProject();
+                  }
+                }}
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <TouchableOpacity
+                disabled={creatingProject}
+                onPress={() => {
+                  setSimpleProjectModal({ visible: false, parentSubId: null, parentMainId: null });
+                  setNewProjectName('');
+                  setNewProjectNumber('');
+                }}
+                style={{ 
+                  backgroundColor: '#E5E7EB', 
+                  borderRadius: 10, 
+                  paddingVertical: 12, 
+                  paddingHorizontal: 20, 
+                  minWidth: 100, 
+                  alignItems: 'center',
+                  opacity: creatingProject ? 0.5 : 1,
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: '#111', fontWeight: '600', fontSize: 14 }}>Avbryt</Text>
+              </TouchableOpacity>
+
+              <View style={{ width: 10 }} />
+
+              <TouchableOpacity
+                disabled={!canCreateSimpleProject || creatingProject}
+                onPress={handleCreateSimpleProject}
+                style={{
+                  backgroundColor: (canCreateSimpleProject && !creatingProject) ? '#1976D2' : '#94A3B8',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 20,
+                  minWidth: 100,
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  justifyContent: 'center',
+                  opacity: (canCreateSimpleProject && !creatingProject) ? 1 : 0.6,
+                }}
+                activeOpacity={0.85}
+              >
+                {creatingProject ? (
+                  <>
+                    <View style={{ 
+                      width: 16, 
+                      height: 16, 
+                      borderWidth: 2, 
+                      borderColor: '#fff', 
+                      borderTopColor: 'transparent', 
+                      borderRadius: 8,
+                    }} />
+                    <View style={{ width: 8 }} />
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Skapar...</Text>
+                  </>
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Skapa projekt</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Simple Project Loading Modal */}
+      {creatingProject && simpleProjectModal.visible ? (
+        <Modal
+          visible={true}
+          transparent
+          animationType="fade"
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              padding: 32,
+              alignItems: 'center',
+              minWidth: 280,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}>
+              <ActivityIndicator size="large" color="#1976D2" />
+              <Text style={{
+                fontSize: 18,
+                fontWeight: '600',
+                color: '#263238',
+                marginTop: 16,
+                textAlign: 'center',
+              }}>
+                Skapar projekt...
+              </Text>
+              <Text style={{
+                fontSize: 14,
+                color: '#546E7A',
+                marginTop: 4,
+                textAlign: 'center',
+              }}>
+                Sparar data och laddar innehåll...
+              </Text>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {/* Simple Project Success Modal */}
+      <Modal
+        visible={simpleProjectSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={handleSimpleProjectSuccessClose}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <View style={{ 
+            backgroundColor: '#fff', 
+            borderRadius: 18, 
+            padding: 32, 
+            alignItems: 'center',
+            minWidth: 320,
+            maxWidth: '90%',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+            elevation: 6,
+          }}>
+            <View style={{
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: '#10B981',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
+            }}>
+              <Ionicons name="checkmark" size={36} color="#fff" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8, textAlign: 'center' }}>
+              Projekt skapat!
+            </Text>
+            {simpleProjectCreatedRef.current ? (
+              <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 24 }}>
+                {simpleProjectCreatedRef.current.projectId} - {simpleProjectCreatedRef.current.projectName}
+              </Text>
+            ) : null}
+            <TouchableOpacity
+              onPress={handleSimpleProjectSuccessClose}
+              style={{
+                backgroundColor: '#1976D2',
+                borderRadius: 10,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+                minWidth: 120,
+                alignItems: 'center',
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      
       {(() => {
         const RootContainer = ImageBackground;
         const rootContainerProps = {
@@ -3902,6 +4529,36 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 }}
               >
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Adminlogg</Text>
+              </TouchableOpacity>
+            )}
+            {canShowSupportToolsInHeader && supportMenuOpen && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={() => {
+                  try { navigation.navigate('ContactRegistry', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna kontaktregister'); }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Kontaktregister</Text>
+              </TouchableOpacity>
+            )}
+            {canShowSupportToolsInHeader && supportMenuOpen && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={() => {
+                  try { navigation.navigate('Suppliers', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna leverantörer'); }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Leverantörer</Text>
+              </TouchableOpacity>
+            )}
+            {canShowSupportToolsInHeader && supportMenuOpen && (
+              <TouchableOpacity
+                style={{ backgroundColor: '#FB8C00', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
+                onPress={() => {
+                  try { navigation.navigate('Customers', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna kunder'); }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Kunder</Text>
               </TouchableOpacity>
             )}
             {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
@@ -4226,6 +4883,55 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 nestedScrollEnabled={true}
               >
                 {(() => {
+                  // ALWAYS show PhaseLeftPanel when a project is selected (all projects have a phase, default is kalkylskede)
+                  // This replaces ProjectTree in the leftpanel
+                  console.log('[HomeScreen] LEFT PANEL RENDER (ScrollView) - selectedProject:', !!selectedProject, 'projectPhaseKey:', projectPhaseKey, 'phaseNavigation:', !!phaseNavigation);
+                  
+                  // If project is selected, show PhaseLeftPanel instead of ProjectTree
+                  if (selectedProject && projectPhaseKey) {
+                    console.log('[HomeScreen] Project selected in ScrollView, checking phase navigation...');
+                    
+                    // Show loading while navigation is loading
+                    if (phaseNavigationLoading) {
+                      console.log('[HomeScreen] Showing loading state in ScrollView');
+                      return (
+                        <View style={{ padding: 20, alignItems: 'center' }}>
+                          <Text style={{ color: '#888', fontSize: 14 }}>Laddar...</Text>
+                        </View>
+                      );
+                    }
+                    
+                    // Show PhaseLeftPanel if we have navigation data
+                    if (phaseNavigation && phaseNavigation.sections && phaseNavigation.sections.length > 0) {
+                      console.log('[HomeScreen] Rendering PhaseLeftPanel in ScrollView');
+                      return (
+                        <PhaseLeftPanel
+                          navigation={phaseNavigation}
+                          activeSection={phaseActiveSection}
+                          activeItem={phaseActiveItem}
+                          onSelectSection={(sectionId) => {
+                            setPhaseActiveSection(sectionId);
+                            // Don't auto-select first item - show section summary instead
+                            setPhaseActiveItem(null);
+                          }}
+                          onSelectItem={(sectionId, itemId) => {
+                            setPhaseActiveSection(sectionId);
+                            setPhaseActiveItem(itemId);
+                          }}
+                          projectName={selectedProject?.name || selectedProject?.id || 'Projekt'}
+                        />
+                      );
+                    }
+                    
+                    // Fallback: show loading if navigation not ready yet
+                    console.log('[HomeScreen] Navigation not ready in ScrollView, showing fallback');
+                    return (
+                      <View style={{ padding: 20, alignItems: 'center' }}>
+                        <Text style={{ color: '#888', fontSize: 14 }}>Laddar navigation...</Text>
+                      </View>
+                    );
+                  }
+                  
                   // Show loading indicator when changing phase
                   if (phaseChanging || loadingHierarchy) {
                     const spin = phaseChangeSpinAnim.interpolate({
@@ -4277,6 +4983,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     }));
                   
                   if (filteredHierarchy.length === 0) {
+                    console.log('[HomeScreen] No hierarchy, showing empty state');
                     return (
                       <View style={{ paddingHorizontal: 4 }} nativeID={Platform.OS === 'web' ? 'dk-tree-root' : undefined}>
                         <View
@@ -4455,9 +5162,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                               );
                             })()}
                           </View>
-                          {main.expanded && (
+                          {(main.expanded || String(creatingSubFolderForMainId) === String(main.id)) && (
                             <>
-                              {creatingSubFolderForMainId === main.id && (
+                              {String(creatingSubFolderForMainId) === String(main.id) && (
                                 <View style={{ marginLeft: 20, marginTop: 4, marginBottom: 4 }}>
                                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                     <Ionicons
@@ -4798,8 +5505,8 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 />
               )}
               
-              {/* Sidebar bottom-left: sync status + app version (web portal to avoid clipping) */}
-              {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
+              {/* Sidebar bottom-left: sync status + app version (web portal to avoid clipping) - Only show when no project is selected */}
+              {!selectedProject && Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
                 try {
                   let footerRoot = document.getElementById('dk-footer-portal');
                   if (!footerRoot) {
@@ -4814,7 +5521,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                         <Text style={{ fontSize: 12, color: syncStatus === 'synced' ? '#2E7D32' : syncStatus === 'syncing' ? '#F57C00' : syncStatus === 'offline' ? '#757575' : syncStatus === 'error' ? '#D32F2F' : '#444' }}>
                           Synk: {syncStatus}
                         </Text>
-                        <Text style={{ fontSize: 12, color: '#666', marginLeft: 6 }}>Version: {appVersion} ({BUILD_STAMP})</Text>
+                        <Text style={{ fontSize: 12, color: '#666', marginLeft: 6 }}>Version: {appVersion}</Text>
                       </View>
                     </View>
                   );
@@ -4827,12 +5534,12 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                         <Text style={{ fontSize: 12, color: syncStatus === 'synced' ? '#2E7D32' : syncStatus === 'syncing' ? '#F57C00' : syncStatus === 'offline' ? '#757575' : syncStatus === 'error' ? '#D32F2F' : '#444' }}>
                           Synk: {syncStatus}
                         </Text>
-                        <Text style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>Version: {appVersion} ({BUILD_STAMP})</Text>
+                        <Text style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>Version: {appVersion}</Text>
                       </View>
                     </View>
                   );
                 }
-              })() : (
+              })() : (!selectedProject ? (
                 <View style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 9999, pointerEvents: 'auto', backgroundColor: 'rgba(255,255,255,0.95)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e6e6e6', elevation: 8, ...(Platform && Platform.OS === 'web' ? { boxShadow: '0px 6px 12px rgba(0,0,0,0.12)' } : {}) }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={{ fontSize: 12, color: syncStatus === 'synced' ? '#2E7D32' : syncStatus === 'syncing' ? '#F57C00' : syncStatus === 'offline' ? '#757575' : syncStatus === 'error' ? '#D32F2F' : '#444' }}>
@@ -4841,7 +5548,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     <Text style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>Version: {appVersion} ({BUILD_STAMP})</Text>
                   </View>
                 </View>
-              )}
+              ) : null)}
 
             </View>
             {Platform.OS === 'web' && (
@@ -5209,32 +5916,33 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     </TouchableOpacity>
                   </View>
 
-                  {/* Persistent right side: activity */}
-                  <View style={{ width: rightWidth, minWidth: 340, maxWidth: 520, padding: 18, borderLeftWidth: 1, borderLeftColor: '#e6e6e6', backgroundColor: '#F7FAFC', position: 'relative' }}>
-                    {/* Divider for visual separation */}
-                    <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, backgroundColor: '#e6e6e6' }} />
-                    {/* Draggable handle - sits above the left divider of the right panel */}
-                    <View
-                      {...(panResponderRight && panResponderRight.panHandlers)}
-                      style={Platform.OS === 'web' ? { 
-                        position: 'absolute', 
-                        left: -8, 
-                        top: 0, 
-                        bottom: 0, 
-                        width: 16, 
-                        cursor: 'col-resize', 
-                        zIndex: 9,
-                        // Förhindra att handle blockerar scroll
-                        pointerEvents: 'auto',
-                      } : { 
-                        position: 'absolute', 
-                        left: -12, 
-                        top: 0, 
-                        bottom: 0, 
-                        width: 24, 
-                        zIndex: 9 
-                      }}
-                    />
+                  {/* Persistent right side: activity - Hide when phase project is selected */}
+                  {!selectedProject || !projectPhaseKey ? (
+                    <View style={{ width: rightWidth, minWidth: 340, maxWidth: 520, padding: 18, borderLeftWidth: 1, borderLeftColor: '#e6e6e6', backgroundColor: '#F7FAFC', position: 'relative' }}>
+                      {/* Divider for visual separation */}
+                      <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, backgroundColor: '#e6e6e6' }} />
+                      {/* Draggable handle - sits above the left divider of the right panel */}
+                      <View
+                        {...(panResponderRight && panResponderRight.panHandlers)}
+                        style={Platform.OS === 'web' ? { 
+                          position: 'absolute', 
+                          left: -8, 
+                          top: 0, 
+                          bottom: 0, 
+                          width: 16, 
+                          cursor: 'col-resize', 
+                          zIndex: 9,
+                          // Förhindra att handle blockerar scroll
+                          pointerEvents: 'auto',
+                        } : { 
+                          position: 'absolute', 
+                          left: -12, 
+                          top: 0, 
+                          bottom: 0, 
+                          width: 24, 
+                          zIndex: 9 
+                        }}
+                      />
                     <ScrollView 
                       ref={activityScrollRef} 
                       style={{ flex: 1 }} 
@@ -5262,12 +5970,32 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       <Ionicons name="chevron-down" size={18} color="#222" />
                     </TouchableOpacity>
                   </View>
+                  ) : null}
                 </View>
               ) : (
                 <ScrollView ref={rightPaneScrollRef} style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
                   {selectedProject ? (
                     <View style={{ flex: 1 }}>
-                      <ProjectDetails route={{ params: { project: selectedProject, companyId, selectedAction: projectSelectedAction, onInlineLockChange: handleInlineLockChange } }} navigation={navigation} inlineClose={closeSelectedProject} refreshNonce={projectControlsRefreshNonce} />
+                      <ProjectDetails 
+                        route={{ 
+                          params: { 
+                            project: selectedProject, 
+                            companyId, 
+                            selectedAction: projectSelectedAction, 
+                            onInlineLockChange: handleInlineLockChange,
+                            phaseActiveSection: phaseActiveSection,
+                            phaseActiveItem: phaseActiveItem,
+                            onPhaseSectionChange: setPhaseActiveSection,
+                            onPhaseItemChange: (sectionId, itemId) => {
+                              setPhaseActiveSection(sectionId);
+                              setPhaseActiveItem(itemId);
+                            }
+                          } 
+                        }} 
+                        navigation={navigation} 
+                        inlineClose={closeSelectedProject} 
+                        refreshNonce={projectControlsRefreshNonce} 
+                      />
                     </View>
                   ) : (
                     <View style={{ flex: 1, padding: 18 }}>
@@ -5996,7 +6724,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   return (
                           <TouchableOpacity
                       key={phase.key}
-                      onPress={() => setSelectedPhase(phase.key)}
+                      onPress={() => handlePhaseChange(phase.key)}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -6039,96 +6767,222 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                           </Text>
                                         ) : (
                 <View style={{ paddingHorizontal: 4 }}>
-                  <ProjectTree
-                    hierarchy={(() => {
-                      // Filter hierarchy to selected phase - filter both folders and projects
-                      const filtered = hierarchy
-                        .filter(main => {
-                          // Filter main folders by phase
-                          const mainPhase = main?.phase || DEFAULT_PHASE;
-                          return mainPhase === selectedPhase;
-                        })
-                        .map(main => ({
-                          ...main,
-                          children: (main.children || [])
-                            .filter(sub => {
-                              // Filter sub folders by phase
-                              const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
-                              return subPhase === selectedPhase;
-                            })
-                            .map(sub => ({
-                              ...sub,
-                              children: (sub.children || []).filter(project => {
-                                // Filter projects by phase
-                                const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
-                                return projectPhase === selectedPhase;
-                              })
-                            }))
-                        }));
-                      return filtered;
-                    })()}
-                    selectedProject={selectedProject}
-                    selectedPhase={selectedPhase}
-                    onSelectProject={(project) => {
-                      if (isWeb) {
-                        setSelectedProject({ ...project });
-                                                  } else {
-                                                    navigation.navigate('ProjectDetails', {
-                                                      project: {
-                            id: project.id,
-                            name: project.name,
-                            ansvarig: project.ansvarig || '',
-                            adress: project.adress || '',
-                            fastighetsbeteckning: project.fastighetsbeteckning || '',
-                            client: project.client || '',
-                            status: project.status || 'ongoing',
-                            createdAt: project.createdAt || '',
-                            createdBy: project.createdBy || ''
-                                                      },
-                                                      companyId
-                                                    });
-                                                  }
-                                                }}
-                    onSelectFunction={handleSelectFunction}
-                    navigation={navigation}
-                    companyId={companyId}
-                    projectStatusFilter={projectStatusFilter}
-                    onToggleMainFolder={handleToggleMainFolder}
-                    onToggleSubFolder={handleToggleSubFolder}
-                    onAddSubFolder={(mainId) => {
-                      // Öppna huvudmappen om den är stängd så att textrutan syns
-                      const mainFolder = hierarchy.find(m => m.id === mainId);
-                      if (mainFolder && !mainFolder.expanded) {
-                        handleToggleMainFolder(mainId);
+                  {(() => {
+                    // ALWAYS show PhaseLeftPanel when a project is selected (all projects have a phase, default is kalkylskede)
+                    // This replaces ProjectTree in the leftpanel
+                    console.log('[HomeScreen] LEFT PANEL RENDER - selectedProject:', !!selectedProject, 'projectPhaseKey:', projectPhaseKey, 'phaseNavigation:', !!phaseNavigation);
+                    
+                    // If project is selected, show PhaseLeftPanel instead of ProjectTree
+                    if (selectedProject && projectPhaseKey) {
+                      console.log('[HomeScreen] Project selected, checking phase navigation...');
+                      // Show loading while navigation is loading
+                      if (phaseNavigationLoading) {
+                        console.log('[HomeScreen] Showing loading state');
+                        return (
+                          <View style={{ padding: 20, alignItems: 'center' }}>
+                            <Text style={{ color: '#888', fontSize: 14 }}>Laddar...</Text>
+                          </View>
+                        );
                       }
-                      setCreatingSubFolderForMainId(mainId);
-                      setNewSubFolderName("");
-                    }}
-                    onAddProject={(subId) => {
-                      setNewProjectModal({ visible: true, parentSubId: subId });
-                      setNewProjectName("");
-                      setNewProjectNumber("");
-                    }}
-                    onAddMainFolder={() => {
-                      setIsCreatingMainFolder(true);
-                      setNewMainFolderName("");
-                    }}
-                    onEditMainFolder={(id, name) => {
-                      setEditModal({ visible: true, type: 'main', id, name });
-                    }}
-                    onEditSubFolder={(id, name) => {
-                      setEditModal({ visible: true, type: 'sub', id, name });
-                    }}
-                    mainChevronSpinAnim={mainChevronSpinAnim}
-                    subChevronSpinAnim={subChevronSpinAnim}
-                    mainTimersRef={mainTimersRef}
-                    spinOnce={spinOnce}
-                  />
-                                  </View>
+                      
+                      // Show PhaseLeftPanel if we have navigation data
+                      if (phaseNavigation && phaseNavigation.sections && phaseNavigation.sections.length > 0) {
+                        console.log('[HomeScreen] Rendering PhaseLeftPanel');
+                        return (
+                          <PhaseLeftPanel
+                            navigation={phaseNavigation}
+                            activeSection={phaseActiveSection}
+                            activeItem={phaseActiveItem}
+                            onSelectSection={(sectionId) => {
+                              setPhaseActiveSection(sectionId);
+                              // Set first item in section as active if available
+                              const section = phaseNavigation.sections.find(s => s.id === sectionId);
+                              if (section && section.items && section.items.length > 0) {
+                                setPhaseActiveItem(section.items[0].id);
+                              } else {
+                                setPhaseActiveItem(null);
+                              }
+                            }}
+                            onSelectItem={(sectionId, itemId) => {
+                              setPhaseActiveSection(sectionId);
+                              setPhaseActiveItem(itemId);
+                            }}
+                            projectName={selectedProject?.name || selectedProject?.id || 'Projekt'}
+                          />
+                        );
+                      }
+                      
+                      // Fallback: show loading if navigation not ready yet
+                      console.log('[HomeScreen] Navigation not ready, showing fallback');
+                      return (
+                        <View style={{ padding: 20, alignItems: 'center' }}>
+                          <Text style={{ color: '#888', fontSize: 14 }}>Laddar navigation...</Text>
+                        </View>
+                      );
+                    }
+                    
+                    // No project selected - show ProjectTree
+                    console.log('[HomeScreen] No project selected, showing ProjectTree');
+
+                    // Show ProjectTree for normal projects
+                    return (
+                      <ProjectTree
+                        hierarchy={(() => {
+                          // Filter hierarchy to selected phase - filter both folders and projects
+                          const filtered = hierarchy
+                            .filter(main => {
+                              // Filter main folders by phase
+                              const mainPhase = main?.phase || DEFAULT_PHASE;
+                              return mainPhase === selectedPhase;
+                            })
+                            .map(main => ({
+                              ...main,
+                              children: (main.children || [])
+                                .filter(sub => {
+                                  // Filter sub folders by phase
+                                  const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
+                                  return subPhase === selectedPhase;
+                                })
+                                .map(sub => ({
+                                  ...sub,
+                                  children: (sub.children || []).filter(project => {
+                                    // Filter projects by phase
+                                    const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
+                                    return projectPhase === selectedPhase;
+                                  })
+                                }))
+                            }));
+                          return filtered;
+                        })()}
+                        selectedProject={selectedProject}
+                        selectedPhase={selectedPhase}
+                        onSelectProject={(project) => {
+                          if (isWeb) {
+                            setSelectedProject({ ...project });
+                          } else {
+                            navigation.navigate('ProjectDetails', {
+                              project: {
+                                id: project.id,
+                                name: project.name,
+                                ansvarig: project.ansvarig || '',
+                                adress: project.adress || '',
+                                fastighetsbeteckning: project.fastighetsbeteckning || '',
+                                client: project.client || '',
+                                status: project.status || 'ongoing',
+                                createdAt: project.createdAt || '',
+                                createdBy: project.createdBy || ''
+                              },
+                              companyId
+                            });
+                          }
+                        }}
+                        onSelectFunction={handleSelectFunction}
+                        navigation={navigation}
+                        companyId={companyId}
+                        projectStatusFilter={projectStatusFilter}
+                        onToggleMainFolder={handleToggleMainFolder}
+                        onToggleSubFolder={handleToggleSubFolder}
+                        onAddSubFolder={(mainId) => {
+                          // Öppna huvudmappen om den är stängd så att textrutan syns
+                          const mainFolder = hierarchy.find(m => m.id === mainId);
+                          if (mainFolder && !mainFolder.expanded) {
+                            handleToggleMainFolder(mainId);
+                          }
+                          setCreatingSubFolderForMainId(mainId);
+                          setNewSubFolderName("");
+                        }}
+                        onAddProject={(subId) => {
+                          // Visa enkel modal för kalkylskede, fullständig modal för andra faser
+                          if (selectedPhase === 'kalkylskede') {
+                            const mainFolder = hierarchy.find(m => {
+                              return (m.children || []).some(sub => sub.id === subId);
+                            });
+                            setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainFolder?.id || null });
+                            setNewProjectName("");
+                            setNewProjectNumber("");
+                          } else {
+                            setNewProjectModal({ visible: true, parentSubId: subId });
+                            setNewProjectName("");
+                            setNewProjectNumber("");
+                          }
+                        }}
+                        onAddMainFolder={() => {
+                          setIsCreatingMainFolder(true);
+                          setNewMainFolderName("");
+                        }}
+                        onEditMainFolder={(id, name) => {
+                          setEditModal({ visible: true, type: 'main', id, name });
+                        }}
+                        onEditSubFolder={(id, name) => {
+                          setEditModal({ visible: true, type: 'sub', id, name });
+                        }}
+                        mainChevronSpinAnim={mainChevronSpinAnim}
+                        subChevronSpinAnim={subChevronSpinAnim}
+                        mainTimersRef={mainTimersRef}
+                        spinOnce={spinOnce}
+                      />
+                    );
+                  })()}
+                </View>
               )}
             </View>
           )}
       </ScrollView>
+        
+        {/* Phase Change Loading Modal */}
+        <Modal
+          visible={phaseChanging}
+          transparent
+          animationType="fade"
+        >
+          <View style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}>
+            <View style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              padding: 32,
+              alignItems: 'center',
+              minWidth: 280,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}>
+              <ActivityIndicator size="large" color="#1976D2" />
+              <Text style={{
+                fontSize: 18,
+                fontWeight: '600',
+                color: '#263238',
+                marginTop: 16,
+                textAlign: 'center',
+              }}>
+                {(() => {
+                  const phaseNames = {
+                    'kalkylskede': 'Kalkylskede',
+                    'produktion': 'Produktion',
+                    'avslut': 'Avslut',
+                    'eftermarknad': 'Eftermarknad',
+                  };
+                  const phaseName = phaseNames[loadingPhase] || 'Laddar...';
+                  return `Laddar ${phaseName.toLowerCase()}`;
+                })()}
+              </Text>
+              <Text style={{
+                fontSize: 14,
+                color: '#546E7A',
+                marginTop: 4,
+                textAlign: 'center',
+              }}>
+                Sparar data och laddar innehåll...
+              </Text>
+            </View>
+          </View>
+        </Modal>
         </RootContainer>
       );
     })()}

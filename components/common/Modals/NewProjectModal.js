@@ -95,6 +95,7 @@ const NewProjectModal = ({
   isProjectNumberUnique,
   canCreateProject,
   setHierarchy,
+  onProjectCreated, // Callback when project is created: ({ projectId, projectName, mainId, subId }) => void
   
   // Platform and environment
   isBrowserEnv,
@@ -145,59 +146,102 @@ const NewProjectModal = ({
     setNewProjectKeyboardLockHeight(0);
   };
 
+  const [showSuccessPopup, setShowSuccessPopup] = React.useState(false);
+  const createdProjectRef = React.useRef(null);
+
   const handleCreateProject = async () => {
     if (creatingProject || !canCreate) return;
     setCreatingProject(true);
     try {
+      const projectId = String(newProjectNumber ?? '').trim();
+      const projectName = String(newProjectName ?? '').trim();
+      let mainId = null;
+      let subId = parentSubId;
+      
       // Insert new project into selected subfolder
-      setHierarchy(prev => prev.map(main => ({
-        ...main,
-        children: main.children.map(sub =>
-          sub.id === parentSubId
-            ? {
-                ...sub,
-                children: [
-                  ...(sub.children || []),
-                  {
-                    id: String(newProjectNumber ?? '').trim(),
-                    name: String(newProjectName ?? '').trim(),
-                    type: 'project',
-                    status: 'ongoing',
-                    phase: newProjectPhase || DEFAULT_PHASE,
-                    customer: String(newProjectCustomer || '').trim() || null,
-                    clientContact: {
-                      name: String(newProjectClientContactName || '').trim() || null,
-                      phone: String(newProjectClientContactPhone || '').trim() || null,
-                      email: String(newProjectClientContactEmail || '').trim() || null,
-                    },
-                    address: {
-                      street: String(newProjectAddressStreet || '').trim() || null,
-                      postalCode: String(newProjectAddressPostal || '').trim() || null,
-                      city: String(newProjectAddressCity || '').trim() || null,
-                    },
-                    propertyDesignation: String(newProjectPropertyDesignation || '').trim() || null,
-                    skyddsrondEnabled: !!newProjectSkyddsrondEnabled,
-                    skyddsrondIntervalWeeks: Number(newProjectSkyddsrondWeeks) || 2,
-                    skyddsrondFirstDueDate: String(newProjectSkyddsrondFirstDueDate || '').trim() || null,
-                    ansvarig: formatPersonName(newProjectResponsible),
-                    ansvarigId: newProjectResponsible?.uid || null,
-                    participants: (newProjectParticipants || []).map(p => ({ uid: p.uid || p.id, displayName: p.displayName || null, email: p.email || null })),
-                    createdAt: new Date().toISOString(),
-                    createdBy: auth?.currentUser?.email || ''
-                  }
-                ]
-              }
-            : sub
-        )
-      })));
+      setHierarchy(prev => {
+        const updated = prev.map(main => ({
+          ...main,
+          children: main.children.map(sub =>
+            sub.id === parentSubId
+              ? {
+                  ...sub,
+                  children: [
+                    ...(sub.children || []),
+                    {
+                      id: projectId,
+                      name: projectName,
+                      type: 'project',
+                      status: 'ongoing',
+                      phase: newProjectPhase || DEFAULT_PHASE,
+                      customer: String(newProjectCustomer || '').trim() || null,
+                      clientContact: {
+                        name: String(newProjectClientContactName || '').trim() || null,
+                        phone: String(newProjectClientContactPhone || '').trim() || null,
+                        email: String(newProjectClientContactEmail || '').trim() || null,
+                      },
+                      address: {
+                        street: String(newProjectAddressStreet || '').trim() || null,
+                        postalCode: String(newProjectAddressPostal || '').trim() || null,
+                        city: String(newProjectAddressCity || '').trim() || null,
+                      },
+                      propertyDesignation: String(newProjectPropertyDesignation || '').trim() || null,
+                      skyddsrondEnabled: !!newProjectSkyddsrondEnabled,
+                      skyddsrondIntervalWeeks: Number(newProjectSkyddsrondWeeks) || 2,
+                      skyddsrondFirstDueDate: String(newProjectSkyddsrondFirstDueDate || '').trim() || null,
+                      ansvarig: formatPersonName(newProjectResponsible),
+                      ansvarigId: newProjectResponsible?.uid || null,
+                      participants: (newProjectParticipants || []).map(p => ({ uid: p.uid || p.id, displayName: p.displayName || null, email: p.email || null })),
+                      createdAt: new Date().toISOString(),
+                      createdBy: auth?.currentUser?.email || ''
+                    }
+                  ]
+                }
+              : sub
+          )
+        }));
+        
+        // Find mainId
+        for (const main of updated) {
+          for (const sub of main.children || []) {
+            if (sub.id === parentSubId) {
+              mainId = main.id;
+              break;
+            }
+          }
+          if (mainId) break;
+        }
+        
+        return updated;
+      });
+      
+      // Store project info for callback
+      createdProjectRef.current = { projectId, projectName, mainId, subId };
+      
       // Wait a moment for hierarchy to update and save
-      await new Promise(resolve => setTimeout(resolve, 300));
-      onClose();
-      resetProjectFields();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Show success popup
       setCreatingProject(false);
+      setShowSuccessPopup(true);
     } catch (error) {
       console.error('Error creating project:', error);
       setCreatingProject(false);
+    }
+  };
+
+  const handleSuccessPopupClose = () => {
+    setShowSuccessPopup(false);
+    const projectInfo = createdProjectRef.current;
+    createdProjectRef.current = null;
+    
+    // Close modal and reset fields
+    onClose();
+    resetProjectFields();
+    
+    // Call callback to open project
+    if (onProjectCreated && projectInfo) {
+      onProjectCreated(projectInfo);
     }
   };
 
@@ -1408,6 +1452,62 @@ const NewProjectModal = ({
           );
         })()
       )}
+      
+      {/* Success Popup Modal */}
+      <Modal
+        visible={showSuccessPopup}
+        transparent
+        animationType="fade"
+        onRequestClose={handleSuccessPopupClose}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <View style={{
+            backgroundColor: '#fff',
+            borderRadius: 18,
+            padding: 32,
+            alignItems: 'center',
+            minWidth: 320,
+            maxWidth: 420,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: 0.2,
+            shadowRadius: 16,
+            elevation: 12,
+          }}>
+            <View style={{
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: '#10B981',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
+            }}>
+              <Ionicons name="checkmark" size={36} color="#fff" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8, textAlign: 'center' }}>
+              Projekt skapat
+            </Text>
+            <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 24 }}>
+              {newProjectNumber && newProjectName ? `${newProjectNumber} - ${newProjectName}` : 'Projektet har skapats'}
+            </Text>
+            <TouchableOpacity
+              onPress={handleSuccessPopupClose}
+              style={{
+                backgroundColor: '#1976D2',
+                borderRadius: 10,
+                paddingVertical: 12,
+                paddingHorizontal: 24,
+                minWidth: 120,
+                alignItems: 'center',
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 };

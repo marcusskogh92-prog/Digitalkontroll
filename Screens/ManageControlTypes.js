@@ -21,6 +21,7 @@ import {
     updateCompanyControlTypeFolder,
     updateCompanyMall,
 } from '../components/firebase';
+import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
@@ -809,6 +810,9 @@ export default function ManageControlTypes({ route, navigation }) {
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>
                     {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
+                  </View>
+                  <View style={{ marginRight: 10 }}>
+                    <HeaderAdminMenu />
                   </View>
                   {allowedTools ? (
                     <TouchableOpacity

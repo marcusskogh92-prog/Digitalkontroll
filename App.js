@@ -17,6 +17,7 @@ import ContactRegistryScreen from './Screens/ContactRegistryScreen';
 import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
 import HomeScreen from './Screens/HomeScreen';
+import SuppliersScreen from './Screens/SuppliersScreen';
 import LoginScreen from './Screens/LoginScreen';
 import ManageCompany from './Screens/ManageCompany';
 import ManageControlTypes from './Screens/ManageControlTypes';
@@ -83,6 +84,7 @@ const dispatchBreadcrumbNavigate = (target) => {
 
 const WebGlobalBreadcrumb = ({ navigation, route, titleFallback = '' }) => {
   const [homeSegments, setHomeSegments] = React.useState(null);
+  const [manageCompanySegments, setManageCompanySegments] = React.useState(null);
 
   React.useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -97,9 +99,13 @@ const WebGlobalBreadcrumb = ({ navigation, route, titleFallback = '' }) => {
     const onUpdate = (event) => {
       try {
         const detail = event?.detail || {};
-        if (detail.scope !== 'home') return;
-        const segs = Array.isArray(detail.segments) ? detail.segments : [];
-        setHomeSegments(segs);
+        if (detail.scope === 'home') {
+          const segs = Array.isArray(detail.segments) ? detail.segments : [];
+          setHomeSegments(segs);
+        } else if (detail.scope === 'manageCompany') {
+          const segs = Array.isArray(detail.segments) ? detail.segments : [];
+          setManageCompanySegments(segs);
+        }
       } catch (_e) {}
     };
 
@@ -193,6 +199,34 @@ const WebGlobalBreadcrumb = ({ navigation, route, titleFallback = '' }) => {
         { label: projectLabel, onPress: () => { try { navigation.goBack(); } catch (_e) {} } },
         { label: controlLabel, onPress: () => { try { /* stay */ } catch (_e) {} } },
       ];
+    }
+
+    // ManageCompany: show Dashboard / Företag / {företagsnamn}
+    if (currentRouteName === 'ManageCompany') {
+      // Use segments published by ManageCompany component if available
+      if (Array.isArray(manageCompanySegments) && manageCompanySegments.length > 0) {
+        return manageCompanySegments.map((s) => ({
+          label: s?.label,
+          onPress: s?.onPress || (() => {
+            try {
+              if (navigation?.navigate) navigation.navigate('ManageCompany');
+            } catch (_e) {}
+          }),
+        }));
+      }
+      // Fallback to default
+      const companyName = String(route?.params?.companyName || '').trim();
+      if (companyName) {
+        return [
+          { label: 'Startsida', onPress: () => runTarget({ kind: 'dashboard' }) },
+          { label: 'Företag', onPress: () => {
+            try {
+              if (navigation?.navigate) navigation.navigate('ManageCompany');
+            } catch (_e) {}
+          } },
+          { label: companyName, onPress: () => { try { /* stay */ } catch (_e) {} } },
+        ];
+      }
     }
 
     return segs;
@@ -523,6 +557,58 @@ export default function App() {
 
               return ({
                 title: 'Kontaktregister',
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
+                headerLeft: () => (
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    accessibilityLabel="Tillbaka"
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                  >
+                    <Ionicons name="chevron-back" size={30} color="#000" />
+                  </TouchableOpacity>
+                ),
+              });
+            }} />
+            <Stack.Screen name="Suppliers" component={SuppliersScreen} options={({ navigation }) => {
+              const isWeb = Platform.OS === 'web';
+              if (isWeb) {
+                return ({
+                  title: 'Leverantörer',
+                  headerBackTitleVisible: false,
+                  headerBackTitle: '',
+                });
+              }
+
+              return ({
+                title: 'Leverantörer',
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
+                headerLeft: () => (
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    accessibilityLabel="Tillbaka"
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                  >
+                    <Ionicons name="chevron-back" size={30} color="#000" />
+                  </TouchableOpacity>
+                ),
+              });
+            }} />
+            <Stack.Screen name="Customers" component={SuppliersScreen} options={({ navigation }) => {
+              const isWeb = Platform.OS === 'web';
+              if (isWeb) {
+                return ({
+                  title: 'Kunder',
+                  headerBackTitleVisible: false,
+                  headerBackTitle: '',
+                });
+              }
+
+              return ({
+                title: 'Kunder',
                 headerBackTitleVisible: false,
                 headerBackTitle: '',
                 headerLeft: () => (

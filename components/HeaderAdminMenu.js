@@ -95,6 +95,8 @@ export default function HeaderAdminMenu() {
   // Admin + superadmin: kontaktregister
   if (isCompanyAdmin || isSuperadmin) {
     menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#0f172a" /> });
+    menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#43A047" /> });
+    menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#FB8C00" /> });
   }
 
   // Om inga admin-funktioner finns, visa inget
@@ -121,6 +123,16 @@ export default function HeaderAdminMenu() {
             return navigation.navigate('ContactRegistry', {
               companyId: cid,
               allCompanies: !!isSuperadmin,
+            });
+          }
+          if (it.key === 'suppliers') {
+            return navigation.navigate('Suppliers', {
+              companyId: cid,
+            });
+          }
+          if (it.key === 'customers') {
+            return navigation.navigate('Customers', {
+              companyId: cid,
             });
           }
         } catch(_e) {}

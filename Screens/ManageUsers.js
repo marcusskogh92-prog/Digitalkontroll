@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, ImageBackground, KeyboardAvoidingView, Platform, SectionList, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { adminFetchCompanyMembers, auth, createUserRemote, deleteUserRemote, fetchCompanyMembers, fetchCompanyProfile, requestSubscriptionUpgradeRemote, updateUserRemote, uploadUserAvatar } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
+import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
@@ -692,6 +693,9 @@ export default function ManageUsers({ route, navigation }) {
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>
                     {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
+                  </View>
+                  <View style={{ marginRight: 10 }}>
+                    <HeaderAdminMenu />
                   </View>
                   {allowedTools ? (
                     <TouchableOpacity

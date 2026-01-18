@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
+import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
@@ -1036,7 +1037,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 <View style={{ marginRight: 10 }}>
                   {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
                 </View>
-
+                <View style={{ marginRight: 10 }}>
+                  <HeaderAdminMenu />
+                </View>
                 {allowedTools ? (
                   <TouchableOpacity
                     style={{ 
@@ -1058,9 +1061,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                     <Text style={{ color: supportMenuOpen ? '#fff' : '#475569', fontWeight: '700', fontSize: 13 }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
                   </TouchableOpacity>
                 ) : null}
-
               </View>
-
               <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }} />
             </View>
           </View>

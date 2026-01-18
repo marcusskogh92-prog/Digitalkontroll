@@ -5,6 +5,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getFolderColor, DEFAULT_FOLDER_COLOR } from './folderColors';
 
 export default function ProjectTreeFolder({
   folder,
@@ -22,7 +23,48 @@ export default function ProjectTreeFolder({
   const paddingLeft = isMainFolder ? 0 : 12;
   const fontSize = isMainFolder ? 16 : 15;
   const fontWeight = isMainFolder ? 'bold' : '600';
-  const chevronSize = isMainFolder ? 22 : 18;
+  const iconSize = isMainFolder ? 28 : 24; // Larger for better visibility
+  
+  // Get folder color - use folder.iconColor or default
+  const folderColor = folder?.iconColor 
+    ? getFolderColor(folder.iconColor)
+    : DEFAULT_FOLDER_COLOR;
+
+  // Render folder icon with spin animation if provided
+  const renderFolderIcon = () => {
+    const iconElement = (
+      <Ionicons
+        name={isExpanded ? 'folder-open' : 'folder'}
+        size={iconSize}
+        color={folderColor.color}
+      />
+    );
+
+    if (spinAnim) {
+      return (
+        <Animated.View
+          style={{
+            marginRight: 8,
+            minWidth: iconSize,
+            transform: [{
+              rotate: spinAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0deg', '360deg']
+              })
+            }]
+          }}
+        >
+          {iconElement}
+        </Animated.View>
+      );
+    }
+
+    return (
+      <View style={{ marginRight: 8, minWidth: iconSize }}>
+        {iconElement}
+      </View>
+    );
+  };
 
   // Main folder has different styling
   if (isMainFolder) {
@@ -37,36 +79,13 @@ export default function ProjectTreeFolder({
           delayLongPress={2000}
           activeOpacity={0.7}
         >
-          {spinAnim ? (
-            <Animated.View
-              style={{
-                transform: [{
-                  rotate: spinAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg']
-                  })
-                }]
-              }}
-            >
-              <Ionicons
-                name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-                size={chevronSize}
-                color="#222"
-              />
-            </Animated.View>
-          ) : (
-            <Ionicons
-              name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-              size={chevronSize}
-              color="#222"
-            />
-          )}
+          {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
+          {renderFolderIcon()}
           <Text
             style={{
               fontSize,
               fontWeight,
               color: '#222',
-              marginLeft: 8
             }}
           >
             {folder.name}
@@ -96,36 +115,13 @@ export default function ProjectTreeFolder({
           delayLongPress={2000}
           activeOpacity={0.7}
         >
-          {spinAnim ? (
-            <Animated.View
-              style={{
-                transform: [{
-                  rotate: spinAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '360deg']
-                  })
-                }]
-              }}
-            >
-              <Ionicons
-                name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-                size={chevronSize}
-                color="#222"
-              />
-            </Animated.View>
-          ) : (
-            <Ionicons
-              name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-              size={chevronSize}
-              color="#222"
-            />
-          )}
+          {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
+          {renderFolderIcon()}
           <Text
             style={{
               fontSize,
               fontWeight,
               color: '#222',
-              marginLeft: 8
             }}
           >
             {folder.name}

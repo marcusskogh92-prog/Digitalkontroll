@@ -5,7 +5,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
-import { getProjectPhase } from '../../../features/projects/constants';
+import { DEFAULT_PHASE, getProjectPhase } from '../../../features/projects/constants';
 import { isWeb } from '../../../utils/platform';
 import ProjectFunctionNode from './ProjectFunctionNode';
 
@@ -20,30 +20,77 @@ export default function ProjectTreeNode({
   isSelected = false,
   selectedPhase = null,
 }) {
-  const hasFunctions = Array.isArray(project.children) && 
-    project.children.some(child => child.type === 'projectFunction');
+  // Check if project is in kalkylskede - these should NEVER have functions or expand
+  const projectPhase = getProjectPhase(project);
+  const isKalkylskede = projectPhase.key === 'kalkylskede' || 
+                        (!project?.phase && DEFAULT_PHASE === 'kalkylskede') ||
+                        (selectedPhase && selectedPhase === 'kalkylskede' && !project?.phase);
+  
+  // For kalkylskede projects, filter out all functions
+  const projectWithoutFunctions = isKalkylskede 
+    ? { ...project, children: (project.children || []).filter(c => c.type !== 'projectFunction') }
+    : project;
+  
+  const hasFunctions = !isKalkylskede && Array.isArray(projectWithoutFunctions.children) && 
+    projectWithoutFunctions.children.some(child => child.type === 'projectFunction');
 
   const functions = hasFunctions 
-    ? project.children.filter(child => child.type === 'projectFunction')
+    ? projectWithoutFunctions.children.filter(child => child.type === 'projectFunction')
         .sort((a, b) => (a.order || 999) - (b.order || 999))
     : [];
 
-  const handlePress = () => {
-    if (hasFunctions) {
+  const handlePress = (e) => {
+    // Prevent event propagation to avoid any parent handlers
+    if (e && e.stopPropagation) {
+      e.stopPropagation();
+    }
+    
+    console.log('[ProjectTreeNode] handlePress - project:', project.id, 'phase:', project?.phase, 'isKalkylskede:', isKalkylskede, 'hasFunctions:', hasFunctions, 'onToggle:', !!onToggle);
+    
+    // For kalkylskede projects, ALWAYS navigate directly (never expand)
+    if (isKalkylskede) {
+      console.log('[ProjectTreeNode] Navigating to kalkylskede project (preventing expansion)');
+      handleSelect();
+      return;
+    }
+    
+    // For other projects, expand if has functions, otherwise navigate
+    if (hasFunctions && onToggle) {
       // Toggle expand/collapse if project has functions
-      if (onToggle) {
-        onToggle(project.id);
-      }
+      console.log('[ProjectTreeNode] Expanding project (not kalkylskede)');
+      onToggle(project.id);
     } else {
       // Direct navigation if no functions
+      console.log('[ProjectTreeNode] Navigating (no functions or no onToggle)');
       handleSelect();
     }
   };
 
   const handleSelect = () => {
+    // Always ensure phase is set - use project's phase, selectedPhase context, or DEFAULT_PHASE
+    const effectivePhase = project?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
+    const projectWithPhase = {
+      ...project,
+      phase: effectivePhase
+    };
+    
+    const projectPhase = getProjectPhase(projectWithPhase);
+    const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede') || effectivePhase === 'kalkylskede';
+    
+    console.log('[ProjectTreeNode] handleSelect - project:', project.id, 'phase:', effectivePhase, 'isKalkylskede:', isKalkylskede);
+    
     if (isWeb) {
-      // Web: set selected project (handled by parent)
-      if (onSelect) onSelect(project);
+      // For kalkylskede projects on web, navigate to separate page
+      if (isKalkylskede && navigation) {
+        console.log('[ProjectTreeNode] Navigating to kalkylskede project:', projectWithPhase.id, 'phase:', projectWithPhase.phase);
+        navigation.navigate('ProjectDetails', {
+          project: projectWithPhase,
+          companyId
+        });
+      } else if (onSelect) {
+        // Web: set selected project (handled by parent) for non-kalkylskede projects
+        onSelect(projectWithPhase);
+      }
     } else {
       // Native: navigate to ProjectDetails
       if (navigation) {
@@ -56,6 +103,7 @@ export default function ProjectTreeNode({
             fastighetsbeteckning: project.fastighetsbeteckning || '',
             client: project.client || '',
             status: project.status || 'ongoing',
+            phase: project.phase || DEFAULT_PHASE,
             createdAt: project.createdAt || '',
             createdBy: project.createdBy || ''
           },
@@ -82,17 +130,31 @@ export default function ProjectTreeNode({
           paddingHorizontal: 8
         }}
         onPress={handlePress}
+        onLongPress={() => {
+          // On long press, always navigate (for kalkylskede projects)
+          const projectPhase = getProjectPhase(project);
+          const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
+          if (isKalkylskede) {
+            handleSelect();
+          }
+        }}
         activeOpacity={0.7}
       >
-        {/* Chevron for expand/collapse (only if has functions) */}
-        {hasFunctions && (
-          <Ionicons
-            name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-            size={16}
-            color="#666"
-            style={{ marginRight: 6 }}
-          />
-        )}
+        {/* Chevron for expand/collapse (only if has functions AND not kalkylskede) */}
+        {(() => {
+          const projectPhase = getProjectPhase(project);
+          const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
+          // Don't show chevron for kalkylskede projects - they navigate instead
+          if (isKalkylskede) return null;
+          return hasFunctions ? (
+            <Ionicons
+              name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+              size={16}
+              color="#666"
+              style={{ marginRight: 6 }}
+            />
+          ) : null;
+        })()}
         
         {/* Status indicator - dölj för eftermarknad */}
         {selectedPhase !== 'eftermarknad' && (
@@ -124,23 +186,29 @@ export default function ProjectTreeNode({
         </Text>
       </TouchableOpacity>
 
-      {/* Functions list (when expanded) */}
-      {isExpanded && hasFunctions && functions.length > 0 && (
-        <View style={{ marginLeft: 20, marginTop: 4 }}>
-          {functions.map((func) => (
-            <ProjectFunctionNode
-              key={func.id}
-              functionItem={func}
-              project={project}
-              onSelect={() => {
-                if (onSelectFunction) {
-                  onSelectFunction(project, func);
-                }
-              }}
-            />
-          ))}
-        </View>
-      )}
+      {/* Functions list (when expanded) - but NOT for kalkylskede projects */}
+      {(() => {
+        const projectPhase = getProjectPhase(project);
+        const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
+        // Don't show functions for kalkylskede projects - they navigate instead
+        if (isKalkylskede) return null;
+        return isExpanded && hasFunctions && functions.length > 0 ? (
+          <View style={{ marginLeft: 20, marginTop: 4 }}>
+            {functions.map((func) => (
+              <ProjectFunctionNode
+                key={func.id}
+                functionItem={func}
+                project={project}
+                onSelect={() => {
+                  if (onSelectFunction) {
+                    onSelectFunction(project, func);
+                  }
+                }}
+              />
+            ))}
+          </View>
+        ) : null;
+      })()}
     </View>
   );
 }

@@ -36,7 +36,8 @@ service cloud.firestore {
     // Backup documents for hierarchy (automatic backups before saves)
     match /foretag/{company}/hierarki/{backupId} {
       allow read: if isCompanyMember(company) && backupId.matches('backup_.*');
-      allow write: if isCompanyMember(company) && backupId.matches('backup_.*');
+      allow create, update: if isCompanyMember(company) && backupId.matches('backup_.*');
+      allow delete: if isCompanyMember(company) && backupId.matches('backup_.*');
     }
 
     // Controls (completed)
@@ -133,6 +134,13 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
     }
 
+    // Leverantörer (company-scoped)
+    // Varje företag har sitt eget register: foretag/{company}/leverantorer/{supplierId}
+    // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera leverantörer för alla företag.
+    match /foretag/{company}/leverantorer/{supplierId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
     // Company members directory (company-scoped)
     // Used for listing admins/roles in the app without enabling cross-company user queries.
     match /foretag/{company}/members/{uid} {
@@ -177,6 +185,25 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.companyId == resource.data.companyId;
       allow delete: if false;
+    }
+
+    // Project phase navigation (company-scoped, project-specific)
+    // Used for storing custom navigation structures for each project phase
+    match /foretag/{company}/projects/{projectId}/phaseNavigation/{phaseKey} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Phase navigation (company-wide, not per project)
+    // Used for storing custom navigation structures shared across all projects in a company
+    match /foretag/{company}/phaseNavigation/{phaseKey} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project phase data (company-scoped, project-specific)
+    // Used for storing phase-specific data like completions, progress, etc.
+    match /foretag/{company}/projects/{projectId}/phaseData/{phaseKey} {
+      allow read, write: if isCompanyMember(company);
     }
   }
 }
