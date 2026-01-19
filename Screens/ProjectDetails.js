@@ -6,21 +6,21 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Animated,
-    Easing,
-    Image,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    useWindowDimensions,
-    View
+  Animated,
+  Easing,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View
 } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,12 +29,12 @@ import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated, onProjectUpdated } from '../components/projectBus';
 
 import {
-    ArbetsberedningControl,
-    EgenkontrollControl,
-    FuktmätningControl,
-    MottagningskontrollControl,
-    RiskbedömningControl,
-    SkyddsrondControl,
+  ArbetsberedningControl,
+  EgenkontrollControl,
+  FuktmätningControl,
+  MottagningskontrollControl,
+  RiskbedömningControl,
+  SkyddsrondControl,
 } from '../features/kma/components/controls';
 import ControlDetails from './ControlDetails';
 
