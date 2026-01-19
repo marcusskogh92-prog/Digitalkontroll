@@ -4,9 +4,9 @@
  * Uses PKCE (Proof Key for Code Exchange) for Single-Page Application flow
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAzureConfig } from './config';
 
 // PKCE helper functions
@@ -302,7 +302,8 @@ async function authenticateWeb(config) {
     `scope=${encodeURIComponent(config.scopes.join(' '))}&` +
     `state=${state}&` +
     `code_challenge=${encodeURIComponent(codeChallenge)}&` +
-    `code_challenge_method=S256`; // SHA256
+    `code_challenge_method=S256&` +
+    `prompt=select_account`; // Force account selection to avoid automatic SSO with wrong tenant
   
   // Small delay to ensure localStorage is committed before redirect
   // This is especially important on some browsers

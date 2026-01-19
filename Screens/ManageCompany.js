@@ -1,10 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Pressable, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteId, purgeCompanyRemote, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, storage, uploadCompanyLogo } from '../components/firebase';
-import { createCompanySiteWithStructure } from '../services/azure/siteService';
+import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteId, purgeCompanyRemote, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, uploadCompanyLogo } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
@@ -933,11 +931,20 @@ export default function ManageCompany({ navigation }) {
                             await getAccessToken();
                           }
 
-                          const sanitizedId = compId
-                            .replace(/[^a-zA-Z0-9]/g, '')
-                            .replace(/\s+/g, '')
+                          // Bygg ett stabilt URL-segment för SharePoint-siten.
+                          // Exempel: companyId "MS Byggsystem" -> "dk-msbyggsystem".
+                          const rawSlug = compId
                             .toLowerCase()
-                            .substring(0, 50);
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+/, '')
+                            .replace(/-+$/, '')
+                            .substring(0, 40); // lämna lite marginal för prefix
+
+                          const baseSlug = rawSlug && rawSlug.startsWith('dk-') ? rawSlug : `dk-${rawSlug || compId.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+                          const sanitizedId = baseSlug.substring(0, 50);
+
+                          // Lokal del som kan användas som förslag till gruppens e-postadress
+                          const emailLocalPart = baseSlug.replace(/[^a-z0-9]/g, '');
                           
                           const { getSiteByUrl } = await import('../services/azure/siteService');
                           const { getAzureConfig } = await import('../services/azure/config');
@@ -977,8 +984,8 @@ export default function ManageCompany({ navigation }) {
                               `1. Gå till SharePoint Admin Center:\n` +
                               `   https://admin.microsoft.com/sharepoint\n\n` +
                               `2. Klicka "+ Skapa" och fyll i:\n\n` +
-                              `   📝 NAMN: "${compName}"\n` +
-                              `   📝 GRUPPENS E-POSTADRESS: "${compId.replace(/[^a-zA-Z0-9]/g, '')}"\n` +
+                              `   📝 NAMN: "DK - ${compName}"\n` +
+                              `   📝 GRUPPENS E-POSTADRESS: "${emailLocalPart}" (t.ex. ${emailLocalPart}@dindomän.se)\n` +
                               `   📝 WEBBPLATSADRESS: "${sanitizedId}"\n` +
                               `   📝 GRUPPÄGARE: marcus@msbyggsystem.se\n\n` +
                               `3. När site är skapad, kom tillbaka och klicka på "Skapa SharePoint Site" igen för att länka den.`;
