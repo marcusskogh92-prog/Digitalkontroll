@@ -1,10 +1,11 @@
 /**
- * DashboardRecentProjects - Recent projects list
+ * DashboardRecentProjects - Recent projects list with phase color coding
  */
 
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { PROJECT_PHASES, getPhaseConfig } from '../../../features/projects/constants';
 
 const DashboardRecentProjects = ({
   dashboardLoading,
@@ -56,27 +57,76 @@ const DashboardRecentProjects = ({
             </TouchableOpacity>
           </View>
         ) : (
-          (dashboardRecentProjects || []).map((entry, idx) => (
-            <TouchableOpacity
-              key={`${entry.projectId}-${idx}`}
-              activeOpacity={0.85}
-              onPress={() => {
-                if (entry?.project && onProjectSelect) {
-                  onProjectSelect(entry.project);
-                }
-              }}
-              style={dashboardListItemStyle(idx)}
-            >
-              <Text style={dashboardLinkTitleStyle} numberOfLines={1}>
-                {entry.project.id} — {entry.project.name}
-              </Text>
-              {formatRelativeTime && entry.ts && (
-                <Text style={dashboardMetaTextStyle}>
-                  Senast aktivitet: {formatRelativeTime(entry.ts)}
-                </Text>
-              )}
-            </TouchableOpacity>
-          ))
+          (dashboardRecentProjects || []).map((entry, idx) => {
+            const project = entry?.project || {};
+            const projectPhase = project?.phase || 'kalkylskede';
+            const phaseConfig = getPhaseConfig(projectPhase);
+            
+            return (
+              <TouchableOpacity
+                key={`${entry.projectId}-${idx}`}
+                activeOpacity={0.85}
+                onPress={() => {
+                  if (entry?.project && onProjectSelect) {
+                    onProjectSelect(entry.project);
+                  }
+                }}
+                style={[
+                  dashboardListItemStyle(idx),
+                  {
+                    borderLeftWidth: 4,
+                    borderLeftColor: phaseConfig.color,
+                    paddingLeft: 12,
+                  }
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: phaseConfig.color,
+                      marginRight: 8,
+                    }}
+                  />
+                  <Text 
+                    style={[
+                      dashboardLinkTitleStyle,
+                      { flex: 1, fontWeight: '500' }
+                    ]} 
+                    numberOfLines={1}
+                  >
+                    {entry.project.id} — {entry.project.name}
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor: `${phaseConfig.color}20`,
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      borderRadius: 12,
+                      marginLeft: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: phaseConfig.color,
+                        fontWeight: '600',
+                      }}
+                    >
+                      {phaseConfig.name}
+                    </Text>
+                  </View>
+                </View>
+                {formatRelativeTime && entry.ts && (
+                  <Text style={dashboardMetaTextStyle}>
+                    Senast aktivitet: {formatRelativeTime(entry.ts)}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          })
         )}
       </View>
     </>

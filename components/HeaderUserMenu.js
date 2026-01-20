@@ -6,7 +6,6 @@ import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-
 import ContextMenu from './ContextMenu';
 import { auth } from './firebase';
 import { formatPersonName } from './formatPersonName';
-import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
 
 let createPortal = null;
 if (Platform.OS === 'web') {
@@ -14,7 +13,7 @@ if (Platform.OS === 'web') {
 }
 let portalRootId = 'dk-header-portal';
 
-export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
+export default function HeaderUserMenu() {
   const navigation = useNavigation();
   const btnRef = useRef(null);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -22,14 +21,6 @@ export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
   const [roleLabel, setRoleLabel] = useState('');
   const chevronSpinAnim = useRef(new Animated.Value(0)).current;
   const chevronDeg = useRef(0);
-  const [currentPhase, setCurrentPhase] = useState(selectedPhase || DEFAULT_PHASE);
-  
-  // Synka med prop när den ändras
-  useEffect(() => {
-    if (selectedPhase) {
-      setCurrentPhase(selectedPhase);
-    }
-  }, [selectedPhase]);
 
   const openMenu = () => {
     try {
@@ -95,20 +86,30 @@ export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
 
   const menuItems = [];
   
-  // Lägg till fas-väljare först
-  menuItems.push({ key: 'phase_separator', label: 'Projektskede', isSeparator: true });
-  PROJECT_PHASES.forEach(phase => {
-    const isSelected = currentPhase === phase.key;
-    menuItems.push({ 
-      key: `phase_${phase.key}`, 
-      label: phase.name, 
-      icon: <Ionicons name={phase.icon} size={16} color={phase.color} />,
-      isSelected: isSelected,
-      phaseColor: phase.color
-    });
-  });
+  // Lägg till admin-funktioner först (flyttat från HeaderAdminMenu)
+  const isSuperOrMsAdmin = isOwner || isMsAdmin;
   
-  menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
+  if (isSuperadmin) {
+    if (isSuperOrMsAdmin) {
+      menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+    }
+    if (isOwner || isCompanyAdmin) {
+      menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
+    }
+  }
+
+  // Admin + superadmin: kontaktregister
+  if (isCompanyAdmin || isSuperadmin) {
+    menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#0f172a" /> });
+    menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#43A047" /> });
+    menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#FB8C00" /> });
+  }
+
+  // Separator om det finns admin-funktioner
+  if (menuItems.length > 0) {
+    menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
+  }
 
   // Alla roller (superadmin, admin, användare) ska kunna logga ut här
   menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
@@ -124,18 +125,7 @@ export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
         try {
           if (!it) return;
           
-          // Hantera fas-väljare (stäng inte menyn direkt)
-          if (it.key && it.key.startsWith('phase_')) {
-            const phaseKey = it.key.replace('phase_', '');
-            setCurrentPhase(phaseKey);
-            if (onPhaseChange) {
-              onPhaseChange(phaseKey);
-            }
-            // Uppdatera menyn men stäng inte
-            return;
-          }
-          
-          // För andra val, stäng menyn
+          // Stäng menyn för alla val
           setMenuVisible(false);
           
           if (it.key === 'logout') {
@@ -147,6 +137,36 @@ export default function HeaderUserMenu({ selectedPhase, onPhaseChange }) {
               try { navigation.navigate('Login'); } catch(__e) {}
             }
             return;
+          }
+
+          // Hantera admin-funktioner (flyttat från HeaderAdminMenu)
+          if (it.key === 'manage_company') {
+            return navigation.navigate('ManageCompany');
+          }
+          if (it.key === 'manage_users') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ManageUsers', { companyId: cid });
+          }
+          if (it.key === 'manage_control_types') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ManageControlTypes', { companyId: cid });
+          }
+          if (it.key === 'contact_registry') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ContactRegistry', {
+              companyId: cid,
+              allCompanies: !!isSuperadmin,
+            });
+          }
+          if (it.key === 'suppliers') {
+            return navigation.navigate('Suppliers', {
+              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
+            });
+          }
+          if (it.key === 'customers') {
+            return navigation.navigate('Customers', {
+              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
+            });
           }
         } catch(_e) {}
       }}

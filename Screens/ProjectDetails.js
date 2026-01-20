@@ -652,6 +652,34 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
     }
   }
   
+  // Handler for phase change - updates project phase in hierarchy
+  const handleProjectPhaseChange = React.useCallback(async (newPhaseKey) => {
+    if (!project?.id || !companyId) return;
+    
+    try {
+      // Update project phase
+      const updatedProject = {
+        ...project,
+        phase: newPhaseKey,
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Emit update so HomeScreen can update hierarchy
+      emitProjectUpdated(updatedProject);
+      
+      // Update local project state
+      setProject(updatedProject);
+      
+      // Update navigation params
+      if (typeof navigation?.setParams === 'function') {
+        navigation.setParams({ project: updatedProject });
+      }
+    } catch (error) {
+      console.error('[ProjectDetails] Error changing project phase:', error);
+      throw error;
+    }
+  }, [project, companyId, navigation]);
+
   // If project has a phase, render the PhaseLayout (full width, no internal leftpanel)
   if (projectPhaseKey && companyId && project?.id && PhaseLayoutComponent) {
     try {
@@ -667,6 +695,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             externalActiveItem={route?.params?.phaseActiveItem}
             onExternalSectionChange={route?.params?.onPhaseSectionChange}
             onExternalItemChange={route?.params?.onPhaseItemChange}
+            onPhaseChange={handleProjectPhaseChange}
+            reactNavigation={navigation}
           />
         </View>
       );

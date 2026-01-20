@@ -4,22 +4,20 @@ import { getDownloadURL, ref as storageRef } from 'firebase/storage';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Easing, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
-import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenu from '../components/HeaderUserMenu';
 import { Dashboard } from '../components/common/Dashboard';
 import { NewProjectModal, SelectProjectModal } from '../components/common/Modals';
 import { ProjectTree } from '../components/common/ProjectTree';
-import { ensureProjectFunctions } from '../components/common/ProjectTree/constants';
-import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchHierarchy, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
+import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
-import PhaseLeftPanel from '../features/project-phases/phases/kalkylskede/components/PhaseLeftPanel';
-import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../features/projects/constants';
+import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useBreadcrumbNavigation } from '../hooks/common/useBreadcrumbNavigation';
 import { useHierarchyToggle } from '../hooks/common/useHierarchy';
 import useBackgroundSync from '../hooks/useBackgroundSync';
+import { checkSharePointConnection, getProjectFolders } from '../services/azure/hierarchyService';
 import { showAlert } from '../utils/alerts';
 import { getAppVersion } from '../utils/appVersion';
 import { copyProjectWeb, deleteProject } from '../utils/hierarchyOperations';
@@ -27,6 +25,7 @@ import { isWeb } from '../utils/platform';
 import { isValidIsoDateYmd } from '../utils/validation';
 import ProjectDetails from './ProjectDetails';
 import TemplateControlScreen from './TemplateControlScreen';
+import { loadFolderChildren } from '../services/azure/hierarchyService';
 let createPortal = null;
 if (isWeb) {
   try { createPortal = require('react-dom').createPortal; } catch(_e) { createPortal = null; }
@@ -35,6 +34,248 @@ let portalRootId = 'dk-header-portal';
 
 // App version (displayed in sidebar)
 const appVersion = getAppVersion();
+
+// Recursive folder component for HomeScreen - handles infinite nesting levels from SharePoint
+// Uses React Native components (View, TouchableOpacity) instead of HTML (li, div, ul)
+function RecursiveFolderView({ 
+  folder, 
+  level = 0, 
+  expandedSubs, 
+  spinSubs, 
+  onToggle, 
+  companyId,
+  hierarchy,
+  setHierarchy,
+  parentPath = '' // Full path from root to parent folder
+}) {
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const isExpanded = expandedSubs[folder.id] || false;
+  const fontSize = Math.max(12, 15 - level);
+  const marginLeft = 18 + (level * 4);
+  
+  // Construct full path from root to this folder
+  // Priority: folder.path (if set correctly) > parentPath + folder.name > folder.name
+  const getFullPath = () => {
+    // If folder.path exists and looks valid, use it
+    if (folder.path && typeof folder.path === 'string' && folder.path.trim().length > 0) {
+      let normalized = folder.path.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+      normalized = normalized.replace(/\/+$/, '');
+      // CRITICAL: Remove any colons from path (Graph API adds : at end, but we don't want it in the path itself)
+      normalized = normalized.replace(/:/g, '');
+      if (normalized && normalized.length > 0 && normalized !== '/') {
+        return normalized;
+      }
+    }
+    
+    // Otherwise, construct from parentPath + folder.name
+    if (parentPath && typeof parentPath === 'string' && parentPath.trim().length > 0) {
+      let normalizedParent = parentPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+      normalizedParent = normalizedParent.replace(/\/+$/, '');
+      // CRITICAL: Remove any colons from parent path
+      normalizedParent = normalizedParent.replace(/:/g, '');
+      if (normalizedParent && normalizedParent.length > 0) {
+        const fullPath = `${normalizedParent}/${folder.name}`;
+        // Normalize the constructed path
+        return fullPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+      }
+    }
+    
+    // Fallback to just folder.name (root level) - remove any colons
+    const fallback = folder.name || '';
+    return fallback.replace(/:/g, '');
+  };
+  
+  const handleToggle = async () => {
+    if (onToggle) {
+      onToggle(folder.id);
+    }
+    
+    // If expanding and folder has no children or children not loaded, load them from SharePoint
+    if (!isExpanded && (!folder.children || folder.children.length === 0) && companyId) {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Get full path from root to this folder
+        const folderPath = getFullPath();
+        
+        // Normalize path - CRITICAL: Remove any colons (Graph API format issue)
+        let normalizedPath = folderPath;
+        if (normalizedPath && typeof normalizedPath === 'string') {
+          // Remove colons first (Graph API can add : at end)
+          normalizedPath = normalizedPath.replace(/:/g, '');
+          // Then normalize slashes
+          normalizedPath = normalizedPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+          normalizedPath = normalizedPath.replace(/\/+$/, '');
+        } else {
+          normalizedPath = '';
+        }
+        
+        // Validate path - if empty, log warning but still try (will use root endpoint)
+        if (!normalizedPath || normalizedPath.length === 0 || normalizedPath === '/') {
+          console.warn('[HomeScreen] RecursiveFolderView - Empty or invalid folder path for:', folder.name, 'parentPath:', parentPath, 'folder.path:', folder.path, 'constructed path:', folderPath);
+          // Don't set normalizedPath to folder.name here - let loadFolderChildren handle empty path
+        }
+        
+        console.log('[HomeScreen] RecursiveFolderView - Loading children for path:', normalizedPath || '(root)', 'folder:', folder.name, 'level:', level, 'original folderPath:', folderPath);
+        
+        const children = await loadFolderChildren(companyId, normalizedPath);
+        
+        // Update hierarchy with loaded children - ensure each child has correct path
+        setHierarchy(prev => {
+          const updateFolder = (folders, currentParentPath = '') => folders.map(f => {
+            if (f.id === folder.id) {
+              // Update this folder with children and correct path
+              // CRITICAL: Use the actual normalizedPath that was used to load children
+              const actualPath = normalizedPath || f.path || (parentPath ? `${parentPath}/${folder.name}` : folder.name);
+              
+              const updatedChildren = (children || []).map(child => {
+                // CRITICAL: Construct child path from actual parent path
+                // child.path from loadFolderChildren should already be correct, but double-check
+                let childPath = child.path;
+                if (!childPath || childPath.length === 0) {
+                  // If child doesn't have path, construct it from parent
+                  childPath = actualPath 
+                    ? `${actualPath}/${child.name}`.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '')
+                    : child.name;
+                } else {
+                  // Normalize existing path to ensure it's correct
+                  childPath = childPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+                }
+                
+                return {
+                  ...child,
+                  path: childPath // Always use normalized path
+                };
+              });
+              
+              return { 
+                ...f, 
+                children: updatedChildren, 
+                path: actualPath, // Always ensure path is set correctly
+                loading: false, 
+                error: null
+              };
+            }
+            if (f.children) {
+              // Recursively update children, passing current folder's path as parentPath
+              const currentPath = f.path || (currentParentPath ? `${currentParentPath}/${f.name}` : f.name);
+              return { ...f, children: updateFolder(f.children, currentPath) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('[HomeScreen] RecursiveFolderView - Error loading folder children:', err, 'for path:', getFullPath(), 'folder:', folder.name);
+        setError(err.message || 'Kunde inte ladda undermappar');
+        setLoading(false);
+        
+        // Update hierarchy with error
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === folder.id) {
+              return { ...f, loading: false, error: err.message || 'Kunde inte ladda undermappar' };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+      }
+    }
+  };
+  
+  return (
+    <View style={{ marginLeft, marginTop: 4 }}>
+      <TouchableOpacity
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: '2px 4px',
+        }}
+        onPress={handleToggle}
+      >
+        <Ionicons
+          name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+          size={Math.max(12, 16 - level)}
+          color="#222"
+          style={{ marginRight: 4 }}
+        />
+        <Text style={{ 
+          fontSize, 
+          fontWeight: isExpanded ? '600' : '400', 
+          color: '#222' 
+        }}>
+          {folder.name}
+        </Text>
+      </TouchableOpacity>
+      
+      {isExpanded && (
+        <View style={{ marginLeft: 4, marginTop: 4 }}>
+          {loading || folder.loading ? (
+            <Text style={{ color: '#888', fontSize: fontSize - 1, marginLeft: 18, fontStyle: 'italic' }}>
+              Laddar undermappar från SharePoint...
+            </Text>
+          ) : error || folder.error ? (
+            <Text style={{ color: '#D32F2F', fontSize: fontSize - 1, marginLeft: 18 }}>
+              Fel: {error || folder.error}
+            </Text>
+          ) : folder.children && folder.children.length > 0 ? (
+            // Recursively render children - infinite depth, fully driven by SharePoint structure
+            folder.children
+              .filter(child => child.type === 'folder' || !child.type) // Only folders
+              .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+              .map(childFolder => {
+                // Construct parent path for child - use folder's path or construct from parentPath
+                // CRITICAL: Normalize path and remove any colons
+                let currentFolderPath = folder.path;
+                if (!currentFolderPath || currentFolderPath.length === 0) {
+                  if (parentPath && folder.name) {
+                    currentFolderPath = `${parentPath}/${folder.name}`;
+                  } else if (folder.name) {
+                    currentFolderPath = folder.name;
+                  } else {
+                    currentFolderPath = '';
+                  }
+                }
+                // Normalize: remove leading/trailing slashes, remove colons, normalize slashes
+                if (currentFolderPath && typeof currentFolderPath === 'string') {
+                  currentFolderPath = currentFolderPath.replace(/:/g, '').replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+                } else {
+                  currentFolderPath = '';
+                }
+                
+                return (
+                  <RecursiveFolderView
+                    key={childFolder.id}
+                    folder={childFolder}
+                    level={level + 1}
+                    expandedSubs={expandedSubs}
+                    spinSubs={spinSubs}
+                    onToggle={onToggle}
+                    companyId={companyId}
+                    hierarchy={hierarchy}
+                    setHierarchy={setHierarchy}
+                    parentPath={currentFolderPath}
+                  />
+                );
+              })
+          ) : (
+            <Text style={{ color: '#D32F2F', fontSize: fontSize - 1, marginLeft: 18, fontStyle: 'italic' }}>
+              Mappen är tom
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
 
 export default function HomeScreen({ navigation, route }) {
 
@@ -203,20 +444,8 @@ export default function HomeScreen({ navigation, route }) {
         const user = auth?.currentUser;
         if (!user) return;
         
-        // Try to ensure system folder structure in Digitalkontroll site
-        // This runs silently in the background - don't show errors to user
-        try {
-          const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
-          await ensureSystemFolderStructure();
-          if (mounted) {
-            console.log('[HomeScreen] ✅ System folder structure ensured');
-          }
-        } catch (structureError) {
-          // Silently fail - structure will be created on-demand when files are uploaded
-          if (mounted && structureError?.message && !structureError.message.includes('Popup window was blocked') && !structureError.message.includes('Authentication not available')) {
-            console.warn('[HomeScreen] ⚠️ Could not ensure system folder structure:', structureError);
-          }
-        }
+        // REMOVED: ensureSystemFolderStructure - SharePoint is now the source of truth
+        // Folders should be created directly in SharePoint, not auto-created by Digitalkontroll
       } catch (_e) {
         // Ignore errors
       }
@@ -608,12 +837,27 @@ export default function HomeScreen({ navigation, route }) {
     const n = String(num ?? '').trim();
     if (!n) return true;
     try {
-      for (const main of (hierarchyRef.current || [])) {
-        for (const sub of (main.children || [])) {
-          if (Array.isArray(sub.children) && sub.children.some(child => child?.type === 'project' && String(child.id) === n)) {
-            return false;
-          }
-        }
+      // Recursively check all projects - no assumptions about depth
+      const findAllProjects = (items) => {
+        const projects = [];
+        const walk = (nodes) => {
+          if (!Array.isArray(nodes)) return;
+          nodes.forEach(node => {
+            if (node && node.type === 'project' && node.id) {
+              projects.push(node);
+            }
+            if (node && node.children && Array.isArray(node.children)) {
+              walk(node.children);
+            }
+          });
+        };
+        walk(items);
+        return projects;
+      };
+      
+      const allProjects = findAllProjects(hierarchyRef.current || []);
+      if (allProjects.some(proj => String(proj.id) === String(n))) {
+        return false;
       }
     } catch(_e) {}
     return true;
@@ -725,16 +969,20 @@ export default function HomeScreen({ navigation, route }) {
       try {
         tree.forEach(main => {
           if (main.children && Array.isArray(main.children)) {
-            main.children.forEach(sub => {
-              if (sub.children && Array.isArray(sub.children)) {
-                sub.children.forEach(child => {
-                  if (child && child.type === 'project') {
-                    if (child.status === 'completed') completed++;
-                    else ongoing++;
-                  }
-                });
-              }
-            });
+            // Recursively count projects - no assumptions about depth
+            const walk = (nodes) => {
+              if (!Array.isArray(nodes)) return;
+              nodes.forEach(node => {
+                if (node && node.type === 'project') {
+                  if (node.status === 'completed') completed++;
+                  else ongoing++;
+                }
+                if (node && node.children && Array.isArray(node.children)) {
+                  walk(node.children);
+                }
+              });
+            };
+            walk(main.children || []);
           }
         });
       } catch(_e) {}
@@ -761,16 +1009,20 @@ export default function HomeScreen({ navigation, route }) {
   // eslint-disable-next-line no-unused-vars
   function _countProjects(tree) {
     let count = 0;
+    // Recursively count projects - no assumptions about depth
     if (!Array.isArray(tree)) return count;
-    tree.forEach(main => {
-      if (main.children && Array.isArray(main.children)) {
-        main.children.forEach(sub => {
-          if (sub.children && Array.isArray(sub.children)) {
-            count += sub.children.filter(child => child.type === 'project').length;
-          }
-        });
-      }
-    });
+    const walk = (nodes) => {
+      if (!Array.isArray(nodes)) return;
+      nodes.forEach(node => {
+        if (node && node.type === 'project') {
+          count++;
+        }
+        if (node && node.children && Array.isArray(node.children)) {
+          walk(node.children);
+        }
+      });
+    };
+    walk(tree);
     return count;
   }
   const email = route?.params?.email || '';
@@ -827,12 +1079,14 @@ export default function HomeScreen({ navigation, route }) {
   const hierarchyRef = useRef([]);
   const [spinMain, setSpinMain] = useState({});
   const [spinSub, setSpinSub] = useState({});
+  const [expandedSubs, setExpandedSubs] = useState({}); // For recursive folder expansion (SharePoint folders)
   const [expandedProjects, setExpandedProjects] = useState({}); // For project functions expansion
   const [localFallbackExists, setLocalFallbackExists] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle');
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedProjectPath, setSelectedProjectPath] = useState(null); // { mainId, subId, mainName?, subName?, projectId? }
   const selectedProjectRef = useRef(null);
+  const [selectedProjectFolders, setSelectedProjectFolders] = useState([]); // SharePoint folders for selected project
   
   // Phase navigation state (for PhaseLeftPanel in leftpanel)
   const [phaseActiveSection, setPhaseActiveSection] = useState(null);
@@ -900,6 +1154,7 @@ export default function HomeScreen({ navigation, route }) {
   
   // Selected phase for filtering (default: kalkylskede)
   const [selectedPhase, setSelectedPhase] = useState('kalkylskede');
+  // Phase dropdown removed - phases are now SharePoint folders
   const [phaseChanging, setPhaseChanging] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState(null); // Store which phase is being loaded
   const phaseChangeSpinAnim = useRef(new Animated.Value(0)).current;
@@ -928,42 +1183,168 @@ export default function HomeScreen({ navigation, route }) {
     }
   }, [hierarchy, companyId]);
   
-  // Handler för fasbyte med loading indikator och data-sparning
-  const handlePhaseChange = React.useCallback(async (newPhase) => {
-    if (newPhase === selectedPhase) return;
+  // Phase dropdown removed - phases are now SharePoint folders
+  // Active folder will be tracked when user navigates to a folder
+  const [activeFolderPath, setActiveFolderPath] = useState(null); // Track which SharePoint folder is active
+  const [sharePointStatus, setSharePointStatus] = useState({ connected: false, checking: true, error: null, siteId: null, siteUrl: null, siteName: null }); // SharePoint connection status
+  const [sharePointTooltipVisible, setSharePointTooltipVisible] = useState(false); // Tooltip visibility for SharePoint icon
+  
+  // Listen for folder selection events to update active folder
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     
-    // Get phase name for loading message
-    const phaseConfig = PROJECT_PHASES.find(p => p.key === newPhase);
-    const phaseName = phaseConfig?.name || newPhase;
-    setLoadingPhase(newPhase);
-    setPhaseChanging(true);
+    const handleFolderSelected = (event) => {
+      try {
+        const detail = event?.detail || {};
+        if (detail.folderPath) {
+          setActiveFolderPath(detail.folderPath);
+        }
+      } catch (_e) {}
+    };
     
-    // Save all pending data before changing phase
-    await saveAllPendingData();
+    window.addEventListener('dkFolderSelected', handleFolderSelected);
+    return () => {
+      try {
+        window.removeEventListener('dkFolderSelected', handleFolderSelected);
+      } catch (_e) {}
+    };
+  }, []);
+  
+  // Map SharePoint folder names to phase colors for UI
+  const getFolderColor = React.useCallback((folderName) => {
+    if (!folderName) return '#1976D2'; // Default blue
+    const name = String(folderName).toLowerCase();
+    if (name.includes('kalkyl')) return '#1976D2'; // Blue
+    if (name.includes('produktion')) return '#43A047'; // Green
+    if (name.includes('avslut')) return '#616161'; // Gray
+    if (name.includes('eftermarknad')) return '#7B1FA2'; // Purple
+    return '#1976D2'; // Default
+  }, []);
+  
+  // Get active folder name from path
+  const getActiveFolderName = React.useCallback(() => {
+    if (!activeFolderPath) return null;
+    const parts = activeFolderPath.split('/');
+    return parts[parts.length - 1] || activeFolderPath;
+  }, [activeFolderPath]);
+
+  // Check SharePoint connection status and animate icon
+  React.useEffect(() => {
+    if (!companyId) {
+        setSharePointStatus({ connected: false, checking: false, error: null, siteId: null, siteUrl: null, siteName: null });
+      return;
+    }
     
-    // Change phase
-    setSelectedPhase(newPhase);
+    let mounted = true;
+    (async () => {
+      try {
+        setSharePointStatus(prev => ({ ...prev, checking: true }));
+        const connectionStatus = await checkSharePointConnection(companyId);
+        if (mounted) {
+          setSharePointStatus({
+            connected: connectionStatus.connected,
+            checking: false,
+            error: connectionStatus.error,
+            siteId: connectionStatus.siteId,
+            siteUrl: connectionStatus.siteUrl,
+            siteName: connectionStatus.siteName
+          });
+          
+          // Start pulsing animation
+          if (connectionStatus.connected) {
+            // Green pulsing animation
+            Animated.loop(
+              Animated.sequence([
+                Animated.timing(searchSpinAnim, {
+                  toValue: 1,
+                  duration: 1500,
+                  easing: Easing.inOut(Easing.ease),
+                  useNativeDriver: false,
+                }),
+                Animated.timing(searchSpinAnim, {
+                  toValue: 0,
+                  duration: 1500,
+                  easing: Easing.inOut(Easing.ease),
+                  useNativeDriver: false,
+                }),
+              ])
+            ).start();
+          } else {
+            // Red pulsing animation
+            Animated.loop(
+              Animated.sequence([
+                Animated.timing(searchSpinAnim, {
+                  toValue: 1,
+                  duration: 1000,
+                  easing: Easing.inOut(Easing.ease),
+                  useNativeDriver: false,
+                }),
+                Animated.timing(searchSpinAnim, {
+                  toValue: 0,
+                  duration: 1000,
+                  easing: Easing.inOut(Easing.ease),
+                  useNativeDriver: false,
+                }),
+              ])
+            ).start();
+          }
+        }
+      } catch (error) {
+        if (mounted) {
+          setSharePointStatus({
+            connected: false,
+            checking: false,
+            error: error?.message || 'Okänt fel',
+            siteId: null,
+            siteUrl: null,
+            siteName: null
+          });
+          // Red pulsing animation on error
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(searchSpinAnim, {
+                toValue: 1,
+                duration: 1000,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: false,
+              }),
+              Animated.timing(searchSpinAnim, {
+                toValue: 0,
+                duration: 1000,
+                easing: Easing.inOut(Easing.ease),
+                useNativeDriver: false,
+              }),
+            ])
+          ).start();
+        }
+      }
+    })();
     
-    // Starta spinner animation
-    phaseChangeSpinAnim.setValue(0);
-    const animation = Animated.loop(
-      Animated.timing(phaseChangeSpinAnim, {
-        toValue: 1,
-        duration: 800,
-        easing: Easing.linear,
-        useNativeDriver: Platform.OS !== 'web',
-      })
-    );
-    animation.start();
-    
-    // Visa loading i minst 1 sekund för att användaren ska se meddelandet
-    setTimeout(() => {
-      animation.stop();
-      phaseChangeSpinAnim.setValue(0);
-      setPhaseChanging(false);
-      setLoadingPhase(null);
-    }, 1000);
-  }, [selectedPhase, phaseChangeSpinAnim, saveAllPendingData]);
+    return () => { mounted = false; };
+  }, [companyId]);
+
+  // Dispatch window event helper
+  const dispatchWindowEvent = React.useCallback((name, detail) => {
+    try {
+      if (typeof window === 'undefined') return;
+      const evt = (typeof CustomEvent === 'function')
+        ? new CustomEvent(name, { detail })
+        : (() => {
+          const e = document.createEvent('Event');
+          e.initEvent(name, true, true);
+          e.detail = detail;
+          return e;
+        })();
+      window.dispatchEvent(evt);
+    } catch (_e) {}
+  }, []);
+
+  // Phase change removed - phases are now SharePoint folders, navigation happens via folder clicks
+
+  // Phase change removed - phases are now SharePoint folders, not internal state
+
+  // Phase changes removed - phases are now SharePoint folders
+  // No need to listen for phase change events since phases are SharePoint folders
 
   // Dashboard drill-down + hover (used mainly on web)
   const [dashboardFocus, setDashboardFocus] = useState(null); // 'activeProjects' | 'drafts' | 'controlsToSign' | 'upcomingSkyddsrond' | 'openDeviations'
@@ -1117,6 +1498,14 @@ export default function HomeScreen({ navigation, route }) {
           };
           const newHierarchy = walk(prev || []);
           try { hierarchyRef.current = newHierarchy; } catch (_e) {}
+          
+          // Auto-save hierarchy when project is updated (including phase changes)
+          if (companyId && newHierarchy && newHierarchy.length > 0) {
+            saveHierarchy(companyId, newHierarchy).catch(err => {
+              console.error('[HomeScreen] Error auto-saving hierarchy after project update:', err);
+            });
+          }
+          
           return newHierarchy;
         });
 
@@ -1178,6 +1567,33 @@ export default function HomeScreen({ navigation, route }) {
   React.useEffect(() => {
     selectedProjectRef.current = selectedProject;
   }, [selectedProject]);
+
+  // Load SharePoint folders for selected project
+  React.useEffect(() => {
+    if (!selectedProject || !companyId || !projectPhaseKey) {
+      setSelectedProjectFolders([]);
+      return;
+    }
+
+    const projectPhase = getProjectPhase(selectedProject);
+    const isKalkylskede = projectPhase.key === 'kalkylskede';
+    
+    // Don't load folders for kalkylskede projects
+    if (isKalkylskede) {
+      setSelectedProjectFolders([]);
+      return;
+    }
+
+    (async () => {
+      try {
+        const folders = await getProjectFolders(companyId, selectedProject.id, projectPhaseKey);
+        setSelectedProjectFolders(folders);
+      } catch (error) {
+        console.error('[HomeScreen] Error loading project folders:', error);
+        setSelectedProjectFolders([]);
+      }
+    })();
+  }, [selectedProject, companyId, projectPhaseKey]);
 
   // Close dashboard dropdowns when navigating into a project (avoid leaving overlays open)
   React.useEffect(() => {
@@ -1340,22 +1756,28 @@ export default function HomeScreen({ navigation, route }) {
     setTimeout(() => {
       if (!projectInfo) return;
       
+      // Recursively find project - no assumptions about depth
       const findProjectInHierarchy = (hierarchy, targetId) => {
-        for (const main of hierarchy || []) {
-          for (const sub of main.children || []) {
-            for (const project of sub.children || []) {
-              if (project.type === 'project' && String(project.id) === String(targetId)) {
-                return {
-                  project,
-                  mainId: main.id,
-                  subId: sub.id,
-                  mainName: main.name || '',
-                  subName: sub.name || ''
-                };
-              }
+        const findRecursive = (nodes, path = []) => {
+          if (!Array.isArray(nodes)) return null;
+          for (const node of nodes) {
+            if (node && node.type === 'project' && String(node.id) === String(targetId)) {
+              // Return project with path information (last 2 levels if available)
+              const pathInfo = path.length >= 2 
+                ? { mainId: path[path.length - 2]?.id, subId: path[path.length - 1]?.id, mainName: path[path.length - 2]?.name || '', subName: path[path.length - 1]?.name || '' }
+                : path.length >= 1
+                ? { mainId: path[path.length - 1]?.id, subId: null, mainName: path[path.length - 1]?.name || '', subName: '' }
+                : { mainId: null, subId: null, mainName: '', subName: '' };
+              return { project: node, ...pathInfo };
+            }
+            if (node && node.children && Array.isArray(node.children)) {
+              const result = findRecursive(node.children, [...path, node]);
+              if (result) return result;
             }
           }
-        }
+          return null;
+        };
+        return findRecursive(hierarchy || []);
         return null;
       };
 
@@ -1581,20 +2003,28 @@ export default function HomeScreen({ navigation, route }) {
     };
   }, []);
 
+  // Recursively find project by ID - no assumptions about depth
   const findProjectById = React.useCallback((projectId) => {
     if (!projectId) return null;
     const targetId = String(projectId);
     try {
-      const tree = hierarchyRef.current || [];
-      for (const main of tree) {
-        for (const sub of (main.children || [])) {
-          for (const child of (sub.children || [])) {
-            if (child && child.type === 'project' && String(child.id) === targetId) return child;
+      const findRecursive = (nodes) => {
+        if (!Array.isArray(nodes)) return null;
+        for (const node of nodes) {
+          if (node && node.type === 'project' && String(node.id) === targetId) {
+            return node;
+          }
+          if (node && node.children && Array.isArray(node.children)) {
+            const result = findRecursive(node.children);
+            if (result) return result;
           }
         }
-      }
-    } catch(_e) {}
-    return null;
+        return null;
+      };
+      return findRecursive(hierarchyRef.current || []);
+    } catch(_e) {
+      return null;
+    }
   }, []);
 
   const toTsMs = React.useCallback((value) => {
@@ -1711,14 +2141,19 @@ export default function HomeScreen({ navigation, route }) {
       // Filter them to only include projects that exist in the current company's hierarchy.
       const allowedProjectIds = new Set();
       try {
-        const tree = hierarchyRef.current || [];
-        for (const main of tree) {
-          for (const sub of (main.children || [])) {
-            for (const child of (sub.children || [])) {
-              if (child && child.type === 'project' && child.id) allowedProjectIds.add(String(child.id));
+        // Recursively find all projects - no assumptions about depth
+        const findAllProjects = (nodes) => {
+          if (!Array.isArray(nodes)) return;
+          nodes.forEach(node => {
+            if (node && node.type === 'project' && node.id) {
+              allowedProjectIds.add(String(node.id));
             }
-          }
-        }
+            if (node && node.children && Array.isArray(node.children)) {
+              findAllProjects(node.children);
+            }
+          });
+        };
+        findAllProjects(hierarchyRef.current || []);
       } catch(_e) {}
 
       const pickProjectId = (item) => {
@@ -2534,63 +2969,31 @@ export default function HomeScreen({ navigation, route }) {
 
       if (!cid) return;
 
-      if (didInitialLoadRef.current && loadedHierarchyForCompanyRef.current === cid) return;
-      loadedHierarchyForCompanyRef.current = cid;
+      // Track companyId to reload when it changes
+      const hierarchyKey = `${cid}`;
+      if (didInitialLoadRef.current && loadedHierarchyForCompanyRef.current === hierarchyKey) return;
+      loadedHierarchyForCompanyRef.current = hierarchyKey;
 
       if (cancelled) return;
       setLoadingHierarchy(true);
 
-      const items = await fetchHierarchy(cid).catch(() => null);
-      if (cancelled) return;
-
-      if (Array.isArray(items) && items.length > 0) {
-        const collapsed = collapseHierarchy(items);
-        setHierarchy(collapsed);
+      // Load ALL root folders from SharePoint - SharePoint is the single source of truth
+      // No Firestore fallback - SharePoint is required
+      try {
+        const { getSharePointHierarchy } = await import('../services/azure/hierarchyService');
+        // Get ALL root folders (all phases) from SharePoint - no filtering
+        const sharePointFolders = await getSharePointHierarchy(cid, null);
         
-        // Check if any folders are missing phase metadata and save updated hierarchy
-        const needsUpdate = items.some(main => {
-          if (!main?.phase) return true;
-          return (main.children || []).some(sub => {
-            if (!sub?.phase) return true;
-            return (sub.children || []).some(proj => !proj?.phase);
-          });
-        });
+        if (cancelled) return;
         
-        if (needsUpdate) {
-          // Save updated hierarchy with phase metadata to Firestore (async, don't wait)
-          saveHierarchy(cid, collapsed).catch(() => {
-            // Silently fail - we'll try again next time
-          });
-        }
-      } else {
-        // Firestore empty or failed — try local AsyncStorage fallback
-        try {
-          const raw = await AsyncStorage.getItem('hierarchy_local');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setHierarchy(collapseHierarchy(parsed));
-              setLocalFallbackExists(true);
-              // Try to push local fallback to Firestore (best-effort)
-              try {
-                const pushedRes = await saveHierarchy(cid, parsed);
-                const pushed = pushedRes === true || (pushedRes && pushedRes.ok === true);
-                if (pushed) {
-                  try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
-                  await refreshLocalFallbackFlag();
-                } else {
-                  try { console.error('[Home] push local fallback error', pushedRes && pushedRes.error ? pushedRes.error : pushedRes); } catch(_e) {}
-                }
-              } catch(_e) {}
-            } else {
-              setHierarchy([]);
-            }
-          } else {
-            setHierarchy([]);
-          }
-        } catch(_e) {
-          setHierarchy([]);
-        }
+        // Use SharePoint folders directly - no adapter, no Firestore
+        setHierarchy(Array.isArray(sharePointFolders) ? sharePointFolders : []);
+        console.log(`[HomeScreen] ✅ Loaded ${sharePointFolders?.length || 0} SharePoint folders for company: ${cid}`);
+      } catch (error) {
+        console.error('[HomeScreen] Error fetching SharePoint hierarchy:', error);
+        if (cancelled) return;
+        // SharePoint is required - show empty if connection fails
+        setHierarchy([]);
       }
 
       setLoadingHierarchy(false);
@@ -2600,6 +3003,7 @@ export default function HomeScreen({ navigation, route }) {
 
     return () => { cancelled = true; };
   }, [companyId, routeCompanyId, authClaims?.companyId]);
+  // Removed selectedPhase from dependencies - SharePoint hierarchy is not phase-filtered
 
   // Visa migreringsknappen även om det finns lokala kontroller (completed/draft)
   React.useEffect(() => {
@@ -2827,15 +3231,21 @@ export default function HomeScreen({ navigation, route }) {
       } else if (dkType === 'sub') {
         target = { type: 'sub', mainId, subId };
       } else if (dkType === 'project') {
-        // Lookup project object from current hierarchy
-        let project = null;
-        for (const m of hierarchy || []) {
-          if (String(m.id) !== String(mainId)) continue;
-          for (const s of m.children || []) {
-            if (String(s.id) !== String(subId)) continue;
-            project = (s.children || []).find(ch => ch?.type === 'project' && String(ch.id) === String(projectId)) || null;
+        // Recursively lookup project - no assumptions about depth
+        const findProjectRecursive = (nodes) => {
+          if (!Array.isArray(nodes)) return null;
+          for (const node of nodes) {
+            if (node && node.type === 'project' && String(node.id) === String(projectId)) {
+              return node;
+            }
+            if (node && node.children && Array.isArray(node.children)) {
+              const result = findProjectRecursive(node.children);
+              if (result) return result;
+            }
           }
-        }
+          return null;
+        };
+        const project = findProjectRecursive(hierarchy || []);
         target = { type: 'project', mainId, subId, project };
       }
 
@@ -3000,20 +3410,12 @@ export default function HomeScreen({ navigation, route }) {
   const contextMenuItems = React.useMemo(() => {
     const t = contextMenu.target;
     if (!t) return [];
-    if (t.type === 'main') {
+    // Old local folder/project creation removed - folders are managed in SharePoint
+    // Context menu for SharePoint folders is handled in ProjectSidebar
+    if (t.type === 'main' || t.type === 'sub' || t.type === 'folder') {
       return [
-        { key: 'addMain', label: 'Lägg till huvudmapp', iconName: 'folder-outline', icon: null },
-        { key: 'addSub', label: 'Lägg till undermapp', iconName: 'folder-open-outline', icon: null },
-        { key: 'addProject', label: 'Lägg till projekt', iconName: 'add-circle-outline', icon: null },
-        { key: 'rename', label: 'Byt namn', iconName: 'create-outline', icon: null },
-        { key: 'delete', label: 'Radera', iconName: 'trash-outline', icon: null, danger: true, disabled: (hierarchy || []).length <= 1 },
-      ];
-    }
-    if (t.type === 'sub') {
-      return [
-        { key: 'addProject', label: 'Lägg till projekt', iconName: 'add-circle-outline', icon: null },
-        { key: 'rename', label: 'Byt namn', iconName: 'create-outline', icon: null },
-        { key: 'delete', label: 'Radera', iconName: 'trash-outline', icon: null, danger: true },
+        // Note: Folder management (create/delete) should be done via SharePoint context menu in ProjectSidebar
+        { key: 'openInSharePoint', label: 'Öppna i SharePoint', iconName: 'open-outline', icon: null },
       ];
     }
     if (t.type === 'project') {
@@ -3164,12 +3566,27 @@ export default function HomeScreen({ navigation, route }) {
     toggleMainFolder(mainId, hierarchy, setHierarchy, spinMain, setSpinMain);
   };
 
-  const handleToggleSubFolder = (subId) => {
-    toggleSubFolder(subId, hierarchy, setHierarchy, spinSub, setSpinSub);
+  // Toggle folder expansion - works for all levels recursively
+  const handleToggleSubFolder = (folderId) => {
+    // Toggle expansion state for any folder (no level restrictions)
+    setExpandedSubs(prev => ({ ...prev, [folderId]: !prev[folderId] }));
+    // Also update spin animation
+    setSpinSub(prev => ({ ...prev, [folderId]: (prev[folderId] || 0) + 1 }));
   };
 
   // Handle project function selection
+  // Now supports both hardcoded functions and SharePoint folders
   const handleSelectFunction = (project, functionItem) => {
+    // If function has SharePoint webUrl, open it directly
+    if (functionItem.webUrl && Platform.OS === 'web') {
+      try {
+        window.open(functionItem.webUrl, '_blank');
+        return;
+      } catch (error) {
+        console.error('[HomeScreen] Error opening SharePoint folder:', error);
+      }
+    }
+    
     const functionType = functionItem.functionType;
     
     switch (functionType) {
@@ -3178,7 +3595,9 @@ export default function HomeScreen({ navigation, route }) {
         requestProjectSwitch(project, { 
           selectedAction: { 
             kind: 'showControls',
-            functionType: 'handlingar'
+            functionType: 'handlingar',
+            sharePointPath: functionItem.sharePointPath || functionItem.path,
+            webUrl: functionItem.webUrl,
           } 
         });
         break;
@@ -3187,32 +3606,76 @@ export default function HomeScreen({ navigation, route }) {
         // För eftermarknad: visa projektöversikt med alla projektfält
         requestProjectSwitch(project, { 
           selectedAction: { 
-            kind: 'overblick'
+            kind: 'overblick',
+            sharePointPath: functionItem.sharePointPath || functionItem.path,
+            webUrl: functionItem.webUrl,
           } 
         });
         break;
         
       case 'ritningar':
-        // TODO: Navigera till ritningar-screen (kommer att skapas)
-        showAlert('Info', 'Ritningar-funktionen kommer snart!');
+        // Open SharePoint folder for ritningar, or navigate to ritningar-screen
+        if (functionItem.webUrl && Platform.OS === 'web') {
+          try {
+            window.open(functionItem.webUrl, '_blank');
+          } catch (_e) {
+            showAlert('Info', 'Ritningar-funktionen kommer snart!');
+          }
+        } else {
+          showAlert('Info', 'Ritningar-funktionen kommer snart!');
+        }
         break;
         
       case 'moten':
-        // TODO: Navigera till möten-screen (kommer att skapas)
-        showAlert('Info', 'Möten-funktionen kommer snart!');
+        // Open SharePoint folder for möten, or navigate to möten-screen
+        if (functionItem.webUrl && Platform.OS === 'web') {
+          try {
+            window.open(functionItem.webUrl, '_blank');
+          } catch (_e) {
+            showAlert('Info', 'Möten-funktionen kommer snart!');
+          }
+        } else {
+          showAlert('Info', 'Möten-funktionen kommer snart!');
+        }
         break;
         
       case 'forfragningsunderlag':
-        // TODO: Navigera till förfrågningsunderlag-screen
-        showAlert('Info', 'Förfrågningsunderlag-funktionen kommer snart!');
+        // Open SharePoint folder for förfrågningsunderlag
+        if (functionItem.webUrl && Platform.OS === 'web') {
+          try {
+            window.open(functionItem.webUrl, '_blank');
+          } catch (_e) {
+            showAlert('Info', 'Förfrågningsunderlag-funktionen kommer snart!');
+          }
+        } else {
+          showAlert('Info', 'Förfrågningsunderlag-funktionen kommer snart!');
+        }
         break;
         
       case 'kma':
-        // TODO: Navigera till KMA-screen
-        showAlert('Info', 'KMA-funktionen kommer snart!');
+        // Open SharePoint folder for KMA, or navigate to KMA-screen
+        if (functionItem.webUrl && Platform.OS === 'web') {
+          try {
+            window.open(functionItem.webUrl, '_blank');
+          } catch (_e) {
+            showAlert('Info', 'KMA-funktionen kommer snart!');
+          }
+        } else {
+          showAlert('Info', 'KMA-funktionen kommer snart!');
+        }
         break;
         
       default:
+        // For unknown function types, try to open SharePoint folder if available
+        if (functionItem.webUrl && Platform.OS === 'web') {
+          try {
+            window.open(functionItem.webUrl, '_blank');
+          } catch (_e) {
+            showAlert('Info', `Funktionen "${functionItem.name}" öppnas i SharePoint.`);
+          }
+        } else {
+          showAlert('Info', `Funktionen "${functionItem.name}" kommer snart!`);
+        }
         // Fallback: öppna projektet normalt
         requestProjectSwitch(project, { selectedAction: null });
     }
@@ -3264,211 +3727,6 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
     const ActivityPanel = React.useCallback(() => {
       return (
         <View style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-          {/* Moved Overview: show Översikt at top of right-hand panel */}
-          <Text style={dashboardSectionTitleStyle}>Översikt</Text>
-          <View
-            style={[dashboardCardStyle, { padding: 12, marginBottom: 20 }]}
-            onLayout={Platform.OS === 'web' ? (e) => { dashboardCardLayoutRef.current.overview = e?.nativeEvent?.layout || null; } : undefined}
-          >
-            {[
-              { key: 'activeProjects', label: 'Pågående projekt', color: '#43A047', value: dashboardOverview.activeProjects, focus: 'activeProjects' },
-              { key: 'completedProjects', label: 'Avslutade projekt', color: '#222', value: (_countProjectStatus ? _countProjectStatus(hierarchy).completed : 0), focus: 'completedProjects' },
-              { key: 'controlsToSign', label: 'Kontroller att signera', color: '#D32F2F', value: dashboardOverview.controlsToSign, focus: 'controlsToSign' },
-              { key: 'drafts', label: 'Sparade utkast', color: '#888', value: dashboardOverview.drafts, focus: 'drafts' },
-            ].map((row, ridx) => {
-              const isWeb = Platform.OS === 'web';
-              const isHovered = isWeb && dashboardHoveredStatKey === row.key;
-              const isOpen = isWeb && dashboardFocus === row.focus && dashboardDropdownAnchor === 'overview';
-              const openFromRow = () => {
-                const cardLayout = dashboardCardLayoutRef.current.overview;
-                const rowLayout = dashboardStatRowLayoutRef.current[`overview:${row.key}`];
-                // Position top flush under the row (no extra gap)
-                const top = (cardLayout && rowLayout) ? (cardLayout.y + rowLayout.y + rowLayout.height) : undefined;
-                console.log && console.log('dashboard: overview row press', row.key, row.focus, { cardLayout, rowLayout, top });
-                setDashboardHoveredStatKey(row.key);
-                setDashboardDropdownRowKey(row.key);
-                toggleDashboardFocus(row.focus, 'overview', top);
-              };
-              return (
-                <TouchableOpacity
-                  key={row.key}
-                  style={{
-                    ...dashboardStatRowStyle(ridx),
-                    paddingHorizontal: 6,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: isHovered ? '#1976D2' : 'transparent',
-                    backgroundColor: isHovered ? '#eee' : 'transparent',
-                    cursor: isWeb ? 'pointer' : undefined,
-                    transition: isWeb ? 'background 0.15s, border 0.15s' : undefined,
-                  }}
-                  activeOpacity={0.75}
-                  onPress={openFromRow}
-                  onMouseEnter={isWeb ? () => setDashboardHoveredStatKey(row.key) : undefined}
-                  onMouseLeave={isWeb ? () => setDashboardHoveredStatKey(null) : undefined}
-                  onLayout={isWeb ? (e) => {
-                    const l = e?.nativeEvent?.layout;
-                    if (l) dashboardStatRowLayoutRef.current[`overview:${row.key}`] = l;
-                  } : undefined}
-                >
-                  <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color="#222" style={{ marginRight: 6 }} />
-                  <View style={dashboardStatDotStyle(row.color)} />
-                  <Text style={dashboardStatLabelStyle}>{row.label}</Text>
-                  <Text style={dashboardStatValueStyle}>{String(row.value ?? 0)}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Overview dropdown overlay (renders inside ActivityPanel, below Overview card) */}
-          {Platform.OS === 'web' && dashboardFocus && dashboardDropdownAnchor === 'overview' ? (
-            <View
-              style={(function() {
-                try {
-                  const ov = dashboardCardLayoutRef.current.overview;
-                  const rKey = dashboardDropdownRowKey;
-                  const rowLayout = rKey ? dashboardStatRowLayoutRef.current[`overview:${rKey}`] : null;
-                  // compute left/width and position dropdown directly below the clicked row
-                  if (rowLayout && typeof rowLayout.x === 'number' && typeof rowLayout.width === 'number' && ov && typeof ov.height === 'number' && typeof rowLayout.y === 'number' && typeof ov.y === 'number') {
-                    // Align dropdown top to the row's bottom with small gap
-                    // rowLayout.y is relative to card's content area
-                    // ov.y is the card's position relative to ActivityPanel
-                    const GAP = 0; // No gap - dropdown directly below the row
-                    const cardTop = ov.y || 0; // Card's top position in ActivityPanel
-                    const cardPadding = 12; // padding from dashboardCardStyle
-                    // Position dropdown directly below the clicked row
-                    const topPos = cardTop + cardPadding + rowLayout.y + rowLayout.height + GAP;
-                    console.log && console.log('dashboard overlay positioning (exact, top)', { cardTop, cardPadding, ovHeight: ov.height, rowY: rowLayout.y, rowHeight: rowLayout.height, topPos, gap: GAP });
-                    return { position: 'absolute', left: (ov.x || 0) + cardPadding + rowLayout.x, width: rowLayout.width, top: topPos, zIndex: 20 };
-                  }
-
-                  // fallback: full card width (use top so overlay appears under the card)
-                  if (ov && typeof ov.width === 'number' && typeof ov.height === 'number') {
-                    return { position: 'absolute', left: 0, width: ov.width, top: ov.height + 4, zIndex: 20 };
-                  }
-                } catch (e) {}
-                return { position: 'absolute', left: 0, right: 0, top: 54, zIndex: 20 };
-              })()}
-            >
-              <View style={[dashboardCardStyle, { 
-                paddingTop: 8, 
-                marginTop: 4,
-                boxShadow: Platform.OS === 'web' ? '0px 4px 12px rgba(0,0,0,0.1)' : undefined,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.1,
-                shadowRadius: 12,
-                elevation: 4,
-              }]}> 
-                <ScrollView style={{ maxHeight: Math.max(180, (webPaneHeight || 640) - 220 - 24), paddingTop: 0 }}>
-                  {dashboardLoading ? <Text style={dashboardEmptyTextStyle}>Laddar…</Text> : (
-                    (() => {
-                      const focus = dashboardFocus;
-                      if (focus === 'activeProjects') {
-                        const items = Array.isArray(dashboardActiveProjectsList) ? dashboardActiveProjectsList : [];
-                        if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga pågående projekt.</Text>;
-                        return items.map((p, idx) => (
-                          <TouchableOpacity key={`${p.id}-${idx}`} activeOpacity={0.85} onPress={() => { requestProjectSwitch(p, { selectedAction: null }); setDashboardFocus(null); setDashboardDropdownTop(null); setDashboardHoveredStatKey(null); }} style={dashboardListItemStyle(idx)}>
-                            <Text style={dashboardLinkTitleStyle} numberOfLines={1}>{p.id} — {p.name}</Text>
-                          </TouchableOpacity>
-                        ));
-                      }
-                      if (focus === 'completedProjects') {
-                        try {
-                          const tree = hierarchyRef.current || [];
-                          const items = [];
-                          for (const main of tree) {
-                            for (const sub of (main.children || [])) {
-                              for (const child of (sub.children || [])) {
-                                if (child && child.type === 'project' && (child.status === 'completed' || String(child.status || '').toLowerCase() === 'completed')) {
-                                  items.push(child);
-                                }
-                              }
-                            }
-                          }
-                          if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga avslutade projekt.</Text>;
-                          return items.map((p, idx) => (
-                            <TouchableOpacity key={`${p.id}-${idx}`} activeOpacity={0.85} onPress={() => { requestProjectSwitch(p, { selectedAction: null }); setDashboardFocus(null); setDashboardDropdownTop(null); setDashboardHoveredStatKey(null); }} style={dashboardListItemStyle(idx)}>
-                              <Text style={dashboardLinkTitleStyle} numberOfLines={1}>{p.id} — {p.name}</Text>
-                            </TouchableOpacity>
-                          ));
-                        } catch (_e) {
-                          return <Text style={dashboardEmptyTextStyle}>Inga avslutade projekt.</Text>;
-                        }
-                      }
-                      if (focus === 'drafts' || focus === 'controlsToSign') {
-                        const items = focus === 'controlsToSign' ? (Array.isArray(dashboardControlsToSignItems) ? dashboardControlsToSignItems : []) : (Array.isArray(dashboardDraftItems) ? dashboardDraftItems : []);
-                        if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga utkast.</Text>;
-                        return items.map((d, idx) => {
-                          const pid = d?.project?.id || d?.projectId || d?.project || null;
-                          const projectId = pid ? String(pid) : '';
-                          const projObj = projectId ? findProjectById(projectId) : null;
-                          const title = projObj ? `${projObj.id} — ${projObj.name}` : (projectId || 'Projekt');
-                          const ts = d?.savedAt || d?.updatedAt || d?.createdAt || d?.date || null;
-                          const type = String(d?.type || 'Utkast');
-                          return (
-                            <TouchableOpacity key={`${projectId}-${type}-${idx}`} activeOpacity={0.85} onPress={() => {
-                              if (!projObj) return;
-                              requestProjectSwitch(projObj, { selectedAction: { id: `openDraft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, kind: 'openDraft', type, initialValues: d }, clearActionAfter: true });
-                              setDashboardFocus(null); setDashboardDropdownTop(null); setDashboardHoveredStatKey(null);
-                            }} style={dashboardListItemStyle(idx)}>
-                              <Text style={dashboardLinkTitleStyle} numberOfLines={1}>{title}</Text>
-                              <Text style={dashboardMetaTextStyle}>{type}{ts ? ` • Sparat: ${formatRelativeTime(ts)}` : ''}</Text>
-                            </TouchableOpacity>
-                          );
-                        });
-                      }
-                      if (focus === 'openDeviations') {
-                        const items = Array.isArray(dashboardOpenDeviationItems) ? dashboardOpenDeviationItems : [];
-                        if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga öppna avvikelser.</Text>;
-                        return items.map((entry, idx) => {
-                          const c = entry?.control;
-                          const pid = c?.project?.id || c?.projectId || c?.project || null;
-                          const projectId = pid ? String(pid) : '';
-                          const projObj = projectId ? findProjectById(projectId) : null;
-                          const title = projObj ? `${projObj.id} — ${projObj.name}` : (projectId || 'Projekt');
-                          const openCount = entry?.openCount || 0;
-                          return (
-                            <TouchableOpacity key={`${projectId}-${c?.id || idx}`} activeOpacity={0.85} onPress={() => {
-                              if (!projObj || !c) return;
-                              requestProjectSwitch(projObj, { selectedAction: { id: `openControl-${c?.id || Date.now()}`, kind: 'openControlDetails', control: c }, clearActionAfter: true });
-                              setDashboardFocus(null); setDashboardDropdownTop(null); setDashboardHoveredStatKey(null);
-                            }} style={dashboardListItemStyle(idx)}>
-                              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                                <View style={[dashboardStatDotStyle('#FFD600'), { marginTop: 4 }]} />
-                                <View style={{ flex: 1, minWidth: 0 }}>
-                                  <Text style={dashboardLinkTitleStyle} numberOfLines={1}>{title}</Text>
-                                  <Text style={dashboardMetaTextStyle}>Skyddsrond • Öppna avvikelser: {String(openCount)}</Text>
-                                </View>
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        });
-                      }
-                      if (focus === 'upcomingSkyddsrond') {
-                        const items = Array.isArray(dashboardUpcomingSkyddsrondItems) ? dashboardUpcomingSkyddsrondItems : [];
-                        if (items.length === 0) return <Text style={dashboardEmptyTextStyle}>Inga kommande skyddsronder.</Text>;
-                        return items.map((entry, idx) => {
-                          const p = entry?.project;
-                          const dueMs = Number(entry?.nextDueMs || 0);
-                          const dueLabel = dueMs ? new Date(dueMs).toLocaleDateString('sv-SE') : '';
-                          const state = entry?.state === 'overdue' ? 'Försenad' : 'Snart';
-                          return (
-                            <TouchableOpacity key={`${p?.id || 'proj'}-${idx}`} activeOpacity={0.85} onPress={() => { if (p) requestProjectSwitch(p, { selectedAction: null }); setDashboardFocus(null); setDashboardDropdownTop(null); setDashboardHoveredStatKey(null); }} style={dashboardListItemStyle(idx)}>
-                              <Text style={dashboardLinkTitleStyle} numberOfLines={1}>{p?.id} — {p?.name}</Text>
-                              <Text style={dashboardMetaTextStyle}>{state}{dueLabel ? ` • Nästa: ${dueLabel}` : ''}</Text>
-                            </TouchableOpacity>
-                          );
-                        });
-                      }
-                      return <Text style={dashboardEmptyTextStyle}>Inget att visa.</Text>;
-                    })()
-                  )}
-                </ScrollView>
-              </View>
-            </View>
-          ) : null}
-
           <Text style={dashboardSectionTitleStyle}>Senaste aktivitet</Text>
           <View style={dashboardCardDenseStyle}>
             {dashboardLoading ? (
@@ -3677,17 +3935,36 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 autoCapitalize="none"
               />
               <ScrollView style={{ maxHeight: 520 }} keyboardShouldPersistTaps="handled">
-                {hierarchy.flatMap(main =>
-                  main.children.flatMap(sub =>
-                    (sub.children || [])
-                      .filter(child => child.type === 'project' &&
-                        searchText.trim() !== '' &&
-                        (
-                          child.id.toLowerCase().includes(searchText.toLowerCase()) ||
-                          child.name.toLowerCase().includes(searchText.toLowerCase())
-                        )
+                {/* Recursively find all projects in hierarchy - no assumptions about depth */}
+                {(() => {
+                  const findAllProjects = (items) => {
+                    const projects = [];
+                    const walk = (nodes) => {
+                      if (!Array.isArray(nodes)) return;
+                      nodes.forEach(node => {
+                        if (node && node.type === 'project' && node.id) {
+                          projects.push(node);
+                        }
+                        if (node && node.children && Array.isArray(node.children)) {
+                          walk(node.children);
+                        }
+                      });
+                    };
+                    walk(items);
+                    return projects;
+                  };
+                  
+                  const allProjects = findAllProjects(hierarchy);
+                  const filtered = searchText.trim() !== '' 
+                    ? allProjects.filter(proj => 
+                        proj.id.toLowerCase().includes(searchText.toLowerCase()) ||
+                        proj.name.toLowerCase().includes(searchText.toLowerCase())
                       )
-                      .map(proj => (
+                    : [];
+                  
+                  return (
+                    <>
+                      {filtered.map(proj => (
                         <TouchableOpacity
                           key={proj.id}
                           style={{ paddingVertical: 8, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
@@ -3699,15 +3976,13 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                           <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: (proj.status || 'ongoing') === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
                           <Text style={{ fontSize: 16, color: '#222', fontWeight: '600', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} - {proj.name}</Text>
                         </TouchableOpacity>
-                      ))
-                  )
-                )}
-                {searchText.trim() !== '' && hierarchy.flatMap(main => main.children.flatMap(sub => (sub.children || []).filter(child => child.type === 'project' && (
-                  child.id.toLowerCase().includes(searchText.toLowerCase()) ||
-                  child.name.toLowerCase().includes(searchText.toLowerCase())
-                )))).length === 0 && (
-                  <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 12 }}>Inga projekt hittades.</Text>
-                )}
+                      ))}
+                      {searchText.trim() !== '' && filtered.length === 0 && (
+                        <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 12 }}>Inga projekt hittades.</Text>
+                      )}
+                    </>
+                  );
+                })()}
               </ScrollView>
             </View>
           </View>
@@ -3907,6 +4182,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
         isProjectNumberUnique={isProjectNumberUnique}
         canCreateProject={canCreateProject}
         setHierarchy={setHierarchy}
+        currentHierarchy={hierarchy}
         onProjectCreated={({ projectId, projectName, mainId, subId }) => {
           // Find the created project in hierarchy and open it
           const findProjectInHierarchy = (hierarchy, targetId) => {
@@ -4376,28 +4652,13 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
             justifyContent: 'space-between', 
             padding: 16, 
             backgroundColor: (() => {
-              // Ändra bakgrundsfärg baserat på valt skede
-              const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase);
-              if (currentPhaseConfig) {
-                // Använd ljusare ton av fas-färgen (25% opacity för skarpare färg)
-                return currentPhaseConfig.color + '25';
-              }
-              return '#F7FAFC'; // Default ljusgrå
+              // Ljusare blå färg med mer transparens (20% opacity) så bakgrundsbilden syns igenom
+              return 'rgba(25, 118, 210, 0.2)'; // #1976D2 med 20% opacity
             })(),
             borderBottomWidth: 1, 
-            borderColor: (() => {
-              const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase);
-              if (currentPhaseConfig) {
-                // Färgad border i fas-färgen (60% opacity för tydligare)
-                return currentPhaseConfig.color + '60';
-              }
-              return '#e6e6e6'; // Default grå
-            })(),
+            borderColor: 'rgba(25, 118, 210, 0.3)',
             borderLeftWidth: 4,
-            borderLeftColor: (() => {
-              const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase);
-              return currentPhaseConfig ? currentPhaseConfig.color : 'transparent';
-            })(),
+            borderLeftColor: '#1976D2',
           }}
         >
           <View>
@@ -4498,17 +4759,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <>
                 <View style={{ marginRight: 6 }}>
                     {showHeaderUserMenu ? (
-                      <HeaderUserMenu 
-                        selectedPhase={selectedPhase} 
-                        onPhaseChange={handlePhaseChange}
-                      />
+                      <HeaderUserMenu />
                     ) : <HeaderDisplayName />}
                   </View>
-                  {showHeaderUserMenu ? (
-                    <View style={{ marginRight: 6 }}>
-                      <HeaderAdminMenu />
-                </View>
-              ) : null}
               {allowedTools ? (
                 <TouchableOpacity
                   style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
@@ -4520,8 +4773,129 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 </>
               ) : null}
             </View>
-
-            {canShowSupportToolsInHeader && supportMenuOpen && (
+          </View>
+          
+          {/* SharePoint Status Icon with Site Name - Right side */}
+          <View 
+            style={{ 
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
+              {sharePointStatus.checking ? (
+                <Animated.View
+                  style={{
+                    opacity: searchSpinAnim.interpolate({
+                      inputRange: [0, 0.5, 1],
+                      outputRange: [0.5, 1, 0.5]
+                    })
+                  }}
+                >
+                  <Ionicons name="hourglass-outline" size={24} color="#888" />
+                </Animated.View>
+              ) : sharePointStatus.connected ? (
+                <>
+                  {/* Cloud icon */}
+                  <Ionicons name="cloud" size={32} color="#1976D2" />
+                  {/* Green pulsing sync indicator on cloud */}
+                  <Animated.View
+                    style={{
+                      position: 'absolute',
+                      bottom: -2,
+                      right: -2,
+                      opacity: searchSpinAnim.interpolate({
+                        inputRange: [0, 0.5, 1],
+                        outputRange: [0.6, 1, 0.6]
+                      }),
+                      transform: [{
+                        scale: searchSpinAnim.interpolate({
+                          inputRange: [0, 0.5, 1],
+                          outputRange: [0.9, 1.1, 0.9]
+                        })
+                      }]
+                    }}
+                  >
+                    <View style={{
+                      backgroundColor: '#43A047',
+                      borderRadius: 10,
+                      width: 20,
+                      height: 20,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 2,
+                      borderColor: '#fff',
+                    }}>
+                      <Ionicons name="sync" size={12} color="#fff" />
+                    </View>
+                  </Animated.View>
+                </>
+              ) : (
+                <>
+                  {/* Cloud icon (red/gray when disconnected) */}
+                  <Ionicons name="cloud" size={32} color="#999" />
+                  {/* Red pulsing error indicator */}
+                  <Animated.View
+                    style={{
+                      position: 'absolute',
+                      bottom: -2,
+                      right: -2,
+                      opacity: searchSpinAnim.interpolate({
+                        inputRange: [0, 0.5, 1],
+                        outputRange: [0.6, 1, 0.6]
+                      }),
+                      transform: [{
+                        scale: searchSpinAnim.interpolate({
+                          inputRange: [0, 0.5, 1],
+                          outputRange: [0.9, 1.1, 0.9]
+                        })
+                      }]
+                    }}
+                  >
+                    <View style={{
+                      backgroundColor: '#D32F2F',
+                      borderRadius: 10,
+                      width: 20,
+                      height: 20,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 2,
+                      borderColor: '#fff',
+                    }}>
+                      <Ionicons name="close" size={12} color="#fff" />
+                    </View>
+                  </Animated.View>
+                </>
+              )}
+            </View>
+            
+            {/* Simple text box showing site name - always visible */}
+            {sharePointStatus.connected && sharePointStatus.siteName && (
+              <View style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: '#ddd',
+                ...(Platform.OS === 'web' ? {
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                } : {}),
+              }}>
+                <Text style={{ 
+                  color: '#333', 
+                  fontSize: 12, 
+                  fontWeight: '600',
+                }}>
+                  {sharePointStatus.siteName}
+                </Text>
+              </View>
+            )}
+          </View>
+          
+          {/* Support tools menu */}
+          {canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#1565C0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={() => {
@@ -4756,9 +5130,8 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#222', fontWeight: '700' }}>Visa senaste FS-fel</Text>
               </TouchableOpacity>
             )}
-          </View>
-
         </View>
+        
         {/* Allt under headern är skrollbart */}
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -4787,42 +5160,10 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     zIndex: 9 
                   }}
                     />
-              <View style={{ paddingVertical: 8, paddingHorizontal: 6, borderBottomWidth: 1, borderColor: '#e0e0e0', marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-                  {(() => {
-                    const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase) || PROJECT_PHASES[0];
-                    return (
-                      <TouchableOpacity
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 6,
-                          paddingVertical: 8,
-                          paddingHorizontal: 12,
-                          borderRadius: 6,
-                          borderWidth: 1,
-                          borderColor: currentPhaseConfig.color + '60',
-                          backgroundColor: currentPhaseConfig.color + '15',
-                          flex: 1,
-                        }}
-                        onPress={() => {
-                          // Öppna dropdown för att välja fas (kan implementeras senare)
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name={currentPhaseConfig.icon} size={16} color={currentPhaseConfig.color} />
-                        <Text style={{ 
-                          fontSize: 14, 
-                          fontWeight: '600', 
-                          color: currentPhaseConfig.color,
-                          fontFamily: 'Inter_600SemiBold, Inter, Arial, sans-serif'
-                        }}>
-                          {currentPhaseConfig.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })()}
-                </View>
+              <View style={{ paddingVertical: 8, paddingHorizontal: 6, borderBottomWidth: 1, borderColor: '#e0e0e0', marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                {/* Phase dropdown removed - phases are now SharePoint folders shown directly in left panel */}
+                
+                {/* Home and Refresh buttons */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <TouchableOpacity
                     style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
@@ -4871,11 +5212,22 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       }}
                     />
                   </TouchableOpacity>
-
-
-                  
                 </View>
               </View>
+              {/* Phase selector dropdown - removed, now above */}
+              {false && !selectedProject ? (
+                Platform.OS === 'web' ? (
+                  <div style={{ padding: '8px', borderBottom: '1px solid #e0e0e0', marginBottom: 8, position: 'relative' }}>
+                    {(() => {
+                    })()}
+                  </div>
+                ) : (
+                  <View style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0', marginBottom: 8, position: 'relative' }}>
+                    {(() => {
+                    })()}
+                  </View>
+                )
+              ) : null}
               <ScrollView 
                 ref={leftTreeScrollRef} 
                 style={{ flex: 1 }}
@@ -4901,34 +5253,53 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                       );
                     }
                     
-                    // Show PhaseLeftPanel if we have navigation data
-                    if (phaseNavigation && phaseNavigation.sections && phaseNavigation.sections.length > 0) {
-                      console.log('[HomeScreen] Rendering PhaseLeftPanel in ScrollView');
-                      return (
-                        <PhaseLeftPanel
-                          navigation={phaseNavigation}
-                          activeSection={phaseActiveSection}
-                          activeItem={phaseActiveItem}
-                          onSelectSection={(sectionId) => {
-                            setPhaseActiveSection(sectionId);
-                            // Don't auto-select first item - show section summary instead
-                            setPhaseActiveItem(null);
-                          }}
-                          onSelectItem={(sectionId, itemId) => {
-                            setPhaseActiveSection(sectionId);
-                            setPhaseActiveItem(itemId);
-                          }}
-                          projectName={selectedProject?.name || selectedProject?.id || 'Projekt'}
-                        />
-                      );
-                    }
+                    // With SharePoint-first approach, show ProjectTree with project folders from SharePoint
+                    // instead of PhaseLeftPanel with hardcoded navigation
+                    console.log('[HomeScreen] Rendering ProjectTree with SharePoint data for selected project');
                     
-                    // Fallback: show loading if navigation not ready yet
-                    console.log('[HomeScreen] Navigation not ready in ScrollView, showing fallback');
+                    // Create a hierarchy structure with the selected project as root and its folders as children
+                    const projectHierarchy = selectedProject ? [{
+                      id: selectedProject.id,
+                      name: selectedProject.name || selectedProject.id,
+                      type: 'project',
+                      expanded: true,
+                      children: selectedProjectFolders.map(folder => ({
+                        ...folder,
+                        type: 'projectFunction',
+                      })),
+                      ...selectedProject
+                    }] : [];
+                    
                     return (
-                      <View style={{ padding: 20, alignItems: 'center' }}>
-                        <Text style={{ color: '#888', fontSize: 14 }}>Laddar navigation...</Text>
-                      </View>
+                      <ProjectTree
+                        hierarchy={projectHierarchy}
+                        selectedProject={selectedProject}
+                        selectedPhase={projectPhaseKey}
+                        onSelectProject={(project) => {
+                          if (isWeb) {
+                            setSelectedProject({ ...project });
+                          } else {
+                            navigation.navigate('ProjectDetails', {
+                              project: {
+                                id: project.id,
+                                name: project.name,
+                                ansvarig: project.ansvarig || '',
+                                adress: project.adress || '',
+                                fastighetsbeteckning: project.fastighetsbeteckning || '',
+                                client: project.client || '',
+                                status: project.status || 'ongoing',
+                                createdAt: project.createdAt || '',
+                                createdBy: project.createdBy || ''
+                              },
+                              companyId
+                            });
+                          }
+                        }}
+                        onSelectFunction={handleSelectFunction}
+                        navigation={navigation}
+                        companyId={companyId}
+                        projectStatusFilter={projectStatusFilter}
+                      />
                     );
                   }
                   
@@ -4960,27 +5331,10 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     );
                   }
                   
-                  // Filter hierarchy to selected phase for web
-                  const filteredHierarchy = hierarchy
-                    .filter(main => {
-                      const mainPhase = main?.phase || DEFAULT_PHASE;
-                      return mainPhase === selectedPhase;
-                    })
-                    .map(main => ({
-                      ...main,
-                      children: (main.children || [])
-                        .filter(sub => {
-                          const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
-                          return subPhase === selectedPhase;
-                        })
-                        .map(sub => ({
-                          ...sub,
-                          children: (sub.children || []).filter(project => {
-                            const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
-                            return projectPhase === selectedPhase;
-                          })
-                        }))
-                    }));
+                  // With SharePoint-first approach, hierarchy is already from SharePoint
+                  // No need to filter by phase - SharePoint folders represent the structure
+                  // Use hierarchy directly from SharePoint without phase filtering
+                  const filteredHierarchy = hierarchy;
                   
                   if (filteredHierarchy.length === 0) {
                     console.log('[HomeScreen] No hierarchy, showing empty state');
@@ -5098,397 +5452,27 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     );
                   }
                   
+                  // Render all folders recursively from root - no assumptions about depth
+                  // SharePoint is the source of truth, render all folders recursively
                   return (
                     <View style={{ paddingHorizontal: 4 }} nativeID={Platform.OS === 'web' ? 'dk-tree-root' : undefined}>
                       {filteredHierarchy
-                      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                      .map((main) => (
-                        <View key={main.id} style={{ marginBottom: 0, padding: 0 }}>
-                          <View
-                            style={{ flexDirection: 'row', alignItems: 'center', padding: '2px 0 2px 4px', userSelect: 'none' }}
-                            dataSet={Platform.OS === 'web' ? { dkType: 'main', dkMainid: String(main.id) } : undefined}
-                          >
-                            {(() => {
-                              const isHovered = Platform.OS === 'web' && hoveredRowKey === getRowKey('main', String(main.id));
-                              return (
-                            <TouchableOpacity
-                              dataSet={Platform.OS === 'web' ? { dkType: 'main', dkMainid: String(main.id) } : undefined}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                flex: 1,
-                                backgroundColor: 'transparent',
-                                borderRadius: 4,
-                                padding: '2px 4px',
-                                borderWidth: 0,
-                                borderColor: 'transparent',
-                                transition: 'background 0.15s, border 0.15s',
-                              }}
-                              onPress={() => handleToggleMainFolder(main.id)}
-                              activeOpacity={0.7}
-                              onLongPress={() => setEditModal({ visible: true, type: 'main', id: main.id, name: main.name })}
-                              delayLongPress={2000}
-                              onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(getRowKey('main', String(main.id))) : undefined}
-                              onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
-                              onPressIn={() => {
-                                if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
-                                mainTimersRef.current[main.id] = setTimeout(() => {
-                                  setEditModal({ visible: true, type: 'main', id: main.id, name: main.name });
-                                }, 2000);
-                              }}
-                              onPressOut={() => {
-                                if (mainTimersRef.current[main.id]) clearTimeout(mainTimersRef.current[main.id]);
-                              }}
-                            >
-                              <Ionicons
-                                name={main.expanded ? 'chevron-down' : 'chevron-forward'}
-                                size={18}
-                                color="#222"
-                                style={{
-                                  marginRight: 4,
-                                  transform: Platform.OS === 'web' ? [{ rotate: `${(spinMain[main.id] || 0) * 360}deg` }] : undefined,
-                                  transitionProperty: Platform.OS === 'web' ? 'transform' : undefined,
-                                  transitionDuration: Platform.OS === 'web' ? '0.35s' : undefined,
-                                  transitionTimingFunction: Platform.OS === 'web' ? 'ease' : undefined,
-                                }}
-                              />
-                              <Text style={{ 
-                                fontSize: 15, 
-                                fontWeight: (isHovered || main.expanded) ? '600' : '400', 
-                                color: '#222', 
-                                marginLeft: 2 
-                              }}>{main.name}</Text>
-                            </TouchableOpacity>
-                              );
-                            })()}
-                          </View>
-                          {(main.expanded || String(creatingSubFolderForMainId) === String(main.id)) && (
-                            <>
-                              {String(creatingSubFolderForMainId) === String(main.id) && (
-                                <View style={{ marginLeft: 20, marginTop: 4, marginBottom: 4 }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <Ionicons
-                                      name="folder-outline"
-                                      size={16}
-                                      color="#1976D2"
-                                      style={{ marginRight: 4 }}
-                                    />
-                                    <TextInput
-                                      autoFocus
-                                      placeholder="Namn på undermapp..."
-                                      value={newSubFolderName}
-                                      onChangeText={setNewSubFolderName}
-                                      onSubmitEditing={async () => {
-                                        if (newSubFolderName.trim() === '') return;
-                                        const parent = hierarchy.find(m => m.id === main.id);
-                                        if (!parent) return;
-                                        const isDuplicate = (parent.children || []).some(sub => sub.name.trim().toLowerCase() === newSubFolderName.trim().toLowerCase());
-                                        if (isDuplicate) return;
-                                        
-                                        const updatedHierarchy = hierarchy.map(m => {
-                                          if (m.id === main.id) {
-                                            return {
-                                              ...m,
-                                              children: [
-                                                ...(m.children || []),
-                                                {
-                                                  id: (Math.random() * 100000).toFixed(0),
-                                                  name: newSubFolderName.trim(),
-                                                  type: 'sub',
-                                                  phase: m?.phase || selectedPhase,
-                                                  expanded: false,
-                                                  children: [],
-                                                },
-                                              ],
-                                            };
-                                          }
-                                          return m;
-                                        });
-                                        setHierarchy(updatedHierarchy);
-                                        setNewSubFolderName('');
-                                        setCreatingSubFolderForMainId(null);
-                                        try {
-                                          const ok = await saveHierarchy(companyId, updatedHierarchy);
-                                          if (!ok) {
-                                            await AsyncStorage.setItem('hierarchy_local', JSON.stringify(updatedHierarchy));
-                                            setLocalFallbackExists(true);
-                                            Alert.alert('Offline', 'Undermappen sparades lokalt. Appen kommer försöka synka senare.');
-                                          } else {
-                                            try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
-                                            await refreshLocalFallbackFlag();
-                                          }
-                                        } catch(_e) {
-                                          try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(updatedHierarchy)); } catch(_e) {}
-                                          Alert.alert('Offline', 'Undermappen sparades lokalt. Appen kommer försöka synka senare.');
-                                        }
-                                      }}
-                                      onBlur={() => {
-                                        if (newSubFolderName.trim() === '') {
-                                          setCreatingSubFolderForMainId(null);
-                                          setNewSubFolderName('');
-                                        }
-                                      }}
-                                      style={{
-                                        flex: 1,
-                                        fontSize: 14,
-                                        fontWeight: '400',
-                                        color: '#222',
-                                        padding: '2px 4px',
-                                        borderWidth: 1,
-                                        borderColor: (newSubFolderName.trim() === '' || (() => {
-                                          const parent = hierarchy.find(m => m.id === main.id);
-                                          if (!parent) return false;
-                                          return (parent.children || []).some(sub => sub.name.trim().toLowerCase() === newSubFolderName.trim().toLowerCase());
-                                        })()) ? '#D32F2F' : '#1976D2',
-                                        borderRadius: 4,
-                                        backgroundColor: '#fff',
-                                      }}
-                                    />
-                                    {newSubFolderName.trim() !== '' && (() => {
-                                      const parent = hierarchy.find(m => m.id === main.id);
-                                      if (!parent) return false;
-                                      return (parent.children || []).some(sub => sub.name.trim().toLowerCase() === newSubFolderName.trim().toLowerCase());
-                                    })() && (
-                                      <Text style={{ fontSize: 12, color: '#D32F2F', marginLeft: 4 }}>
-                                        Finns redan
-                                      </Text>
-                                    )}
-                                  </View>
-                                </View>
-                              )}
-                              {(!main.children || main.children.length === 0) && (!creatingSubFolderForMainId || creatingSubFolderForMainId !== main.id) ? (
-                                <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 22, marginTop: 6 }}>
-                                  Inga undermappar skapade
-                                </Text>
-                              ) : null}
-                              {main.children && main.children.length > 0 && (
-                                [...main.children]
-                                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                  .map((sub) => {
-                                  const allProjects = sub.children ? sub.children.filter(child => child.type === 'project') : [];
-                                  const projects = allProjects;
-                                  return (
-                                    <View key={sub.id} style={{ marginLeft: 20, marginBottom: 0, padding: 0 }}>
-                                  <View
-                                    style={{ flexDirection: 'row', alignItems: 'center', padding: '2px 0 2px 0', userSelect: 'none' }}
-                                    dataSet={Platform.OS === 'web' ? { dkType: 'sub', dkMainid: String(main.id), dkSubid: String(sub.id) } : undefined}
-                                  >
-                                    {(() => {
-                                      const isHovered = Platform.OS === 'web' && hoveredRowKey === getRowKey('sub', String(main.id), String(sub.id));
-                                      return (
-                                    <TouchableOpacity
-                                      dataSet={Platform.OS === 'web' ? { dkType: 'sub', dkMainid: String(main.id), dkSubid: String(sub.id) } : undefined}
-                                      style={{
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        flex: 1,
-                                        backgroundColor: 'transparent',
-                                        borderRadius: 4,
-                                        padding: '2px 4px',
-                                        borderWidth: 0,
-                                        borderColor: 'transparent',
-                                        transition: 'background 0.15s, border 0.15s',
-                                      }}
-                                      onPress={() => handleToggleSubFolder(sub.id)}
-                                      onLongPress={() => setEditModal({ visible: true, type: 'sub', id: sub.id, name: sub.name })}
-                                      delayLongPress={2000}
-                                      activeOpacity={0.7}
-                                      onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(getRowKey('sub', String(main.id), String(sub.id))) : undefined}
-                                      onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
-                                    >
-                                      <Ionicons
-                                        name={sub.expanded ? 'chevron-down' : 'chevron-forward'}
-                                        size={16}
-                                        color="#222"
-                                        style={{
-                                          marginRight: 4,
-                                          transform: Platform.OS === 'web' ? [{ rotate: `${(spinSub[sub.id] || 0) * 360}deg` }] : undefined,
-                                          transitionProperty: Platform.OS === 'web' ? 'transform' : undefined,
-                                          transitionDuration: Platform.OS === 'web' ? '0.35s' : undefined,
-                                          transitionTimingFunction: Platform.OS === 'web' ? 'ease' : undefined,
-                                        }}
-                                      />
-                                      <Text style={{ 
-                                        fontSize: 14, 
-                                        fontWeight: (isHovered || sub.expanded) ? '600' : '400', 
-                                        color: '#222', 
-                                        marginLeft: 2 
-                                      }}>{sub.name}</Text>
-                                    </TouchableOpacity>
-                                      );
-                                    })()}
-                                  </View>
-                                  {sub.expanded && (
-                                    <React.Fragment>
-                                      {projects.length === 0 ? (
-                                        <Text style={{ color: '#D32F2F', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
-                                          {allProjects.length === 0 ? 'Inga projekt skapade' : 'Inga projekt matchar filtret'}
-                                        </Text>
-                                      ) : (
-                                        projects
-                                          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                          .map((proj) => {
-                                            // Ensure project has functions
-                                            const projectWithFunctions = ensureProjectFunctions(proj);
-                                            const hasFunctions = Array.isArray(projectWithFunctions.children) && 
-                                              projectWithFunctions.children.some(child => child.type === 'projectFunction');
-                                            const functions = hasFunctions 
-                                              ? projectWithFunctions.children.filter(child => child.type === 'projectFunction')
-                                                  .sort((a, b) => (a.order || 999) - (b.order || 999))
-                                              : [];
-                                            const isProjectExpanded = expandedProjects[proj.id] || false;
-                                            const phase = getProjectPhase(proj);
-                                            
-                                            return (
-                                            <View
-                                              key={proj.id}
-                                              style={{ marginLeft: 32 }}
-                                              dataSet={Platform.OS === 'web' ? { dkType: 'project', dkMainid: String(main.id), dkSubid: String(sub.id), dkProjectid: String(proj.id) } : undefined}
-                                            >
-                                              {(() => {
-                                                const isHovered = Platform.OS === 'web' && hoveredRowKey === getRowKey('project', String(main.id), String(sub.id), String(proj.id));
-                                                const isSelected = selectedProject && selectedProject.id === proj.id;
-                                                return (
-                                                    <React.Fragment>
-                                              <TouchableOpacity
-                                                dataSet={Platform.OS === 'web' ? { dkType: 'project', dkMainid: String(main.id), dkSubid: String(sub.id), dkProjectid: String(proj.id) } : undefined}
-                                                style={{
-                                                  flexDirection: 'row',
-                                                  alignItems: 'center',
-                                                  backgroundColor: 'transparent',
-                                                  borderRadius: 4,
-                                                  padding: '2px 4px',
-                                                  marginBottom: 0,
-                                                  borderWidth: 0,
-                                                  borderColor: 'transparent',
-                                                  transition: 'background 0.15s, border 0.15s',
-                                                }}
-                                                onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(getRowKey('project', String(main.id), String(sub.id), String(proj.id))) : undefined}
-                                                onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
-                                                onPress={() => {
-                                                          if (hasFunctions) {
-                                                            // Toggle expand/collapse if project has functions
-                                                            setExpandedProjects(prev => ({
-                                                              ...prev,
-                                                              [proj.id]: !prev[proj.id]
-                                                            }));
-                                                          } else {
-                                                            // Direct navigation if no functions
-                                                  if (Platform.OS === 'web') {
-                                                    requestProjectSwitch(proj, { selectedAction: null, path: { mainId: String(main.id), subId: String(sub.id), mainName: String(main.name || ''), subName: String(sub.name || '') } });
-                                                  } else {
-                                                    navigation.navigate('ProjectDetails', {
-                                                      project: {
-                                                        id: proj.id,
-                                                        name: proj.name,
-                                                        ansvarig: proj.ansvarig || '',
-                                                        adress: proj.adress || '',
-                                                        fastighetsbeteckning: proj.fastighetsbeteckning || '',
-                                                        client: proj.client || '',
-                                                        status: proj.status || 'ongoing',
-                                                        createdAt: proj.createdAt || '',
-                                                        createdBy: proj.createdBy || ''
-                                                      },
-                                                      companyId
-                                                    });
-                                                            }
-                                                          }
-                                                        }}
-                                                      >
-                                                        {hasFunctions && (
-                                                          <Ionicons
-                                                            name={isProjectExpanded ? 'chevron-down' : 'chevron-forward'}
-                                                            size={14}
-                                                            color="#666"
-                                                            style={{ marginRight: 4 }}
-                                                          />
-                                                        )}
-                                                {/* Status indicator - dölj för eftermarknad */}
-                                                {selectedPhase !== 'eftermarknad' && (
-                                                  <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 6, borderWidth: 1, borderColor: '#bbb' }} />
-                                                )}
-                                                <Text
-                                                  style={{ 
-                                                    fontSize: 13, 
-                                                    color: '#222', 
-                                                    fontWeight: (isHovered || isSelected) ? '700' : '400', 
-                                                    marginLeft: 2, 
-                                                    marginRight: 6, 
-                                                    flexShrink: 1 
-                                                  }}
-                                                  numberOfLines={1}
-                                                  ellipsizeMode="tail"
-                                                >
-                                                  {proj.id} — {proj.name}
-                                                </Text>
-                                              </TouchableOpacity>
-                                                      
-                                                      {/* Show functions when expanded */}
-                                                      {isProjectExpanded && hasFunctions && functions.length > 0 && (
-                                                        <View style={{ marginLeft: 20, marginTop: 4 }}>
-                                                          {functions.map((func) => (
-                                                            <TouchableOpacity
-                                                              key={func.id}
-                                                              style={{
-                                                                flexDirection: 'row',
-                                                                alignItems: 'center',
-                                                                paddingVertical: 4,
-                                                                paddingHorizontal: 6,
-                                                                backgroundColor: '#f8f9fa',
-                                                                borderRadius: 4,
-                                                                marginVertical: 2,
-                                                              }}
-                                                              onPress={() => {
-                                                                // Handle function click
-                                                                handleSelectFunction(proj, func);
-                                                              }}
-                                                              onMouseEnter={Platform.OS === 'web' ? (e) => {
-                                                                if (e?.currentTarget) {
-                                                                  e.currentTarget.style.backgroundColor = '#e9ecef';
-                                                                }
-                                                              } : undefined}
-                                                              onMouseLeave={Platform.OS === 'web' ? (e) => {
-                                                                if (e?.currentTarget) {
-                                                                  e.currentTarget.style.backgroundColor = '#f8f9fa';
-                                                                }
-                                                              } : undefined}
-                                                            >
-                                                              <Ionicons
-                                                                name={func.icon || 'document-outline'}
-                                                                size={14}
-                                                                color="#666"
-                                                                style={{ marginRight: 6 }}
-                                                              />
-                                                              <Text
-                                                                style={{
-                                                                  fontSize: 13,
-                                                                  color: '#444',
-                                                                  flexShrink: 1
-                                                                }}
-                                                              >
-                                                                {func.name}
-                                                              </Text>
-                                                            </TouchableOpacity>
-                                                          ))}
-                                                        </View>
-                                                      )}
-                                                    </React.Fragment>
-                                                );
-                                              })()}
-                                            </View>
-                                            );
-                                          })
-                                      )}
-                                    </React.Fragment>
-                                  )}
-                                </View>
-                                  );
-                                  })
-                              )}
-                            </>
-                          )}
-                        </View>
-                      ))}
+                        .filter(folder => folder.type === 'folder' || !folder.type) // Only folders, no projects at root
+                        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+                        .map((folder) => (
+                          <RecursiveFolderView
+                            key={folder.id}
+                            folder={folder}
+                            level={0}
+                            expandedSubs={expandedSubs}
+                            spinSubs={spinSub}
+                            onToggle={handleToggleSubFolder}
+                            companyId={companyId}
+                            hierarchy={hierarchy}
+                            setHierarchy={setHierarchy}
+                            parentPath=""
+                          />
+                        ))}
                     </View>
                   );
                 })()}
@@ -5892,8 +5876,26 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                               setDashboardBtn1Failed={setDashboardBtn1Failed}
                               setDashboardBtn2Failed={setDashboardBtn2Failed}
                               setDashboardDropdownRowKey={setDashboardDropdownRowKey}
-                            />
-                          </View>
+                        selectedPhase={selectedPhase}
+                        companyName={companyProfile?.companyName || companyProfile?.name || companyId || null}
+                        companyId={companyId || routeCompanyId}
+                        currentUserId={auth?.currentUser?.uid || null}
+                        onCreateProject={() => {
+                          // Find first available subfolder to create project in
+                          const firstSubFolder = hierarchy.find(main => 
+                            main.children && main.children.length > 0
+                          )?.children?.[0];
+                          if (firstSubFolder) {
+                            setNewProjectModal({ visible: true, parentSubId: firstSubFolder.id });
+                          } else {
+                            // If no subfolder exists, show message
+                            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                              alert('Skapa först en undermapp i sidopanelen för att kunna skapa projekt.');
+                            }
+                          }
+                        }}
+                      />
+                    </View>
                         </View>
                       )}
                     </ScrollView>
@@ -6051,13 +6053,13 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                         }}
                         onDeviationSelect={(project, entry) => {
                           requestProjectSwitch(project, {
-                            selectedAction: {
+                                                  selectedAction: {
                               id: `openControl-${entry?.control?.id || Date.now()}`,
-                              kind: 'openControlDetails',
+                                                    kind: 'openControlDetails',
                               control: entry.control,
-                            },
-                            clearActionAfter: true,
-                          });
+                                                  },
+                                                  clearActionAfter: true,
+                                                });
                           setDashboardFocus(null);
                           setDashboardDropdownTop(null);
                           setDashboardHoveredStatKey(null);
@@ -6077,6 +6079,24 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                         setDashboardBtn1Failed={setDashboardBtn1Failed}
                         setDashboardBtn2Failed={setDashboardBtn2Failed}
                         setDashboardDropdownRowKey={setDashboardDropdownRowKey}
+                        selectedPhase={selectedPhase}
+                        companyName={companyProfile?.companyName || companyProfile?.name || companyId || null}
+                        companyId={companyId || routeCompanyId}
+                        currentUserId={auth?.currentUser?.uid || null}
+                        onCreateProject={() => {
+                          // Find first available subfolder to create project in
+                          const firstSubFolder = hierarchy.find(main => 
+                            main.children && main.children.length > 0
+                          )?.children?.[0];
+                          if (firstSubFolder) {
+                            setNewProjectModal({ visible: true, parentSubId: firstSubFolder.id });
+                          } else {
+                            // If no subfolder exists, show message
+                            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                              alert('Skapa först en undermapp i sidopanelen för att kunna skapa projekt.');
+                            }
+                          }
+                        }}
                       />
                     </View>
                   )}
@@ -6717,49 +6737,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
           </View>
           {!isWeb && (
             <View style={{ flex: 1, paddingHorizontal: 4 }}>
-              {/* Phase Selector - Integrated in tree header */}
-              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                {PROJECT_PHASES.map(phase => {
-                  const isSelected = selectedPhase === phase.key;
-                  return (
-                          <TouchableOpacity
-                      key={phase.key}
-                      onPress={() => handlePhaseChange(phase.key)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 4,
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
-                        borderRadius: 6,
-                        borderWidth: 1,
-                        borderColor: isSelected ? phase.color : '#e0e0e0',
-                        backgroundColor: isSelected ? phase.color + '20' : '#fff',
-                            }}
-                            activeOpacity={0.7}
-                    >
-                      <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: phase.color,
-                        }}
-                      />
-                      <Ionicons name={phase.icon} size={14} color={phase.color} />
-                      <Text
-                        style={{
-                          fontSize: 13,
-                          fontWeight: isSelected ? '600' : '400',
-                          color: isSelected ? phase.color : '#666',
-                        }}
-                      >
-                        {phase.name}
-                      </Text>
-                                      </TouchableOpacity>
-                  );
-                })}
-                                    </View>
+              {/* Phase selector removed - phases are now SharePoint folders shown directly in left panel */}
               
               {loadingHierarchy || hierarchy.length === 0 ? (
                 <Text style={{ color: '#888', fontSize: 16, textAlign: 'center', marginTop: 32 }}>
@@ -6785,39 +6763,53 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                         );
                       }
                       
-                      // Show PhaseLeftPanel if we have navigation data
-                      if (phaseNavigation && phaseNavigation.sections && phaseNavigation.sections.length > 0) {
-                        console.log('[HomeScreen] Rendering PhaseLeftPanel');
-                        return (
-                          <PhaseLeftPanel
-                            navigation={phaseNavigation}
-                            activeSection={phaseActiveSection}
-                            activeItem={phaseActiveItem}
-                            onSelectSection={(sectionId) => {
-                              setPhaseActiveSection(sectionId);
-                              // Set first item in section as active if available
-                              const section = phaseNavigation.sections.find(s => s.id === sectionId);
-                              if (section && section.items && section.items.length > 0) {
-                                setPhaseActiveItem(section.items[0].id);
-                              } else {
-                                setPhaseActiveItem(null);
-                              }
-                            }}
-                            onSelectItem={(sectionId, itemId) => {
-                              setPhaseActiveSection(sectionId);
-                              setPhaseActiveItem(itemId);
-                            }}
-                            projectName={selectedProject?.name || selectedProject?.id || 'Projekt'}
-                          />
-                        );
-                      }
+                      // With SharePoint-first approach, show ProjectTree with project folders from SharePoint
+                      // instead of PhaseLeftPanel with hardcoded navigation
+                      console.log('[HomeScreen] Rendering ProjectTree with SharePoint data for selected project');
                       
-                      // Fallback: show loading if navigation not ready yet
-                      console.log('[HomeScreen] Navigation not ready, showing fallback');
+                      // Create a hierarchy structure with the selected project as root and its folders as children
+                      const projectHierarchy = selectedProject ? [{
+                        id: selectedProject.id,
+                        name: selectedProject.name || selectedProject.id,
+                        type: 'project',
+                        expanded: true,
+                        children: selectedProjectFolders.map(folder => ({
+                          ...folder,
+                          type: 'projectFunction',
+                        })),
+                        ...selectedProject
+                      }] : [];
+                      
                       return (
-                        <View style={{ padding: 20, alignItems: 'center' }}>
-                          <Text style={{ color: '#888', fontSize: 14 }}>Laddar navigation...</Text>
-                        </View>
+                        <ProjectTree
+                          hierarchy={projectHierarchy}
+                          selectedProject={selectedProject}
+                          selectedPhase={projectPhaseKey}
+                          onSelectProject={(project) => {
+                            if (isWeb) {
+                              setSelectedProject({ ...project });
+                            } else {
+                              navigation.navigate('ProjectDetails', {
+                                project: {
+                                  id: project.id,
+                                  name: project.name,
+                                  ansvarig: project.ansvarig || '',
+                                  adress: project.adress || '',
+                                  fastighetsbeteckning: project.fastighetsbeteckning || '',
+                                  client: project.client || '',
+                                  status: project.status || 'ongoing',
+                                  createdAt: project.createdAt || '',
+                                  createdBy: project.createdBy || ''
+                                },
+                                companyId
+                              });
+                            }
+                          }}
+                          onSelectFunction={handleSelectFunction}
+                          navigation={navigation}
+                          companyId={companyId}
+                          projectStatusFilter={projectStatusFilter}
+                        />
                       );
                     }
                     

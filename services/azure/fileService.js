@@ -15,9 +15,10 @@ import { getAzureConfig } from './config';
  * @param {string} options.path - SharePoint path (e.g., "Company/{companyId}/Users/{userId}/avatar.jpg")
  * @param {string} options.companyId - Company ID (for path organization)
  * @param {string} [options.siteId] - SharePoint Site ID (optional, uses default from config)
+ * @param {string} [options.phaseKey] - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad') - if provided, uses phase-specific SharePoint site
  * @returns {Promise<string>} File URL (webUrl from SharePoint)
  */
-export async function uploadFile({ file, path, companyId, siteId = null }) {
+export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null }) {
   if (!file) throw new Error('File is required');
   if (!path) throw new Error('Path is required');
   
@@ -30,8 +31,18 @@ export async function uploadFile({ file, path, companyId, siteId = null }) {
   }
   
   // Get SharePoint site ID
-  // Priority: 1) Provided siteId, 2) Company-specific siteId from Firestore, 3) Global config
+  // Priority: 1) Provided siteId, 2) Phase-specific siteId (if phaseKey provided), 3) Company-specific siteId from Firestore, 4) Global config
   let sharePointSiteId = siteId;
+  if (!sharePointSiteId && companyId && options.phaseKey) {
+    try {
+      // Dynamic import to avoid circular dependency
+      const { getSharePointSiteForPhase } = await import('../../components/firebase');
+      const phaseSiteConfig = await getSharePointSiteForPhase(companyId, options.phaseKey);
+      sharePointSiteId = phaseSiteConfig?.siteId || null;
+    } catch (error) {
+      console.warn('[uploadFile] Could not fetch phase-specific SharePoint Site ID:', error);
+    }
+  }
   if (!sharePointSiteId && companyId) {
     try {
       // Dynamic import to avoid circular dependency
@@ -351,24 +362,54 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
   }
   
   // Normalize path and split into parts
-  const pathParts = path.split('/').filter(p => p);
-  const folderName = pathParts.pop();
-  const parentPath = pathParts.length > 0 ? '/' + pathParts.join('/') : '/';
+  const pathParts = path.split('/').filter(p => p && p.trim().length > 0);
+  if (pathParts.length === 0) {
+    throw new Error('Invalid path: path must contain at least one folder name');
+  }
   
+  const folderName = pathParts.pop();
+  if (!folderName || folderName.trim().length === 0) {
+    throw new Error('Invalid path: folder name cannot be empty');
+  }
+  
+  // Construct parent path - if no parent, use root
+  // CRITICAL: parentPath must be normalized and never be just '/' or empty
+  let parentPath = '';
+  if (pathParts.length > 0) {
+    parentPath = pathParts.join('/');
+    // Normalize: remove leading/trailing slashes
+    parentPath = parentPath.replace(/^\/+/, '').replace(/\/+$/, '');
+  }
+  
+  // Build endpoint - use root/children if no parent, otherwise root:/parent:/children
   let endpoint;
   if (sharePointSiteId) {
-    endpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root:${parentPath}:`;
+    if (parentPath && parentPath.length > 0) {
+      endpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root:/${parentPath}:`;
+    } else {
+      endpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root`;
+    }
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${parentPath}:`;
+    if (parentPath && parentPath.length > 0) {
+      endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:/${parentPath}:`;
+    } else {
+      endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root`;
+    }
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
   
   // Check if folder exists
   try {
-    const checkResponse = await fetch(endpoint + `:/${folderName}:`, {
+    // Construct check endpoint - check if folder exists in parent
+    // For root: root:/folderName:
+    // For parent: root:/parent:/folderName:
+    const checkEndpoint = parentPath && parentPath.length > 0
+      ? `${endpoint}:/${folderName}:`
+      : `${endpoint}:/${folderName}:`;
+    const checkResponse = await fetch(checkEndpoint, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -383,8 +424,13 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
     // Folder doesn't exist, create it
   }
   
-  // Create folder
-  const createResponse = await fetch(endpoint + ':/children', {
+  // Create folder - endpoint should already be correct (root or root:/parent:)
+  // Append /children to create folder in the correct location
+  const createEndpoint = parentPath && parentPath.length > 0
+    ? `${endpoint}:/children`
+    : `${endpoint}/children`;
+  
+  const createResponse = await fetch(createEndpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,

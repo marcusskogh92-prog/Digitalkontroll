@@ -3,9 +3,9 @@
  * TODO: Extract full implementation from HomeScreen.js
  */
 
-import React from 'react';
-import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 const DashboardReminders = ({
   dashboardLoading,

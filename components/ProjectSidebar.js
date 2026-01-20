@@ -3,11 +3,12 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, TouchableOpacity } from 'react-native';
+import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { ensureProjectFunctions, DEFAULT_PROJECT_FUNCTIONS } from './common/ProjectTree/constants';
 import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveCompanySharePointSiteId, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveCompanySharePointSiteId, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+import { getSharePointHierarchy, loadFolderChildren, checkSharePointConnection, createSharePointFolder, deleteItem } from '../services/azure/hierarchyService';
 import { createCompanySiteWithStructure } from '../services/azure/siteService';
 import UserEditModal from './UserEditModal';
 
@@ -35,6 +36,91 @@ const publishHomeBreadcrumbSegments = (segments) => {
   } catch (_e) {}
 };
 
+// Recursive folder component - handles infinite nesting levels from SharePoint
+function RecursiveFolderItem({ 
+  folder, 
+  level = 0, 
+  expandedSubs, 
+  spinSubs, 
+  toggleSub, 
+  setFolderContextMenu,
+  resolvedCompanyId,
+  loadFolderChildren,
+  setHierarchy 
+}) {
+  const folderSpin = spinSubs[folder.id] || 0;
+  const folderAngle = expandedSubs[folder.id] ? (folderSpin * 360 + 90) : (folderSpin * 360);
+  const fontSize = Math.max(12, 15 - level); // Slightly smaller font for deeper levels
+  const paddingLeft = 16 + (level * 4); // More indentation for deeper levels
+  
+  return (
+    <li>
+      <div 
+        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
+        onClick={() => toggleSub(folder.id)}
+        onContextMenu={(e) => {
+          if (Platform.OS !== 'web') return;
+          try { e.preventDefault(); } catch(_e) {}
+          const x = (e && e.clientX) ? e.clientX : 60;
+          const y = (e && e.clientY) ? e.clientY : 60;
+          setFolderContextMenu({ folder, x, y });
+        }}
+      >
+        <span
+          style={{
+            color: '#222',
+            fontSize: fontSize + 1,
+            fontWeight: 500,
+            marginRight: 6,
+            display: 'inline-block',
+            transform: `rotate(${folderAngle}deg)`,
+            transition: 'transform 0.4s ease',
+          }}
+        >
+          &gt;
+        </span>
+        <span style={{ 
+          fontWeight: expandedSubs[folder.id] ? 600 : 400, 
+          fontSize: fontSize 
+        }}>{folder.name}</span>
+      </div>
+      {expandedSubs[folder.id] && (
+        <ul style={{ listStyle: 'none', paddingLeft: paddingLeft, marginTop: 2 }}>
+          {folder.loading ? (
+            <li style={{ color: '#888', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+              Laddar undermappar från SharePoint...
+            </li>
+          ) : folder.error ? (
+            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8 }}>
+              Fel: {folder.error}
+            </li>
+          ) : folder.children && folder.children.length > 0 ? (
+            // Recursively render children - infinite depth, fully driven by SharePoint structure
+            folder.children.map(childFolder => (
+              <RecursiveFolderItem
+                key={childFolder.id}
+                folder={childFolder}
+                level={level + 1}
+                expandedSubs={expandedSubs}
+                spinSubs={spinSubs}
+                toggleSub={toggleSub}
+                setFolderContextMenu={setFolderContextMenu}
+                resolvedCompanyId={resolvedCompanyId}
+                loadFolderChildren={loadFolderChildren}
+                setHierarchy={setHierarchy}
+              />
+            ))
+          ) : (
+            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+              Mappen är tom
+            </li>
+          )}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, iconName = null, iconColor = null, controlTypesMode = false, selectedCompanyId = null, selectedPhase: selectedPhaseProp, onPhaseChange, onAddMainFolder }) {
   // Legacy: "Mallar"-sidan är borttagen och vi vill inte att sidomenyn kan hamna i templates-läge.
   // Låt flaggan vara hårt avstängd även om någon råkar skicka props från äldre kod.
@@ -46,23 +132,8 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [expandedSubs, setExpandedSubs] = useState({});
   const [expandedProjects, setExpandedProjects] = useState({});
   const [hierarchy, setHierarchy] = useState([]);
-  const [selectedPhase, setSelectedPhase] = useState(selectedPhaseProp || DEFAULT_PHASE);
+  // Phase is now just a SharePoint folder - no internal phase logic needed
   const [companies, setCompanies] = useState([]);
-  
-  // Synka med prop när den ändras
-  useEffect(() => {
-    if (selectedPhaseProp !== undefined) {
-      setSelectedPhase(selectedPhaseProp);
-    }
-  }, [selectedPhaseProp]);
-  
-  // När phase ändras lokalt, meddela parent
-  const handlePhaseChange = (phase) => {
-    setSelectedPhase(phase);
-    if (onPhaseChange) {
-      onPhaseChange(phase);
-    }
-  };
   const [loading, setLoading] = useState(true);
   const [expandedCompanies, setExpandedCompanies] = useState({});
   const [membersByCompany, setMembersByCompany] = useState({});
@@ -103,6 +174,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [templateFetchErrors, setTemplateFetchErrors] = useState({});
   const [controlTypeContextMenu, setControlTypeContextMenu] = useState(null); // { companyId, profile, controlTypeId, controlTypeKey, controlTypeName, builtin, hidden, x, y }
   const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, profile, controlType, template, x, y }
+  const [folderContextMenu, setFolderContextMenu] = useState(null); // { folder, x, y } - for SharePoint folder context menu
 
   // Breadcrumb state for web: track last selected project path in the sidebar
   const [selectedProjectBreadcrumb, setSelectedProjectBreadcrumb] = useState(null); // { group, sub, project }
@@ -301,10 +373,44 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
       setLoading(false);
       return;
     }
-    fetchHierarchy(resolvedCompanyId).then(items => {
-      setHierarchy(items || []);
-      setLoading(false);
-    }).catch(() => { setHierarchy([]); setLoading(false); });
+    
+    // Check SharePoint connection and fetch folders
+    (async () => {
+      try {
+        // First check SharePoint connection status
+        setSharePointStatus({ connected: false, checking: true, error: null, siteId: null });
+        const connectionStatus = await checkSharePointConnection(resolvedCompanyId);
+        setSharePointStatus({
+          connected: connectionStatus.connected,
+          checking: false,
+          error: connectionStatus.error,
+          siteId: connectionStatus.siteId
+        });
+
+        if (connectionStatus.connected) {
+          // Get ALL root folders (all phases) from SharePoint - no filtering
+          const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+          
+          // Use SharePoint folders directly - no adapter needed
+          // Each folder represents a phase (Kalkylskede, Produktion, etc.)
+          setHierarchy(sharePointFolders || []);
+        } else {
+          // No connection - show empty
+          setHierarchy([]);
+        }
+      } catch (error) {
+        console.error('[ProjectSidebar] Error fetching SharePoint hierarchy:', error);
+        setSharePointStatus({
+          connected: false,
+          checking: false,
+          error: error?.message || 'Unknown error',
+          siteId: null
+        });
+        setHierarchy([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [companiesMode, restrictCompanyId, resolvedCompanyId]);
 
   // Web: react to company profile updates from ManageCompany (e.g. userLimit changes)
@@ -677,79 +783,125 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
     return PROJECT_NUMBER_SORT_DIRECTION * compareText(aKey, bKey);
   };
 
-  const filterTree = (tree) => tree
-    .map(group => {
-      // Filter by search for main folder name
-      const groupMatchesSearch = group.name.toLowerCase().includes(search.toLowerCase());
-      
-      const filteredSubs = (group.children || []).map(sub => {
-        // Filter by search for sub folder name
-        const subMatchesSearch = sub.name.toLowerCase().includes(search.toLowerCase());
+  // Filter tree while preserving object references so state updates work correctly
+  const filterTree = (tree) => {
+    if (!search.trim()) {
+      // No search - return tree as-is to preserve references
+      return tree;
+    }
+    return tree
+      .map(group => {
+        // Filter by search for main folder name
+        const groupMatchesSearch = group.name.toLowerCase().includes(search.toLowerCase());
         
-        const filteredProjects = (sub.children || []).filter(project => {
-          // Filter by search
-          const matchesSearch = project.name.toLowerCase().includes(search.toLowerCase()) ||
-            String(project.id).toLowerCase().includes(search.toLowerCase());
+        const filteredSubs = (group.children || []).map(sub => {
+          // Filter by search for sub folder name
+          const subMatchesSearch = sub.name.toLowerCase().includes(search.toLowerCase());
           
-          // Filter by phase (only if not in companiesMode, showMembers, etc.)
-          if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
-            const projectPhase = project?.phase || sub?.phase || group?.phase || DEFAULT_PHASE;
-            const matchesPhase = projectPhase === selectedPhase;
-            return matchesSearch && matchesPhase;
+          const filteredProjects = (sub.children || []).filter(project => {
+            // Filter by search
+            const matchesSearch = project.name.toLowerCase().includes(search.toLowerCase()) ||
+              String(project.id).toLowerCase().includes(search.toLowerCase());
+            
+            return matchesSearch;
+          }).slice().sort(compareProjectsByNumber);
+          
+          // Preserve sub object reference if no filtering needed, otherwise create new
+          if (subMatchesSearch && filteredProjects.length === (sub.children || []).length) {
+            return sub; // No filtering needed - preserve reference
           }
-          
-          return matchesSearch;
-        }).slice().sort(compareProjectsByNumber);
+          return { ...sub, children: filteredProjects };
+        }).filter(sub => {
+          // Keep sub folder if it has matching projects OR if sub folder name matches search
+          return sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase());
+        });
         
-        // Include sub folder if it has matching projects OR if sub folder name matches search
-        return { ...sub, children: filteredProjects };
-      }).filter(sub => {
-        // Keep sub folder if it has matching projects OR if sub folder name matches search
-        return sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase());
-      });
-      
-      // Include main folder if it has matching sub folders OR if main folder name matches search
-      return { ...group, children: filteredSubs };
-    })
-    .filter(group => {
-      // Keep main folder if it has matching sub folders OR if main folder name matches search
-      return group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase());
-    });
-
-  // Filter hierarchy to selected phase (only if not in companiesMode, showMembers, etc.)
-  let phaseHierarchy = hierarchy;
-  if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
-    // Filter both folders and projects by phase metadata
-    phaseHierarchy = hierarchy
-      .filter(main => {
-        // Filter main folders by phase (if they have phase metadata)
-        const mainPhase = main?.phase || DEFAULT_PHASE;
-        return mainPhase === selectedPhase;
+        // Preserve group object reference if no filtering needed
+        if (groupMatchesSearch && filteredSubs.length === (group.children || []).length) {
+          return group; // No filtering needed - preserve reference
+        }
+        return { ...group, children: filteredSubs };
       })
-      .map(main => ({
-        ...main,
-        children: (main.children || [])
-          .filter(sub => {
-            // Filter sub folders by phase (if they have phase metadata)
-            const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
-            return subPhase === selectedPhase;
-          })
-          .map(sub => ({
-            ...sub,
-            children: (sub.children || []).filter(project => {
-              // Filter projects by phase metadata
-              const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
-              return projectPhase === selectedPhase;
-            })
-          }))
-      }));
-  }
+      .filter(group => {
+        // Keep main folder if it has matching sub folders OR if main folder name matches search
+        return group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase());
+      });
+  };
+
+  // SharePoint hierarchy is already filtered by phase when fetched
+  // No need to filter projects by phase metadata - SharePoint folders represent phases
+  // The hierarchy structure from SharePoint is: Phase Folder -> Subfolders -> Files/Projects
+  let phaseHierarchy = hierarchy;
+  
+  // Note: With SharePoint-first approach, phase filtering happens at fetch time
+  // The hierarchy already contains only the selected phase folder and its contents
+  // If we need to show all phases, we would fetch without phaseKey filter
   
   const filteredGroups = filterTree(phaseHierarchy);
 
-  const toggleGroup = (id) => {
+  // Lazy load folder children when expanded
+  const toggleGroup = async (id) => {
+    const folder = hierarchy.find(f => f.id === id);
+    if (!folder) return;
+    
+    const nextOpen = !expandedGroups[id];
+    
+    // If expanding and folder has no children or children not loaded, load them
+    if (nextOpen && (!folder.children || folder.children.length === 0) && resolvedCompanyId) {
+      try {
+        // Use folder.path if available, otherwise construct from folder.name
+        // Ensure path is not empty or just slashes
+        let folderPath = folder.path || folder.name || '';
+        
+        // Normalize path: remove leading/trailing slashes, normalize separators
+        if (folderPath && typeof folderPath === 'string') {
+          folderPath = folderPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+          folderPath = folderPath.replace(/\/+$/, '');
+        } else {
+          folderPath = '';
+        }
+        
+        // Validate path - if empty or invalid, log warning but still try with folder name
+        if (!folderPath || folderPath.length === 0 || folderPath === '/') {
+          console.warn('[ProjectSidebar] toggleGroup - Invalid folder path after normalization, using folder name:', folder.name);
+          folderPath = folder.name || '';
+        }
+        
+        console.log('[ProjectSidebar] toggleGroup - Loading children for folder:', folder.name, 'normalized path:', folderPath, 'current children:', folder.children?.length || 0, 'original path:', folder.path);
+        
+        // Set loading state
+        setHierarchy(prev => prev.map(f => 
+          f.id === id ? { ...f, children: [], loading: true, error: null } : f
+        ));
+        
+        const children = await loadFolderChildren(resolvedCompanyId, folderPath);
+        console.log('[ProjectSidebar] toggleGroup - Loaded', children.length, 'children for', folder.name, 'children:', children.map(c => c.name));
+        
+        // Update with loaded children - make sure to preserve other folder properties
+        setHierarchy(prev => prev.map(f => {
+          if (f.id === id) {
+            return { 
+              ...f, 
+              children, 
+              path: folderPath, 
+              loading: false, 
+              error: null,
+              expanded: true 
+            };
+          }
+          return f;
+        }));
+      } catch (error) {
+        console.error('[ProjectSidebar] Error loading folder children:', error);
+        // Set error state
+        setHierarchy(prev => prev.map(f => 
+          f.id === id ? { ...f, children: [], loading: false, error: error.message } : f
+        ));
+      }
+    }
+    
+    // Update expanded state AFTER loading children (if needed)
     setExpandedGroups(prev => {
-      const nextOpen = !prev[id];
       const next = { ...prev, [id]: nextOpen };
       if (nextOpen) lastExpandedGroupIdRef.current = id;
       else if (lastExpandedGroupIdRef.current === id) lastExpandedGroupIdRef.current = null;
@@ -758,9 +910,204 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
     setSpinGroups(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   };
 
-  const toggleSub = (id) => {
+  // Lazy load subfolder children when expanded
+  const toggleSub = async (id) => {
+    // Find subfolder in hierarchy (recursively search all levels)
+    const findFolder = (folders, targetId) => {
+      for (const folder of folders) {
+        if (folder.id === targetId) return folder;
+        if (folder.children) {
+          const found = findFolder(folder.children, targetId);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const folder = findFolder(hierarchy, id);
+    if (!folder) return;
+    
+    const nextOpen = !expandedSubs[id];
+    
+    // If expanding and folder has no children or children not loaded, load them
+    if (nextOpen && (!folder.children || folder.children.length === 0) && resolvedCompanyId) {
+      try {
+        // Use folder.path if available, otherwise construct from folder.name
+        // For nested folders, we need the full path from root
+        let folderPath = folder.path;
+        if (!folderPath || (typeof folderPath === 'string' && folderPath.trim().length === 0)) {
+          // If no path, try to construct it by finding parent path
+          // This is critical for nested folders where path might not be set initially
+          const findParentPath = (folders, targetId, currentPath = '') => {
+            for (const f of folders) {
+              // Use f.path if available (more reliable), otherwise construct from currentPath
+              let fPath = f.path;
+              if (!fPath || (typeof fPath === 'string' && fPath.trim().length === 0)) {
+                // No path on folder, construct from currentPath
+                fPath = currentPath ? `${currentPath}/${f.name}` : f.name;
+              }
+              
+              if (f.id === targetId) {
+                return fPath;
+              }
+              
+              if (f.children && Array.isArray(f.children) && f.children.length > 0) {
+                const found = findParentPath(f.children, targetId, fPath);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const constructedPath = findParentPath(hierarchy, id);
+          folderPath = constructedPath || folder.name;
+          console.log('[ProjectSidebar] toggleSub - No path found on folder, constructed:', folderPath, 'from folder name:', folder.name, 'folder.id:', id);
+        }
+        
+        // Normalize path: remove leading/trailing slashes, normalize separators
+        if (folderPath && typeof folderPath === 'string') {
+          folderPath = folderPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+          folderPath = folderPath.replace(/\/+$/, '');
+        } else {
+          folderPath = '';
+        }
+        
+        // CRITICAL VALIDATION: Ensure path is never empty or invalid before calling loadFolderChildren
+        // Empty paths will cause ::/children errors in Graph API
+        if (!folderPath || folderPath.length === 0 || folderPath === '/' || (typeof folderPath === 'string' && folderPath.trim().length === 0)) {
+          console.error('[ProjectSidebar] toggleSub - CRITICAL: Invalid folder path after normalization!', {
+            folderName: folder.name,
+            folderId: id,
+            originalPath: folder.path,
+            normalizedPath: folderPath,
+            folderType: typeof folderPath
+          });
+          
+          // Try to use folder name as fallback, but validate it too
+          if (folder.name && typeof folder.name === 'string' && folder.name.trim().length > 0) {
+            folderPath = folder.name.trim();
+            console.warn('[ProjectSidebar] toggleSub - Using folder name as fallback path:', folderPath);
+          } else {
+            console.error('[ProjectSidebar] toggleSub - Cannot construct valid path, skipping loadFolderChildren');
+            // Don't call loadFolderChildren with invalid path - it will cause 400 error
+            setExpandedSubs(prev => ({ ...prev, [id]: false }));
+            setHierarchy(prev => {
+              const updateFolder = (folders) => folders.map(f => {
+                if (f.id === id) {
+                  return { ...f, loading: false, error: 'Invalid folder path - cannot load children' };
+                }
+                if (f.children) {
+                  return { ...f, children: updateFolder(f.children) };
+                }
+                return f;
+              });
+              return updateFolder(prev);
+            });
+            return;
+          }
+        }
+        
+        console.log('[ProjectSidebar] toggleSub - Loading children', {
+          folderName: folder.name,
+          folderId: id,
+          normalizedPath: folderPath,
+          pathType: typeof folderPath,
+          pathLength: folderPath.length,
+          currentChildren: folder.children?.length || 0,
+          originalPath: folder.path
+        });
+        
+        // Set loading state (recursively update hierarchy)
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              return { ...f, children: [], loading: true, error: null };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+        
+        const children = await loadFolderChildren(resolvedCompanyId, folderPath);
+        console.log('[ProjectSidebar] toggleSub - Loaded', children.length, 'children for subfolder:', folder.name, 'children:', children.map(c => c.name));
+        
+        // Update with loaded children (recursively update hierarchy)
+        // CRITICAL: Ensure all loaded children have their paths preserved
+        // This is essential for recursive rendering to work correctly at all levels
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              // Ensure children have paths - they should already have paths from loadFolderChildren
+              // but double-check to prevent issues with deeper nesting
+              const childrenWithPaths = children.map(child => {
+                // Validate and ensure child has a valid path
+                let childPath = child.path;
+                if (!childPath || (typeof childPath === 'string' && childPath.trim().length === 0)) {
+                  // Child missing path, construct it from parent path
+                  // This is critical for recursive rendering to work at all levels
+                  if (folderPath && folderPath.length > 0 && folderPath !== '/') {
+                    childPath = `${folderPath}/${child.name}`;
+                  } else {
+                    childPath = child.name;
+                  }
+                  console.warn('[ProjectSidebar] toggleSub - Child missing path, constructed:', childPath, 'for child:', child.name, 'parent path:', folderPath);
+                }
+                
+                // Normalize child path to ensure consistency
+                if (childPath && typeof childPath === 'string') {
+                  childPath = childPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+                  childPath = childPath.replace(/\/+$/, '');
+                }
+                
+                // Final validation - path should never be empty
+                if (!childPath || childPath.length === 0) {
+                  console.error('[ProjectSidebar] toggleSub - CRITICAL: Cannot construct valid path for child:', child.name, 'parent path:', folderPath);
+                  childPath = child.name || '';
+                }
+                
+                return { 
+                  ...child, 
+                  path: childPath 
+                };
+              });
+              
+              return { 
+                ...f, 
+                children: childrenWithPaths, 
+                path: folderPath, 
+                loading: false, 
+                error: null,
+                expanded: true 
+              };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+      } catch (error) {
+        console.error('[ProjectSidebar] toggleSub - Error loading subfolder children:', error);
+        // Set error state (recursively update hierarchy)
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              return { ...f, children: [], loading: false, error: error.message };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+      }
+    }
+    
     setExpandedSubs(prev => {
-      const nextOpen = !prev[id];
       const next = { ...prev, [id]: nextOpen };
       if (nextOpen) lastExpandedSubIdRef.current = id;
       else if (lastExpandedSubIdRef.current === id) lastExpandedSubIdRef.current = null;
@@ -1022,12 +1369,19 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
           return;
         }
 
-        // Project mode: re-fetch hierarchy for current companyId without hiding UI
+        // Project mode: re-fetch ALL root folders from SharePoint (no phase filtering)
         const prevH = Array.isArray(hierarchy) ? hierarchy : [];
-        const items = await fetchHierarchy(companyId);
-        if (Array.isArray(items) && items.length > 0) setHierarchy(items);
-        else {
-          showToast('Uppdateringen gav inga nya projekt.');
+        try {
+          const sharePointFolders = await getSharePointHierarchy(companyId, null);
+          if (Array.isArray(sharePointFolders) && sharePointFolders.length > 0) {
+            setHierarchy(sharePointFolders);
+          } else {
+            showToast('Uppdateringen gav inga nya mappar.');
+            setHierarchy(prevH);
+          }
+        } catch (error) {
+          console.error('[ProjectSidebar] Error refreshing SharePoint hierarchy:', error);
+          showToast('Kunde inte uppdatera mappstruktur från SharePoint.');
           setHierarchy(prevH);
         }
         return;
@@ -1048,7 +1402,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   };
 
   return (
-    <div style={{ width: 320, minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', overflowX: 'hidden', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative', boxSizing: 'border-box', flexShrink: 0 }}>
+    <div style={{ width: 320, minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', overflowX: 'hidden', borderRight: '1px solid #ddd', padding: 0, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative', boxSizing: 'border-box', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
       {addDialogOpen && (
         <div
           style={{
@@ -1137,90 +1491,9 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
         </div>
       )}
       {(() => {
-        // Om vi är i projektläge, visa fas-knapp istället för "Projekt"-rubrik
-        if (!companiesMode && !showMembers && !memberSearchMode && !controlTypesMode) {
-          const currentPhaseConfig = PROJECT_PHASES.find(p => p.key === selectedPhase) || PROJECT_PHASES[0];
-          return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-              <button
-                onClick={() => {
-                  // Öppna dropdown för att välja fas (kan implementeras senare)
-                  // För nu, bara visa vald fas
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: `1px solid ${currentPhaseConfig.color}60`,
-                  backgroundColor: currentPhaseConfig.color + '15',
-                  cursor: 'pointer',
-                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                  fontSize: 14,
-                  fontWeight: 400,
-                  color: currentPhaseConfig.color,
-                  transition: 'all 0.2s',
-                  flex: 1,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = currentPhaseConfig.color + '25';
-                  e.currentTarget.style.borderColor = currentPhaseConfig.color + '80';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = currentPhaseConfig.color + '15';
-                  e.currentTarget.style.borderColor = currentPhaseConfig.color + '60';
-                }}
-              >
-                <Ionicons name={currentPhaseConfig.icon} size={16} color={currentPhaseConfig.color} />
-                <span>{currentPhaseConfig.name}</span>
-              </button>
-              
-              {/* Hem- och uppdatera-knappar */}
-              <TouchableOpacity
-                style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                onPress={() => {
-                  setSpinHome(n => n + 1);
-                  handleGoHome();
-                }}
-                accessibilityLabel="Hem"
-              >
-                <Ionicons
-                  name="home-outline"
-                  size={18}
-                  color={currentPhaseConfig.color}
-                  style={{
-                    transform: `rotate(${spinHome * 360}deg)`,
-                    transition: 'transform 0.4s ease'
-                  }}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                onPress={() => {
-                  setSpinRefresh(n => n + 1);
-                  handleHardRefresh();
-                }}
-                accessibilityLabel="Uppdatera"
-              >
-                <Ionicons
-                  name="refresh"
-                  size={18}
-                  color={currentPhaseConfig.color}
-                  style={{
-                    transform: `rotate(${spinRefresh * 360}deg)`,
-                    transition: 'transform 0.4s ease'
-                  }}
-                />
-              </TouchableOpacity>
-            </div>
-          );
-        }
-        
-        // Annars visa normal rubrik
+        // Visa normal rubrik (fasväljaren, hem- och uppdatera-knapparna finns nu i GlobalPhaseToolbar)
         return (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingLeft: 16, paddingRight: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {iconName ? (
                 <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1284,6 +1557,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
             {toast.message}
           </div>
         ) : null}
+      <div style={{ padding: '0 16px', flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
       <input
         type="text"
         placeholder={searchPlaceholder}
@@ -1324,7 +1598,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
           ) : null}
         </>
       ) : null}
-      <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
+        <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
       {companiesMode ? (<>
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {(() => {
@@ -2681,39 +2955,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
               {search.trim() === '' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
                   <div style={{ color: '#888', fontSize: 15, marginBottom: 8 }}>Inga mappar ännu</div>
-                  {onAddMainFolder && (
-                    <button
-                      onClick={() => {
-                        if (onAddMainFolder) {
-                          onAddMainFolder();
-                        }
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        backgroundColor: '#1976D2',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 8,
-                        padding: '12px 20px',
-                        fontSize: 16,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        transition: 'background-color 0.2s',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#1565C0';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = '#1976D2';
-                      }}
-                    >
-                      <span style={{ fontSize: 20 }}>+</span>
-                      <span>Skapa mapp</span>
-                    </button>
-                  )}
+                  {/* Old "Create folder" button removed - folders are managed in SharePoint */}
                 </div>
               ) : (
                 <div style={{ color: '#888', fontSize: 15 }}>Inga projekt hittades.</div>
@@ -2725,7 +2967,17 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
             const groupAngle = expandedGroups[group.id] ? (groupSpin * 360 + 90) : (groupSpin * 360);
             return (
             <li key={group.id}>
-              <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleGroup(group.id)}>
+              <div 
+                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
+                onClick={() => toggleGroup(group.id)}
+                onContextMenu={(e) => {
+                  if (Platform.OS !== 'web') return;
+                  try { e.preventDefault(); } catch(_e) {}
+                  const x = (e && e.clientX) ? e.clientX : 60;
+                  const y = (e && e.clientY) ? e.clientY : 60;
+                  setFolderContextMenu({ folder: group, x, y });
+                }}
+              >
                 <span
                   style={{
                     color: '#222',
@@ -2746,14 +2998,33 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                   letterSpacing: 0.1 
                 }}>{group.name}</span>
               </div>
-              {expandedGroups[group.id] && group.children.length > 0 && (
+              {expandedGroups[group.id] && (
                 <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
-                  {group.children.map(sub => {
+                  {group.loading ? (
+                    <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                      Laddar undermappar...
+                    </li>
+                  ) : group.error ? (
+                    <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                      Fel: {group.error}
+                    </li>
+                  ) : group.children && group.children.length > 0 ? (
+                    group.children.map(sub => {
                     const subSpin = spinSubs[sub.id] || 0;
                     const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
                     return (
                     <li key={sub.id}>
-                      <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSub(sub.id)}>
+                      <div 
+                        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
+                        onClick={() => toggleSub(sub.id)}
+                        onContextMenu={(e) => {
+                          if (Platform.OS !== 'web') return;
+                          try { e.preventDefault(); } catch(_e) {}
+                          const x = (e && e.clientX) ? e.clientX : 60;
+                          const y = (e && e.clientY) ? e.clientY : 60;
+                          setFolderContextMenu({ folder: sub, x, y });
+                        }}
+                      >
                         <span
                           style={{
                             color: '#222',
@@ -2772,146 +3043,160 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                           fontSize: 15 
                         }}>{sub.name}</span>
                       </div>
-                      {expandedSubs[sub.id] && sub.children.length > 0 && (
+                      {expandedSubs[sub.id] && (
                         <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                          {sub.children
-                            .filter(child => child.type === 'project')
-                            .map(project => {
-                              // Ensure project has functions
-                              const projectWithFunctions = ensureProjectFunctions(project);
-                              const hasFunctions = Array.isArray(projectWithFunctions.children) && 
-                                projectWithFunctions.children.some(child => child.type === 'projectFunction');
-                              const functions = hasFunctions 
-                                ? projectWithFunctions.children.filter(child => child.type === 'projectFunction')
-                                    .sort((a, b) => (a.order || 999) - (b.order || 999))
-                                : [];
-                              const isExpanded = expandedProjects[project.id] || false;
-                              
-                              return (
-                                <li key={project.id}>
-                                  <button
-                                    style={{
-                                      background: 'none',
-                                      border: 'none',
-                                      padding: 0,
-                                      cursor: 'pointer',
-                                      color: '#222',
-                                      fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                                      fontSize: 15,
-                                      letterSpacing: 0.1,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      width: '100%',
-                                      justifyContent: 'space-between',
-                                    }}
-                                    onClick={() => {
-                                      if (hasFunctions) {
-                                        // Toggle expand/collapse if project has functions
-                                        setExpandedProjects(prev => ({
-                                          ...prev,
-                                          [project.id]: !prev[project.id]
-                                        }));
-                                      } else {
-                                        // Direct selection if no functions
-                                        try { setSelectedProjectBreadcrumb({ group, sub, project }); } catch (_e) {}
-                                        try {
-                                          publishHomeBreadcrumbSegments([
-                                            { label: 'Startsida', target: { kind: 'dashboard' } },
-                                            { label: String(group?.name || '').trim() || 'Huvudmapp', target: { kind: 'main', mainId: group?.id } },
-                                            { label: String(sub?.name || '').trim() || 'Undermapp', target: { kind: 'sub', mainId: group?.id, subId: sub?.id } },
-                                            { label: (String(project?.id || '').trim() && String(project?.name || '').trim()) ? `${String(project.id).trim()} — ${String(project.name).trim()}` : (String(project?.name || '').trim() || 'Projekt'), target: { kind: 'project', projectId: String(project?.id || '') } },
-                                          ]);
-                                        } catch (_e) {}
-                                        if (onSelectProject) onSelectProject(project);
-                                      }
-                                    }}
-                                  >
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      {hasFunctions && (
-                                        <span style={{ 
-                                          color: '#666', 
-                                          fontSize: 14,
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                                          transition: 'transform 0.2s ease',
-                                        }}>
-                                          ▶
-                                        </span>
-                                      )}
-                                      <span style={{ 
-                                        fontWeight: (selectedProjectBreadcrumb && selectedProjectBreadcrumb.project && selectedProjectBreadcrumb.project.id === project.id) ? 700 : 400 
-                                      }}>{project.name}</span>
-                                    </span>
-                                    {!hasFunctions && (
-                                      <span style={{ color: '#222', fontSize: 18, marginLeft: 8, display: 'inline-flex', alignItems: 'center' }}>&gt;</span>
-                                    )}
-                                  </button>
-                                  
-                                  {/* Show functions when expanded */}
-                                  {isExpanded && hasFunctions && functions.length > 0 && (
-                                    <ul style={{ listStyle: 'none', paddingLeft: 24, marginTop: 4 }}>
-                                      {functions.map((func) => (
-                                        <li key={func.id} style={{ marginBottom: 2 }}>
-                                          <button
-                                            style={{
-                                              background: 'none',
-                                              border: 'none',
-                                              padding: '4px 8px',
-                                              cursor: 'pointer',
-                                              color: '#444',
-                                              fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                                              fontSize: 14,
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              width: '100%',
-                                              gap: 6,
-                                              borderRadius: 4,
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              e.currentTarget.style.backgroundColor = '#f0f0f0';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.backgroundColor = 'transparent';
-                                            }}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              // Handle function click
-                                              if (onSelectFunction) {
-                                                onSelectFunction(project, func);
-                                              } else if (onSelectProject) {
-                                                // Fallback: pass function info via project
-                                                onSelectProject({ ...project, selectedFunction: func });
-                                              }
-                                            }}
-                                          >
-                                            <span style={{ fontSize: 12, color: '#666' }}>
-                                              {func.icon === 'document-text-outline' && '📄'}
-                                              {func.icon === 'map-outline' && '🗺️'}
-                                              {func.icon === 'people-outline' && '👥'}
-                                              {func.icon === 'folder-outline' && '📁'}
-                                              {func.icon === 'shield-checkmark-outline' && '🛡️'}
-                                            </span>
-                                            <span>{func.name}</span>
-                                          </button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </li>
-                              );
-                            })}
+                          {sub.loading ? (
+                            <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                              Laddar undermappar från SharePoint...
+                            </li>
+                          ) : sub.error ? (
+                            <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                              Fel: {sub.error}
+                            </li>
+                          ) : sub.children && sub.children.length > 0 ? (
+                            // Recursively render subfolders - infinite depth using RecursiveFolderItem
+                            sub.children.map(childFolder => (
+                              <RecursiveFolderItem
+                                key={childFolder.id}
+                                folder={childFolder}
+                                level={1}
+                                expandedSubs={expandedSubs}
+                                spinSubs={spinSubs}
+                                toggleSub={toggleSub}
+                                setFolderContextMenu={setFolderContextMenu}
+                                resolvedCompanyId={resolvedCompanyId}
+                                loadFolderChildren={loadFolderChildren}
+                                setHierarchy={setHierarchy}
+                              />
+                            ))
+                          ) : (
+                            <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                              Mappen är tom
+                            </li>
+                          )}
                         </ul>
                       )}
                     </li>
                   );
-                  })}
+                  })
+                  ) : (
+                    <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                      {group.loading ? 'Laddar undermappar från SharePoint...' : 'Inga undermappar i SharePoint'}
+                    </li>
+                  )}
                 </ul>
               )}
             </li>
           );
           })}
         </ul>
+      )}
+      </div>
+      
+      {/* SharePoint Folder Context Menu */}
+      {folderContextMenu && (
+        <ContextMenu
+          visible={!!folderContextMenu}
+          x={folderContextMenu.x}
+          y={folderContextMenu.y}
+          onClose={() => setFolderContextMenu(null)}
+          items={[
+            { key: 'createFolder', label: 'Lägg till mapp i SharePoint' },
+            { key: 'rename', label: 'Byt namn' },
+            { key: 'delete', label: 'Radera mapp', danger: true },
+          ]}
+          onSelect={async (item) => {
+            const folder = folderContextMenu?.folder;
+            if (!folder || !resolvedCompanyId) return;
+            setFolderContextMenu(null);
+
+            try {
+              if (item.key === 'createFolder') {
+                const folderName = window.prompt('Namn på ny mapp:', '');
+                if (!folderName || !folderName.trim()) return;
+                
+                const parentPath = folder.path || folder.name;
+                const newFolder = await createSharePointFolder(resolvedCompanyId, parentPath, folderName.trim());
+                
+                // Refresh hierarchy to show new folder
+                const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+                setHierarchy(sharePointFolders || []);
+                
+                showToast(`Mappen "${folderName}" har skapats i SharePoint`);
+              } else if (item.key === 'delete') {
+                const confirmed = window.confirm(`Är du säker på att du vill radera mappen "${folder.name}" från SharePoint? Detta går inte att ångra.`);
+                if (!confirmed) return;
+                
+                const folderPath = folder.path || folder.name;
+                await deleteItem(resolvedCompanyId, folderPath);
+                
+                // Refresh hierarchy
+                const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+                setHierarchy(sharePointFolders || []);
+                
+                showToast(`Mappen "${folder.name}" har raderats från SharePoint`);
+              } else if (item.key === 'rename') {
+                const newName = window.prompt('Nytt namn på mappen:', folder.name);
+                if (!newName || !newName.trim() || newName.trim() === folder.name) return;
+                
+                // Note: SharePoint rename requires PATCH to update item name
+                // For now, show message that rename should be done in SharePoint
+                window.alert('För att byta namn på mappar, gör det direkt i SharePoint. Ändringen synkas automatiskt.');
+              }
+            } catch (error) {
+              console.error('[ProjectSidebar] Error handling folder action:', error);
+              showToast(`Fel: ${error?.message || 'Okänt fel'}`);
+            }
+          }}
+        />
+      )}
+      
+      {/* SharePoint Connection Status Indicator */}
+      {!companiesMode && resolvedCompanyId && (
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          padding: '10px 16px',
+          backgroundColor: '#fff',
+          borderTop: '2px solid #ddd',
+          fontSize: 12,
+          color: '#666',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          zIndex: 100,
+          boxShadow: '0 -2px 8px rgba(0,0,0,0.15)',
+          minHeight: 40
+        }}>
+          {sharePointStatus.checking ? (
+            <>
+              <Ionicons name="hourglass-outline" size={16} color="#888" />
+              <span>Kontrollerar SharePoint...</span>
+            </>
+          ) : sharePointStatus.connected ? (
+            <>
+              <Ionicons name="checkmark-circle" size={18} color="#43A047" />
+              <span style={{ color: '#43A047', fontWeight: '600' }}>SharePoint: Ansluten</span>
+              {sharePointStatus.siteId && (
+                <span style={{ color: '#999', fontSize: 10, marginLeft: 'auto' }}>
+                  Site: {sharePointStatus.siteId.substring(0, 8)}...
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <Ionicons name="close-circle" size={18} color="#D32F2F" />
+              <span style={{ color: '#D32F2F' }}>SharePoint: Ej ansluten</span>
+              {sharePointStatus.error && (
+                <span style={{ color: '#999', fontSize: 10, marginLeft: 'auto' }} title={sharePointStatus.error}>
+                  {sharePointStatus.error.length > 25 ? sharePointStatus.error.substring(0, 25) + '...' : sharePointStatus.error}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );

@@ -2,7 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteId, purgeCompanyRemote, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, uploadCompanyLogo } from '../components/firebase';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getAllPhaseSharePointConfigs, getCompanySharePointSiteId, getSharePointSiteForPhase, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, uploadCompanyLogo } from '../components/firebase';
+import { PROJECT_PHASES } from '../features/projects/constants';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
@@ -41,6 +42,12 @@ export default function ManageCompany({ navigation }) {
   const [sharePointSiteId, setSharePointSiteId] = useState('');
   const [sharePointSiteCreating, setSharePointSiteCreating] = useState(false);
   const [sharePointSyncError, setSharePointSyncError] = useState(false);
+  const [phaseSharePointConfigs, setPhaseSharePointConfigs] = useState({});
+  const [phaseConfigModalVisible, setPhaseConfigModalVisible] = useState(false);
+  const [selectedPhaseForConfig, setSelectedPhaseForConfig] = useState(null);
+  const [externalSiteIdInput, setExternalSiteIdInput] = useState('');
+  const [externalSiteUrlInput, setExternalSiteUrlInput] = useState('');
+  const [externalSiteNameInput, setExternalSiteNameInput] = useState('');
   const fileInputRef = useRef(null);
   
   // Edit modal state
@@ -448,53 +455,48 @@ export default function ManageCompany({ navigation }) {
     }
   };
 
-  // Web: render inside the central dashboard area so layout and background remain consistent
-  if (Platform.OS === 'web') {
-    const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
-    const dashboardColumnsStyle = { flexDirection: 'row', alignItems: 'flex-start' };
-    const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
-
-    const RootContainer = ImageBackground;
-    const rootProps = {
-      source: require('../assets/images/inlogg.webb.png'),
-      resizeMode: 'cover',
-      imageStyle: { width: '100%', height: '100%' },
-    };
-
-    const handleSelectCompany = (payload) => {
-      try {
-        if (payload?.createNew) {
-          // Clear form for new company
-          try { busyLabelLockRef.current = null; setBusyLabel(''); } catch (_e) {}
-          setCompanyId('');
-          setCompanyName('');
-          setUserLimit('10');
-          setCompanyEnabled(true);
-          setCompanyDeleted(false);
-          setCompanyMemberCount(null);
-          setOrgNumber(''); setCompanyForm(''); setStreetAddress(''); setPostalCode(''); setCity(''); setCountry('');
-          setContactName(''); setContactEmail(''); setContactPhone('');
-          setBillingAddress(''); setBillingReference(''); setPaymentTerms('30'); setInvoiceMethod('email');
-          setAuditCompanyId('');
-          setAuditEvents([]);
-          setSelectedCompanyAuditEvents([]);
-          return;
-        }
-        const cid = String(payload?.companyId || payload?.id || '').trim();
-        const prof = payload?.profile || payload || {};
-
-        // UX: When selecting a company in this view, keep the overlay label stable.
-        // It should always read "Laddar företag…" (not "Hämtar användare…").
+  // Handle company selection - used in both web and native, but primarily for web
+  const handleSelectCompany = (payload) => {
+    try {
+      if (payload?.createNew) {
+        // Clear form for new company
+        try { busyLabelLockRef.current = null; setBusyLabel(''); } catch (_e) {}
+        setCompanyId('');
+        setCompanyName('');
+        setUserLimit('10');
+        setCompanyEnabled(true);
+        setCompanyDeleted(false);
+        setCompanyMemberCount(null);
+        setOrgNumber(''); setCompanyForm(''); setStreetAddress(''); setPostalCode(''); setCity(''); setCountry('');
+        setContactName(''); setContactEmail(''); setContactPhone('');
+        setBillingAddress(''); setBillingReference(''); setPaymentTerms('30'); setInvoiceMethod('email');
+        setAuditCompanyId('');
+        setAuditEvents([]);
+        setSelectedCompanyAuditEvents([]);
+        return;
+      }
+      const cid = String(payload?.companyId || payload?.id || payload || '').trim();
+      if (!cid) return;
+      
+      // If payload is just a string (companyId), fetch the profile
+      const prof = payload?.profile || payload || {};
+      
+      // UX: When selecting a company in this view, keep the overlay label stable.
+      // It should always read "Laddar företag…" (not "Hämtar användare…").
+      if (Platform.OS === 'web') {
         lockBusyLabel('Laddar företag…');
         const endSelectBusy = beginBusy('', { silent: true });
         try { setTimeout(() => endSelectBusy(), 250); } catch (_e) { endSelectBusy(); }
+      }
 
-        if (cid) setCompanyId(cid);
-        setCompanyName(prof?.companyName || prof?.name || '');
-        setUserLimit((prof && typeof prof.userLimit !== 'undefined') ? String(prof.userLimit) : '10');
-        setCompanyEnabled(typeof prof?.enabled === 'boolean' ? !!prof.enabled : true);
-        setCompanyDeleted(typeof prof?.deleted === 'boolean' ? !!prof.deleted : false);
-        // Load SharePoint site ID asynchronously
+      if (cid) setCompanyId(cid);
+      setCompanyName(prof?.companyName || prof?.name || '');
+      setUserLimit((prof && typeof prof.userLimit !== 'undefined') ? String(prof.userLimit) : '10');
+      setCompanyEnabled(typeof prof?.enabled === 'boolean' ? !!prof.enabled : true);
+      setCompanyDeleted(typeof prof?.deleted === 'boolean' ? !!prof.deleted : false);
+      
+      // Load SharePoint site ID asynchronously (web only)
+      if (Platform.OS === 'web') {
         (async () => {
           try {
             const siteId = await getCompanySharePointSiteId(cid);
@@ -508,21 +510,35 @@ export default function ManageCompany({ navigation }) {
             setSharePointSyncError(false);
           }
         })();
-        setOrgNumber(prof?.orgNumber || prof?.organisationsnummer || '');
-        setCompanyForm(prof?.companyForm || prof?.företagsform || '');
-        setStreetAddress(prof?.streetAddress || prof?.address || '');
-        setPostalCode(prof?.postalCode || prof?.postnummer || '');
-        setCity(prof?.city || prof?.ort || '');
-        setCountry(prof?.country || '');
-        setContactName(prof?.contactName || '');
-        setContactEmail(prof?.contactEmail || '');
-        setContactPhone(prof?.contactPhone || '');
-        setBillingAddress(prof?.billingAddress || '');
-        setBillingReference(prof?.billingReference || '');
-        setPaymentTerms(prof?.paymentTerms ? String(prof.paymentTerms) : '30');
-        setInvoiceMethod(prof?.invoiceMethod || 'email');
-        // Förhandsläs logga: om det är en gammal gs://-URL vill vi omvandla den till https.
+        
+        // Load phase SharePoint configurations
         (async () => {
+          try {
+            const configs = await getAllPhaseSharePointConfigs(cid);
+            setPhaseSharePointConfigs(configs || {});
+          } catch (_e) {
+            setPhaseSharePointConfigs({});
+          }
+        })();
+      }
+      
+      setOrgNumber(prof?.orgNumber || prof?.organisationsnummer || '');
+      setCompanyForm(prof?.companyForm || prof?.företagsform || '');
+      setStreetAddress(prof?.streetAddress || prof?.address || '');
+      setPostalCode(prof?.postalCode || prof?.postnummer || '');
+      setCity(prof?.city || prof?.ort || '');
+      setCountry(prof?.country || '');
+      setContactName(prof?.contactName || '');
+      setContactEmail(prof?.contactEmail || '');
+      setContactPhone(prof?.contactPhone || '');
+      setBillingAddress(prof?.billingAddress || '');
+      setBillingReference(prof?.billingReference || '');
+      setPaymentTerms(prof?.paymentTerms ? String(prof.paymentTerms) : '30');
+      setInvoiceMethod(prof?.invoiceMethod || 'email');
+      
+      // Förhandsläs logga: om det är en gammal gs://-URL vill vi omvandla den till https.
+      (async () => {
+        if (Platform.OS === 'web') {
           const endBusy = beginBusy('', { silent: true });
           try {
             const resolved = await resolveCompanyLogoUrl(cid);
@@ -536,53 +552,92 @@ export default function ManageCompany({ navigation }) {
           } finally {
             endBusy();
           }
+        } else {
+          setLogoUrl(prof?.logoUrl || '');
+        }
+      })();
+
+      // Hämta senaste admin-loggposter för företaget (endast superadmin på webb)
+      if (Platform.OS === 'web' && cid && isSuperadmin) {
+        setAuditCompanyId(cid);
+        (async () => {
+          const endBusy = beginBusy('', { silent: true });
+          try {
+            await loadAuditForCompany(cid, 50, { setLogEvents: true, setSelectedCompanyEvents: true });
+          } finally {
+            endBusy();
+          }
         })();
+      } else {
+        setAuditCompanyId('');
+        setAuditEvents([]);
+        setSelectedCompanyAuditEvents([]);
+      }
 
-        // Hämta senaste admin-loggposter för företaget (endast superadmin på webb)
-        if (Platform.OS === 'web' && cid && isSuperadmin) {
-          setAuditCompanyId(cid);
-          (async () => {
-            const endBusy = beginBusy('', { silent: true });
-            try {
-              await loadAuditForCompany(cid, 50, { setLogEvents: true, setSelectedCompanyEvents: true });
-            } finally {
-              endBusy();
+      // Hämta antal användare för snabb sammanfattning (webb)
+      if (Platform.OS === 'web' && cid) {
+        (async () => {
+          const endBusy = beginBusy('', { silent: true });
+          try {
+            // Superadmin: försök via Cloud Function (kan läsa alla bolag), annars fallback till Firestore.
+            let mems = null;
+            if (isSuperadmin) {
+              const res = await adminFetchCompanyMembers(cid).catch(() => null);
+              if (res && (res.ok === true || res.success === true) && Array.isArray(res.members)) {
+                mems = res.members;
+              }
             }
-          })();
-        } else {
-          setAuditCompanyId('');
-          setAuditEvents([]);
-          setSelectedCompanyAuditEvents([]);
-        }
+            if (!mems) {
+              mems = await fetchCompanyMembers(cid).catch(() => []);
+            }
+            const count = Array.isArray(mems) ? mems.length : null;
+            setCompanyMemberCount(typeof count === 'number' ? count : null);
+          } catch (_e) {
+            setCompanyMemberCount(null);
+          } finally {
+            endBusy();
+          }
+        })();
+      } else {
+        setCompanyMemberCount(null);
+      }
+      
+      // If we only got a companyId string, fetch the full profile
+      if (typeof payload === 'string' || (!payload?.profile && !payload?.companyName)) {
+        (async () => {
+          try {
+            const profile = await fetchCompanyProfile(cid);
+            if (profile) {
+              setCompanyName(profile.companyName || prof?.companyName || '');
+              setUserLimit((typeof profile.userLimit !== 'undefined') ? String(profile.userLimit) : '10');
+              setCompanyEnabled(typeof profile.enabled === 'boolean' ? !!profile.enabled : true);
+              setCompanyDeleted(typeof profile.deleted === 'boolean' ? !!profile.deleted : false);
+              if (Platform.OS === 'web') {
+                const resolved = await resolveCompanyLogoUrl(cid);
+                setLogoUrl(resolved || profile.logoUrl || '');
+              } else {
+                setLogoUrl(profile.logoUrl || '');
+              }
+            }
+          } catch (_e) {
+            // Ignore errors when fetching profile
+          }
+        })();
+      }
+    } catch (_e) {}
+  };
 
-        // Hämta antal användare för snabb sammanfattning (webb)
-        if (Platform.OS === 'web' && cid) {
-          (async () => {
-            const endBusy = beginBusy('', { silent: true });
-            try {
-              // Superadmin: försök via Cloud Function (kan läsa alla bolag), annars fallback till Firestore.
-              let mems = null;
-              if (isSuperadmin) {
-                const res = await adminFetchCompanyMembers(cid).catch(() => null);
-                if (res && (res.ok === true || res.success === true) && Array.isArray(res.members)) {
-                  mems = res.members;
-                }
-              }
-              if (!mems) {
-                mems = await fetchCompanyMembers(cid).catch(() => []);
-              }
-              const count = Array.isArray(mems) ? mems.length : null;
-              setCompanyMemberCount(typeof count === 'number' ? count : null);
-            } catch (_e) {
-              setCompanyMemberCount(null);
-            } finally {
-              endBusy();
-            }
-          })();
-        } else {
-          setCompanyMemberCount(null);
-        }
-      } catch (_e) {}
+  // Web: render inside the central dashboard area so layout and background remain consistent
+  if (Platform.OS === 'web') {
+    const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
+    const dashboardColumnsStyle = { flexDirection: 'row', alignItems: 'flex-start' };
+    const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
+
+    const RootContainer = ImageBackground;
+    const rootProps = {
+      source: require('../assets/images/inlogg.webb.png'),
+      resizeMode: 'cover',
+      imageStyle: { width: '100%', height: '100%' },
     };
 
     const hasSelectedCompany = !!(String(companyId || '').trim() || String(companyName || '').trim());
@@ -1009,6 +1064,19 @@ export default function ManageCompany({ navigation }) {
                       }}
                     />
 
+                    {/* Per-Phase SharePoint Configuration Card */}
+                    <ActionCard
+                      icon={<Ionicons name="layers-outline" size={28} color="#7B1FA2" />}
+                      title="SharePoint per Fas"
+                      text="Konfigurera externa SharePoint-sites per fas (Kalkylskede, Produktion, Avslut, Eftermarknad). Om ingen extern site är kopplad används primär SharePoint-site."
+                      button="Konfigurera Faser"
+                      color="blue"
+                      disabled={!companyId || sharePointSiteCreating}
+                      onPress={() => {
+                        setPhaseConfigModalVisible(true);
+                      }}
+                    />
+
                     {/* Delete Card */}
                     <ActionCard
                       icon={<Ionicons name="trash" size={28} color="#C62828" />}
@@ -1339,9 +1407,35 @@ export default function ManageCompany({ navigation }) {
                             setLogoUploading(true);
                             try {
                               const url = await uploadCompanyLogo({ companyId, file });
-                              setLogoUrl(url);
+                              const ok = await saveCompanyProfile(companyId, { logoUrl: url });
+                              if (!ok) {
+                                throw new Error('Kunde inte spara företagsprofil (logoUrl).');
+                              }
+                              // Resolve logo URL (handles gs:// URLs)
+                              try {
+                                const resolved = await resolveCompanyLogoUrl(companyId);
+                                setLogoUrl((resolved || url || '').trim());
+                              } catch (_e) {
+                                setLogoUrl(url || '');
+                              }
+                              // Inform sidebar / other views about updated profile
+                              try {
+                                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                                  window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+                                    detail: {
+                                      companyId,
+                                      profile: { logoUrl: url },
+                                    },
+                                  }));
+                                }
+                              } catch (_e) {}
                               // Trigger refresh
                               await handleSelectCompany(companyId);
+                              try {
+                                if (typeof window !== 'undefined') {
+                                  window.alert('Företagsbild uppdaterad!');
+                                }
+                              } catch (_e) {}
                             } catch (error) {
                               console.error('Logo upload error:', error);
                               try {
@@ -1351,6 +1445,11 @@ export default function ManageCompany({ navigation }) {
                               } catch (_e) {}
                             } finally {
                               setLogoUploading(false);
+                              try {
+                                if (e?.target) {
+                                  e.target.value = '';
+                                }
+                              } catch (_e) {}
                             }
                           }
                         }}
@@ -1456,6 +1555,319 @@ export default function ManageCompany({ navigation }) {
                     {busyCount > 0 ? 'Sparar...' : 'Spara ändringar'}
                   </Text>
                 </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* Per-Phase SharePoint Configuration Modal */}
+        <Modal
+          visible={phaseConfigModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setPhaseConfigModalVisible(false)}
+        >
+          <Pressable
+            style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+            onPress={() => setPhaseConfigModalVisible(false)}
+          >
+            <Pressable
+              style={{ backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 600, maxHeight: '90%' }}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={{ padding: 24 }}>
+                <Text style={{ fontSize: 20, fontWeight: '700', marginBottom: 20 }}>
+                  SharePoint per Fas
+                </Text>
+                
+                <ScrollView style={{ maxHeight: 500 }}>
+                  {PROJECT_PHASES.map((phase) => {
+                    const phaseConfig = phaseSharePointConfigs[phase.key];
+                    const isExternal = phaseConfig && phaseConfig.enabled;
+                    
+                    return (
+                      <View
+                        key={phase.key}
+                        style={{
+                          marginBottom: 16,
+                          padding: 16,
+                          backgroundColor: '#f9f9f9',
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: isExternal ? phase.color : '#ddd',
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                          <View
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: 6,
+                              backgroundColor: phase.color,
+                              marginRight: 8,
+                            }}
+                          />
+                          <Text style={{ fontSize: 16, fontWeight: '600', flex: 1 }}>
+                            {phase.name}
+                          </Text>
+                          {isExternal ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <Ionicons name="checkmark-circle" size={20} color={phase.color} />
+                              <Text style={{ fontSize: 12, color: phase.color, fontWeight: '600' }}>
+                                Extern Site
+                              </Text>
+                            </View>
+                          ) : (
+                            <Text style={{ fontSize: 12, color: '#666' }}>
+                              Primär Site
+                            </Text>
+                          )}
+                        </View>
+                        
+                        {isExternal && phaseConfig ? (
+                          <View style={{ marginTop: 8 }}>
+                            <Text style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+                              Site: {phaseConfig.siteName || phaseConfig.siteId?.substring(0, 20) || 'N/A'}
+                            </Text>
+                            {phaseConfig.webUrl && (
+                              <Text style={{ fontSize: 11, color: '#999', marginBottom: 8 }}>
+                                {phaseConfig.webUrl}
+                              </Text>
+                            )}
+                            <TouchableOpacity
+                              onPress={async () => {
+                                if (!companyId) return;
+                                const conf = typeof window !== 'undefined'
+                                  ? window.confirm(`Återställa ${phase.name} till primär SharePoint-site?`)
+                                  : true;
+                                if (!conf) return;
+                                
+                                const endBusy = beginBusy('Återställer...');
+                                try {
+                                  await removeSharePointSiteForPhase(companyId, phase.key);
+                                  const configs = await getAllPhaseSharePointConfigs(companyId);
+                                  setPhaseSharePointConfigs(configs || {});
+                                  if (typeof window !== 'undefined') {
+                                    window.alert(`${phase.name} återställd till primär SharePoint-site.`);
+                                  }
+                                } catch (e) {
+                                  console.error('[ManageCompany] Error removing phase site:', e);
+                                  if (typeof window !== 'undefined') {
+                                    window.alert('Kunde inte återställa: ' + (e?.message || e));
+                                  }
+                                } finally {
+                                  endBusy();
+                                }
+                              }}
+                              style={{
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 6,
+                                backgroundColor: '#fff',
+                                borderWidth: 1,
+                                borderColor: '#ddd',
+                                alignSelf: 'flex-start',
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, color: '#666' }}>
+                                Återställ till Primär
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setSelectedPhaseForConfig(phase.key);
+                              setExternalSiteIdInput('');
+                              setExternalSiteUrlInput('');
+                              setExternalSiteNameInput('');
+                            }}
+                            style={{
+                              paddingVertical: 8,
+                              paddingHorizontal: 12,
+                              borderRadius: 6,
+                              backgroundColor: phase.color,
+                              alignSelf: 'flex-start',
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>
+                              Koppla Extern Site
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                  
+                  {selectedPhaseForConfig && (
+                    <View style={{
+                      marginTop: 20,
+                      padding: 16,
+                      backgroundColor: '#f0f0f0',
+                      borderRadius: 8,
+                      borderWidth: 2,
+                      borderColor: PROJECT_PHASES.find(p => p.key === selectedPhaseForConfig)?.color || '#1976D2',
+                    }}>
+                      <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
+                        Koppla Extern SharePoint Site för {PROJECT_PHASES.find(p => p.key === selectedPhaseForConfig)?.name}
+                      </Text>
+                      
+                      <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                        Site ID (krävs):
+                      </Text>
+                      <TextInput
+                        value={externalSiteIdInput}
+                        onChangeText={setExternalSiteIdInput}
+                        placeholder="t.ex. msbyggsystem.sharepoint.com,abc123..."
+                        style={{
+                          backgroundColor: '#fff',
+                          borderWidth: 1,
+                          borderColor: '#ddd',
+                          borderRadius: 6,
+                          padding: 10,
+                          marginBottom: 12,
+                          fontSize: 14,
+                        }}
+                      />
+                      
+                      <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                        Web URL (valfritt):
+                      </Text>
+                      <TextInput
+                        value={externalSiteUrlInput}
+                        onChangeText={setExternalSiteUrlInput}
+                        placeholder="https://msbyggsystem.sharepoint.com/sites/..."
+                        style={{
+                          backgroundColor: '#fff',
+                          borderWidth: 1,
+                          borderColor: '#ddd',
+                          borderRadius: 6,
+                          padding: 10,
+                          marginBottom: 12,
+                          fontSize: 14,
+                        }}
+                      />
+                      
+                      <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                        Site Namn (valfritt):
+                      </Text>
+                      <TextInput
+                        value={externalSiteNameInput}
+                        onChangeText={setExternalSiteNameInput}
+                        placeholder="t.ex. Kunds SharePoint Site"
+                        style={{
+                          backgroundColor: '#fff',
+                          borderWidth: 1,
+                          borderColor: '#ddd',
+                          borderRadius: 6,
+                          padding: 10,
+                          marginBottom: 12,
+                          fontSize: 14,
+                        }}
+                      />
+                      
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setSelectedPhaseForConfig(null);
+                            setExternalSiteIdInput('');
+                            setExternalSiteUrlInput('');
+                            setExternalSiteNameInput('');
+                          }}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 10,
+                            paddingHorizontal: 16,
+                            borderRadius: 6,
+                            backgroundColor: '#eee',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>
+                            Avbryt
+                          </Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          onPress={async () => {
+                            if (!companyId || !externalSiteIdInput.trim()) {
+                              if (typeof window !== 'undefined') {
+                                window.alert('Site ID krävs.');
+                              }
+                              return;
+                            }
+                            
+                            const endBusy = beginBusy('Kopplar site...');
+                            try {
+                              await setSharePointSiteForPhase(
+                                companyId,
+                                selectedPhaseForConfig,
+                                externalSiteIdInput.trim(),
+                                externalSiteUrlInput.trim() || null,
+                                externalSiteNameInput.trim() || null
+                              );
+                              
+                              const configs = await getAllPhaseSharePointConfigs(companyId);
+                              setPhaseSharePointConfigs(configs || {});
+                              
+                              setSelectedPhaseForConfig(null);
+                              setExternalSiteIdInput('');
+                              setExternalSiteUrlInput('');
+                              setExternalSiteNameInput('');
+                              
+                              if (typeof window !== 'undefined') {
+                                window.alert('Extern SharePoint-site kopplad!');
+                              }
+                            } catch (e) {
+                              console.error('[ManageCompany] Error setting phase site:', e);
+                              if (typeof window !== 'undefined') {
+                                window.alert('Kunde inte koppla site: ' + (e?.message || e));
+                              }
+                            } finally {
+                              endBusy();
+                            }
+                          }}
+                          disabled={!externalSiteIdInput.trim() || busyCount > 0}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 10,
+                            paddingHorizontal: 16,
+                            borderRadius: 6,
+                            backgroundColor: PROJECT_PHASES.find(p => p.key === selectedPhaseForConfig)?.color || '#1976D2',
+                            opacity: (!externalSiteIdInput.trim() || busyCount > 0) ? 0.6 : 1,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
+                            {busyCount > 0 ? 'Kopplar...' : 'Koppla Site'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </ScrollView>
+                
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 20, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#eee' }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setPhaseConfigModalVisible(false);
+                      setSelectedPhaseForConfig(null);
+                      setExternalSiteIdInput('');
+                      setExternalSiteUrlInput('');
+                      setExternalSiteNameInput('');
+                    }}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 20,
+                      borderRadius: 8,
+                      backgroundColor: '#1976D2',
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
+                      Stäng
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </Pressable>
           </Pressable>

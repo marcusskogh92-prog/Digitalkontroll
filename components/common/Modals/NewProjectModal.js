@@ -95,6 +95,7 @@ const NewProjectModal = ({
   isProjectNumberUnique,
   canCreateProject,
   setHierarchy,
+  currentHierarchy, // Current hierarchy state for validation
   onProjectCreated, // Callback when project is created: ({ projectId, projectName, mainId, subId }) => void
   
   // Platform and environment
@@ -151,15 +152,83 @@ const NewProjectModal = ({
 
   const handleCreateProject = async () => {
     if (creatingProject || !canCreate) return;
+    
+    // Double-check uniqueness before creating (important for race conditions)
+    const projectId = String(newProjectNumber ?? '').trim();
+    const projectName = String(newProjectName ?? '').trim();
+    
+    if (!projectId || !projectName) {
+      // Should not happen if canCreate is true, but safety check
+      return;
+    }
+    
+    // Validate uniqueness one more time before creating - check both ref and current hierarchy
+    const checkUniqueness = (hierarchyToCheck) => {
+      if (!hierarchyToCheck || !Array.isArray(hierarchyToCheck)) return true;
+      try {
+        for (const main of hierarchyToCheck) {
+          for (const sub of (main.children || [])) {
+            if (Array.isArray(sub.children) && sub.children.some(child => child?.type === 'project' && String(child.id) === projectId)) {
+              return false;
+            }
+          }
+        }
+      } catch(_e) {}
+      return true;
+    };
+    
+    // Check both current hierarchy state and ref (for race conditions)
+    const isUniqueInState = currentHierarchy ? checkUniqueness(currentHierarchy) : true;
+    const isUniqueInRef = isProjectNumberUnique(projectId);
+    
+    if (!isUniqueInState || !isUniqueInRef) {
+      // Show error - project number already exists
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
+        window.alert(`Projektnummer "${projectId}" används redan. Välj ett annat projektnummer.`);
+      } else {
+        const { Alert } = require('react-native');
+        Alert.alert('Projektnummer används redan', `Projektnummer "${projectId}" används redan. Välj ett annat projektnummer.`);
+      }
+      return;
+    }
+    
     setCreatingProject(true);
     try {
-      const projectId = String(newProjectNumber ?? '').trim();
-      const projectName = String(newProjectName ?? '').trim();
       let mainId = null;
       let subId = parentSubId;
       
       // Insert new project into selected subfolder
+      // Double-check that project doesn't already exist in the subfolder before adding
       setHierarchy(prev => {
+        // First, verify the project doesn't already exist
+        let projectExists = false;
+        try {
+          for (const main of prev) {
+            for (const sub of (main.children || [])) {
+              if (sub.id === parentSubId && Array.isArray(sub.children)) {
+                if (sub.children.some(child => child?.type === 'project' && String(child.id) === projectId)) {
+                  projectExists = true;
+                  break;
+                }
+              }
+            }
+            if (projectExists) break;
+          }
+        } catch(_e) {}
+        
+        if (projectExists) {
+          // Project already exists - don't create duplicate
+          console.warn('[NewProjectModal] Project already exists, not creating duplicate:', projectId);
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
+            window.alert(`Projektnummer "${projectId}" finns redan i den valda mappen.`);
+          } else {
+            const { Alert } = require('react-native');
+            Alert.alert('Projekt finns redan', `Projektnummer "${projectId}" finns redan i den valda mappen.`);
+          }
+          setCreatingProject(false);
+          return prev; // Return unchanged hierarchy
+        }
+        
         const updated = prev.map(main => ({
           ...main,
           children: main.children.map(sub =>
@@ -218,6 +287,13 @@ const NewProjectModal = ({
       // Store project info for callback
       createdProjectRef.current = { projectId, projectName, mainId, subId };
       
+      // Clear form fields immediately so validation doesn't show errors for the newly created project
+      resetProjectFields();
+      
+      // Close the modal immediately to prevent validation errors from showing
+      // The success popup will still be visible
+      onClose();
+      
       // Wait a moment for hierarchy to update and save
       await new Promise(resolve => setTimeout(resolve, 500));
       
@@ -235,11 +311,8 @@ const NewProjectModal = ({
     const projectInfo = createdProjectRef.current;
     createdProjectRef.current = null;
     
-    // Close modal and reset fields
-    onClose();
-    resetProjectFields();
-    
-    // Call callback to open project
+    // Fields and modal are already closed/reset when project was created
+    // Just call callback to open project if needed
     if (onProjectCreated && projectInfo) {
       onProjectCreated(projectInfo);
     }

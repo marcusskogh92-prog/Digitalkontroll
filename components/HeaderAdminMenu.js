@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, Platform, TouchableOpacity } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { auth } from './firebase';
 

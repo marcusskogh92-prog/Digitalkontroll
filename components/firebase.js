@@ -2517,3 +2517,150 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
   }
 }
 
+// ============================================================================
+// PER-FAS SHAREPOINT KONFIGURATION
+// ============================================================================
+
+/**
+ * Get SharePoint Site ID for a specific phase
+ * Returns external site if configured, otherwise returns primary (fallback) site
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad')
+ * @returns {Promise<{siteId: string, webUrl: string, isExternal: boolean, phaseKey: string, siteName?: string}>}
+ */
+export async function getSharePointSiteForPhase(companyId, phaseKey) {
+  if (!companyId || !phaseKey) {
+    throw new Error('Company ID and Phase Key are required');
+  }
+
+  try {
+    // First, check if there's an external site configured for this phase
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    const phaseConfigSnap = await getDoc(phaseConfigRef);
+    
+    if (phaseConfigSnap.exists()) {
+      const phaseConfig = phaseConfigSnap.data();
+      if (phaseConfig.enabled && phaseConfig.siteId) {
+        return {
+          siteId: phaseConfig.siteId,
+          webUrl: phaseConfig.webUrl || null,
+          isExternal: true,
+          phaseKey: phaseKey,
+          siteName: phaseConfig.siteName || null,
+        };
+      }
+    }
+    
+    // Fallback to primary site
+    const primarySiteId = await getCompanySharePointSiteId(companyId);
+    if (!primarySiteId) {
+      throw new Error(`No SharePoint site configured for company ${companyId}`);
+    }
+    
+    const profile = await fetchCompanyProfile(companyId);
+    return {
+      siteId: primarySiteId,
+      webUrl: profile?.sharePointWebUrl || null,
+      isExternal: false,
+      phaseKey: phaseKey,
+      siteName: null,
+    };
+  } catch (error) {
+    console.error('[getSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Set external SharePoint site for a specific phase
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key
+ * @param {string} siteId - SharePoint Site ID
+ * @param {string} [webUrl] - SharePoint Web URL
+ * @param {string} [siteName] - Site display name
+ * @returns {Promise<void>}
+ */
+export async function setSharePointSiteForPhase(companyId, phaseKey, siteId, webUrl = null, siteName = null) {
+  if (!companyId || !phaseKey || !siteId) {
+    throw new Error('Company ID, Phase Key, and Site ID are required');
+  }
+
+  try {
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    await setDoc(phaseConfigRef, {
+      enabled: true,
+      siteId: siteId,
+      webUrl: webUrl || null,
+      siteName: siteName || null,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    }, { merge: true });
+    
+    console.log(`[setSharePointSiteForPhase] ✅ Set external SharePoint site for ${companyId}/${phaseKey}`);
+  } catch (error) {
+    console.error('[setSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Remove external SharePoint site for a phase (revert to primary)
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key
+ * @returns {Promise<void>}
+ */
+export async function removeSharePointSiteForPhase(companyId, phaseKey) {
+  if (!companyId || !phaseKey) {
+    throw new Error('Company ID and Phase Key are required');
+  }
+
+  try {
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    await updateDoc(phaseConfigRef, {
+      enabled: false,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    });
+    
+    console.log(`[removeSharePointSiteForPhase] ✅ Removed external SharePoint site for ${companyId}/${phaseKey}`);
+  } catch (error) {
+    console.error('[removeSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all phase SharePoint configurations for a company
+ * @param {string} companyId - Company ID
+ * @returns {Promise<Object>} Map of phaseKey -> config
+ */
+export async function getAllPhaseSharePointConfigs(companyId) {
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const phasesRef = collection(db, 'foretag', companyId, 'sharepoint_phases');
+    const phasesSnap = await getDocs(phasesRef);
+    
+    const configs = {};
+    phasesSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data.enabled) {
+        configs[docSnap.id] = {
+          phaseKey: docSnap.id,
+          siteId: data.siteId,
+          webUrl: data.webUrl || null,
+          siteName: data.siteName || null,
+          enabled: true,
+          updatedAt: data.updatedAt,
+        };
+      }
+    });
+    
+    return configs;
+  } catch (error) {
+    console.error('[getAllPhaseSharePointConfigs] Error:', error);
+    return {};
+  }
+}

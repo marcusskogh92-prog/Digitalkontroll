@@ -9,6 +9,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import ErrorBoundary from './components/ErrorBoundary';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
@@ -264,6 +265,9 @@ function ensureWebTitle() {
 
 
 export default function App() {
+  const [currentRoute, setCurrentRoute] = React.useState(null);
+  const navigationRef = React.useRef(null);
+  
   let [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_700Bold,
@@ -277,14 +281,35 @@ export default function App() {
       </View>
     );
   }
+  
+  const handleStateChange = (state) => {
+    ensureWebTitle();
+    // Extract current route name
+    if (state) {
+      const route = state.routes[state.index];
+      setCurrentRoute(route?.name || null);
+    }
+  };
+  
+  const showToolbar = false; // Disabled - phase selector is now in left sidebar
+  // const showToolbar = currentRoute && currentRoute !== 'Login';
+  
   return (
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <NavigationContainer
-          documentTitle={{ enabled: false }}
-          onReady={ensureWebTitle}
-          onStateChange={ensureWebTitle}
-        >
+        {showToolbar && (
+          <GlobalPhaseToolbar 
+            navigation={navigationRef.current}
+            route={{ name: currentRoute }}
+          />
+        )}
+        <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
+          <NavigationContainer
+            ref={navigationRef}
+            documentTitle={{ enabled: false }}
+            onReady={ensureWebTitle}
+            onStateChange={handleStateChange}
+          >
           <Stack.Navigator
             initialRouteName="Login"
             screenOptions={({ route, navigation }) => {
@@ -653,7 +678,8 @@ export default function App() {
             />
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
           </Stack.Navigator>
-        </NavigationContainer>
+          </NavigationContainer>
+        </View>
       </GestureHandlerRootView>
     </ErrorBoundary>
   );
