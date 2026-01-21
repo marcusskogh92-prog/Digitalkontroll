@@ -5,11 +5,10 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, TextInput } from 'react-native';
-import PersonSelector from '../../components/PersonSelector';
-import { fetchHierarchy, saveHierarchy } from '../../../../../../components/firebase';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
+import PersonSelector from '../../components/PersonSelector';
 
 export default function OversiktSummary({ projectId, companyId, project }) {
   // Track if there are unsaved changes per card
@@ -111,6 +110,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setHasChangesTider(false);
     setHasChangesAnteckningar(false);
   }, [project]);
+
   const [projectType, setProjectType] = useState(project?.projectType || '');
   const [upphandlingsform, setUpphandlingsform] = useState(project?.upphandlingsform || '');
   const [status, setStatus] = useState(project?.status || 'ongoing');
@@ -137,298 +137,15 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Kalkylanteckningar state (simplified from "Kalkylkritisk sammanfattning")
   const [anteckningar, setAnteckningar] = useState(project?.anteckningar || project?.beskrivning || '');
 
-  // Person selector modals
-  const [kontaktpersonSelectorVisible, setKontaktpersonSelectorVisible] = useState(false);
-  
-  // Upphandlingsform dropdown state
-  const [upphandlingsformDropdownVisible, setUpphandlingsformDropdownVisible] = useState(false);
-  
-  // Entreprenadform dropdown state
-  const [entreprenadformDropdownVisible, setEntreprenadformDropdownVisible] = useState(false);
-  
-  // Info descriptions for upphandlingsform and entreprenadform
-  const upphandlingsformInfo = {
-    'Fastpris': 'Ett fast totalpris för hela uppdraget.',
-    'Löpande räkning': 'Debitering sker per timme och material.',
-    'Budgetpris': 'Ett riktpris som kan justeras under projektets gång.',
-    'Partnering': 'Gemensamma mål och öppen ekonomi mellan parter.',
-    'Ramavtal': 'Förutbestämda villkor för återkommande uppdrag.',
-    'LOU': 'Upphandling enligt lagen om offentlig upphandling.'
-  };
-
-  const entreprenadformInfo = {
-    'Utförandeentreprenad AB 04': 'Beställaren projekterar, entreprenören utför arbetet.',
-    'Totalentreprenad ABT 06': 'Entreprenören ansvarar för både projektering och byggnation.',
-    'Generalentreprenad': 'En huvudentreprenör samordnar underentreprenörer.',
-    'Delad entreprenad': 'Beställaren har avtal med flera entreprenörer.',
-    'Samverkansentreprenad': 'Tätt samarbete under hela projektet.',
-    'Partneringsentreprenad': 'Samverkan med gemensam ekonomi och mål.'
-  };
-
-  // Upphandlingsform options
-  const upphandlingsformOptions = [
-    'Fastpris',
-    'Löpande räkning',
-    'Budgetpris',
-    'Partnering',
-    'Ramavtal',
-    'LOU'
-  ];
-  
-  // Entreprenadform options
-  const entreprenadformOptions = [
-    'Utförandeentreprenad AB 04',
-    'Totalentreprenad ABT 06',
-    'Generalentreprenad',
-    'Delad entreprenad',
-    'Samverkansentreprenad',
-    'Partneringsentreprenad'
-  ];
-
-  // Info tooltip modal state
-  const [infoTooltipVisible, setInfoTooltipVisible] = useState(false);
-  const [infoTooltipText, setInfoTooltipText] = useState('');
-
-  // Loading state for save operations
-  const [saving, setSaving] = useState(false);
-
   // Helper function to update project in hierarchy
+  // Legacy Firestore-hierarki är avvecklad – denna funktion gör inget hierarki-ingrepp längre
   const updateProjectInHierarchy = async (updates) => {
-    if (!companyId || !projectId) {
-      throw new Error('Company ID and Project ID are required');
-    }
-
-    try {
-      // Fetch current hierarchy
-      const hierarchy = await fetchHierarchy(companyId);
-      if (!Array.isArray(hierarchy) || hierarchy.length === 0) {
-        throw new Error('Could not fetch hierarchy');
-      }
-
-      // Log full hierarchy structure for debugging
-      console.log('[OversiktSummary] Full hierarchy structure:', JSON.stringify(hierarchy, null, 2));
-      console.log('[OversiktSummary] Hierarchy length:', hierarchy.length);
-
-      // Helper function to recursively find and update project
-      const findAndUpdateProject = (items, oldId, newId, updates, projectIdChanged) => {
-        let found = false;
-        const normalizedOldId = String(oldId || '').trim();
-        const updated = items.map(item => {
-          // Check if this item is the project we're looking for
-          // Normalize both IDs for comparison (trim whitespace, case-insensitive)
-          const itemId = String(item?.id || '').trim();
-          const isMatch = item && item.type === 'project' && itemId === normalizedOldId;
-          
-          if (isMatch) {
-            console.log('[OversiktSummary] ✅ Found project to update:', { 
-              oldId: itemId, 
-              newId: String(newId).trim(),
-              itemName: item.name 
-            });
-            found = true;
-            const updatedProject = {
-              ...item,
-              ...updates,
-              updatedAt: new Date().toISOString()
-            };
-            
-            // If project number changed, update the ID
-            if (projectIdChanged) {
-              updatedProject.id = String(newId).trim();
-              console.log('[OversiktSummary] Project ID changed from', itemId, 'to', updatedProject.id);
-            }
-            
-            return updatedProject;
-          }
-          
-          // If this item has children, recursively search them
-          if (item && item.children && Array.isArray(item.children)) {
-            const { found: childFound, updated: updatedChildren } = findAndUpdateProject(
-              item.children,
-              oldId,
-              newId,
-              updates,
-              projectIdChanged
-            );
-            if (childFound) {
-              found = true;
-              return { ...item, children: updatedChildren };
-            }
-          }
-          
-          return item;
-        });
-        
-        return { found, updated };
-      };
-
-      // Find and update the project in hierarchy
-      const oldProjectId = projectId;
-      const newProjectId = updates.id ? String(updates.id).trim() : projectId;
-      const projectIdChanged = newProjectId !== oldProjectId;
-      
-      console.log('[OversiktSummary] Updating project in hierarchy:', { 
-        oldProjectId, 
-        newProjectId, 
-        projectIdChanged, 
-        updates: Object.keys(updates),
-        companyId,
-        hierarchyLength: hierarchy.length
-      });
-      
-      const { found: projectFound, updated: updatedHierarchy } = findAndUpdateProject(
-        hierarchy,
-        oldProjectId,
-        newProjectId,
-        updates,
-        projectIdChanged
-      );
-
-      if (!projectFound) {
-        // Log the hierarchy structure to help debug
-        console.error('[OversiktSummary] ❌ Project not found in hierarchy. Searching for:', oldProjectId);
-        console.error('[OversiktSummary] Current projectId prop:', projectId);
-        console.error('[OversiktSummary] Company ID:', companyId);
-        
-        // Try to find all projects to help debug
-        const allProjects = [];
-        const findAllProjects = (items, path = '') => {
-          items.forEach((item, index) => {
-            const currentPath = path ? `${path}[${index}]` : `[${index}]`;
-            if (item && item.type === 'project') {
-              allProjects.push({ 
-                id: item.id, 
-                name: item.name, 
-                type: item.type,
-                path: currentPath,
-                fullItem: item
-              });
-            }
-            if (item && item.children && Array.isArray(item.children)) {
-              findAllProjects(item.children, `${currentPath}.children`);
-            }
-          });
-        };
-        findAllProjects(hierarchy);
-        console.error('[OversiktSummary] All projects in hierarchy:', allProjects);
-        console.error('[OversiktSummary] Full hierarchy structure:', JSON.stringify(hierarchy, null, 2));
-        
-        // Check if project ID matches any project (case-insensitive, trimmed)
-        const matchingProject = allProjects.find(p => 
-          String(p.id).trim() === String(oldProjectId).trim() ||
-          String(p.id).trim() === String(projectId).trim()
-        );
-        if (matchingProject) {
-          console.error('[OversiktSummary] ⚠️ Found project with similar ID:', matchingProject);
-        }
-        
-        throw new Error(`Project not found in hierarchy. Looking for ID: "${oldProjectId}". Found ${allProjects.length} projects: ${allProjects.map(p => `${p.id} (${p.path})`).join(', ')}`);
-      }
-
-      // Helper function to recursively find project (define it here so we can use it)
-      const findProjectInHierarchy = (items, searchId) => {
-        for (const item of items) {
-          if (item && item.type === 'project' && String(item.id).trim() === String(searchId).trim()) {
-            return item;
-          }
-          if (item && item.children && Array.isArray(item.children)) {
-            const found = findProjectInHierarchy(item.children, searchId);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      
-      // Verify that the project is actually in the updated hierarchy before saving
-      const verifyBeforeSave = findProjectInHierarchy(updatedHierarchy, newProjectId);
-      if (!verifyBeforeSave) {
-        console.error('[OversiktSummary] ❌ ERROR: Updated project not found in updatedHierarchy before save!');
-        console.error('[OversiktSummary] Searching for old ID in updatedHierarchy:', oldProjectId);
-        const oldInUpdated = findProjectInHierarchy(updatedHierarchy, oldProjectId);
-        if (oldInUpdated) {
-          console.error('[OversiktSummary] ❌ Old project ID still exists in updatedHierarchy! Update failed.');
-          console.error('[OversiktSummary] Old project data:', { id: oldInUpdated.id, name: oldInUpdated.name });
-        }
-        throw new Error('Updated project not found in hierarchy before save');
-      }
-      console.log('[OversiktSummary] ✅ Verified: Updated project exists in hierarchy before save:', {
-        id: verifyBeforeSave.id,
-        name: verifyBeforeSave.name
-      });
-      
-      // Save updated hierarchy to Firestore
-      console.log('[OversiktSummary] Saving hierarchy to Firestore...', {
-        companyId,
-        hierarchyLength: updatedHierarchy.length,
-        projectIdChanged,
-        oldId: oldProjectId,
-        newId: newProjectId,
-        projectInHierarchy: { id: verifyBeforeSave.id, name: verifyBeforeSave.name }
-      });
-      
-      const saveSuccess = await saveHierarchy(companyId, updatedHierarchy);
-      if (!saveSuccess) {
-        console.error('[OversiktSummary] saveHierarchy returned false - save failed');
-        throw new Error('Failed to save hierarchy to Firestore');
-      }
-      
-      console.log('[OversiktSummary] ✅ Hierarchy saved successfully to Firestore!');
-      
-      // Verify the save by fetching the hierarchy again (wait a bit for Firestore to update)
-      console.log('[OversiktSummary] Verifying save by fetching hierarchy from Firestore...');
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second for Firestore to update
-      
-      const verifyHierarchy = await fetchHierarchy(companyId);
-      
-      // Use the same helper function defined above
-      const verifyProject = findProjectInHierarchy(verifyHierarchy, newProjectId);
-      
-      if (verifyProject) {
-        console.log('[OversiktSummary] ✅ Verification: Project found in Firestore:', {
-          id: verifyProject.id,
-          name: verifyProject.name,
-          path: `foretag/${companyId}/hierarki/state/items[...]`
-        });
-      } else {
-        console.warn('[OversiktSummary] ⚠️ Verification: Project not found after save.');
-        console.warn('[OversiktSummary] Searching for old ID instead:', oldProjectId);
-        const oldProject = findProjectInHierarchy(verifyHierarchy, oldProjectId);
-        if (oldProject) {
-          console.error('[OversiktSummary] ❌ ERROR: Old project ID still exists in Firestore! Save may have failed.');
-        } else {
-          console.warn('[OversiktSummary] ⚠️ Neither old nor new project ID found. This might be a timing issue.');
-        }
-      }
-
-      // Helper function to recursively find project
-      const findProject = (items, searchId) => {
-        for (const item of items) {
-          if (item && item.type === 'project' && item.id === searchId) {
-            return item;
-          }
-          if (item && item.children && Array.isArray(item.children)) {
-            const found = findProject(item.children, searchId);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      // Return the updated project (use new ID if it changed)
-      const searchId = newProjectId;
-      const updatedProject = findProject(updatedHierarchy, searchId);
-      
-      if (updatedProject) {
-        console.log('[OversiktSummary] ✅ Found updated project:', { id: updatedProject.id, name: updatedProject.name });
-        return updatedProject;
-      }
-
-      console.error('[OversiktSummary] ❌ Could not find updated project with ID:', searchId);
-      throw new Error('Could not find updated project after save');
-    } catch (error) {
-      console.error('[OversiktSummary] Error updating project in hierarchy:', error);
-      throw error;
-    }
+    console.log('[OversiktSummary] updateProjectInHierarchy skipped (legacy Firestore hierarchy removed).', {
+      companyId,
+      projectId,
+      updates: Object.keys(updates || {})
+    });
+    return null;
   };
 
   const statusOptions = [

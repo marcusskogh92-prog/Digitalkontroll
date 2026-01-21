@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { useEffect, useRef, useState } from 'react';
-import { saveControlToFirestore, saveDraftToFirestore, saveHierarchy } from '../components/firebase';
+import { saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 
 export default function useBackgroundSync(companyId, opts = {}) {
   const { onStatus } = opts;
@@ -21,47 +21,11 @@ export default function useBackgroundSync(companyId, opts = {}) {
       }
       // online -> try to sync
       try {
-        const raw = await AsyncStorage.getItem('hierarchy_local');
-        if (!raw) {
-          setStatus('synced');
-          if (onStatus) onStatus('synced');
-          return;
-        }
-        const parsed = JSON.parse(raw);
-        if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
-          // nothing to sync
-          await AsyncStorage.removeItem('hierarchy_local');
-          setStatus('synced');
-          if (onStatus) onStatus('synced');
-          return;
-        }
-        // attempt sync with retries/backoff
+        // För hierarkin används nu SharePoint som källa; hoppa över hierarchy_local-sync
         setStatus('syncing');
         if (onStatus) onStatus('syncing');
-        let ok = false;
-        attemptsRef.current = 0;
-        while (attemptsRef.current < 5 && !ok) {
-          attemptsRef.current += 1;
-          try {
-            const res = await saveHierarchy(companyId, parsed);
-            ok = res === true || (res && res.ok === true);
-            if (ok) break;
-          } catch(_e) {
-            // ignore, will backoff
-          }
-          // exponential backoff
-          const waitMs = Math.min(30000, 500 * Math.pow(2, attemptsRef.current));
-          await new Promise(r => backoffTimer.current = setTimeout(r, waitMs));
-        }
-        if (ok) {
-          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
-          setStatus('synced');
-          if (onStatus) onStatus('synced');
-        } else {
-          setStatus('error');
-          if (onStatus) onStatus('error');
-        }
-        // Additionally attempt to sync any locally stored controls (completed and drafts)
+
+        // Försök istället bara synka lokala kontroller (utförda och utkast)
         try {
           // Sync completed controls
           const rawCompleted = await AsyncStorage.getItem('completed_controls');
@@ -108,7 +72,7 @@ export default function useBackgroundSync(companyId, opts = {}) {
             }
           }
         } catch(_e) {}
-      } catch(_e) {
+        } catch(_e) {
         setStatus('error');
         if (onStatus) onStatus('error');
       }

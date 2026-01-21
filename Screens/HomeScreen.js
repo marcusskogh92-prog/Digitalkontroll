@@ -9,23 +9,20 @@ import HeaderUserMenu from '../components/HeaderUserMenu';
 import { Dashboard } from '../components/common/Dashboard';
 import { NewProjectModal, SelectProjectModal } from '../components/common/Modals';
 import { ProjectTree } from '../components/common/ProjectTree';
-import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveHierarchy, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
+import { auth, DEFAULT_CONTROL_TYPES, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchUserProfile, logCompanyActivity, saveControlToFirestore, saveDraftToFirestore, saveUserProfile, storage, subscribeCompanyActivity, subscribeCompanyMembers, upsertCompanyMember } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useBreadcrumbNavigation } from '../hooks/common/useBreadcrumbNavigation';
-import { useHierarchyToggle } from '../hooks/common/useHierarchy';
 import useBackgroundSync from '../hooks/useBackgroundSync';
-import { checkSharePointConnection, getProjectFolders } from '../services/azure/hierarchyService';
+import { checkSharePointConnection, getProjectFolders, loadFolderChildren } from '../services/azure/hierarchyService';
 import { showAlert } from '../utils/alerts';
 import { getAppVersion } from '../utils/appVersion';
-import { copyProjectWeb, deleteProject } from '../utils/hierarchyOperations';
 import { isWeb } from '../utils/platform';
 import { isValidIsoDateYmd } from '../utils/validation';
 import ProjectDetails from './ProjectDetails';
 import TemplateControlScreen from './TemplateControlScreen';
-import { loadFolderChildren } from '../services/azure/hierarchyService';
 let createPortal = null;
 if (isWeb) {
   try { createPortal = require('react-dom').createPortal; } catch(_e) { createPortal = null; }
@@ -119,7 +116,6 @@ function RecursiveFolderView({
         }
         
         console.log('[HomeScreen] RecursiveFolderView - Loading children for path:', normalizedPath || '(root)', 'folder:', folder.name, 'level:', level, 'original folderPath:', folderPath);
-        
         const children = await loadFolderChildren(companyId, normalizedPath);
         
         // Update hierarchy with loaded children - ensure each child has correct path
@@ -129,7 +125,6 @@ function RecursiveFolderView({
               // Update this folder with children and correct path
               // CRITICAL: Use the actual normalizedPath that was used to load children
               const actualPath = normalizedPath || f.path || (parentPath ? `${parentPath}/${folder.name}` : folder.name);
-              
               const updatedChildren = (children || []).map(child => {
                 // CRITICAL: Construct child path from actual parent path
                 // child.path from loadFolderChildren should already be correct, but double-check
@@ -467,7 +462,7 @@ export default function HomeScreen({ navigation, route }) {
   const isMsByggsystemCompany = debugCompanyId === 'MS Byggsystem';
   const canShowSupportToolsInHeader = !!(showSupportTools && (isDemoCompany || (isMsByggsystemCompany && isAdminUser)));
   
-  // Dev-only: promote current user to demo/admin and load test hierarchy
+  // Dev-only: promote current user to demo/admin (no longer loads test hierarchy)
   async function handleMakeDemoAdmin() {
     if (!__DEV__) return;
     if (adminActionRunning) return;
@@ -485,7 +480,6 @@ export default function HomeScreen({ navigation, route }) {
         });
         await AsyncStorage.setItem('dk_companyId', demoCompanyId);
         setCompanyId(demoCompanyId);
-        setHierarchy(collapseHierarchy(testHierarchy));
       }
     } catch(_e) {
       console.log('[Home] make demo admin error', _e?.message || _e);
@@ -951,15 +945,10 @@ export default function HomeScreen({ navigation, route }) {
     }
   }, [newProjectModal.visible, canCreateProject, creatingProject, isBrowserEnv]);
 
-  // Ref for main folder long press timers
+  // Ref for main folder long press timers (used by legacy project tree, kept for now but inactive)
   const mainTimersRef = React.useRef({});
-  // Ref for long press timer
+  // Ref for long press timer (legacy project tree)
   const projektLongPressTimer = React.useRef(null);
-        // State for inline creation of main folder
-        const [isCreatingMainFolder, setIsCreatingMainFolder] = useState(false);
-        const [newMainFolderName, setNewMainFolderName] = useState('');
-      // State for edit modal (main or sub group)
-      const [editModal, setEditModal] = useState({ visible: false, type: '', id: null, name: '' });
     // Helper to count ongoing and completed projects
     // eslint-disable-next-line no-unused-vars
     function _countProjectStatus(tree) {
@@ -1160,28 +1149,15 @@ export default function HomeScreen({ navigation, route }) {
   const phaseChangeSpinAnim = useRef(new Animated.Value(0)).current;
   
   // Function to save all pending data before phase change
+  // Legacy: previously also saved Firestore hierarchy; now only reserved for future use
   const saveAllPendingData = React.useCallback(async () => {
     try {
-      const savePromises = [];
-      
-      // Save hierarchy if it exists and has changes
-      if (hierarchy && hierarchy.length > 0 && companyId) {
-        savePromises.push(saveHierarchy(companyId, hierarchy).catch(err => {
-          console.error('[HomeScreen] Error saving hierarchy:', err);
-          return false;
-        }));
-      }
-      
-      // Save any draft controls
-      // Note: This would need to be implemented based on your draft saving logic
-      
-      // Wait for all saves to complete
-      await Promise.all(savePromises);
-      console.log('[HomeScreen] All pending data saved');
+      // Placeholder for future pending-save logic (e.g. drafts)
+      console.log('[HomeScreen] saveAllPendingData called (no-op for hierarchy).');
     } catch (error) {
       console.error('[HomeScreen] Error saving pending data:', error);
     }
-  }, [hierarchy, companyId]);
+  }, []);
   
   // Phase dropdown removed - phases are now SharePoint folders
   // Active folder will be tracked when user navigates to a folder
@@ -1498,13 +1474,6 @@ export default function HomeScreen({ navigation, route }) {
           };
           const newHierarchy = walk(prev || []);
           try { hierarchyRef.current = newHierarchy; } catch (_e) {}
-          
-          // Auto-save hierarchy when project is updated (including phase changes)
-          if (companyId && newHierarchy && newHierarchy.length > 0) {
-            saveHierarchy(companyId, newHierarchy).catch(err => {
-              console.error('[HomeScreen] Error auto-saving hierarchy after project update:', err);
-            });
-          }
           
           return newHierarchy;
         });
@@ -3020,49 +2989,10 @@ export default function HomeScreen({ navigation, route }) {
     })();
   }, []);
 
-  // Spara hierarchy till Firestore varje gång den ändras (och companyId finns)
+  // Legacy: tidigare sparades hierarkin till Firestore vid varje ändring.
+  // SharePoint är nu source of truth, så denna effekt är avstängd.
   React.useEffect(() => {
-    if (!companyId) return;
-    // don't save before initial load finished (avoid overwriting server with empty on mount)
-    if (!didInitialLoadRef.current) return;
-    
-    // SÄKERHET: Validera att hierarkin inte är tom innan sparande
-    const hierarchyArray = Array.isArray(hierarchy) ? hierarchy : [];
-    if (hierarchyArray.length === 0) {
-      // Om hierarkin är tom, försök ladda från server först
-      // Detta förhindrar att tom hierarki skriver över befintlig data
-      return;
-    }
-    
-    (async () => {
-      try {
-        const res = await saveHierarchy(companyId, hierarchy);
-        const ok = res === true || (res && res.ok === true);
-        if (!ok) {
-          // Firestore save failed — persist locally as fallback
-          try {
-            await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
-            setLocalFallbackExists(true);
-            if (Platform.OS === 'web') {
-              console.warn('[HomeScreen] Kunde inte spara hierarki till Firestore, sparad lokalt som backup');
-            }
-          } catch(_e) {}
-        } else {
-          // On successful cloud save, also clear local fallback
-            try {
-            await AsyncStorage.removeItem('hierarchy_local');
-            await refreshLocalFallbackFlag();
-          } catch(_e) {}
-        }
-      } catch(_e) {
-        console.error('[HomeScreen] Fel vid sparande av hierarki:', _e);
-        try {
-          await AsyncStorage.setItem('hierarchy_local', JSON.stringify(hierarchy || []));
-          setLocalFallbackExists(true);
-        } catch(_e) {}
-      }
-    })();
-     
+    return; // no-op
   }, [hierarchy, companyId]);
 
   // DISABLED: Remove all top-level folders named 'test' after initial load
@@ -3390,7 +3320,7 @@ export default function HomeScreen({ navigation, route }) {
     }
   }, [hierarchy]);
 
-  // Hierarchy operations - use utilities
+  // Legacy hierarchy operations (main/sub) - kept for now but not exposed i UI
   const deleteMainFolderGuardedCallback = React.useCallback((mainId) => {
     deleteMainFolderGuarded(mainId, hierarchy, setHierarchy);
   }, [hierarchy]);
@@ -3399,32 +3329,16 @@ export default function HomeScreen({ navigation, route }) {
     deleteSubFolder(mainId, subId, hierarchy, setHierarchy);
   }, [hierarchy]);
 
-  const deleteProjectCallback = React.useCallback((mainId, subId, projectId) => {
-    deleteProject(mainId, subId, projectId, hierarchy, setHierarchy);
-  }, [hierarchy]);
-
-  const copyProjectWebCallback = React.useCallback((mainId, subId, project) => {
-    copyProjectWeb(mainId, subId, project, hierarchy, setHierarchy, isProjectNumberUnique);
-  }, [hierarchy, isProjectNumberUnique]);
-
   const contextMenuItems = React.useMemo(() => {
     const t = contextMenu.target;
     if (!t) return [];
-    // Old local folder/project creation removed - folders are managed in SharePoint
-    // Context menu for SharePoint folders is handled in ProjectSidebar
-    if (t.type === 'main' || t.type === 'sub' || t.type === 'folder') {
-      return [
-        // Note: Folder management (create/delete) should be done via SharePoint context menu in ProjectSidebar
-        { key: 'openInSharePoint', label: 'Öppna i SharePoint', iconName: 'open-outline', icon: null },
-      ];
-    }
+    // Folders (SharePoint) hanteras i ProjectSidebar; inga sidmeny-åtgärder här
+    if (t.type === 'main' || t.type === 'sub' || t.type === 'folder') return [];
     if (t.type === 'project') {
+      // Endast öppna projekt + skapa kontroll behålls; kopiera/byt namn/radera via gamla hierarkin är borttaget
       return [
         { key: 'open', label: 'Öppna projekt', iconName: 'document-text-outline', icon: null },
         { key: 'addControl', label: 'Skapa ny kontroll', iconName: 'checkmark-circle-outline', icon: null },
-        { key: 'copy', label: 'Kopiera projekt', iconName: 'copy-outline', icon: null },
-        { key: 'rename', label: 'Byt namn', iconName: 'create-outline', icon: null },
-        { key: 'delete', label: 'Radera', iconName: 'trash-outline', icon: null, danger: true },
       ];
     }
     return [];
@@ -3512,17 +3426,11 @@ export default function HomeScreen({ navigation, route }) {
     }
 
     if (t.type === 'project') {
-      const mainId = t.mainId;
-      const subId = t.subId;
       const project = t.project;
       switch (item.key) {
         case 'open':
           if (project && Platform.OS === 'web') {
-            const main = (hierarchy || []).find((m) => m && String(m.id) === String(mainId)) || null;
-            const sub = main && Array.isArray(main.children)
-              ? (main.children || []).find((s) => s && String(s.id) === String(subId))
-              : null;
-            requestProjectSwitch(project, { selectedAction: null, path: { mainId: String(mainId), subId: String(subId), mainName: String(main?.name || ''), subName: String(sub?.name || '') } });
+            requestProjectSwitch(project, { selectedAction: null, path: null });
           }
           break;
         case 'addControl':
@@ -3546,25 +3454,11 @@ export default function HomeScreen({ navigation, route }) {
             })();
           }
           break;
-        case 'copy':
-          copyProjectWebCallback(mainId, subId, project);
-          break;
-        case 'rename':
-          if (project?.id) renameProjectWeb(project.id);
-          break;
-        case 'delete':
-          if (project?.id) deleteProjectCallback(mainId, subId, project.id);
-          break;
       }
     }
-  }, [contextMenu.target, deleteMainFolderGuardedCallback, deleteSubFolderCallback, renameMainFolderWeb, renameSubFolderWeb, requestProjectSwitch, copyProjectWebCallback, deleteProjectCallback, renameProjectWeb, companyId, routeCompanyId, authClaims?.companyId, controlTypeOptions, fetchCompanyMallar]);
+  }, [contextMenu.target, deleteMainFolderGuardedCallback, deleteSubFolderCallback, renameMainFolderWeb, renameSubFolderWeb, requestProjectSwitch, companyId, routeCompanyId, authClaims?.companyId, controlTypeOptions, fetchCompanyMallar]);
 
-  // Use hierarchy toggle hook
-  const { toggleExpand, toggleMainFolder, toggleSubFolder } = useHierarchyToggle();
-
-  const handleToggleMainFolder = (mainId) => {
-    toggleMainFolder(mainId, hierarchy, setHierarchy, spinMain, setSpinMain);
-  };
+  // Toggle folder expansion - works for all levels recursively (SharePoint folders)
 
   // Toggle folder expansion - works for all levels recursively
   const handleToggleSubFolder = (folderId) => {
@@ -4935,18 +4829,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                 <Text style={{ color: '#fff', fontWeight: '700' }}>Kunder</Text>
               </TouchableOpacity>
             )}
-            {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
-              <TouchableOpacity
-                style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
-                onPress={async () => {
-                  await saveHierarchy('testdemo', testHierarchy);
-                  setShowAdminButton(false);
-                  alert('Testdata har lagts in!');
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: 'bold' }}>Fyll på testdata</Text>
-              </TouchableOpacity>
-            )}
+            {/* Legacy dev-knapp för att fylla på test-hierarki borttagen då SharePoint nu är källa för struktur. */}
             {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
               <TouchableOpacity
                 style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
@@ -4962,44 +4845,25 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               <TouchableOpacity
                 style={{ backgroundColor: '#FFB300', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
                 onPress={async () => {
-                  // migrate local fallback (hierarki + controls) to Firestore with confirmation
+                  // Migrera lokalt sparade kontroller till Firestore (hierarki migreras inte längre – SharePoint är källa)
                   try {
-                    const rawHierarchy = await AsyncStorage.getItem('hierarchy_local');
                     const rawCompleted = await AsyncStorage.getItem('completed_controls');
                     const rawDrafts = await AsyncStorage.getItem('draft_controls');
 
-                    if (!rawHierarchy && !rawCompleted && !rawDrafts) {
-                      Alert.alert('Ingen lokal data', 'Ingen lokalt sparad hierarki eller kontroller hittades.');
+                    if (!rawCompleted && !rawDrafts) {
+                      Alert.alert('Ingen lokal data', 'Inga lokalt sparade kontroller hittades.');
                       await refreshLocalFallbackFlag();
                       return;
                     }
 
                     Alert.alert(
                       'Migrera lokal data',
-                      'Vill du migrera lokalt sparad hierarki och kontroller till molnet för kontot? Detta kan skriva över befintlig molndata.',
+                      'Vill du migrera lokalt sparade kontroller till molnet för kontot? Detta kan skriva över befintlig molndata.',
                       [
                         { text: 'Avbryt', style: 'cancel' },
                         { text: 'Migrera', onPress: async () => {
                           try {
                             let successMsgs = [];
-
-                            // Hierarki
-                            if (rawHierarchy) {
-                              try {
-                                const parsed = JSON.parse(rawHierarchy);
-                                const res = await saveHierarchy(companyId, parsed);
-                                const ok = res === true || (res && res.ok === true);
-                                if (ok) {
-                                  await AsyncStorage.removeItem('hierarchy_local');
-                                  setHierarchy(parsed);
-                                  successMsgs.push('Hierarki migrerad');
-                                } else {
-                                  successMsgs.push('Hierarki misslyckades');
-                                }
-                              } catch(_e) {
-                                successMsgs.push('Hierarki-fel');
-                              }
-                            }
 
                             // Controls: backup locally first
                             if (rawCompleted) {
@@ -5069,25 +4933,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                   try {
                     // Force refresh token
                     await auth.currentUser.getIdToken(true);
-                    showAlert('Token uppdaterad', 'ID-token uppdaterad. Försöker migrera lokal data...');
-                    // attempt migration if local data exists
-                    const raw = await AsyncStorage.getItem('hierarchy_local');
-                    if (!raw) {
-                      showAlert('Ingen lokal data', 'Inget att migrera.');
-                      await refreshLocalFallbackFlag();
-                      return;
-                    }
-                    const parsed = JSON.parse(raw);
-                    const res = await saveHierarchy(companyId, parsed);
-                    const ok = res === true || (res && res.ok === true);
-                      if (ok) {
-                      await AsyncStorage.removeItem('hierarchy_local');
-                      await refreshLocalFallbackFlag();
-                      setHierarchy(parsed);
-                      showAlert('Klar', 'Lokal hierarki migrerad till molnet.');
-                    } else {
-                      showAlert('Misslyckades', 'Kunde inte spara till molnet. Fel: ' + (res && res.error ? res.error : 'okänt fel'));
-                    }
+                    showAlert('Token uppdaterad', 'ID-token uppdaterad. Hierarki migreras inte längre automatiskt eftersom SharePoint är källa.');
                   } catch(_e) {
                     showAlert('Fel', 'Kunde inte uppdatera token eller migrera: ' + (_e?.message || _e));
                   }
@@ -5340,114 +5186,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                     console.log('[HomeScreen] No hierarchy, showing empty state');
                     return (
                       <View style={{ paddingHorizontal: 4 }} nativeID={Platform.OS === 'web' ? 'dk-tree-root' : undefined}>
-                        <View
-                          style={{ flexDirection: 'row', alignItems: 'center', padding: '2px 0 2px 4px', userSelect: 'none' }}
-                        >
-                          {(() => {
-                            const isHovered = Platform.OS === 'web' && hoveredRowKey === 'create-main-folder';
-                            if (isCreatingMainFolder) {
-                              return (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                                  <Ionicons
-                                    name="folder-outline"
-                                    size={18}
-                                    color="#1976D2"
-                                    style={{ marginRight: 4 }}
-                                  />
-                                  <TextInput
-                                    autoFocus
-                                    placeholder="Namn på mapp..."
-                                    value={newMainFolderName}
-                                    onChangeText={setNewMainFolderName}
-                                    onSubmitEditing={async () => {
-                                      if (newMainFolderName.trim() === '' || !isFolderNameUnique(newMainFolderName)) return;
-                                      const newMain = {
-                                        id: (Math.random() * 100000).toFixed(0),
-                                        name: newMainFolderName.trim(),
-                                        type: 'main',
-                                        phase: selectedPhase,
-                                        expanded: false,
-                                        children: [],
-                                      };
-                                      const newHierarchy = [...hierarchy, newMain];
-                                      setHierarchy(newHierarchy);
-                                      setNewMainFolderName('');
-                                      setIsCreatingMainFolder(false);
-                                      try {
-                                        const ok = await saveHierarchy(companyId, newHierarchy);
-                                        if (!ok) {
-                                          await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy));
-                                          setLocalFallbackExists(true);
-                                          Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
-                                        } else {
-                                          try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
-                                          await refreshLocalFallbackFlag();
-                                        }
-                                      } catch(_e) {
-                                        try { await AsyncStorage.setItem('hierarchy_local', JSON.stringify(newHierarchy)); } catch(_e) {}
-                                        Alert.alert('Offline', 'Huvudmappen sparades lokalt. Appen kommer försöka synka senare.');
-                                      }
-                                    }}
-                                    onBlur={() => {
-                                      if (newMainFolderName.trim() === '') {
-                                        setIsCreatingMainFolder(false);
-                                        setNewMainFolderName('');
-                                      }
-                                    }}
-                                    style={{
-                                      flex: 1,
-                                      fontSize: 15,
-                                      fontWeight: '400',
-                                      color: '#222',
-                                      padding: '2px 4px',
-                                      borderWidth: 1,
-                                      borderColor: (newMainFolderName.trim() === '' || !isFolderNameUnique(newMainFolderName)) ? '#D32F2F' : '#1976D2',
-                                      borderRadius: 4,
-                                      backgroundColor: '#fff',
-                                    }}
-                                  />
-                                  {newMainFolderName.trim() !== '' && !isFolderNameUnique(newMainFolderName) && (
-                                    <Text style={{ fontSize: 12, color: '#D32F2F', marginLeft: 4 }}>
-                                      Finns redan
-                                    </Text>
-                                  )}
-                                </View>
-                              );
-                            }
-                            return (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setIsCreatingMainFolder(true);
-                                  setNewMainFolderName('');
-                                }}
-                                onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey('create-main-folder') : undefined}
-                                onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey(null) : undefined}
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  flex: 1,
-                                  backgroundColor: isHovered ? '#eee' : 'transparent',
-                                  borderRadius: 4,
-                                  padding: '2px 4px',
-                                  borderWidth: 1,
-                                  borderColor: isHovered ? '#1976D2' : 'transparent',
-                                  transition: 'background 0.15s, border 0.15s',
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons
-                                  name="add-circle-outline"
-                                  size={18}
-                                  color="#1976D2"
-                                  style={{ marginRight: 4 }}
-                                />
-                                <Text style={{ fontSize: 15, fontWeight: isHovered ? '600' : '400', color: '#222', marginLeft: 2 }}>
-                                  Skapa mapp
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })()}
-                        </View>
+                        <Text style={{ paddingVertical: 8, paddingHorizontal: 4, color: '#666', fontSize: 14 }}>
+                          Inga mappar hittades. Skapa projektstruktur i SharePoint och uppdatera.
+                        </Text>
                       </View>
                     );
                   }
@@ -5697,17 +5438,8 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
                                       );
                                     }
 
-                                    // Uppdatera state och spara hierarchy
+                                    // Uppdatera state lokalt (ingen Firestore-hierarki längre)
                                     setHierarchy(updatedHierarchy);
-                                    const saveOk = await saveHierarchy(companyId, updatedHierarchy);
-                                    if (!saveOk) {
-                                      await AsyncStorage.setItem('hierarchy_local', JSON.stringify(updatedHierarchy));
-                                      setLocalFallbackExists(true);
-                                      Alert.alert('Offline', 'Projektet sparades lokalt. Appen kommer försöka synka senare.');
-                                    } else {
-                                      try { await AsyncStorage.removeItem('hierarchy_local'); } catch(_e) {}
-                                      await refreshLocalFallbackFlag();
-                                    }
                                     
                                     // Stäng inline-redigering och öppna det nya projektet
                                     setCreatingProjectInline(null);
