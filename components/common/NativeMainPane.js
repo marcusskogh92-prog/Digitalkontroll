@@ -46,7 +46,6 @@ export default function NativeMainPane({
   setDashboardBtn1Failed,
   setDashboardBtn2Failed,
   setDashboardDropdownRowKey,
-  selectedPhase,
   companyProfile,
   routeCompanyId,
   auth,
@@ -161,7 +160,6 @@ export default function NativeMainPane({
             setDashboardBtn1Failed={setDashboardBtn1Failed}
             setDashboardBtn2Failed={setDashboardBtn2Failed}
             setDashboardDropdownRowKey={setDashboardDropdownRowKey}
-            selectedPhase={selectedPhase}
             companyName={
               companyProfile?.companyName ||
               companyProfile?.name ||

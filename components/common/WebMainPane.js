@@ -15,7 +15,6 @@ export default function WebMainPane(props) {
     handleInlineControlFinished,
     creatingProjectInline,
     selectedProject,
-    selectedPhase,
     auth,
     creatingProject,
     newProjectNumber,
@@ -71,11 +70,11 @@ export default function WebMainPane(props) {
     companyProfile,
     companyId,
     routeCompanyId,
-    setNewProjectModal,
     scrollToEndSafe,
     rightWidth,
     panResponderRight,
     projectPhaseKey,
+    onOpenCreateProjectModal,
   } = props;
 
   const isWeb = Platform.OS === 'web';
@@ -110,7 +109,6 @@ export default function WebMainPane(props) {
               newProjectName={newProjectName}
               setNewProjectName={setNewProjectName}
               creatingProject={creatingProject}
-              selectedPhase={selectedPhase}
               auth={auth}
               creatingProjectInline={creatingProjectInline}
               hierarchy={hierarchy}
@@ -244,7 +242,6 @@ export default function WebMainPane(props) {
                   setDashboardBtn1Failed={setDashboardBtn1Failed}
                   setDashboardBtn2Failed={setDashboardBtn2Failed}
                   setDashboardDropdownRowKey={setDashboardDropdownRowKey}
-                  selectedPhase={selectedPhase}
                   companyName={
                     companyProfile?.companyName ||
                     companyProfile?.name ||
@@ -253,23 +250,7 @@ export default function WebMainPane(props) {
                   }
                   companyId={companyId || routeCompanyId}
                   currentUserId={auth?.currentUser?.uid || null}
-                  onCreateProject={() => {
-                    const firstSubFolder = hierarchy.find(
-                      (main) => main.children && main.children.length > 0,
-                    )?.children?.[0];
-                    if (firstSubFolder) {
-                      setNewProjectModal({
-                        visible: true,
-                        parentSubId: firstSubFolder.id,
-                      });
-                    } else if (isWeb && typeof window !== 'undefined') {
-                      // If no subfolder exists, show message
-                      // eslint-disable-next-line no-alert
-                      alert(
-                        'Skapa först en undermapp i sidopanelen för att kunna skapa projekt.',
-                      );
-                    }
-                  }}
+                  onCreateProject={onOpenCreateProjectModal}
                 />
               </View>
             </View>

@@ -13,7 +13,6 @@ export default function MobileProjectTreeSection({
   navigation,
   companyId,
   projectStatusFilter,
-  selectedPhase,
   handleSelectFunction,
   handleToggleMainFolder,
   handleToggleSubFolder,
@@ -122,35 +121,13 @@ export default function MobileProjectTreeSection({
 
           console.log('[HomeScreen] No project selected, showing ProjectTree');
 
-          const filteredHierarchy = (() => {
-            const filtered = hierarchy
-              .filter((main) => {
-                const mainPhase = main?.phase || DEFAULT_PHASE;
-                return mainPhase === selectedPhase;
-              })
-              .map((main) => ({
-                ...main,
-                children: (main.children || [])
-                  .filter((sub) => {
-                    const subPhase = sub?.phase || main?.phase || DEFAULT_PHASE;
-                    return subPhase === selectedPhase;
-                  })
-                  .map((sub) => ({
-                    ...sub,
-                    children: (sub.children || []).filter((project) => {
-                      const projectPhase = project?.phase || sub?.phase || main?.phase || DEFAULT_PHASE;
-                      return projectPhase === selectedPhase;
-                    }),
-                  })),
-              }));
-            return filtered;
-          })();
+          const filteredHierarchy = hierarchy;
 
           return (
             <ProjectTree
               hierarchy={filteredHierarchy}
               selectedProject={selectedProject}
-              selectedPhase={selectedPhase}
+                selectedPhase={DEFAULT_PHASE}
               onSelectProject={(project) => {
                 if (isWeb) {
                   // Should never happen on mobile, but keep behaviour identical
@@ -190,18 +167,12 @@ export default function MobileProjectTreeSection({
                 setNewSubFolderName('');
               }}
               onAddProject={(subId) => {
-                if (selectedPhase === 'kalkylskede') {
-                  const mainFolder = hierarchy.find((m) => {
-                    return (m.children || []).some((sub) => sub.id === subId);
-                  });
-                  setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainFolder?.id || null });
-                  setNewProjectName('');
-                  setNewProjectNumber('');
-                } else {
-                  setNewProjectModal({ visible: true, parentSubId: subId });
-                  setNewProjectName('');
-                  setNewProjectNumber('');
-                }
+                const mainFolder = hierarchy.find((m) => {
+                  return (m.children || []).some((sub) => sub.id === subId);
+                });
+                setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainFolder?.id || null });
+                setNewProjectName('');
+                setNewProjectNumber('');
               }}
               onAddMainFolder={() => {
                 setIsCreatingMainFolder(true);

@@ -11,7 +11,7 @@ import { getSharePointHierarchy } from '../services/azure/hierarchyService';
  * - Hämtar hela hierarkin från SharePoint (getSharePointHierarchy).
  * - Håller en ref (hierarchyRef) i sync för sökningar/effekter.
  */
-export function useSharePointHierarchy({ companyId, setCompanyId, routeCompanyId, authClaims, route }) {
+export function useSharePointHierarchy({ companyId, setCompanyId, routeCompanyId, authClaims, route, reloadKey }) {
   const [loadingHierarchy, setLoadingHierarchy] = useState(true);
   const [hierarchy, setHierarchy] = useState([]);
   const hierarchyRef = useRef([]);
@@ -89,8 +89,8 @@ export function useSharePointHierarchy({ companyId, setCompanyId, routeCompanyId
         return;
       }
 
-      // Track companyId to reload when it changes
-      const hierarchyKey = `${cid}`;
+      // Track companyId + reloadKey to control reloads
+      const hierarchyKey = `${cid}|${reloadKey || 0}`;
       if (didInitialLoadRef.current && loadedHierarchyForCompanyRef.current === hierarchyKey) {
         setLoadingHierarchy(false);
         return;
@@ -125,7 +125,7 @@ export function useSharePointHierarchy({ companyId, setCompanyId, routeCompanyId
     return () => {
       cancelled = true;
     };
-  }, [companyId, routeCompanyId, authClaims?.companyId, route?.params?.uid]);
+  }, [companyId, routeCompanyId, authClaims?.companyId, route?.params?.uid, reloadKey]);
 
   return {
     loadingHierarchy,

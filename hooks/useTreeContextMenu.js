@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
 import { fetchCompanyMallar } from '../components/firebase';
+import { DEFAULT_PHASE } from '../features/projects/constants';
 
 // Hanterar högerklicksmenyn i projekträdet (endast web):
 // - fångar contextmenu-event i DOM
@@ -13,7 +14,6 @@ export function useTreeContextMenu({
   companyId,
   routeCompanyId,
   authClaims,
-  selectedPhase,
   controlTypeOptions,
   requestProjectSwitch,
   setSimpleProjectModal,
@@ -140,13 +140,13 @@ export function useTreeContextMenu({
           id: (Math.random() * 100000).toFixed(0),
           name: 'Huvudmapp',
           type: 'main',
-          phase: selectedPhase,
+          phase: DEFAULT_PHASE,
           expanded: false,
           children: [],
         },
       ]);
     }
-  }, [hierarchy, companyId, selectedPhase, setHierarchy]);
+  }, [hierarchy, companyId, setHierarchy]);
 
   const renameMainFolderWeb = useCallback(
     (mainId) => {
@@ -367,15 +367,9 @@ export function useTreeContextMenu({
         const subId = t.subId;
         switch (item.key) {
           case 'addProject':
-            if (selectedPhase === 'kalkylskede') {
-              setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainId });
-              setNewProjectName('');
-              setNewProjectNumber('');
-            } else {
-              setNewProjectModal({ visible: true, parentSubId: subId });
-              setNewProjectName('');
-              setNewProjectNumber('');
-            }
+            setSimpleProjectModal({ visible: true, parentSubId: subId, parentMainId: mainId });
+            setNewProjectName('');
+            setNewProjectNumber('');
             break;
           case 'rename':
             renameSubFolderWeb(subId);
@@ -431,7 +425,6 @@ export function useTreeContextMenu({
       hierarchy,
       requestProjectSwitch,
       routeCompanyId,
-      selectedPhase,
       setCreatingSubFolderForMainId,
       setIsCreatingMainFolder,
       setNewMainFolderName,

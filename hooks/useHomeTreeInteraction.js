@@ -8,7 +8,7 @@ import { DEFAULT_PHASE } from '../features/projects/constants';
  * - inline-skapande av huvud-/undermappar
  * - hjälpmetoder för att kollapsa hierarki, räkna projekt m.m.
  */
-export function useHomeTreeInteraction({ hierarchy, setHierarchy, selectedPhase }) {
+export function useHomeTreeInteraction({ hierarchy, setHierarchy }) {
   const [isCreatingMainFolder, setIsCreatingMainFolder] = useState(false);
   const [creatingSubFolderForMainId, setCreatingSubFolderForMainId] = useState(null);
   const [newSubFolderName, setNewSubFolderName] = useState('');
@@ -52,20 +52,6 @@ export function useHomeTreeInteraction({ hierarchy, setHierarchy, selectedPhase 
       };
     });
   }, []);
-
-  const isFolderNameUnique = useCallback(
-    (name) => {
-      if (!name) return true;
-      return !hierarchy.some((folder) => {
-        const folderPhase = folder?.phase || DEFAULT_PHASE;
-        return (
-          folderPhase === selectedPhase &&
-          String(folder.name || '').trim().toLowerCase() === String(name).trim().toLowerCase()
-        );
-      });
-    },
-    [hierarchy, selectedPhase],
-  );
 
   const removeLastMainFolder = useCallback(() => {
     setHierarchy((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
@@ -149,7 +135,6 @@ export function useHomeTreeInteraction({ hierarchy, setHierarchy, selectedPhase 
 
     // helpers
     collapseHierarchy,
-    isFolderNameUnique,
     removeLastMainFolder,
     countProjects,
     countProjectStatus,

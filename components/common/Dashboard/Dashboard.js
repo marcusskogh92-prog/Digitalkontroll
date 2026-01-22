@@ -45,7 +45,6 @@ const Dashboard = ({
   _countProjectStatus,
   setDashboardBtn1Failed,
   setDashboardBtn2Failed,
-  selectedPhase,
   companyName,
   onCreateProject,
   companyId = null,
@@ -66,7 +65,6 @@ const Dashboard = ({
         <View style={{ marginBottom: 24 }}>
           <DashboardAllProjects
             hierarchy={hierarchy}
-            selectedPhase={selectedPhase}
             onProjectSelect={onProjectSelect}
             formatRelativeTime={formatRelativeTime}
             companyName={companyName}

@@ -396,24 +396,7 @@ export function SharePointLeftPanel({
                     }}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color:
-                            syncStatus === 'synced'
-                              ? '#2E7D32'
-                              : syncStatus === 'syncing'
-                              ? '#F57C00'
-                              : syncStatus === 'offline'
-                              ? '#757575'
-                              : syncStatus === 'error'
-                              ? '#D32F2F'
-                              : '#444',
-                        }}
-                      >
-                        Synk: {syncStatus}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: '#666', marginLeft: 6 }}>
+                      <Text style={{ fontSize: 12, color: '#666' }}>
                         Version: {appVersion}
                       </Text>
                     </View>
@@ -443,24 +426,7 @@ export function SharePointLeftPanel({
                     }}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          color:
-                            syncStatus === 'synced'
-                              ? '#2E7D32'
-                              : syncStatus === 'syncing'
-                              ? '#F57C00'
-                              : syncStatus === 'offline'
-                              ? '#757575'
-                              : syncStatus === 'error'
-                              ? '#D32F2F'
-                              : '#444',
-                        }}
-                      >
-                        Synk: {syncStatus}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>
+                      <Text style={{ fontSize: 12, color: '#666' }}>
                         Version: {appVersion}
                         {buildStamp ? ` (${buildStamp})` : ''}
                       </Text>
@@ -469,49 +435,7 @@ export function SharePointLeftPanel({
                 );
               }
             })()
-          : !selectedProject && (
-              <View
-                style={{
-                  position: 'absolute',
-                  left: 8,
-                  bottom: 8,
-                  zIndex: 9999,
-                  pointerEvents: 'auto',
-                  backgroundColor: 'rgba(255,255,255,0.95)',
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#e6e6e6',
-                  elevation: 8,
-                  ...(isWeb ? { boxShadow: '0px 6px 12px rgba(0,0,0,0.12)' } : {}),
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color:
-                        syncStatus === 'synced'
-                          ? '#2E7D32'
-                          : syncStatus === 'syncing'
-                          ? '#F57C00'
-                          : syncStatus === 'offline'
-                          ? '#757575'
-                          : syncStatus === 'error'
-                          ? '#D32F2F'
-                          : '#444',
-                    }}
-                  >
-                    Synk: {syncStatus}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: '#666', marginLeft: 8 }}>
-                    Version: {appVersion}
-                    {buildStamp ? ` (${buildStamp})` : ''}
-                  </Text>
-                </View>
-              </View>
-            )}
+          : null}
       </View>
 
       {isWeb && (

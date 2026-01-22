@@ -9,6 +9,7 @@ import HomeMainPaneContainer from '../components/common/HomeMainPaneContainer';
 import { HomeMobileProjectTreeContainer } from '../components/common/HomeMobileProjectTreeContainer';
 import { HomeTasksSection } from '../components/common/HomeTasksSection';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
+import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
@@ -18,6 +19,7 @@ import { getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import { useCompanyControlTypes } from '../hooks/useCompanyControlTypes';
+import useCreateSharePointProjectModal from '../hooks/useCreateSharePointProjectModal';
 import { useHomeHeaderProjectSearch } from '../hooks/useHomeHeaderProjectSearch';
 import { useHomeInlineBrowserIntegration } from '../hooks/useHomeInlineBrowserIntegration';
 import { useHomePaneResizing } from '../hooks/useHomePaneResizing';
@@ -201,37 +203,6 @@ export default function HomeScreen({ navigation, route }) {
     showLastFsError,
   } = useAdminSupportTools({ route, companyId, setCompanyId, showAlert });
 
-  // Ensure SharePoint system folder structure exists (runs once on mount if user is logged in)
-  React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const user = auth?.currentUser;
-        if (!user) return;
-        
-        // REMOVED: ensureSystemFolderStructure - SharePoint is now the source of truth
-        // Folders should be created directly in SharePoint, not auto-created by Digitalkontroll
-      } catch (_e) {
-        // Ignore errors
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  // DISABLED: Filtrera bort projekt med namnet '22 test' vid render
-  // Detta var en cleanup-kod som automatiskt raderade projekt vid varje mount,
-  // vilket kunde orsaka dataförlust. Borttagen för att förhindra oavsiktlig radering.
-  // Om cleanup behövs, gör det manuellt eller med en explicit admin-funktion.
-  // React.useEffect(() => {
-  //   setHierarchy(prev => prev.map(main => ({
-  //     ...main,
-  //     children: main.children.map(sub => ({
-  //       ...sub,
-  //       children: sub.children ? sub.children.filter(child => !(child.type === 'project' && child.name.trim().toLowerCase() === '22 test')) : []
-  //     }))
-  //   })));
-  // }, []);
-
   const isSuperAdmin = ((auth && auth.currentUser && ['marcus@msbyggsystem.se', 'marcus.skogh@msbyggsystem.se'].includes(String(auth.currentUser.email || '').toLowerCase())) || !!authClaims?.globalAdmin);
 
   const currentEmailLower = String(auth?.currentUser?.email || '').toLowerCase();
@@ -259,8 +230,19 @@ export default function HomeScreen({ navigation, route }) {
     })();
   }, [companyId, authClaims?.companyId]);
 
+  const [hierarchyReloadKey, setHierarchyReloadKey] = useState(0);
+
   // Inloggnings-/activity-effekter (login-logg + company members) extraherade till useHomeUserActivity
   useHomeUserActivity({ companyId, routeCompanyId, authClaims });
+
+  // Auto-refresh av SharePoint-hierarkin på webben (polling)
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const interval = setInterval(() => {
+      setHierarchyReloadKey((k) => k + 1);
+    }, 60000); // var 60:e sekund
+    return () => clearInterval(interval);
+  }, []);
 
   // Laddningsstate för hierarkin + referens till aktuell hierarki (SharePoint)
   const {
@@ -274,6 +256,7 @@ export default function HomeScreen({ navigation, route }) {
     routeCompanyId,
     authClaims,
     route,
+    reloadKey: hierarchyReloadKey,
   });
 
   // Projekt-skapande (modals, formulär, ansvariga, skyddsrond m.m.)
@@ -461,9 +444,7 @@ export default function HomeScreen({ navigation, route }) {
     setSelectedProjectFolders,
   });
 
-  // Selected phase for filtering (default: kalkylskede)
-  const [selectedPhase, setSelectedPhase] = useState('kalkylskede');
-  // Phase dropdown removed - phases are now SharePoint folders
+  // Legacy phase dropdown removed - phases are now driven by SharePoint & project phases
   const phaseChangeSpinAnim = useRef(new Animated.Value(0)).current;
 
   // Träd-/mappinteraktioner (SharePoint-hierarkin) extraherade till useHomeTreeInteraction
@@ -476,50 +457,20 @@ export default function HomeScreen({ navigation, route }) {
     setNewSubFolderName,
     newMainFolderName,
     setNewMainFolderName,
-    spinMain,
-    setSpinMain,
     spinSub,
     setSpinSub,
     expandedSubs,
     setExpandedSubs,
-    expandedProjects,
-    setExpandedProjects,
     mainTimersRef,
     projektLongPressTimer,
-    collapseHierarchy,
-    isFolderNameUnique,
-    removeLastMainFolder,
-    countProjects: _countProjects,
     countProjectStatus: _countProjectStatus,
     handleToggleMainFolder,
     handleToggleSubFolder,
-  } = useHomeTreeInteraction({ hierarchy, setHierarchy, selectedPhase });
+  } = useHomeTreeInteraction({ hierarchy, setHierarchy });
   
-  // Function to save all pending data before phase change
-  // Legacy: previously also saved Firestore hierarchy; now only reserved for future use
-  const saveAllPendingData = React.useCallback(async () => {
-    try {
-      // Placeholder for future pending-save logic (e.g. drafts)
-      console.log('[HomeScreen] saveAllPendingData called (no-op for hierarchy).');
-    } catch (error) {
-      console.error('[HomeScreen] Error saving pending data:', error);
-    }
-  }, []);
-  
-  // Phase dropdown removed - phases are now SharePoint folders
-  // Active folder will be tracked when user navigates to a folder
   const {
-    activeFolderPath,
     sharePointStatus,
-    getFolderColor,
-    getActiveFolderName,
   } = useSharePointStatus({ companyId, searchSpinAnim });
-  // Phase change removed - phases are now SharePoint folders, navigation happens via folder clicks
-
-  // Phase change removed - phases are now SharePoint folders, not internal state
-
-  // Phase changes removed - phases are now SharePoint folders
-  // No need to listen for phase change events since phases are SharePoint folders
 
   // Dashboard state and logic is handled by useDashboard hook
 
@@ -747,15 +698,22 @@ export default function HomeScreen({ navigation, route }) {
   // Company profile + kontrolltyper är nu extraherade till useCompanyControlTypes
   const {
     companyProfile,
-    controlTypes,
     controlTypeOptions,
   } = useCompanyControlTypes({ companyId });
+
+  // Ny SharePoint-baserad projektmodal (CreateProjectModal)
+  const {
+    visible: createProjectVisible,
+    availableSites: createProjectSites,
+    openModal: openCreateProjectModal,
+    closeModal: closeCreateProjectModal,
+    handleCreateProject,
+  } = useCreateSharePointProjectModal({ companyId });
 
   // Dashboard: centralised state and logic
   const {
     dashboardLoading,
     dashboardOverview,
-    dashboardRecent,
     dashboardRecentProjects,
     companyActivity,
     dashboardFocus,
@@ -820,20 +778,6 @@ export default function HomeScreen({ navigation, route }) {
       }
     })();
   }, []);
-
-  // Legacy: tidigare sparades hierarkin till Firestore vid varje ändring.
-  // SharePoint är nu source of truth, så denna effekt är avstängd.
-  React.useEffect(() => {
-    return; // no-op
-  }, [hierarchy, companyId]);
-
-  // DISABLED: Remove all top-level folders named 'test' after initial load
-  // Detta var en cleanup-kod som automatiskt raderade mappar vid varje mount,
-  // vilket kunde orsaka dataförlust. Borttagen för att förhindra oavsiktlig radering.
-  // Om cleanup behövs, gör det manuellt eller med en explicit admin-funktion.
-  // React.useEffect(() => {
-  //   setHierarchy(prev => prev.filter(folder => folder.name.trim().toLowerCase() !== 'test'));
-  // }, []);
   // Sökpopup + keyboard/scroll hanteras nu av useHomeSearchAndScroll
 
   // Header search dropdown (between logos): search among created projects in hierarchy
@@ -852,7 +796,6 @@ export default function HomeScreen({ navigation, route }) {
   // --- Safe-aliaser för render, så JSX aldrig kraschar på undefined ---
   const selectedProjectSafe = selectedProject ?? null;
   const projectPhaseKeySafe = projectPhaseKey ?? null;
-  const selectedPhaseSafe = selectedPhase ?? null;
   const hierarchySafe = Array.isArray(hierarchy) ? hierarchy : [];
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
@@ -875,7 +818,6 @@ export default function HomeScreen({ navigation, route }) {
     companyId,
     routeCompanyId,
     authClaims,
-    selectedPhase,
     controlTypeOptions,
     requestProjectSwitch,
     setSimpleProjectModal,
@@ -1002,12 +944,6 @@ export default function HomeScreen({ navigation, route }) {
         requestProjectSwitch(project, { selectedAction: null });
     }
   };
-
-  // Stil för återanvändning
-// eslint-disable-next-line no-unused-vars
-const _kontrollKnappStil = { backgroundColor: '#fff', borderRadius: 16, marginBottom: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', shadowColor: '#1976D2', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2, minHeight: 56, maxWidth: 240, width: '90%', paddingLeft: 14, paddingRight: 10, overflow: 'hidden', borderWidth: 2, borderColor: '#222' };
-// eslint-disable-next-line no-unused-vars
-const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, letterSpacing: 0.5, zIndex: 1 };
 
     // Dashboard-aktivitetsvy är nu extraherad till components/common/Dashboard/DashboardActivity.
 
@@ -1177,6 +1113,14 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
         project={simpleProjectCreatedRef.current}
         onClose={handleSimpleProjectSuccessClose}
       />
+
+      {/* Ny SharePoint-baserad "Skapa projekt"-modal för dashboard-knappen */}
+      <CreateProjectModal
+        visible={createProjectVisible}
+        onClose={closeCreateProjectModal}
+        availableSites={createProjectSites}
+        onCreateProject={handleCreateProject}
+      />
       
       {(() => {
         const RootContainer = ImageBackground;
@@ -1255,6 +1199,9 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               }}
               onPressRefresh={() => {
                 setSpinSidebarRefresh((n) => n + 1);
+                // Tvinga om-laddning av SharePoint-hierarkin
+                try { setHierarchyReloadKey((k) => k + 1); } catch (_e) {}
+
                 if (selectedProject) {
                   setProjectControlsRefreshNonce((n) => n + 1);
                 } else {
@@ -1299,8 +1246,6 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               creatingProjectInline={creatingProjectInline}
               selectedProject={selectedProject}
               selectedProjectSafe={selectedProjectSafe}
-              selectedPhase={selectedPhase}
-              selectedPhaseSafe={selectedPhaseSafe}
               auth={auth}
               creatingProject={creatingProject}
               newProjectNumber={newProjectNumber}
@@ -1366,6 +1311,7 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
               phaseActiveItem={phaseActiveItem}
               setPhaseActiveSection={setPhaseActiveSection}
               setPhaseActiveItem={setPhaseActiveItem}
+              onOpenCreateProjectModal={openCreateProjectModal}
             />
           </View>
         ) : null}
@@ -1423,7 +1369,6 @@ const _kontrollTextStil = { color: '#222', fontWeight: '600', fontSize: 17, lett
             companyId={companyId}
             projectStatusFilter={projectStatusFilter}
             setProjectStatusFilter={setProjectStatusFilter}
-            selectedPhaseSafe={selectedPhaseSafe}
             handleSelectFunction={handleSelectFunction}
             handleToggleMainFolder={handleToggleMainFolder}
             handleToggleSubFolder={handleToggleSubFolder}

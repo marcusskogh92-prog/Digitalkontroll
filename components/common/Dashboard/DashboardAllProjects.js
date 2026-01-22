@@ -2,15 +2,14 @@
  * DashboardAllProjects - Shows all projects in a table format on the dashboard
  */
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, ScrollView, Text, TouchableOpacity, View, Modal } from 'react-native';
-import { PROJECT_PHASES, getPhaseConfig } from '../../../features/projects/constants';
-import { subscribeCompanyActivity, fetchUserProfile } from '../../../components/firebase';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { fetchUserProfile, subscribeCompanyActivity } from '../../../components/firebase';
+import { getPhaseConfig } from '../../../features/projects/constants';
 
 const DashboardAllProjects = ({
   hierarchy = [],
-  selectedPhase,
   onProjectSelect,
   formatRelativeTime,
   companyName,
@@ -80,7 +79,7 @@ const DashboardAllProjects = ({
     // Can be enhanced later with read/unread tracking
     return notifications.length;
   }, [notifications]);
-  // Extract all projects from hierarchy, filtered by selected phase
+  // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {
     const projects = [];
     
@@ -94,10 +93,6 @@ const DashboardAllProjects = ({
         
         sub.children.forEach(child => {
           if (child.type === 'project') {
-            const projectPhase = child?.phase || 'kalkylskede';
-            // Filter by selected phase
-            if (selectedPhase && projectPhase !== selectedPhase) return;
-            
             projects.push({
               ...child,
               mainFolder: main.name,
@@ -114,7 +109,7 @@ const DashboardAllProjects = ({
       const bId = String(b.id || '').toLowerCase();
       return aId.localeCompare(bId, undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [hierarchy, selectedPhase]);
+  }, [hierarchy]);
 
   const dashboardSectionTitleStyle = useMemo(() => ({ 
     fontSize: 20, 
@@ -178,8 +173,6 @@ const DashboardAllProjects = ({
         return 'Pågående';
     }
   };
-
-  const phaseConfig = selectedPhase ? PROJECT_PHASES.find(p => p.key === selectedPhase) : null;
 
   // Calculate summary info for single project
   const projectSummary = useMemo(() => {

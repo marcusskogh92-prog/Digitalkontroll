@@ -17,7 +17,6 @@ export function HomeMobileProjectTreeContainer({
   companyId,
   projectStatusFilter,
   setProjectStatusFilter,
-  selectedPhaseSafe,
   handleSelectFunction,
   handleToggleMainFolder,
   handleToggleSubFolder,
@@ -197,7 +196,6 @@ export function HomeMobileProjectTreeContainer({
           navigation={navigation}
           companyId={companyId}
           projectStatusFilter={projectStatusFilterSafeLocal}
-          selectedPhase={selectedPhaseSafe}
           handleSelectFunction={handleSelectFunction}
           handleToggleMainFolder={handleToggleMainFolder}
           handleToggleSubFolder={handleToggleSubFolder}

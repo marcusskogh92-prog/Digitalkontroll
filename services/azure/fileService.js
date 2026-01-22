@@ -4,7 +4,7 @@
  */
 
 import { Platform } from 'react-native';
-import { getAccessToken, getStoredAccessToken } from './authService';
+import { getAccessToken } from './authService';
 import { getAzureConfig } from './config';
 // Note: getCompanySharePointSiteId is imported dynamically to avoid circular dependency
 
@@ -282,6 +282,61 @@ export async function getFileUrl(path, companyId = null, siteId = null) {
   
   const result = await response.json();
   return result.webUrl || result.downloadUrl || result.url;
+}
+
+/**
+ * List folders in a SharePoint site at a given path
+ * @param {string} [basePath] - Relative folder path inside the drive (e.g. "Projects" or "Projects/2026")
+ * @param {string} siteId - SharePoint Site ID (required)
+ * @returns {Promise<Array<{name: string, path: string}>>}
+ */
+export async function listFolders(basePath = '', siteId) {
+  if (!siteId) {
+    throw new Error('Site ID is required to list folders');
+  }
+
+  const config = getAzureConfig();
+  const accessToken = await getAccessToken();
+
+  if (!accessToken) {
+    throw new Error('Failed to get access token');
+  }
+
+  const normalizedBase = basePath
+    ? '/' + basePath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/^\/+/, '')
+    : '';
+
+  let endpoint;
+  if (normalizedBase) {
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${normalizedBase}:/children`;
+  } else {
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root/children`;
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to list folders: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const items = Array.isArray(data?.value) ? data.value : [];
+
+  return items
+    .filter((item) => item && item.folder)
+    .map((item) => ({
+      name: item.name,
+      path: normalizedBase
+        ? `${normalizedBase.replace(/^\/+/, '')}/${item.name}`
+        : item.name,
+    }));
 }
 
 /**
@@ -566,15 +621,21 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
   };
   
   const phaseFolderName = phaseFolderNames[phaseKey] || 'Kalkylskede';
-  
-  // Build project folder path: Projects/{Phase}/{projectId}-{projectName}
-  // If mainFolder/subFolder are provided, include them: Projects/{Phase}/{mainFolder}/{subFolder}/{projectId}-{projectName}
-  let projectPath;
+
+  // Bygg bas-sökväg där projektet ska hamna:
+  // - Om mainFolder/subFolder angivits använder vi dem som grund (t.ex. "Anbud" eller "Anbud/2026").
+  // - Annars används "Projects" som fallback-bas.
+  let basePath;
   if (mainFolder && subFolder) {
-    projectPath = `Projects/${phaseFolderName}/${mainFolder}/${subFolder}/${projectId}-${projectName}`;
+    basePath = `${mainFolder}/${subFolder}`;
+  } else if (mainFolder) {
+    basePath = mainFolder;
   } else {
-    projectPath = `Projects/${phaseFolderName}/${projectId}-${projectName}`;
+    basePath = 'Projects';
   }
+
+  // Slutlig sökväg: {bas}/{Fas}/{projectId}-{projectName}
+  const projectPath = `${basePath}/${phaseFolderName}/${projectId}-${projectName}`;
   
   // Create project folder (this will create all parent folders too)
   await ensureFolderPath(projectPath, companyId, siteId);

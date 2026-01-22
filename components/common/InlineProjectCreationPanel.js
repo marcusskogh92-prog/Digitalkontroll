@@ -1,4 +1,5 @@
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { DEFAULT_PHASE } from '../../features/projects/constants';
 
 export default function InlineProjectCreationPanel({
   newProjectNumber,
@@ -6,7 +7,6 @@ export default function InlineProjectCreationPanel({
   newProjectName,
   setNewProjectName,
   creatingProject,
-  selectedPhase,
   auth,
   creatingProjectInline,
   hierarchy,
@@ -41,7 +41,7 @@ export default function InlineProjectCreationPanel({
         name: projName,
         type: 'project',
         status: 'ongoing',
-        phase: selectedPhase,
+        phase: DEFAULT_PHASE,
         createdAt: new Date().toISOString(),
         createdBy: auth?.currentUser?.email || '',
       };

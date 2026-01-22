@@ -21,8 +21,6 @@ export function HomeMainPaneContainer(props) {
     creatingProjectInline,
     selectedProject,
     selectedProjectSafe,
-    selectedPhase,
-    selectedPhaseSafe,
     auth,
     creatingProject,
     newProjectNumber,
@@ -84,6 +82,7 @@ export function HomeMainPaneContainer(props) {
     rightWidth,
     panResponderRight,
     projectPhaseKeySafe,
+    onOpenCreateProjectModal,
     // Native-specifika props
     phaseActiveSection,
     phaseActiveItem,
@@ -105,7 +104,6 @@ export function HomeMainPaneContainer(props) {
           handleInlineControlFinished={handleInlineControlFinished}
           creatingProjectInline={creatingProjectInline}
           selectedProject={selectedProjectSafe}
-          selectedPhase={selectedPhaseSafe}
           auth={auth}
           creatingProject={creatingProject}
           newProjectNumber={newProjectNumber}
@@ -161,11 +159,11 @@ export function HomeMainPaneContainer(props) {
           companyProfile={companyProfile}
           companyId={companyId}
           routeCompanyId={routeCompanyId}
-          setNewProjectModal={setNewProjectModal}
           scrollToEndSafe={scrollToEndSafe}
           rightWidth={rightWidth}
           panResponderRight={panResponderRight}
           projectPhaseKey={projectPhaseKeySafe}
+          onOpenCreateProjectModal={onOpenCreateProjectModal}
         />
       ) : (
         <NativeMainPane
@@ -212,7 +210,6 @@ export function HomeMainPaneContainer(props) {
           setDashboardBtn1Failed={setDashboardBtn1Failed}
           setDashboardBtn2Failed={setDashboardBtn2Failed}
           setDashboardDropdownRowKey={setDashboardDropdownRowKey}
-          selectedPhase={selectedPhase}
           companyProfile={companyProfile}
           routeCompanyId={routeCompanyId}
           auth={auth}
