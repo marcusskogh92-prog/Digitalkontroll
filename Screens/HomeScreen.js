@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
@@ -15,7 +15,7 @@ import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
-import { getProjectPhase } from '../features/projects/constants';
+import { getProjectPhase, DEFAULT_PHASE } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import { useCompanyControlTypes } from '../hooks/useCompanyControlTypes';
@@ -704,11 +704,23 @@ export default function HomeScreen({ navigation, route }) {
   // Ny SharePoint-baserad projektmodal (CreateProjectModal)
   const {
     visible: createProjectVisible,
+    isCreating: isCreatingProject,
     availableSites: createProjectSites,
     openModal: openCreateProjectModal,
     closeModal: closeCreateProjectModal,
     handleCreateProject,
   } = useCreateSharePointProjectModal({ companyId });
+
+  // Reload hierarchy when project creation completes
+  const prevIsCreatingProject = useRef(isCreatingProject);
+  useEffect(() => {
+    // When isCreatingProject goes from true to false, project was created
+    if (prevIsCreatingProject.current && !isCreatingProject) {
+      // Reload hierarchy to show the new project
+      setHierarchyReloadKey((k) => k + 1);
+    }
+    prevIsCreatingProject.current = isCreatingProject;
+  }, [isCreatingProject]);
 
   // Dashboard: centralised state and logic
   const {
@@ -1120,6 +1132,8 @@ export default function HomeScreen({ navigation, route }) {
         onClose={closeCreateProjectModal}
         availableSites={createProjectSites}
         onCreateProject={handleCreateProject}
+        isCreating={isCreatingProject}
+        companyId={companyId}
       />
       
       {(() => {
@@ -1234,6 +1248,38 @@ export default function HomeScreen({ navigation, route }) {
               buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
               scrollToEndSafe={scrollToEndSafe}
               createPortal={createPortal}
+              onSelectProject={(projectData) => {
+                try {
+                  if (!projectData || !projectData.id) {
+                    console.warn('[HomeScreen] Invalid projectData in onSelectProject:', projectData);
+                    return;
+                  }
+                  
+                  // Convert projectData to format expected by requestProjectSwitch
+                  const project = {
+                    id: projectData.id,
+                    name: projectData.name || projectData.fullName || projectData.id,
+                    phase: projectData.phase || DEFAULT_PHASE,
+                    ...projectData,
+                  };
+                  
+                  if (requestProjectSwitch) {
+                    requestProjectSwitch(project, {
+                      selectedAction: null,
+                      path: {
+                        mainId: '',
+                        subId: '',
+                        mainName: '',
+                        subName: '',
+                      },
+                    });
+                  } else {
+                    console.warn('[HomeScreen] requestProjectSwitch not available');
+                  }
+                } catch (error) {
+                  console.error('[HomeScreen] Error in onSelectProject callback:', error);
+                }
+              }}
             />
 
             <HomeMainPaneContainer

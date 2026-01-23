@@ -23,6 +23,7 @@ import LoginScreen from './Screens/LoginScreen';
 import ManageCompany from './Screens/ManageCompany';
 import ManageControlTypes from './Screens/ManageControlTypes';
 import ManageUsers from './Screens/ManageUsers';
+import ManageSharePointNavigation from './Screens/ManageSharePointNavigation';
 import ProjectDetails from './Screens/ProjectDetails';
 import TemplateControlScreen from './Screens/TemplateControlScreen';
 import KMAScreen from './features/kma/screens/KMAScreen';
@@ -542,6 +543,21 @@ export default function App() {
                     <Ionicons name="chevron-back" size={30} color="#000" />
                   </TouchableOpacity>
                 ),
+              });
+            }} />
+            <Stack.Screen name="ManageSharePointNavigation" component={ManageSharePointNavigation} options={({ navigation }) => {
+              const isWeb = Platform.OS === 'web';
+              if (isWeb) {
+                return ({
+                  title: 'SharePoint Navigation',
+                  headerBackTitleVisible: false,
+                  headerBackTitle: '',
+                });
+              }
+              return ({
+                title: 'SharePoint Navigation',
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
               });
             }} />
             <Stack.Screen name="ManageControlTypes" component={ManageControlTypes} options={({ navigation }) => {

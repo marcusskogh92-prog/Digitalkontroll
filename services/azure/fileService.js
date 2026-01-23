@@ -394,10 +394,15 @@ export async function deleteFile(path, companyId = null, siteId = null) {
 export async function ensureFolder(path, companyId = null, siteId = null) {
   if (!path) throw new Error('Path is required');
   
+  // eslint-disable-next-line no-console
+  console.log(`[ensureFolder] Creating folder: "${path}" (siteId: ${siteId}, companyId: ${companyId})`);
+  
   const config = getAzureConfig();
   const accessToken = await getAccessToken();
   
   if (!accessToken) {
+    // eslint-disable-next-line no-console
+    console.error('[ensureFolder] ❌ No access token available');
     throw new Error('Failed to get access token. Please authenticate first.');
   }
   
@@ -408,12 +413,23 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
       // Dynamic import to avoid circular dependency
       const { getCompanySharePointSiteId } = await import('../../components/firebase');
       sharePointSiteId = await getCompanySharePointSiteId(companyId);
+      // eslint-disable-next-line no-console
+      console.log(`[ensureFolder] Fetched siteId from company: ${sharePointSiteId}`);
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.warn('[ensureFolder] Could not fetch company SharePoint Site ID:', error);
     }
   }
   if (!sharePointSiteId) {
     sharePointSiteId = config.sharePointSiteId;
+    // eslint-disable-next-line no-console
+    console.log(`[ensureFolder] Using config siteId: ${sharePointSiteId}`);
+  }
+  
+  if (!sharePointSiteId) {
+    // eslint-disable-next-line no-console
+    console.error('[ensureFolder] ❌ No SharePoint site ID available');
+    throw new Error('SharePoint Site ID required but not found');
   }
   
   // Normalize path and split into parts
@@ -436,34 +452,29 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
     parentPath = parentPath.replace(/^\/+/, '').replace(/\/+$/, '');
   }
   
-  // Build endpoint - use root/children if no parent, otherwise root:/parent:/children
-  let endpoint;
+  // Build base endpoint (without the final path segment)
+  let baseEndpoint;
   if (sharePointSiteId) {
-    if (parentPath && parentPath.length > 0) {
-      endpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root:/${parentPath}:`;
-    } else {
-      endpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root`;
-    }
+    baseEndpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    if (parentPath && parentPath.length > 0) {
-      endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:/${parentPath}:`;
-    } else {
-      endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root`;
-    }
+    baseEndpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root`;
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
   
   // Check if folder exists
   try {
-    // Construct check endpoint - check if folder exists in parent
+    // Construct check endpoint - construct full path in one go to avoid double colons
     // For root: root:/folderName:
-    // For parent: root:/parent:/folderName:
-    const checkEndpoint = parentPath && parentPath.length > 0
-      ? `${endpoint}:/${folderName}:`
-      : `${endpoint}:/${folderName}:`;
+    // For parent: root:/parentPath/folderName:
+    let checkEndpoint;
+    if (parentPath && parentPath.length > 0) {
+      checkEndpoint = `${baseEndpoint}:/${parentPath}/${folderName}:`;
+    } else {
+      checkEndpoint = `${baseEndpoint}:/${folderName}:`;
+    }
     const checkResponse = await fetch(checkEndpoint, {
       method: 'GET',
       headers: {
@@ -479,11 +490,15 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
     // Folder doesn't exist, create it
   }
   
-  // Create folder - endpoint should already be correct (root or root:/parent:)
-  // Append /children to create folder in the correct location
-  const createEndpoint = parentPath && parentPath.length > 0
-    ? `${endpoint}:/children`
-    : `${endpoint}/children`;
+  // Create folder - construct endpoint correctly
+  // For root: root/children
+  // For parent: root:/parentPath:/children
+  let createEndpoint;
+  if (parentPath && parentPath.length > 0) {
+    createEndpoint = `${baseEndpoint}:/${parentPath}:/children`;
+  } else {
+    createEndpoint = `${baseEndpoint}/children`;
+  }
   
   const createResponse = await fetch(createEndpoint, {
     method: 'POST',
@@ -500,10 +515,18 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
   
   if (!createResponse.ok) {
     const errorText = await createResponse.text();
+    // eslint-disable-next-line no-console
+    console.error(`[ensureFolder] ❌ Failed to create folder "${folderName}": ${createResponse.status} ${createResponse.statusText}`);
+    // eslint-disable-next-line no-console
+    console.error(`[ensureFolder] Error response: ${errorText}`);
+    // eslint-disable-next-line no-console
+    console.error(`[ensureFolder] Endpoint used: ${createEndpoint}`);
     throw new Error(`Failed to create folder: ${createResponse.status} ${createResponse.statusText} - ${errorText}`);
   }
   
   const result = await createResponse.json();
+  // eslint-disable-next-line no-console
+  console.log(`[ensureFolder] ✅ Successfully created folder "${folderName}" (id: ${result.id})`);
   return result.id;
 }
 
@@ -515,25 +538,42 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
  * @returns {Promise<void>}
  */
 export async function ensureFolderPath(path, companyId = null, siteId = null) {
-  if (!path) return; // Empty path, nothing to create
+  if (!path) {
+    console.warn('[ensureFolderPath] Empty path provided');
+    return; // Empty path, nothing to create
+  }
   
   const pathParts = path.split('/').filter(p => p); // Remove empty strings
-  if (pathParts.length === 0) return; // No folders to create
+  if (pathParts.length === 0) {
+    console.warn('[ensureFolderPath] No path parts after filtering');
+    return; // No folders to create
+  }
+  
+  // eslint-disable-next-line no-console
+  console.log(`[ensureFolderPath] Creating folder path: ${path} (parts: ${pathParts.length}, siteId: ${siteId})`);
   
   // Build path incrementally: "A", "A/B", "A/B/C"
   let currentPath = '';
   for (let i = 0; i < pathParts.length; i++) {
     currentPath = currentPath ? `${currentPath}/${pathParts[i]}` : pathParts[i];
     try {
+      // eslint-disable-next-line no-console
+      console.log(`[ensureFolderPath] Creating folder step ${i + 1}/${pathParts.length}: ${currentPath}`);
       // When companyId is null, we're using Digitalkontroll site (system) for admin files
-      await ensureFolder(currentPath, companyId, siteId);
+      const folderId = await ensureFolder(currentPath, companyId, siteId);
+      // eslint-disable-next-line no-console
+      console.log(`[ensureFolderPath] ✅ Created folder: ${currentPath} (id: ${folderId})`);
     } catch (error) {
       // If folder creation fails, log but continue (parent might not exist yet)
       // ensureFolder will handle checking if folder exists
-      console.warn(`[ensureFolderPath] Warning creating folder ${currentPath}:`, error);
+      // eslint-disable-next-line no-console
+      console.error(`[ensureFolderPath] ❌ Error creating folder ${currentPath}:`, error.message || error);
       // Continue anyway, ensureFolder checks if folder exists before creating
     }
   }
+  
+  // eslint-disable-next-line no-console
+  console.log(`[ensureFolderPath] ✅ Completed folder path creation: ${path}`);
 }
 
 /**

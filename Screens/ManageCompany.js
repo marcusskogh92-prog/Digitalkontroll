@@ -9,13 +9,14 @@ import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
 
-export default function ManageCompany({ navigation }) {
+export default function ManageCompany({ navigation, route }) {
   const [companyId, setCompanyId] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [userLimit, setUserLimit] = useState('10');
   const [companyEnabled, setCompanyEnabled] = useState(true);
   const [companyDeleted, setCompanyDeleted] = useState(false);
   const [companyMemberCount, setCompanyMemberCount] = useState(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [, setOrgNumber] = useState('');
   const [, setCompanyForm] = useState('');
   const [, setStreetAddress] = useState('');
@@ -276,6 +277,7 @@ export default function ManageCompany({ navigation }) {
   // Decide if interactive tools (manage company/users) should be shown
   const [allowedTools, setAllowedTools] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
+  const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [supportMenuOpen, setSupportMenuOpen] = useState(false);
   useEffect(() => {
@@ -289,6 +291,7 @@ export default function ManageCompany({ navigation }) {
           if (mounted) {
             setAllowedTools(true);
             setIsSuperadmin(true);
+            setCanSeeAllCompanies(true);
             setShowHeaderUserMenu(true);
           }
           return;
@@ -302,7 +305,10 @@ export default function ManageCompany({ navigation }) {
         const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
         const companyId = companyFromClaims || stored || '';
         const allowHeader = isEmailSuperadmin || isSuperClaim || isAdminClaim;
-        if (mounted) setIsSuperadmin(!!(isEmailSuperadmin || isSuperClaim));
+        if (mounted) {
+          setIsSuperadmin(!!(isEmailSuperadmin || isSuperClaim));
+          setCanSeeAllCompanies(!!(isEmailSuperadmin || isSuperClaim));
+        }
         if (companyId === 'MS Byggsystem' && isAdminClaim) {
           if (mounted) setAllowedTools(true);
         }
@@ -312,6 +318,7 @@ export default function ManageCompany({ navigation }) {
       if (mounted) {
         setAllowedTools(false);
         setIsSuperadmin(false);
+        setCanSeeAllCompanies(false);
         setShowHeaderUserMenu(false);
       }
     })();
@@ -351,6 +358,17 @@ export default function ManageCompany({ navigation }) {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
     };
   }, [navigation]);
+
+  // Handle route params for creating new company
+  useEffect(() => {
+    if (route?.params?.createNew) {
+      handleSelectCompany({ createNew: true });
+      // Clear the param to avoid re-triggering
+      if (navigation.setParams) {
+        navigation.setParams({ createNew: undefined });
+      }
+    }
+  }, [route?.params?.createNew]);
 
   const handleSave = async () => {
     if (!companyId) return Alert.alert('Fel', 'Ange ett företags-ID');
@@ -473,8 +491,10 @@ export default function ManageCompany({ navigation }) {
         setAuditCompanyId('');
         setAuditEvents([]);
         setSelectedCompanyAuditEvents([]);
+        setIsCreatingNew(true);
         return;
       }
+      setIsCreatingNew(false);
       const cid = String(payload?.companyId || payload?.id || payload || '').trim();
       if (!cid) return;
       
@@ -494,6 +514,7 @@ export default function ManageCompany({ navigation }) {
       setUserLimit((prof && typeof prof.userLimit !== 'undefined') ? String(prof.userLimit) : '10');
       setCompanyEnabled(typeof prof?.enabled === 'boolean' ? !!prof.enabled : true);
       setCompanyDeleted(typeof prof?.deleted === 'boolean' ? !!prof.deleted : false);
+      setIsCreatingNew(false);
       
       // Load SharePoint site ID asynchronously (web only)
       if (Platform.OS === 'web') {
@@ -637,11 +658,20 @@ export default function ManageCompany({ navigation }) {
     const rootProps = {
       source: require('../assets/images/inlogg.webb.png'),
       resizeMode: 'cover',
-      imageStyle: { width: '100%', height: '100%' },
+      imageStyle: { 
+        width: '100%', 
+        height: '100%',
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        backgroundAttachment: 'fixed',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center center',
+      },
     };
 
     const hasSelectedCompany = !!(String(companyId || '').trim() || String(companyName || '').trim());
-    const formDisabled = !hasSelectedCompany;
+    const formDisabled = !hasSelectedCompany && !isCreatingNew;
     const userLimitNum = parseInt(String(userLimit || '0'), 10);
     const userLimitNumber = Number.isFinite(userLimitNum) ? userLimitNum : null;
     const seatsLeft = (typeof companyMemberCount === 'number' && typeof userLimitNumber === 'number') ? (userLimitNumber - companyMemberCount) : null;
@@ -658,8 +688,40 @@ export default function ManageCompany({ navigation }) {
     const lastAuditText = lastAuditTs ? lastAuditTs.toLocaleString('sv-SE') : '';
     const statusLabel = companyEnabled ? 'Aktivt' : 'Pausat';
 
+    const backgroundWrapper = Platform.OS === 'web' ? (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundImage: `url(${require('../assets/images/inlogg.webb.png')})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center center',
+        backgroundRepeat: 'no-repeat',
+        backgroundAttachment: 'fixed',
+        zIndex: 0,
+        pointerEvents: 'none',
+      }} />
+    ) : null;
+
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+      <>
+        {backgroundWrapper}
+        <RootContainer 
+          {...rootProps} 
+          style={{ 
+            flex: 1, 
+            width: '100%', 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0,
+            ...(Platform.OS === 'web' ? { backgroundColor: 'transparent' } : {}),
+          }}
+          imageStyle={Platform.OS === 'web' ? { display: 'none' } : rootProps.imageStyle}
+        >
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         {(busyCount > 0 || loading || logoUploading) ? (
           <View
@@ -684,13 +746,13 @@ export default function ManageCompany({ navigation }) {
           </View>
         ) : null}
         <MainLayout
-          onSelectProject={handleSelectCompany}
-          sidebarTitle="Företag"
-          sidebarIconName="business"
-          sidebarIconColor="#2E7D32"
-          sidebarSearchPlaceholder="Sök företag"
-          sidebarCompaniesMode={true}
-          sidebarShowMembers={allowedTools}
+          adminMode={true}
+          adminCurrentScreen="manage_company"
+          adminOnSelectCompany={handleSelectCompany}
+          adminShowCompanySelector={canSeeAllCompanies}
+          sidebarSelectedCompanyId={isCreatingNew ? null : companyId}
+          adminCompanyBannerOnEdit={hasSelectedCompany && allowedTools && !isCreatingNew ? openEditModal : null}
+          adminHideCompanyBanner={isCreatingNew}
           topBar={
             <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -718,7 +780,7 @@ export default function ManageCompany({ navigation }) {
           }
         >
           <View style={dashboardContainerStyle}>
-            {!hasSelectedCompany ? (
+            {!hasSelectedCompany && !isCreatingNew ? (
               <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, maxWidth: 600, alignSelf: 'center', width: '100%' }}>
                 <Text style={{ fontSize: 16, fontWeight: '600', color: '#666', textAlign: 'center' }}>
                   Välj ett företag i listan till vänster för att visa och ändra dess företagsprofil.
@@ -726,69 +788,160 @@ export default function ManageCompany({ navigation }) {
               </View>
             ) : (
               <>
-                <View style={{ width: '100%', maxWidth: 1200, alignSelf: 'center' }}>
-                {/* HEADER CARD */}
-                <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, marginBottom: 24 }}>
-                  <View style={{ flexDirection: Platform.OS === 'web' ? 'row' : 'column', gap: 24, alignItems: 'center' }}>
-                    {/* Logo/Image Section */}
-                    <View style={{ flex: Platform.OS === 'web' ? 0 : 1, alignItems: 'center', justifyContent: 'center', minWidth: Platform.OS === 'web' ? 200 : '100%' }}>
-                      {logoUrl ? (
-                        <Image 
-                          source={{ uri: logoUrl }} 
-                          style={{ width: 120, height: 120, borderRadius: 12, backgroundColor: '#f0f0f0' }} 
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <View style={{ width: 120, height: 120, borderRadius: 12, backgroundColor: '#f0f0f0', alignItems: 'center', justifyContent: 'center' }}>
-                          <Ionicons name="business" size={48} color="#ccc" />
+                {isCreatingNew ? (
+                  <View style={{ width: '100%', maxWidth: 1200, alignSelf: 'center' }}>
+                    {/* CREATE NEW COMPANY FORM */}
+                    <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, marginBottom: 24 }}>
+                      <Text style={{ fontSize: 24, fontWeight: '600', color: '#1976D2', marginBottom: 24 }}>
+                        Skapa nytt företag
+                      </Text>
+                      <View style={{ gap: 16, width: '100%' }}>
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                            Företagsnamn *
+                          </Text>
+                          <TextInput
+                            value={companyName}
+                            onChangeText={(text) => {
+                              setCompanyName(text);
+                              // Auto-generate company ID from company name
+                              const autoId = text
+                                .toLowerCase()
+                                .trim()
+                                .replace(/\s+/g, '-') // Replace spaces with hyphens
+                                .replace(/[åäö]/g, (match) => {
+                                  const map = { 'å': 'a', 'ä': 'a', 'ö': 'o' };
+                                  return map[match] || match;
+                                }) // Replace Swedish characters
+                                .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+                                .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+                                .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+                              setCompanyId(autoId);
+                            }}
+                            placeholder="t.ex. Test Företag AB"
+                            style={{
+                              borderWidth: 1,
+                              borderColor: '#ddd',
+                              borderRadius: 8,
+                              padding: 12,
+                              fontSize: 14,
+                              backgroundColor: '#fff',
+                            }}
+                          />
                         </View>
-                      )}
-                    </View>
-
-                    {/* Info Section */}
-                    <View style={{ flex: 1, gap: 12 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-                        <Text style={{ fontSize: 24, fontWeight: '600', color: '#222', flex: 1, minWidth: 200 }}>
-                          {companyName || companyId}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                          {hasSelectedCompany && allowedTools ? (
-                            <TouchableOpacity
-                              onPress={openEditModal}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 4,
-                                paddingVertical: 6,
-                                paddingHorizontal: 12,
-                                borderRadius: 8,
-                                borderWidth: 1,
-                                borderColor: '#ddd',
-                                backgroundColor: '#fff',
-                              }}
-                            >
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>
-                                Ändra
-                              </Text>
-                              <Ionicons name="chevron-down" size={14} color="#666" />
-                            </TouchableOpacity>
-                          ) : null}
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                            Företags-ID *
+                          </Text>
+                          <TextInput
+                            value={companyId}
+                            onChangeText={setCompanyId}
+                            placeholder="Fylls i automatiskt från företagsnamn"
+                            style={{
+                              borderWidth: 1,
+                              borderColor: '#ddd',
+                              borderRadius: 8,
+                              padding: 12,
+                              fontSize: 14,
+                              backgroundColor: '#f5f5f5',
+                              color: '#666',
+                            }}
+                          />
+                          <Text style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                            Fylls i automatiskt, men kan redigeras manuellt
+                          </Text>
                         </View>
-                      </View>
-
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
-                        <InfoItem label="Företags-ID" value={companyId || '—'} />
-                        <InfoItem label="Användare" value={typeof companyMemberCount === 'number' ? `${companyMemberCount} st` : '—'} />
-                        <InfoItem label="Licenser" value={seatsLeft !== null ? `${seatsLeft} kvar` : (userLimit ? `${userLimit} totalt` : '—')} />
-                        <InfoItem label="Skapad" value={lastAuditText ? lastAuditText.split(' ')[0] : '—'} />
-                        <InfoItem label="Senast aktiv" value={lastAuditText ? lastAuditText.split(' ')[1] || '—' : '—'} />
+                        <View>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#222', marginBottom: 8 }}>
+                            Max antal användare
+                          </Text>
+                          <TextInput
+                            value={userLimit}
+                            onChangeText={setUserLimit}
+                            placeholder="10"
+                            keyboardType="numeric"
+                            style={{
+                              borderWidth: 1,
+                              borderColor: '#ddd',
+                              borderRadius: 8,
+                              padding: 12,
+                              fontSize: 14,
+                              backgroundColor: '#fff',
+                            }}
+                          />
+                        </View>
+                        <TouchableOpacity
+                          onPress={async () => {
+                            if (!companyId || !companyName) {
+                              try { if (typeof window !== 'undefined') window.alert('Företags-ID och företagsnamn krävs.'); } catch (_e) {}
+                              return;
+                            }
+                            const trimmedName = String(companyName).trim();
+                            const trimmedId = String(companyId).trim();
+                            const endBusy = beginBusy('Skapar företag…');
+                            try {
+                              const { functionsClient } = await import('../components/firebase');
+                              const { httpsCallable } = await import('firebase/functions');
+                              if (!functionsClient) {
+                                throw new Error('Functions client inte tillgänglig');
+                              }
+                              const provisionCompany = httpsCallable(functionsClient, 'provisionCompany');
+                              const result = await provisionCompany({
+                                companyId: trimmedId,
+                                companyName: trimmedName,
+                              });
+                              const ok = !!(result?.data && (result.data.ok === true || result.data.success === true));
+                              if (ok) {
+                                // Show success message in loading overlay
+                                endBusy();
+                                const successEndBusy = beginBusy(`Företag med namnet "${trimmedName}" skapades`);
+                                setIsCreatingNew(false);
+                                
+                                // Trigger event to refresh company list in sidebar
+                                try {
+                                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                                    window.dispatchEvent(new CustomEvent('dkCompanyCreated', {
+                                      detail: { companyId: trimmedId, companyName: trimmedName }
+                                    }));
+                                  }
+                                } catch (_e) {}
+                                
+                                await handleSelectCompany(trimmedId);
+                                // Auto-close after 2 seconds
+                                setTimeout(() => {
+                                  successEndBusy();
+                                }, 2000);
+                              } else {
+                                throw new Error('Kunde inte skapa företag');
+                              }
+                            } catch (e) {
+                              console.error('[ManageCompany] Error creating company:', e);
+                              const errorMsg = e?.message || String(e);
+                              endBusy();
+                              try { if (typeof window !== 'undefined') window.alert('Kunde inte skapa företag: ' + errorMsg); } catch (_e) {}
+                            }
+                          }}
+                          disabled={loading || !companyId.trim() || !companyName.trim()}
+                          style={{
+                            paddingVertical: 12,
+                            paddingHorizontal: 20,
+                            borderRadius: 8,
+                            backgroundColor: (loading || !companyId.trim() || !companyName.trim()) ? '#B0BEC5' : '#43A047',
+                            alignItems: 'center',
+                            marginTop: 8,
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                            {loading ? 'Skapar...' : 'Skapa företag'}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   </View>
-                </View>
-
-                {/* ACTION CARDS */}
-                {hasSelectedCompany && allowedTools ? (
+                ) : (
+                  <View style={{ width: '100%', maxWidth: 1200, alignSelf: 'center' }}>
+                    {/* ACTION CARDS */}
+                {hasSelectedCompany && allowedTools && !isCreatingNew ? (
                   <View style={{ 
                     flexDirection: Platform.OS === 'web' ? 'row' : 'column', 
                     gap: 24, 
@@ -1234,8 +1387,90 @@ export default function ManageCompany({ navigation }) {
                       </View>
                     </View>
                   ) : null}
-                </View>
-                <View style={{ height: 100, minHeight: 100, width: '100%' }} />
+
+                    {/* LOG SECTION */}
+                    {isSuperadmin ? (
+                      <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                          <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>Senaste åtgärder</Text>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 12, color: '#666' }}>Företag:</span>
+                          <select
+                            value={auditCompanyId || ''}
+                            onChange={(e) => {
+                              try {
+                                const next = String(e?.target?.value || '').trim();
+                                setAuditCompanyId(next);
+                                loadAuditForCompany(next, 50, { setLogEvents: true, setSelectedCompanyEvents: false });
+                              } catch (_e) {}
+                            }}
+                            style={{
+                              height: 34,
+                              borderRadius: 8,
+                              border: '1px solid #e0e0e0',
+                              padding: '0 10px',
+                              backgroundColor: '#fff',
+                              minWidth: 240,
+                              maxWidth: 420,
+                            }}
+                          >
+                            <option value="">Välj företag…</option>
+                            {(Array.isArray(companiesForAudit) ? companiesForAudit : []).map((c) => {
+                              const cid = String(c?.id || '').trim();
+                              const name = String((c?.profile && (c.profile.companyName || c.profile.name)) || cid || '').trim();
+                              if (!cid) return null;
+                              return (
+                                <option key={cid} value={cid}>
+                                  {name}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </View>
+
+                        <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%', maxHeight: 400, overflowY: 'auto' }}>
+                          <View style={{ padding: 12, paddingBottom: 24 }}>
+                            {!auditCompanyId ? (
+                              <Text style={{ fontSize: 13, color: '#666' }}>Välj ett företag för att se admin-loggen.</Text>
+                            ) : auditLoading ? (
+                              <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
+                            ) : (Array.isArray(auditEvents) && auditEvents.length > 0 ? (
+                              <>
+                                {auditEvents.map((ev, index) => {
+                                  const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
+                                  const tsText = ts ? ts.toLocaleString('sv-SE') : '';
+                                  const type = String(ev?.type || '').trim();
+                                  let label = type;
+                                  if (type === 'createUser') label = 'Skapa användare';
+                                  else if (type === 'updateUser') label = 'Uppdatera användare';
+                                  else if (type === 'deleteUser') label = 'Ta bort användare';
+                                  else if (type === 'setCompanyUserLimit') label = 'Ändra antal användare (userLimit)';
+                                  else if (type === 'setCompanyName') label = 'Ändra företagsnamn';
+                                  else if (type === 'setCompanyStatus') label = 'Ändra status (pausa/aktivera)';
+                                  else if (type === 'provisionCompany') label = 'Skapa företag';
+                                  else if (type === 'purgeCompany') label = 'Permanent radering av företag';
+
+                                  return (
+                                    <View key={ev.id} style={{ paddingVertical: 8, borderBottomWidth: index === auditEvents.length - 1 ? 0 : 1, borderBottomColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                        <Ionicons name="checkmark-circle" size={16} color="#2E7D32" />
+                                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#333', flex: 1 }}>{label}</Text>
+                                      </View>
+                                      {tsText ? <Text style={{ fontSize: 12, color: '#777', flexShrink: 0 }}>{tsText}</Text> : null}
+                                    </View>
+                                  );
+                                })}
+                              </>
+                            ) : (
+                              <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
+                            ))}
+                          </View>
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
               </>
             )}
           </View>
@@ -1873,6 +2108,7 @@ export default function ManageCompany({ navigation }) {
           </Pressable>
         </Modal>
       </RootContainer>
+      </>
     );
   }
   return (

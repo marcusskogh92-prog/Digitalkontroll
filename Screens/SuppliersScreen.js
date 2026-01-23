@@ -632,7 +632,9 @@ export default function SuppliersScreen({ navigation, route }) {
       )}
       <RootContainer {...rootProps} style={{ flex: 1 }}>
       <MainLayout
-        onSelectProject={(payload) => {
+        adminMode={true}
+        adminCurrentScreen={isCustomers ? 'customers' : 'suppliers'}
+        adminOnSelectCompany={(payload) => {
           try {
             const cid = String(payload?.companyId || payload?.id || '').trim();
             if (!cid) return;
@@ -643,10 +645,8 @@ export default function SuppliersScreen({ navigation, route }) {
             clearForm();
           } catch (_e) {}
         }}
-        sidebarTitle={screenTitle}
-        sidebarIconName="business-outline"
-        sidebarIconColor="#43A047"
-        sidebarSearchPlaceholder="Sök företag"
+        adminShowCompanySelector={canSeeAllCompanies}
+        sidebarSelectedCompanyId={companyId}
         sidebarCompaniesMode={true}
         sidebarShowMembers={false}
         sidebarHideCompanyActions={true}

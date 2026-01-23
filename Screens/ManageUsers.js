@@ -646,7 +646,9 @@ export default function ManageUsers({ route, navigation }) {
       <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         <MainLayout
-          onSelectProject={(payload) => {
+          adminMode={true}
+          adminCurrentScreen="manage_users"
+          adminOnSelectCompany={(payload) => {
             try {
               if (payload?.createNew) return;
               const cid = String(payload?.companyId || payload?.id || '').trim();
@@ -676,16 +678,8 @@ export default function ManageUsers({ route, navigation }) {
               setCompanyId(cid || '');
             } catch (_e) {}
           }}
-          sidebarTitle="Användare"
-          sidebarIconName="person"
-          sidebarIconColor="#1976D2"
-          sidebarSearchPlaceholder="Sök användare"
-          sidebarCompaniesMode={true}
-          sidebarShowMembers={true}
-          sidebarRestrictCompanyId={sidebarRestrictId}
-          sidebarHideCompanyActions={true}
-          sidebarAutoExpandMembers={true}
-          sidebarSearchMembersOnly={true}
+          adminShowCompanySelector={canSeeAllCompanies}
+          sidebarSelectedCompanyId={companyId}
           sidebarAllowCompanyManagementActions={false}
           topBar={
             <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>

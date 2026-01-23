@@ -774,7 +774,9 @@ export default function ManageControlTypes({ route, navigation }) {
       <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         <MainLayout
-          onSelectProject={async (payload) => {
+          adminMode={true}
+          adminCurrentScreen="manage_control_types"
+          adminOnSelectCompany={async (payload) => {
             try {
               if (payload?.createNew) return;
               const cid = String(payload?.companyId || payload?.id || '').trim();
@@ -793,16 +795,7 @@ export default function ManageControlTypes({ route, navigation }) {
               }
             } catch (_e) {}
           }}
-          sidebarTitle="Kontrolltyper"
-          sidebarIconName="options-outline"
-          sidebarIconColor="#6A1B9A"
-          sidebarSearchPlaceholder="Sök kontroll"
-          sidebarCompaniesMode={true}
-          sidebarShowMembers={false}
-          sidebarRestrictCompanyId={sidebarRestrictId}
-          sidebarHideCompanyActions={true}
-          sidebarAutoExpandMembers={true}
-          sidebarControlTypesMode={true}
+          adminShowCompanySelector={canSeeAllCompanies}
           sidebarSelectedCompanyId={companyId}
           topBar={
             <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>

@@ -45,25 +45,12 @@ export default function ProjectTreeNode({
       e.stopPropagation();
     }
     
-    console.log('[ProjectTreeNode] handlePress - project:', project.id, 'phase:', project?.phase, 'isKalkylskede:', isKalkylskede, 'hasFunctions:', hasFunctions, 'onToggle:', !!onToggle);
+    console.log('[ProjectTreeNode] handlePress - project:', project.id, 'phase:', project?.phase, 'isKalkylskede:', isKalkylskede, 'hasFunctions:', hasFunctions);
     
-    // For kalkylskede projects, ALWAYS navigate directly (never expand)
-    if (isKalkylskede) {
-      console.log('[ProjectTreeNode] Navigating to kalkylskede project (preventing expansion)');
-      handleSelect();
-      return;
-    }
-    
-    // For other projects, expand if has functions, otherwise navigate
-    if (hasFunctions && onToggle) {
-      // Toggle expand/collapse if project has functions
-      console.log('[ProjectTreeNode] Expanding project (not kalkylskede)');
-      onToggle(project.id);
-    } else {
-      // Direct navigation if no functions
-      console.log('[ProjectTreeNode] Navigating (no functions or no onToggle)');
-      handleSelect();
-    }
+    // ALL projects should navigate directly (never expand) - projects are now first-class entities
+    // The SharePoint folder structure will be shown inside the project view
+    console.log('[ProjectTreeNode] Navigating to project (projects are no longer expandable)');
+    handleSelect();
   };
 
   const handleSelect = () => {
@@ -80,15 +67,15 @@ export default function ProjectTreeNode({
     console.log('[ProjectTreeNode] handleSelect - project:', project.id, 'phase:', effectivePhase, 'isKalkylskede:', isKalkylskede);
     
     if (isWeb) {
-      // For kalkylskede projects on web, navigate to separate page
-      if (isKalkylskede && navigation) {
-        console.log('[ProjectTreeNode] Navigating to kalkylskede project:', projectWithPhase.id, 'phase:', projectWithPhase.phase);
+      // On web, always navigate to ProjectDetails for all projects
+      if (navigation) {
+        console.log('[ProjectTreeNode] Navigating to project:', projectWithPhase.id, 'phase:', projectWithPhase.phase);
         navigation.navigate('ProjectDetails', {
           project: projectWithPhase,
           companyId
         });
       } else if (onSelect) {
-        // Web: set selected project (handled by parent) for non-kalkylskede projects
+        // Fallback: use onSelect callback
         onSelect(projectWithPhase);
       }
     } else {
@@ -139,21 +126,8 @@ export default function ProjectTreeNode({
 
   const projectRowContent = (
     <>
-      {/* Chevron for expand/collapse (only if has functions AND not kalkylskede) */}
-      {(() => {
-        const projectPhase = getProjectPhase(project);
-        const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
-        // Don't show chevron for kalkylskede projects - they navigate instead
-        if (isKalkylskede) return null;
-        return hasFunctions ? (
-          <Ionicons
-            name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-            size={16}
-            color="#666"
-            style={{ marginRight: 6 }}
-          />
-        ) : null;
-      })()}
+      {/* Projects are no longer expandable - chevron removed */}
+      {/* All projects navigate directly to project view */}
       
       {/* Status indicator - dölj för eftermarknad */}
       {selectedPhase !== 'eftermarknad' && (
@@ -186,28 +160,8 @@ export default function ProjectTreeNode({
     </>
   );
 
-  const functionsList = (() => {
-    const projectPhase = getProjectPhase(project);
-    const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
-    // Don't show functions for kalkylskede projects - they navigate instead
-    if (isKalkylskede) return null;
-    return isExpanded && hasFunctions && functions.length > 0 ? (
-      <View style={{ marginLeft: 20, marginTop: 4 }}>
-        {functions.map((func) => (
-          <ProjectFunctionNode
-            key={func.id}
-            functionItem={func}
-            project={project}
-            onSelect={() => {
-              if (onSelectFunction) {
-                onSelectFunction(project, func);
-              }
-            }}
-          />
-        ))}
-      </View>
-    ) : null;
-  })();
+  // Functions are no longer shown in the sidebar - they will be shown inside the project view
+  // const functionsList = null;
 
   if (Platform.OS === 'web') {
     return (

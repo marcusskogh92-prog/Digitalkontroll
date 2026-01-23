@@ -22,7 +22,7 @@ export const DEFAULT_KALKYLSKEDE_NAVIGATION = {
     },
     {
       id: 'forfragningsunderlag',
-      name: '02 - Förfrågningsunderlag',
+      name: '02- Förfrågningsunderlag',
       icon: 'folder-outline',
       order: 2,
       items: [
@@ -50,7 +50,7 @@ export const DEFAULT_KALKYLSKEDE_NAVIGATION = {
     },
     {
       id: 'ue-offerter',
-      name: '04 - UE & Offerter',
+      name: '04 - UE & offerter',
       icon: 'document-outline',
       order: 4,
       items: [
@@ -92,7 +92,7 @@ export const DEFAULT_KALKYLSKEDE_NAVIGATION = {
     },
     {
       id: 'risk-mojligheter',
-      name: '07 - Risk / Möjligheter',
+      name: '07 - Risk och möjligheter',
       icon: 'warning-outline',
       order: 7,
       items: [

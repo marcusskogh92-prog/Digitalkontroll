@@ -1,7 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
 import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from '../ContextMenu';
 import { ProjectTree } from './ProjectTree';
+import { isProjectFolder, extractProjectMetadata } from '../../utils/isProjectFolder';
+import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
+import { getSharePointNavigationConfig } from '../firebase';
 
 function RecursiveFolderView({
   folder,
@@ -13,49 +17,189 @@ function RecursiveFolderView({
   hierarchy,
   setHierarchy,
   parentPath = '',
+  isProject = false,
+  onSelectProject = null,
+  navigation = null,
 }) {
   if (!folder) return null;
 
   const safeName = folder.name || folder.id || '';
   const fontSize = Math.max(12, 15 - level);
   const marginLeft = 12 + level * 8;
+  
+  // Check if this folder is a project (if not already determined)
+  const folderIsProject = isProject || isProjectFolder(folder);
+  
+  const handlePress = () => {
+    try {
+      if (folderIsProject && onSelectProject) {
+        // Project folder: navigate to project view
+        const projectMetadata = extractProjectMetadata(folder);
+        if (projectMetadata) {
+          const projectData = {
+            id: projectMetadata.id || folder.id || folder.name,
+            name: projectMetadata.name || projectMetadata.fullName || folder.name,
+            number: projectMetadata.number || '',
+            fullName: projectMetadata.fullName || folder.name,
+            path: projectMetadata.path || folder.path || folder.name,
+            type: 'project',
+            ...folder,
+          };
+          
+          if (onSelectProject) {
+            onSelectProject(projectData);
+          } else if (navigation) {
+            navigation.navigate('ProjectDetails', {
+              project: projectData,
+              companyId,
+            });
+          }
+        }
+      } else {
+        // Regular folder: expand/collapse
+        if (onToggle) {
+          onToggle(folder.id);
+        }
+      }
+    } catch (error) {
+      console.error('[RecursiveFolderView] Error handling folder press:', error);
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    return (
+      <div style={{ marginLeft, marginTop: 4 }}>
+        <div
+          onClick={handlePress}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '4px 8px',
+            cursor: 'pointer',
+            borderRadius: 4,
+            backgroundColor: 'transparent',
+          }}
+        >
+          {!folderIsProject && (
+            <Ionicons
+              name={expandedSubs?.[folder.id] ? 'chevron-down' : 'chevron-forward'}
+              size={Math.max(12, 16 - level)}
+              color="#222"
+              style={{ marginRight: 6 }}
+            />
+          )}
+          {folderIsProject && (
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: '#43A047',
+                marginRight: 8,
+                border: '1px solid #bbb',
+                display: 'inline-block',
+              }}
+            />
+          )}
+          <span style={{ fontSize, color: folderIsProject ? '#1976D2' : '#222', fontWeight: folderIsProject ? '600' : '400' }}>
+            {safeName}
+          </span>
+        </div>
+
+        {!folderIsProject && expandedSubs?.[folder.id] && Array.isArray(folder.children) && folder.children.length > 0 && (
+          <div style={{ marginLeft: 8, marginTop: 2 }}>
+            {folder.children
+              .filter(child => child && (child.type === 'folder' || !child.type))
+              .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }))
+              .map(child => {
+                const childIsProject = isProjectFolder(child);
+                return (
+                  <RecursiveFolderView
+                    key={child.id || `${safeName}-${level}`}
+                    folder={child}
+                    level={level + 1}
+                    expandedSubs={expandedSubs}
+                    spinSubs={spinSubs}
+                    onToggle={onToggle}
+                    companyId={companyId}
+                    hierarchy={hierarchy}
+                    setHierarchy={setHierarchy}
+                    parentPath={parentPath}
+                    isProject={childIsProject}
+                    onSelectProject={onSelectProject}
+                    navigation={navigation}
+                  />
+                );
+              })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <View style={{ marginLeft, marginTop: 4 }}>
       <TouchableOpacity
-        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2, paddingHorizontal: 4 }}
-        onPress={() => {
-          if (onToggle) onToggle(folder.id);
+        style={{ 
+          flexDirection: 'row', 
+          alignItems: 'center', 
+          paddingVertical: 2, 
+          paddingHorizontal: 4,
+          backgroundColor: folderIsProject ? 'transparent' : 'transparent',
         }}
+        onPress={handlePress}
       >
-        <Ionicons
-          name={expandedSubs?.[folder.id] ? 'chevron-down' : 'chevron-forward'}
-          size={Math.max(12, 16 - level)}
-          color="#222"
-          style={{ marginRight: 4 }}
-        />
-        <Text style={{ fontSize, color: '#222' }}>{safeName}</Text>
+        {!folderIsProject && (
+          <Ionicons
+            name={expandedSubs?.[folder.id] ? 'chevron-down' : 'chevron-forward'}
+            size={Math.max(12, 16 - level)}
+            color="#222"
+            style={{ marginRight: 4 }}
+          />
+        )}
+        {folderIsProject && (
+          <View
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: '#43A047',
+              marginRight: 6,
+              borderWidth: 1,
+              borderColor: '#bbb',
+            }}
+          />
+        )}
+        <Text style={{ fontSize, color: folderIsProject ? '#1976D2' : '#222', fontWeight: folderIsProject ? '600' : '400' }}>
+          {safeName}
+        </Text>
       </TouchableOpacity>
 
-      {expandedSubs?.[folder.id] && Array.isArray(folder.children) && folder.children.length > 0 && (
+      {!folderIsProject && expandedSubs?.[folder.id] && Array.isArray(folder.children) && folder.children.length > 0 && (
         <View style={{ marginLeft: 8, marginTop: 2 }}>
           {folder.children
             .filter(child => child && (child.type === 'folder' || !child.type))
             .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }))
-            .map(child => (
-              <RecursiveFolderView
-                key={child.id || `${safeName}-${level}`}
-                folder={child}
-                level={level + 1}
-                expandedSubs={expandedSubs}
-                spinSubs={spinSubs}
-                onToggle={onToggle}
-                companyId={companyId}
-                hierarchy={hierarchy}
-                setHierarchy={setHierarchy}
-                parentPath={parentPath}
-              />
-            ))}
+            .map(child => {
+              const childIsProject = isProjectFolder(child);
+              return (
+                <RecursiveFolderView
+                  key={child.id || `${safeName}-${level}`}
+                  folder={child}
+                  level={level + 1}
+                  expandedSubs={expandedSubs}
+                  spinSubs={spinSubs}
+                  onToggle={onToggle}
+                  companyId={companyId}
+                  hierarchy={hierarchy}
+                  setHierarchy={setHierarchy}
+                  parentPath={parentPath}
+                  isProject={childIsProject}
+                  onSelectProject={onSelectProject}
+                  navigation={navigation}
+                />
+              );
+            })}
         </View>
       )}
     </View>
@@ -96,8 +240,47 @@ export function SharePointLeftPanel({
   buildStamp,
   scrollToEndSafe,
   createPortal,
+  onSelectProject, // Optional callback for project selection (from HomeScreen)
 }) {
   const isWeb = Platform.OS === 'web';
+  const [filteredHierarchy, setFilteredHierarchy] = useState([]);
+  const [navConfig, setNavConfig] = useState(null);
+
+  // Load navigation config and build hierarchy from enabled sites
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!companyId) {
+        if (mounted) setFilteredHierarchy([]);
+        return;
+      }
+
+      try {
+        const config = await getSharePointNavigationConfig(companyId);
+        if (!mounted) return;
+        setNavConfig(config);
+
+        // Check if any sites are enabled
+        const enabledSites = config?.enabledSites || [];
+        if (enabledSites.length === 0) {
+          // No sites enabled - show empty (admin must configure)
+          if (mounted) setFilteredHierarchy([]);
+          return;
+        }
+
+        // Build hierarchy from enabled sites (filterHierarchyByConfig now builds from sites, not filters existing hierarchy)
+        const filtered = await filterHierarchyByConfig([], companyId, config);
+        if (mounted) {
+          setFilteredHierarchy(filtered);
+        }
+      } catch (error) {
+        console.error('[SharePointLeftPanel] Error loading/filtering hierarchy:', error);
+        // On error, show empty (admin must configure properly)
+        if (mounted) setFilteredHierarchy([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [companyId]);
 
   return (
     <>
@@ -147,7 +330,7 @@ export function SharePointLeftPanel({
             marginBottom: 8,
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            justifyContent: 'flex-end',
             gap: 8,
           }}
         >
@@ -302,8 +485,10 @@ export function SharePointLeftPanel({
               );
             }
 
-            const filteredHierarchy = hierarchy || [];
-            if (!filteredHierarchy.length) {
+            // Always use filteredHierarchy - never fallback to raw hierarchy
+            // If no config exists or no sites enabled, filteredHierarchy will be empty
+            const displayHierarchy = filteredHierarchy || [];
+            if (!displayHierarchy.length) {
               return (
                 <View
                   style={{ paddingHorizontal: 4 }}
@@ -317,24 +502,92 @@ export function SharePointLeftPanel({
                       fontSize: 14,
                     }}
                   >
-                    Inga mappar hittades. Skapa projektstruktur i SharePoint och uppdatera.
+                    {navConfig && (!navConfig.enabledSites || navConfig.enabledSites.length === 0)
+                      ? 'Inga SharePoint-sites är aktiverade. Konfigurera i Admin → SharePoint Navigation.'
+                      : 'Inga mappar hittades. Konfigurera SharePoint Navigation i Admin-vyn eller skapa projektstruktur i SharePoint.'}
                   </Text>
                 </View>
               );
             }
 
+            // Show sites as root level, with their folders as children
             return (
               <View
                 style={{ paddingHorizontal: 4 }}
                 nativeID={isWeb ? 'dk-tree-root' : undefined}
               >
-                {filteredHierarchy
-                  .filter(folder => folder.type === 'folder' || !folder.type)
-                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                  .map(folder => (
+                {displayHierarchy.map(siteItem => {
+                  // Site items have type 'site' and contain folders as children
+                  if (siteItem.type === 'site') {
+                    return (
+                      <View key={siteItem.id} style={{ marginBottom: 8 }}>
+                        {/* Site header */}
+                        <View style={{ 
+                          flexDirection: 'row', 
+                          alignItems: 'center', 
+                          paddingVertical: 8,
+                          paddingHorizontal: 8,
+                          backgroundColor: '#f0f7ff',
+                          borderRadius: 4,
+                          marginBottom: 4,
+                        }}>
+                          <Ionicons name="folder" size={16} color="#1976D2" style={{ marginRight: 6 }} />
+                          <Text style={{ 
+                            fontSize: 14, 
+                            fontWeight: '600', 
+                            color: '#1976D2',
+                            flex: 1,
+                          }}>
+                            {siteItem.name}
+                          </Text>
+                        </View>
+                        
+                        {/* Site folders */}
+                        {siteItem.children && siteItem.children.length > 0 ? (
+                          <View style={{ marginLeft: 12 }}>
+                            {siteItem.children.map(folder => {
+                              const folderIsProject = isProjectFolder(folder);
+                              
+                              return (
+                                <RecursiveFolderView
+                                  key={folder.id}
+                                  folder={folder}
+                                  level={0}
+                                  expandedSubs={expandedSubs}
+                                  spinSubs={spinSub}
+                                  onToggle={handleToggleSubFolder}
+                                  companyId={companyId}
+                                  hierarchy={hierarchy}
+                                  setHierarchy={setHierarchy}
+                                  parentPath=""
+                                  isProject={folderIsProject}
+                                  onSelectProject={onSelectProject}
+                                  navigation={navigation}
+                                />
+                              );
+                            })}
+                          </View>
+                        ) : (
+                          <Text style={{ 
+                            fontSize: 12, 
+                            color: '#888', 
+                            fontStyle: 'italic',
+                            marginLeft: 12,
+                            paddingLeft: 8,
+                          }}>
+                            Inga mappar
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  }
+                  
+                  // Fallback for old structure (direct folders)
+                  const folderIsProject = isProjectFolder(siteItem);
+                  return (
                     <RecursiveFolderView
-                      key={folder.id}
-                      folder={folder}
+                      key={siteItem.id}
+                      folder={siteItem}
                       level={0}
                       expandedSubs={expandedSubs}
                       spinSubs={spinSub}
@@ -343,8 +596,12 @@ export function SharePointLeftPanel({
                       hierarchy={hierarchy}
                       setHierarchy={setHierarchy}
                       parentPath=""
+                      isProject={folderIsProject}
+                      onSelectProject={onSelectProject}
+                      navigation={navigation}
                     />
-                  ))}
+                  );
+                })}
               </View>
             );
           })()}

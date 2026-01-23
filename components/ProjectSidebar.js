@@ -7,6 +7,7 @@ import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { ensureProjectFunctions, DEFAULT_PROJECT_FUNCTIONS } from './common/ProjectTree/constants';
 import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
+import { isProjectFolder, extractProjectMetadata } from '../utils/isProjectFolder';
 import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveCompanySharePointSiteId, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 import { getSharePointHierarchy, loadFolderChildren, checkSharePointConnection, createSharePointFolder, deleteItem } from '../services/azure/hierarchyService';
 import { createCompanySiteWithStructure } from '../services/azure/siteService';
@@ -46,18 +47,44 @@ function RecursiveFolderItem({
   setFolderContextMenu,
   resolvedCompanyId,
   loadFolderChildren,
-  setHierarchy 
+  setHierarchy,
+  isProject = false,
+  onSelectProject = null,
 }) {
   const folderSpin = spinSubs[folder.id] || 0;
   const folderAngle = expandedSubs[folder.id] ? (folderSpin * 360 + 90) : (folderSpin * 360);
   const fontSize = Math.max(12, 15 - level); // Slightly smaller font for deeper levels
   const paddingLeft = 16 + (level * 4); // More indentation for deeper levels
   
+  // Check if this folder is a project (if not already determined)
+  const folderIsProject = isProject || isProjectFolder(folder);
+  
+  const handleClick = () => {
+    if (folderIsProject && onSelectProject) {
+      // Project folder: navigate to project view
+      const projectMetadata = extractProjectMetadata(folder);
+      if (projectMetadata) {
+        onSelectProject({
+          id: projectMetadata.id,
+          name: projectMetadata.name,
+          number: projectMetadata.number,
+          fullName: projectMetadata.fullName,
+          path: projectMetadata.path,
+          type: 'project',
+          ...folder,
+        });
+      }
+    } else {
+      // Regular folder: expand/collapse
+      toggleSub(folder.id);
+    }
+  };
+  
   return (
     <li>
       <div 
         style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
-        onClick={() => toggleSub(folder.id)}
+        onClick={handleClick}
         onContextMenu={(e) => {
           if (Platform.OS !== 'web') return;
           try { e.preventDefault(); } catch(_e) {}
@@ -66,25 +93,41 @@ function RecursiveFolderItem({
           setFolderContextMenu({ folder, x, y });
         }}
       >
-        <span
-          style={{
-            color: '#222',
-            fontSize: fontSize + 1,
-            fontWeight: 500,
-            marginRight: 6,
-            display: 'inline-block',
-            transform: `rotate(${folderAngle}deg)`,
-            transition: 'transform 0.4s ease',
-          }}
-        >
-          &gt;
-        </span>
+        {!folderIsProject && (
+          <span
+            style={{
+              color: '#222',
+              fontSize: fontSize + 1,
+              fontWeight: 500,
+              marginRight: 6,
+              display: 'inline-block',
+              transform: `rotate(${folderAngle}deg)`,
+              transition: 'transform 0.4s ease',
+            }}
+          >
+            &gt;
+          </span>
+        )}
+        {folderIsProject && (
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: '#43A047',
+              marginRight: 8,
+              display: 'inline-block',
+              border: '1px solid #bbb',
+            }}
+          />
+        )}
         <span style={{ 
-          fontWeight: expandedSubs[folder.id] ? 600 : 400, 
-          fontSize: fontSize 
+          fontWeight: expandedSubs[folder.id] ? 600 : (folderIsProject ? 600 : 400), 
+          fontSize: fontSize,
+          color: folderIsProject ? '#1976D2' : '#222',
         }}>{folder.name}</span>
       </div>
-      {expandedSubs[folder.id] && (
+      {!folderIsProject && expandedSubs[folder.id] && (
         <ul style={{ listStyle: 'none', paddingLeft: paddingLeft, marginTop: 2 }}>
           {folder.loading ? (
             <li style={{ color: '#888', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
@@ -96,20 +139,25 @@ function RecursiveFolderItem({
             </li>
           ) : folder.children && folder.children.length > 0 ? (
             // Recursively render children - infinite depth, fully driven by SharePoint structure
-            folder.children.map(childFolder => (
-              <RecursiveFolderItem
-                key={childFolder.id}
-                folder={childFolder}
-                level={level + 1}
-                expandedSubs={expandedSubs}
-                spinSubs={spinSubs}
-                toggleSub={toggleSub}
-                setFolderContextMenu={setFolderContextMenu}
-                resolvedCompanyId={resolvedCompanyId}
-                loadFolderChildren={loadFolderChildren}
-                setHierarchy={setHierarchy}
-              />
-            ))
+            folder.children.map(childFolder => {
+              const childIsProject = isProjectFolder(childFolder);
+              return (
+                <RecursiveFolderItem
+                  key={childFolder.id}
+                  folder={childFolder}
+                  level={level + 1}
+                  expandedSubs={expandedSubs}
+                  spinSubs={spinSubs}
+                  toggleSub={toggleSub}
+                  setFolderContextMenu={setFolderContextMenu}
+                  resolvedCompanyId={resolvedCompanyId}
+                  loadFolderChildren={loadFolderChildren}
+                  setHierarchy={setHierarchy}
+                  isProject={childIsProject}
+                  onSelectProject={onSelectProject}
+                />
+              );
+            })
           ) : (
             <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
               Mappen är tom
@@ -2949,145 +2997,242 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
         </div>
       )}
       </> ) : (
+        // Show raw SharePoint structure - folders expand, project folders navigate
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {filteredGroups.length === 0 && (
             <li style={{ textAlign: 'center', marginTop: 24 }}>
               {search.trim() === '' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
                   <div style={{ color: '#888', fontSize: 15, marginBottom: 8 }}>Inga mappar ännu</div>
-                  {/* Old "Create folder" button removed - folders are managed in SharePoint */}
                 </div>
               ) : (
-                <div style={{ color: '#888', fontSize: 15 }}>Inga projekt hittades.</div>
+                <div style={{ color: '#888', fontSize: 15 }}>Inga mappar hittades.</div>
               )}
             </li>
           )}
           {filteredGroups.map(group => {
+            const groupIsProject = isProjectFolder(group);
             const groupSpin = spinGroups[group.id] || 0;
             const groupAngle = expandedGroups[group.id] ? (groupSpin * 360 + 90) : (groupSpin * 360);
+            
             return (
-            <li key={group.id}>
-              <div 
-                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
-                onClick={() => toggleGroup(group.id)}
-                onContextMenu={(e) => {
-                  if (Platform.OS !== 'web') return;
-                  try { e.preventDefault(); } catch(_e) {}
-                  const x = (e && e.clientX) ? e.clientX : 60;
-                  const y = (e && e.clientY) ? e.clientY : 60;
-                  setFolderContextMenu({ folder: group, x, y });
-                }}
-              >
-                <span
-                  style={{
-                    color: '#222',
-                    fontSize: 18,
-                    fontWeight: 700,
-                    marginRight: 6,
-                    display: 'inline-block',
-                    transform: `rotate(${groupAngle}deg)`,
-                    transition: 'transform 0.4s ease',
+              <li key={group.id}>
+                <div 
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    cursor: 'pointer', 
+                    userSelect: 'none',
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                  }} 
+                  onClick={() => {
+                    if (groupIsProject && onSelectProject) {
+                      const projectMetadata = extractProjectMetadata(group);
+                      if (projectMetadata) {
+                        onSelectProject({
+                          id: projectMetadata.id,
+                          name: projectMetadata.name,
+                          number: projectMetadata.number,
+                          fullName: projectMetadata.fullName,
+                          path: projectMetadata.path,
+                          type: 'project',
+                          ...group,
+                        });
+                      }
+                    } else {
+                      toggleGroup(group.id);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    if (Platform.OS !== 'web') return;
+                    try { e.preventDefault(); } catch(_e) {}
+                    const x = (e && e.clientX) ? e.clientX : 60;
+                    const y = (e && e.clientY) ? e.clientY : 60;
+                    setFolderContextMenu({ folder: group, x, y });
                   }}
                 >
-                  &gt;
-                </span>
-                <span style={{ 
-                  fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', 
-                  fontWeight: expandedGroups[group.id] ? 700 : 400, 
-                  fontSize: 16, 
-                  letterSpacing: 0.1 
-                }}>{group.name}</span>
-              </div>
-              {expandedGroups[group.id] && (
-                <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
-                  {group.loading ? (
-                    <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
-                      Laddar undermappar...
-                    </li>
-                  ) : group.error ? (
-                    <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
-                      Fel: {group.error}
-                    </li>
-                  ) : group.children && group.children.length > 0 ? (
-                    group.children.map(sub => {
-                    const subSpin = spinSubs[sub.id] || 0;
-                    const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
-                    return (
-                    <li key={sub.id}>
-                      <div 
-                        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
-                        onClick={() => toggleSub(sub.id)}
-                        onContextMenu={(e) => {
-                          if (Platform.OS !== 'web') return;
-                          try { e.preventDefault(); } catch(_e) {}
-                          const x = (e && e.clientX) ? e.clientX : 60;
-                          const y = (e && e.clientY) ? e.clientY : 60;
-                          setFolderContextMenu({ folder: sub, x, y });
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: '#222',
-                            fontSize: 15,
-                            fontWeight: 600,
-                            marginRight: 6,
-                            display: 'inline-block',
-                            transform: `rotate(${subAngle}deg)`,
-                            transition: 'transform 0.4s ease',
-                          }}
-                        >
-                          &gt;
-                        </span>
-                        <span style={{ 
-                          fontWeight: expandedSubs[sub.id] ? 600 : 400, 
-                          fontSize: 15 
-                        }}>{sub.name}</span>
-                      </div>
-                      {expandedSubs[sub.id] && (
-                        <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                          {sub.loading ? (
-                            <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
-                              Laddar undermappar från SharePoint...
-                            </li>
-                          ) : sub.error ? (
-                            <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
-                              Fel: {sub.error}
-                            </li>
-                          ) : sub.children && sub.children.length > 0 ? (
-                            // Recursively render subfolders - infinite depth using RecursiveFolderItem
-                            sub.children.map(childFolder => (
-                              <RecursiveFolderItem
-                                key={childFolder.id}
-                                folder={childFolder}
-                                level={1}
-                                expandedSubs={expandedSubs}
-                                spinSubs={spinSubs}
-                                toggleSub={toggleSub}
-                                setFolderContextMenu={setFolderContextMenu}
-                                resolvedCompanyId={resolvedCompanyId}
-                                loadFolderChildren={loadFolderChildren}
-                                setHierarchy={setHierarchy}
-                              />
-                            ))
-                          ) : (
-                            <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
-                              Mappen är tom
-                            </li>
-                          )}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                  })
-                  ) : (
-                    <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
-                      {group.loading ? 'Laddar undermappar från SharePoint...' : 'Inga undermappar i SharePoint'}
-                    </li>
+                  {!groupIsProject && (
+                    <span
+                      style={{
+                        color: '#222',
+                        fontSize: 18,
+                        fontWeight: 700,
+                        marginRight: 6,
+                        display: 'inline-block',
+                        transform: `rotate(${groupAngle}deg)`,
+                        transition: 'transform 0.4s ease',
+                      }}
+                    >
+                      &gt;
+                    </span>
                   )}
-                </ul>
-              )}
-            </li>
-          );
+                  {groupIsProject && (
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 5,
+                        backgroundColor: '#43A047',
+                        marginRight: 8,
+                        display: 'inline-block',
+                        border: '1px solid #bbb',
+                      }}
+                    />
+                  )}
+                  <span style={{ 
+                    fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', 
+                    fontWeight: expandedGroups[group.id] ? 700 : (groupIsProject ? 600 : 400), 
+                    fontSize: 16, 
+                    letterSpacing: 0.1,
+                    color: groupIsProject ? '#1976D2' : '#222',
+                  }}>{group.name}</span>
+                </div>
+                {!groupIsProject && expandedGroups[group.id] && (
+                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
+                    {group.loading ? (
+                      <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                        Laddar undermappar...
+                      </li>
+                    ) : group.error ? (
+                      <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                        Fel: {group.error}
+                      </li>
+                    ) : group.children && group.children.length > 0 ? (
+                      group.children.map(sub => {
+                        const subIsProject = isProjectFolder(sub);
+                        const subSpin = spinSubs[sub.id] || 0;
+                        const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
+                        return (
+                          <li key={sub.id}>
+                            <div 
+                              style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 4px' }} 
+                              onClick={() => {
+                                if (subIsProject && onSelectProject) {
+                                  const projectMetadata = extractProjectMetadata(sub);
+                                  if (projectMetadata) {
+                                    onSelectProject({
+                                      id: projectMetadata.id,
+                                      name: projectMetadata.name,
+                                      number: projectMetadata.number,
+                                      fullName: projectMetadata.fullName,
+                                      path: projectMetadata.path,
+                                      type: 'project',
+                                      ...sub,
+                                    });
+                                  }
+                                } else {
+                                  toggleSub(sub.id);
+                                }
+                              }}
+                              onContextMenu={(e) => {
+                                if (Platform.OS !== 'web') return;
+                                try { e.preventDefault(); } catch(_e) {}
+                                const x = (e && e.clientX) ? e.clientX : 60;
+                                const y = (e && e.clientY) ? e.clientY : 60;
+                                setFolderContextMenu({ folder: sub, x, y });
+                              }}
+                            >
+                              {!subIsProject && (
+                                <span
+                                  style={{
+                                    color: '#222',
+                                    fontSize: 15,
+                                    fontWeight: 600,
+                                    marginRight: 6,
+                                    display: 'inline-block',
+                                    transform: `rotate(${subAngle}deg)`,
+                                    transition: 'transform 0.4s ease',
+                                  }}
+                                >
+                                  &gt;
+                                </span>
+                              )}
+                              {subIsProject && (
+                                <span
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    backgroundColor: '#43A047',
+                                    marginRight: 8,
+                                    display: 'inline-block',
+                                    border: '1px solid #bbb',
+                                  }}
+                                />
+                              )}
+                              <span style={{ 
+                                fontWeight: expandedSubs[sub.id] ? 600 : (subIsProject ? 600 : 400), 
+                                fontSize: 15,
+                                color: subIsProject ? '#1976D2' : '#222',
+                              }}>{sub.name}</span>
+                            </div>
+                            {!subIsProject && expandedSubs[sub.id] && (
+                              <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
+                                {sub.loading ? (
+                                  <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                                    Laddar undermappar från SharePoint...
+                                  </li>
+                                ) : sub.error ? (
+                                  <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                                    Fel: {sub.error}
+                                  </li>
+                                ) : sub.children && sub.children.length > 0 ? (
+                                  sub.children.map(childFolder => {
+                                    const childIsProject = isProjectFolder(childFolder);
+                                    return (
+                                      <RecursiveFolderItem
+                                        key={childFolder.id}
+                                        folder={childFolder}
+                                        level={1}
+                                        expandedSubs={expandedSubs}
+                                        spinSubs={spinSubs}
+                                        toggleSub={(folderId) => {
+                                          if (childIsProject && onSelectProject) {
+                                            const projectMetadata = extractProjectMetadata(childFolder);
+                                            if (projectMetadata) {
+                                              onSelectProject({
+                                                id: projectMetadata.id,
+                                                name: projectMetadata.name,
+                                                number: projectMetadata.number,
+                                                fullName: projectMetadata.fullName,
+                                                path: projectMetadata.path,
+                                                type: 'project',
+                                                ...childFolder,
+                                              });
+                                            }
+                                          } else {
+                                            toggleSub(folderId);
+                                          }
+                                        }}
+                                        setFolderContextMenu={setFolderContextMenu}
+                                        resolvedCompanyId={resolvedCompanyId}
+                                        loadFolderChildren={loadFolderChildren}
+                                        setHierarchy={setHierarchy}
+                                        isProject={childIsProject}
+                                        onSelectProject={onSelectProject}
+                                      />
+                                    );
+                                  })
+                                ) : (
+                                  <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                                    Mappen är tom
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      })
+                    ) : (
+                      <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                        {group.loading ? 'Laddar undermappar från SharePoint...' : 'Inga undermappar i SharePoint'}
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            );
           })}
         </ul>
       )}

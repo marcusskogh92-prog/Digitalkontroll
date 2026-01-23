@@ -40,6 +40,8 @@ import ControlDetails from './ControlDetails';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
+import ProjectDocumentsView from '../components/common/ProjectDocumentsView';
+import ProjectInternalNavigation from '../components/common/ProjectInternalNavigation';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
@@ -583,6 +585,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   
   // Local state for project that can be updated when project ID changes
   const [project, setProject] = useState(initialProject);
+  
+  // Internal navigation state
+  const [activeSection, setActiveSection] = useState('overview');
   
   // Update project state when route params change
   useEffect(() => {
@@ -1650,35 +1655,84 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </TouchableOpacity>
         )}
       </View>
-      {/* Projektinfo med logga, status, projektnummer, projektnamn (expanderbar) */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
-        {companyLogoUri ? (
-          <View style={{ marginRight: 16 }}>
-            <Image source={{ uri: companyLogoUri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee' }} resizeMode="contain" />
+      {/* Project Header - Show project name and number prominently */}
+      <View style={{ marginBottom: 16, padding: 16, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          <View style={{
+            width: 16,
+            height: 16,
+            borderRadius: 8,
+            backgroundColor: editableProject?.status === 'completed' ? '#222' : '#43A047',
+            marginRight: 12,
+            borderWidth: 2,
+            borderColor: '#bbb',
+          }} />
+          <Text style={{ fontSize: 24, fontWeight: '700', color: '#222', marginRight: 12 }}>
+            {editableProject?.id || project?.id || project?.number || ''}
+          </Text>
+          <Text style={{ fontSize: 24, fontWeight: '700', color: '#222', flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
+            {editableProject?.name || project?.name || project?.fullName || 'Projekt'}
+          </Text>
+        </View>
+        {editableProject?.phase && (
+          <View style={{ marginTop: 8 }}>
+            <Text style={{ fontSize: 14, color: '#666' }}>
+              Fas: {getProjectPhase(editableProject).name}
+            </Text>
           </View>
-        ) : null}
-        <View style={{ flex: 1, position: 'relative' }}>
-          {/* Header-rad med projektnummer/namn och chevron */}
-          <TouchableOpacity
-            onPress={toggleProjectInfo}
-            activeOpacity={0.8}
-            style={{ flexDirection: 'row', alignItems: 'center', marginBottom: projectInfoExpanded ? 8 : 0 }}
-          >
-            <View style={{
-              width: 16,
-              height: 16,
-              borderRadius: 8,
-              backgroundColor: editableProject?.status === 'completed' ? '#222' : '#43A047',
-              marginRight: 8,
-              borderWidth: 2,
-              borderColor: '#bbb',
-            }} />
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.id}</Text>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{editableProject?.name}</Text>
-            <Animated.View style={{ marginLeft: 8, transform: [{ rotate: projectInfoRotate }] }}>
-              <Ionicons name={projectInfoExpanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
-            </Animated.View>
-          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Internal Navigation */}
+      <ProjectInternalNavigation
+        activeSection={activeSection}
+        onSelectSection={setActiveSection}
+        project={editableProject || project}
+      />
+
+      {/* Section Content */}
+      {activeSection === 'documents' && (
+        <ProjectDocumentsView
+          project={editableProject || project}
+          companyId={companyId}
+        />
+      )}
+
+      {/* Overview Section - Show project info */}
+      {activeSection === 'overview' && (
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
+            Projektinformation
+          </Text>
+          {/* Projektinfo med logga, status, projektnummer, projektnamn (expanderbar) */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
+            {companyLogoUri ? (
+              <View style={{ marginRight: 16 }}>
+                <Image source={{ uri: companyLogoUri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee' }} resizeMode="contain" />
+              </View>
+            ) : null}
+            <View style={{ flex: 1, position: 'relative' }}>
+              {/* Header-rad med projektnummer/namn och chevron */}
+              <TouchableOpacity
+                onPress={toggleProjectInfo}
+                activeOpacity={0.8}
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: projectInfoExpanded ? 8 : 0 }}
+              >
+                <View style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  backgroundColor: editableProject?.status === 'completed' ? '#222' : '#43A047',
+                  marginRight: 8,
+                  borderWidth: 2,
+                  borderColor: '#bbb',
+                }} />
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.id}</Text>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{editableProject?.name}</Text>
+                <Animated.View style={{ marginLeft: 8, transform: [{ rotate: projectInfoRotate }] }}>
+                  <Ionicons name={projectInfoExpanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
+                </Animated.View>
+              </TouchableOpacity>
 
           {projectInfoExpanded && (
           <View style={{ marginBottom: 2 }}>
@@ -1745,6 +1799,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           )}
         </View>
       </View>
+        </View>
+      )}
 
       {/* Modal för ändra projektinfo - uppdaterad layout liknande Skapa nytt projekt */}
       <Modal visible={editingInfo} transparent animationType="fade" onRequestClose={() => setEditingInfo(false)}>
@@ -3582,7 +3638,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       </View>
       )}
 
-      {selectedAction?.kind !== 'overblick' && (
+      {/* Controls rendering - moved to controls section */}
+      {selectedAction?.kind !== 'overblick' && activeSection !== 'controls' && activeSection !== 'overview' && activeSection !== 'documents' && activeSection !== 'kalkyl' && activeSection !== 'ue-offerter' && (
         <>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
 
@@ -3859,28 +3916,29 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   </View>
                 </View>
               </Modal>
-      {selectedAction?.kind !== 'overblick' && (
-        <>
-          <View style={{ marginTop: 0, marginBottom: 0, alignItems: 'flex-start' }}>
-            <Text style={{ fontSize: 18, fontWeight: '600', textAlign: 'left', marginBottom: 12, color: '#263238', letterSpacing: 0.2 }}>
-              Utförda kontroller:
-            </Text>
+        </View>
+        </>
+      )}
+
+      {/* Controls Section */}
+      {activeSection === 'controls' && (
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
+            Kontroller
+          </Text>
+          {/* Sökfält för kontroller */}
+          <View style={{ marginBottom: 10 }}>
+            <TextInput
+              style={[styles.input, { marginBottom: 0 }]}
+              placeholder="Sök kontroller (t.ex. gips, arbetsmoment, leverans...)"
+              placeholderTextColor="#888"
+              value={searchText}
+              onChangeText={setSearchText}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
           </View>
-
-        {/* Sökfält för kontroller */}
-        <View style={{ marginBottom: 10 }}>
-        <TextInput
-          style={[styles.input, { marginBottom: 0 }]}
-          placeholder="Sök kontroller (t.ex. gips, arbetsmoment, leverans...)"
-          placeholderTextColor="#888"
-          value={searchText}
-          onChangeText={setSearchText}
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-      </View>
-
-      {(() => {
+          {(() => {
         const baseControls = Array.isArray(controls) ? controls : [];
         // Filtrera kontroller baserat på söktext
         const lowerSearch = (searchText || '').toLowerCase();
@@ -4361,7 +4419,31 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </View>
         );
       })()}
-      </>
+        </View>
+      )}
+
+      {/* Kalkyl Section - Placeholder for future implementation */}
+      {activeSection === 'kalkyl' && (
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
+            Kalkyl
+          </Text>
+          <Text style={{ color: '#666', fontSize: 14 }}>
+            Kalkyl-funktionalitet kommer snart...
+          </Text>
+        </View>
+      )}
+
+      {/* UE & Offerter Section - Placeholder for future implementation */}
+      {activeSection === 'ue-offerter' && (
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
+            UE & Offerter
+          </Text>
+          <Text style={{ color: '#666', fontSize: 14 }}>
+            UE & Offerter-funktionalitet kommer snart...
+          </Text>
+        </View>
       )}
 
       {/* Formulär */}
@@ -4524,9 +4606,6 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
-        </View>
-        </>
-      )}
 
     </ScrollView>
   );

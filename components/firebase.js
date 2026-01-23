@@ -2630,6 +2630,141 @@ export async function removeSharePointSiteForPhase(companyId, phaseKey) {
 }
 
 /**
+ * Get SharePoint navigation configuration for a company
+ * @param {string} companyId - Company ID
+ * @returns {Promise<Object>} Navigation configuration
+ */
+export async function getSharePointNavigationConfig(companyId) {
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const configRef = doc(db, 'foretag', companyId, 'sharepoint_navigation', 'config');
+    const configSnap = await getDoc(configRef);
+    
+    if (configSnap.exists()) {
+      return configSnap.data();
+    }
+    
+    // Return default empty config
+    return {
+      enabledSites: [],
+      siteConfigs: {},
+      updatedAt: null,
+      updatedBy: null,
+    };
+  } catch (error) {
+    console.error('[getSharePointNavigationConfig] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save SharePoint navigation configuration for a company
+ * @param {string} companyId - Company ID
+ * @param {Object} config - Navigation configuration
+ * @returns {Promise<void>}
+ */
+export async function saveSharePointNavigationConfig(companyId, config) {
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const configRef = doc(db, 'foretag', companyId, 'sharepoint_navigation', 'config');
+    await setDoc(configRef, {
+      ...config,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    }, { merge: true });
+    
+    console.log(`[saveSharePointNavigationConfig] ✅ Saved navigation config for ${companyId}`);
+  } catch (error) {
+    console.error('[saveSharePointNavigationConfig] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get list of SharePoint sites available to the current user
+ * Uses Microsoft Graph API to fetch sites the user has access to
+ * @returns {Promise<Array>} Array of site objects { id, name, webUrl, displayName }
+ */
+export async function getAvailableSharePointSites() {
+  try {
+    // Dynamic import to avoid circular dependency
+    const { getAccessToken } = await import('../services/azure/authService');
+    const accessToken = await getAccessToken();
+    
+    if (!accessToken) {
+      throw new Error('Failed to get access token. Please authenticate first.');
+    }
+
+    const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+    
+    // Fetch sites the user follows or has access to
+    // Using /me/followedSites and /sites/search to get all accessible sites
+    const [followedResponse, searchResponse] = await Promise.allSettled([
+      fetch(`${GRAPH_API_BASE}/me/followedSites`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }),
+      fetch(`${GRAPH_API_BASE}/sites?search=*`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }),
+    ]);
+
+    const sites = [];
+    const siteMap = new Map();
+
+    // Process followed sites
+    if (followedResponse.status === 'fulfilled' && followedResponse.value.ok) {
+      const followedData = await followedResponse.value.json();
+      if (followedData.value && Array.isArray(followedData.value)) {
+        followedData.value.forEach(site => {
+          if (site.id && !siteMap.has(site.id)) {
+            siteMap.set(site.id, {
+              id: site.id,
+              name: site.displayName || site.name || 'Unnamed Site',
+              webUrl: site.webUrl || '',
+              displayName: site.displayName || site.name || 'Unnamed Site',
+            });
+          }
+        });
+      }
+    }
+
+    // Process search results
+    if (searchResponse.status === 'fulfilled' && searchResponse.value.ok) {
+      const searchData = await searchResponse.value.json();
+      if (searchData.value && Array.isArray(searchData.value)) {
+        searchData.value.forEach(site => {
+          if (site.id && !siteMap.has(site.id)) {
+            siteMap.set(site.id, {
+              id: site.id,
+              name: site.displayName || site.name || 'Unnamed Site',
+              webUrl: site.webUrl || '',
+              displayName: site.displayName || site.name || 'Unnamed Site',
+            });
+          }
+        });
+      }
+    }
+
+    return Array.from(siteMap.values());
+  } catch (error) {
+    console.error('[getAvailableSharePointSites] Error:', error);
+    throw error;
+  }
+}
+
+/**
  * Get all phase SharePoint configurations for a company
  * @param {string} companyId - Company ID
  * @returns {Promise<Object>} Map of phaseKey -> config

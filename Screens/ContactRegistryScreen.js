@@ -1008,7 +1008,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
   return (
     <RootContainer {...rootProps} style={{ flex: 1 }}>
       <MainLayout
-        onSelectProject={(payload) => {
+        adminMode={true}
+        adminCurrentScreen="contact_registry"
+        adminOnSelectCompany={(payload) => {
           try {
             const cid = String(payload?.companyId || payload?.id || '').trim();
             if (!cid) return;
@@ -1021,15 +1023,8 @@ export default function ContactRegistryScreen({ navigation, route }) {
             clearForm();
           } catch (_e) {}
         }}
-        sidebarTitle="Kontaktregister"
-        sidebarIconName="book-outline"
-        sidebarIconColor="#1976D2"
-        sidebarSearchPlaceholder="Sök företag"
-        sidebarCompaniesMode={true}
-        sidebarShowMembers={false}
-        sidebarHideCompanyActions={true}
-        sidebarAutoExpandMembers={true}
-        sidebarAllowCompanyManagementActions={false}
+        adminShowCompanySelector={canSeeAllCompanies}
+        sidebarSelectedCompanyId={companyId}
         topBar={
           <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
             <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

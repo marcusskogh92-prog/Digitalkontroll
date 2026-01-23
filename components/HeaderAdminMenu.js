@@ -97,6 +97,7 @@ export default function HeaderAdminMenu() {
     menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#0f172a" /> });
     menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#43A047" /> });
     menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#FB8C00" /> });
+    menuItems.push({ key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: <Ionicons name="folder-outline" size={16} color="#7B1FA2" /> });
   }
 
   // Om inga admin-funktioner finns, visa inget
@@ -132,6 +133,11 @@ export default function HeaderAdminMenu() {
           }
           if (it.key === 'customers') {
             return navigation.navigate('Customers', {
+              companyId: cid,
+            });
+          }
+          if (it.key === 'sharepoint_navigation') {
+            return navigation.navigate('ManageSharePointNavigation', {
               companyId: cid,
             });
           }
