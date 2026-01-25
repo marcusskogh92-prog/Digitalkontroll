@@ -88,15 +88,16 @@ export default function HeaderUserMenu() {
   
   // Lägg till admin-funktioner först (flyttat från HeaderAdminMenu)
   const isSuperOrMsAdmin = isOwner || isMsAdmin;
-  
-  if (isSuperadmin) {
-    if (isSuperOrMsAdmin) {
-      menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-    }
-    if (isOwner || isCompanyAdmin) {
-      menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
-    }
+
+  // Superadmin (ägare/MS-admin) får hantera företag
+  if (isSuperadmin && isSuperOrMsAdmin) {
+    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+  }
+
+  // Både företags-admin och superadmin ska kunna hantera användare + kontrolltyper
+  if (isCompanyAdmin || isSuperadmin) {
+    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+    menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
   }
 
   // Admin + superadmin: kontaktregister

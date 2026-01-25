@@ -1,9 +1,13 @@
 /**
  * Determine if a SharePoint folder is a project folder (synchronous check)
  * 
- * Project folders are identified by:
- * 1. Folder name pattern: "{number} {name}" (e.g., "226-01 Opus")
- * 2. Created via "Create new project" (may have metadata in future)
+ * Project folders are identified av namnmönster som tydligt ser ut
+ * som projektnummer, t.ex. "2024-100 Test" eller "825-10 Opus".
+ *
+ * Viktigt: vi kräver nu ett projektnummer med bindestreck i början
+ * (t.ex. "2024-100"), så mappar som bara heter "8 Tekniska Verken"
+ * eller "12 Lejonfastigheter" inte längre tolkas som projekt utan
+ * visas som vanliga mappar.
  * 
  * @param {Object} folder - SharePoint folder object
  * @returns {boolean} True if folder matches project pattern
@@ -12,16 +16,17 @@ export function isProjectFolder(folder) {
   if (!folder || !folder.name) return false;
   
   const folderName = String(folder.name).trim();
-  
-  // Pattern: starts with alphanumeric characters (project number)
-  // followed by space/dash and then text (project name)
-  // Examples: "226-01 Opus", "123 Test Project", "ddd dd"
-  const projectPattern = /^[a-zA-Z0-9åäöÅÄÖ]+[\s-]+[a-zA-Z0-9åäöÅÄÖ\s-]+$/i;
+
+  // Nytt mönster: projektnummer med minst ett bindestreck i första delen,
+  // t.ex. "2024-100 Test", "825-10 Opus", "P100-01 Projekt".
+  // Exkluderar namn som bara börjar med ett tal utan bindestreck
+  // (t.ex. "8 Tekniska Verken").
+  const projectPattern = /^([a-zA-Z]?[0-9]{2,}-[0-9]+)(?:\s+.+)?$/i;
   
   // Must have at least 2 parts (number and name)
   const parts = folderName.split(/\s+/);
   if (parts.length < 2) return false;
-  
+
   // Check if matches project pattern
   return projectPattern.test(folderName);
 }

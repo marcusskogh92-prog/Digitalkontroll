@@ -63,6 +63,8 @@ export default function ManageUsers({ route, navigation }) {
 
   const avatarFileInputRef = useRef(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [globalBusy, setGlobalBusy] = useState(false);
+  const [globalBusyLabel, setGlobalBusyLabel] = useState('');
 
   // Keep selected companyId in storage so global tools (kontaktregister i dropdown) resolve correctly.
   useEffect(() => {
@@ -497,6 +499,8 @@ export default function ManageUsers({ route, navigation }) {
 
   const seatsLeft = (userLimitNumber !== null) ? Math.max(0, userLimitNumber - (Array.isArray(members) ? members.length : 0)) : null;
 
+  const [searchFocused, setSearchFocused] = useState(false);
+
   const handleAdd = async () => {
     if (!newEmail) return Alert.alert('Fel', 'Ange e-post');
     if (seatsLeft !== null && seatsLeft <= 0) return Alert.alert('Fel', 'Inga platser kvar enligt userLimit');
@@ -643,8 +647,41 @@ export default function ManageUsers({ route, navigation }) {
     const sidebarRestrictId = canSeeAllCompanies ? null : (String(lockedCompanyId || '').trim() || companyId);
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
+        {globalBusy && (
+          <View
+            pointerEvents="auto"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 2000,
+              backgroundColor: 'rgba(255,255,255,0.75)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <View style={{ backgroundColor: '#111827', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, minWidth: 260, maxWidth: 360, alignItems: 'center' }}>
+              <View
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 13,
+                  borderWidth: 3,
+                  borderColor: '#4B5563',
+                  borderTopColor: '#fff',
+                  marginBottom: 8,
+                }}
+              />
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13, textAlign: 'center' }}>
+                {globalBusyLabel || 'Arbetar…'}
+              </Text>
+            </View>
+          </View>
+        )}
         <MainLayout
           adminMode={true}
           adminCurrentScreen="manage_users"
@@ -1000,6 +1037,8 @@ export default function ManageUsers({ route, navigation }) {
                       const saveSelectedProfilePatch = async (patch) => {
                         if (!selectedUidResolved) return;
                         setProfileSaving(true);
+                        setGlobalBusy(true);
+                        setGlobalBusyLabel('Sparar ändringar…');
                         setProfileError('');
                         try {
                           await updateUserRemote({ companyId, uid: selectedUidResolved, ...patch });
@@ -1016,6 +1055,8 @@ export default function ManageUsers({ route, navigation }) {
                           setProfileError(String(e?.message || e));
                         } finally {
                           setProfileSaving(false);
+                          setGlobalBusy(false);
+                          setGlobalBusyLabel('');
                         }
                       };
 
@@ -1065,6 +1106,8 @@ export default function ManageUsers({ route, navigation }) {
                       const handleSaveEdits = async () => {
                         if (!selectedUidResolved) return;
                         setProfileSaving(true);
+                        setGlobalBusy(true);
+                        setGlobalBusyLabel('Sparar ändringar…');
                         setProfileError('');
                         try { setProfileSaveConfirmOpen(false); } catch (_e) {}
                         try { setProfileSaveConfirmText(''); } catch (_e) {}
@@ -1169,6 +1212,8 @@ export default function ManageUsers({ route, navigation }) {
                           setProfileError(String(e?.message || e));
                         } finally {
                           setProfileSaving(false);
+                          setGlobalBusy(false);
+                          setGlobalBusyLabel('');
                         }
                       };
 
@@ -1215,16 +1260,10 @@ export default function ManageUsers({ route, navigation }) {
                             minHeight: 520,
                           }}
                         >
-                          <View style={{ width: 360, backgroundColor: '#F9FAFB', borderRightWidth: 1, borderRightColor: '#E6E8EC' }}>
-                            <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E8EC', backgroundColor: '#fff' }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                                <Text style={{ fontSize: 14, fontWeight: '600', color: '#111' }} numberOfLines={1}>
-                                  {`Användare i ${companyId} (${members.length}${userLimitNumber !== null ? ` / ${userLimitNumber}` : ''})`}
-                                </Text>
-                                <Ionicons name="chevron-down" size={16} color="#666" />
-                              </View>
-                              {seatsLeft !== null ? (
-                                <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                          <View style={{ width: 360, backgroundColor: '#F9FAFB', borderRightWidth: 1, borderRightColor: '#E6E8EC', overflow: 'visible', zIndex: 10 }}>
+                            {seatsLeft !== null ? (
+                              <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E8EC', backgroundColor: '#fff' }}>
+                                <View style={{ marginTop: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                                   <View style={{ alignSelf: 'flex-start', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, backgroundColor: seatsLeft > 0 ? '#E8F5E9' : '#FFEBEE' }}>
                                     <Text style={{ fontSize: 12, fontWeight: '600', color: seatsLeft > 0 ? '#2E7D32' : '#C62828' }}>{`Plats kvar: ${seatsLeft}`}</Text>
                                   </View>
@@ -1249,13 +1288,15 @@ export default function ManageUsers({ route, navigation }) {
                                     <Text style={{ fontSize: 12, fontWeight: '500', color: '#1976D2' }}>Uppgradera abonnemang</Text>
                                   </TouchableOpacity>
                                 </View>
-                              ) : null}
-                            </View>
+                              </View>
+                            ) : null}
 
-                            <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E8EC', backgroundColor: '#fff' }}>
+                            <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E8EC', backgroundColor: '#fff', position: 'relative', zIndex: 30 }}>
                               <TextInput
                                 value={memberSearch}
                                 onChangeText={setMemberSearch}
+                                onFocus={() => setSearchFocused(true)}
+                                onBlur={() => setSearchFocused(false)}
                                 placeholder="Sök användare (namn eller e-post)"
                                 style={{
                                   borderWidth: 1,
@@ -1267,6 +1308,90 @@ export default function ManageUsers({ route, navigation }) {
                                   fontSize: 14,
                                 }}
                               />
+
+                              {Platform.OS === 'web' && searchFocused && memberSearch.trim().length > 0 && filtered.length > 0 ? (
+                                <View
+                                  style={{
+                                    position: 'absolute',
+                                    top: 50,
+                                    left: 12,
+                                    right: 12,
+                                    zIndex: 20,
+                                    backgroundColor: '#fff',
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor: '#E5E7EB',
+                                    shadowColor: '#000',
+                                    shadowOpacity: 0.06,
+                                    shadowRadius: 10,
+                                    shadowOffset: { width: 0, height: 4 },
+                                  }}
+                                >
+                                  {filtered.slice(0, 6).map((m) => {
+                                    const key = String(m?.uid || m?.id || m?.email || '');
+                                    const roleMeta = getMemberRoleLabel(m);
+                                    const initials = getInitials(m);
+                                    return (
+                                      <TouchableOpacity
+                                        key={key}
+                                        onPress={() => {
+                                          setMemberSearch(getMemberListName(m));
+                                          setSearchFocused(false);
+                                          requestSelectMember(m);
+                                        }}
+                                        style={{
+                                          flexDirection: 'row',
+                                          alignItems: 'center',
+                                          paddingVertical: 8,
+                                          paddingHorizontal: 10,
+                                          borderBottomWidth: 1,
+                                          borderBottomColor: '#F3F4F6',
+                                        }}
+                                      >
+                                        <View
+                                          style={{
+                                            width: 26,
+                                            height: 26,
+                                            borderRadius: 13,
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            marginRight: 8,
+                                            backgroundColor: roleMeta?.bg || '#E5E7EB',
+                                          }}
+                                        >
+                                          <Ionicons name="person" size={14} color={roleMeta?.color || '#111827'} />
+                                        </View>
+                                        <Text style={{ fontSize: 13, color: '#111827', flex: 1 }} numberOfLines={1}>
+                                          {getMemberListName(m)}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </View>
+                              ) : null}
+
+                              <View style={{ marginTop: 10 }}>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    setAddUserError('');
+                                    setAddUserOpen(true);
+                                  }}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 8,
+                                    paddingVertical: 10,
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor: '#D7DBE2',
+                                    backgroundColor: '#F9FAFB',
+                                  }}
+                                >
+                                  <Ionicons name="add" size={16} color="#1976D2" />
+                                  <Text style={{ fontSize: 13, fontWeight: '500', color: '#1976D2' }}>Lägg till användare</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
 
                             {membersLoadError ? (
@@ -1334,28 +1459,7 @@ export default function ManageUsers({ route, navigation }) {
                               windowSize={11}
                             />
 
-                            <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#E6E8EC', backgroundColor: '#fff' }}>
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setAddUserError('');
-                                  setAddUserOpen(true);
-                                }}
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  paddingVertical: 10,
-                                  borderRadius: 10,
-                                  borderWidth: 1,
-                                  borderColor: '#D7DBE2',
-                                  backgroundColor: '#fff',
-                                }}
-                              >
-                                <Ionicons name="add" size={16} color="#1976D2" />
-                                <Text style={{ fontSize: 13, fontWeight: '500', color: '#1976D2' }}>Lägg till användare</Text>
-                              </TouchableOpacity>
-                            </View>
+                            {/* Knappen "Lägg till användare" är flyttad upp under sökfältet för bättre flöde */}
                           </View>
 
                           <View style={{ flex: 1, padding: 16, backgroundColor: '#fff' }}>
@@ -1722,37 +1826,36 @@ export default function ManageUsers({ route, navigation }) {
               onClick={() => setProfileSaveConfirmOpen(false)}
               style={{
                 position: 'fixed',
-                left: 0,
-                top: 0,
-                width: '100%',
-                height: '100%',
-                background: 'rgba(0,0,0,0.35)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1400,
+                left: 16,
+                bottom: 16,
+                zIndex: 1600,
+                pointerEvents: 'auto',
               }}
             >
               <div
-                onClick={(e) => e.stopPropagation()}
                 style={{
-                  width: 320,
-                  maxWidth: 'calc(100% - 40px)',
-                  background: '#fff',
-                  borderRadius: 12,
-                  padding: 16,
+                  minWidth: 260,
+                  maxWidth: 360,
+                  background: '#111827',
+                  borderRadius: 10,
+                  padding: 12,
                   boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
-                  border: '1px solid #E6E8EC',
+                  border: '1px solid #111827',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  color: '#fff',
+                  cursor: 'pointer',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: '#2E7D32', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="checkmark" size={18} color="#fff" />
-                  </div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#111' }}>Sparat</div>
+                <div style={{ width: 26, height: 26, borderRadius: 999, backgroundColor: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="checkmark" size={18} color="#fff" />
                 </div>
-                <div style={{ fontSize: 13, color: '#374151', lineHeight: '18px' }}>
-                  {profileSaveConfirmText || 'Ändringar är sparade.'}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>Sparat</div>
+                  <div style={{ fontSize: 12, color: '#E5E7EB' }}>
+                    {profileSaveConfirmText || 'Ändringar är sparade.'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1923,6 +2026,8 @@ export default function ManageUsers({ route, navigation }) {
               }
               const displayName = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim() || (email ? String(email).split('@')[0] : '');
               setAddUserSaving(true);
+              setGlobalBusy(true);
+              setGlobalBusyLabel('Skapar användare…');
               setAddUserError('');
               try {
                 const createRes = await createUserRemote({
@@ -1951,8 +2056,10 @@ export default function ManageUsers({ route, navigation }) {
                   }
                 }
 
+                // Hämta om listan från backend så counts/grupper uppdateras korrekt
                 const mems = await fetchCompanyMembers(companyId).catch(() => []);
                 setMembers(Array.isArray(mems) ? mems : []);
+                setMembersReloadNonce(n => n + 1);
                 setAddUserOpen(false);
 
                 const pwToShow = String(password || '').trim() || String(tempPassword || '').trim();
@@ -1962,6 +2069,8 @@ export default function ManageUsers({ route, navigation }) {
                 setAddUserError(String(e?.message || e));
               } finally {
                 setAddUserSaving(false);
+                setGlobalBusy(false);
+                setGlobalBusyLabel('');
               }
             }}
           />

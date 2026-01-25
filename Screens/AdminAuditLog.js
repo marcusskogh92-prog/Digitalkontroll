@@ -120,7 +120,7 @@ export default function AdminAuditLog({ navigation }) {
     const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0, pointerEvents: 'none' }} />
         <MainLayout
           onSelectProject={handleSelectCompany}

@@ -7,8 +7,8 @@ import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndP
 import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
-import { uploadFile as uploadFileToAzure, getFileUrl as getFileUrlFromAzure } from '../services/azure/fileService';
 import { Alert, Platform } from 'react-native';
+import { uploadFile as uploadFileToAzure } from '../services/azure/fileService';
 
 // Firebase-konfiguration för DigitalKontroll
 const firebaseConfig = {
@@ -2631,10 +2631,11 @@ export async function removeSharePointSiteForPhase(companyId, phaseKey) {
 
 /**
  * Get SharePoint navigation configuration for a company
- * @param {string} companyId - Company ID
+ * @param {string} companyIdOverride - Optional explicit company ID
  * @returns {Promise<Object>} Navigation configuration
  */
-export async function getSharePointNavigationConfig(companyId) {
+export async function getSharePointNavigationConfig(companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
   if (!companyId) {
     throw new Error('Company ID is required');
   }
@@ -2662,11 +2663,12 @@ export async function getSharePointNavigationConfig(companyId) {
 
 /**
  * Save SharePoint navigation configuration for a company
- * @param {string} companyId - Company ID
+ * @param {string} companyIdOverride - Optional explicit company ID
  * @param {Object} config - Navigation configuration
  * @returns {Promise<void>}
  */
-export async function saveSharePointNavigationConfig(companyId, config) {
+export async function saveSharePointNavigationConfig(companyIdOverride, config) {
+  const companyId = await resolveCompanyId(companyIdOverride, config || null);
   if (!companyId) {
     throw new Error('Company ID is required');
   }

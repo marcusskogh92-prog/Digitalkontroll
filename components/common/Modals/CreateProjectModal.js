@@ -1,18 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { getSharePointNavigationConfig } from '../../firebase';
-import { isProjectEnabledLocation } from '../../../utils/filterSharePointHierarchy';
 
 // STRUCTURES removed - projects are no longer phase-based
 
@@ -53,27 +52,24 @@ export default function CreateProjectModal({
     async function loadFolders() {
       setLoadingLocationFolders(true);
       try {
-        const { listFolders } = await import('../../services/azure/fileService');
-        const items = await listFolders(currentPath, activeSite.id);
+        // Använd samma källa som vänsterpanelen (getDriveItems)
+        // så vi får exakt samma mappstruktur som användarna ser där.
+        const { getDriveItems } = await import('../../services/azure/hierarchyService');
+        const items = await getDriveItems(activeSite.id, currentPath || '');
         if (cancelled) return;
-        
-        // Filter to only show project-enabled locations
-        if (companyId && navConfig) {
-          const filtered = [];
-          for (const item of (items || [])) {
-            if (item.folder) {
-              const itemPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-              const isEnabled = await isProjectEnabledLocation(itemPath, companyId, navConfig);
-              if (isEnabled) {
-                filtered.push(item);
-              }
-            }
-          }
-          setLocationFolders(filtered);
-        } else {
-          setLocationFolders(items || []);
-        }
-      } catch (_e) {
+
+        const folders = (items || [])
+          .filter((item) => item && item.folder)
+          .map((item) => {
+            const name = String(item.name || '').trim();
+            const base = String(currentPath || '').replace(/\/+$/, '');
+            const path = base ? `${base}/${name}` : name;
+            return { name, path };
+          });
+
+        setLocationFolders(folders);
+      } catch (error) {
+        console.error('[CreateProjectModal] Error loading location folders:', error);
         if (!cancelled) {
           setLocationFolders([]);
         }
@@ -422,9 +418,11 @@ export default function CreateProjectModal({
                           : 'Välj projektplats'}
                       </Text>
                       <View style={styles.dropdownChevronWrapper}>
-                        <Text style={styles.dropdownChevron}>
-                          {locationPickerOpen ? '▴' : '▾'}
-                        </Text>
+                        <Ionicons
+                          name={locationPickerOpen ? 'chevron-up' : 'chevron-down'}
+                          size={18}
+                          color="#374151"
+                        />
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -504,8 +502,10 @@ export default function CreateProjectModal({
                             isSelected && styles.siteRowSelected,
                           ]}
                         >
-                          <Ionicons name="cloud-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                          <Text style={styles.siteText}>{getSiteDisplayName(site)}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Ionicons name="cloud-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+                            <Text style={styles.siteText}>{getSiteDisplayName(site)}</Text>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}

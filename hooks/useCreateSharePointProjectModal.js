@@ -14,18 +14,17 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Platform } from 'react-native';
 
-import { fetchCompanyProfile, getAllPhaseSharePointConfigs, getCompanySharePointSiteId } from '../components/firebase';
+import { getSharePointNavigationConfig } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [availableSites, setAvailableSites] = useState([]);
 
-  // Hämta verkliga SharePoint-ytor för företaget:
-  // - Primär site från company profile
-  // - Eventuella externa sites per fas (kalkyl, produktion, osv.)
+  // Hämta SharePoint-ytor för företaget baserat på adminens navigation:
+  // - Använder samma konfiguration som vänsterpanelen (sharepoint_navigation/config)
+  // - Bygger sitelistan direkt från konfigurerade siter (navConfig.sites)
   useEffect(() => {
     let cancelled = false;
 
@@ -36,59 +35,38 @@ export function useCreateSharePointProjectModal({ companyId }) {
       }
 
       try {
-        const [primarySiteId, profile, phaseConfigs] = await Promise.all([
-          getCompanySharePointSiteId(companyId),
-          fetchCompanyProfile(companyId),
-          getAllPhaseSharePointConfigs(companyId),
-        ]);
+        const navConfig = await getSharePointNavigationConfig(companyId);
 
-        if (cancelled) return;
+          if (cancelled) return;
 
-        const sites = [];
+          const enabledSites = Array.isArray(navConfig?.enabledSites)
+            ? navConfig.enabledSites
+            : [];
 
-        if (primarySiteId) {
-          sites.push({
-            id: primarySiteId,
-            name:
-              profile?.sharePointSiteName ||
-              profile?.sharePointWebUrl ||
-              'Primär SharePoint-site',
-            type: 'primary',
-            webUrl: profile?.sharePointWebUrl || null,
-          });
-        }
+          const sitesFromConfig = Array.isArray(navConfig?.sites)
+            ? navConfig.sites
+            : [];
 
-        if (phaseConfigs && typeof phaseConfigs === 'object') {
-          Object.keys(phaseConfigs).forEach((phaseKey) => {
-            const cfg = phaseConfigs[phaseKey];
-            if (!cfg || !cfg.siteId) return;
+          const enabledSet = new Set(enabledSites.map((id) => String(id || '').trim()).filter(Boolean));
 
-            sites.push({
-              id: cfg.siteId,
-              name:
-                cfg.siteName ||
-                cfg.webUrl ||
-                `Extern site (${phaseKey})`,
-              type: 'phase',
-              phaseKey: cfg.phaseKey || phaseKey,
-              webUrl: cfg.webUrl || null,
-            });
-          });
-        }
+          const sites = sitesFromConfig
+            .filter((site) => {
+              const sid = String(site?.siteId || site?.id || '').trim();
+              return !!sid && enabledSet.has(sid);
+            })
+            .map((site) => ({
+              id: String(site.siteId || site.id).trim(),
+              name: site.siteName || site.displayName || site.name || site.webUrl || 'SharePoint-site',
+              type: 'navigation',
+              webUrl: site.webUrl || null,
+            }));
 
-        // Fallback om inget är konfigurerat ännu – visa en enkel "standardyta"
-        if (sites.length === 0) {
-          const name = String(companyId || '').trim() || 'Standardyta';
-          sites.push({ id: name, name, type: 'placeholder' });
-        }
-
-        setAvailableSites(sites);
+          // Om inget är aktiverat ännu – visa ingen lista (admin måste konfigurera i SharePoint Navigation)
+          setAvailableSites(sites);
       } catch (error) {
         // eslint-disable-next-line no-console
-        console.error('[useCreateSharePointProjectModal] Failed to load SharePoint sites', error);
-        if (cancelled) return;
-        const name = String(companyId || '').trim() || 'Standardyta';
-        setAvailableSites([{ id: name, name, type: 'placeholder' }]);
+        console.error('[useCreateSharePointProjectModal] Error loading sites:', error);
+        setAvailableSites([]);
       }
     }
 

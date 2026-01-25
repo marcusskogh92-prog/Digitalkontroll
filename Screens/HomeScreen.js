@@ -15,7 +15,7 @@ import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
-import { getProjectPhase, DEFAULT_PHASE } from '../features/projects/constants';
+import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import { useCompanyControlTypes } from '../hooks/useCompanyControlTypes';
@@ -1147,7 +1147,11 @@ export default function HomeScreen({ navigation, route }) {
         return (
           <RootContainer
             {...rootContainerProps}
-            style={{ flex: 1, width: '100%', minHeight: Platform.OS === 'web' ? '100vh' : undefined, height: Platform.OS === 'web' ? windowHeight || undefined : undefined }}
+            style={{
+              flex: 1,
+              width: '100%',
+              ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
+            }}
           >
               <View
                 style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.12)', zIndex: 0 }}
@@ -1230,6 +1234,7 @@ export default function HomeScreen({ navigation, route }) {
               selectedProjectFolders={selectedProjectFoldersSafe}
               navigation={navigation}
               companyId={companyId}
+              reloadKey={hierarchyReloadKey}
               handleSelectFunction={handleSelectFunction}
               projectStatusFilter={projectStatusFilterSafe}
               loadingHierarchy={loadingHierarchy}

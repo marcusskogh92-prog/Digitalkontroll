@@ -4,22 +4,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ImageBackground, Platform, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
 import {
-    auth,
-    createCompanyControlType,
-    createCompanyControlTypeFolder,
-    createCompanyMall,
-    DEFAULT_CONTROL_TYPES,
-    deleteCompanyControlType,
-    deleteCompanyControlTypeFolder,
-    deleteCompanyMall,
-    fetchCompanies,
-    fetchCompanyControlTypeFolders,
-    fetchCompanyControlTypes,
-    fetchCompanyMallar,
-    fetchCompanyProfile,
-    updateCompanyControlType,
-    updateCompanyControlTypeFolder,
-    updateCompanyMall,
+  auth,
+  createCompanyControlType,
+  createCompanyControlTypeFolder,
+  createCompanyMall,
+  DEFAULT_CONTROL_TYPES,
+  deleteCompanyControlType,
+  deleteCompanyControlTypeFolder,
+  deleteCompanyMall,
+  fetchCompanies,
+  fetchCompanyControlTypeFolders,
+  fetchCompanyControlTypes,
+  fetchCompanyMallar,
+  fetchCompanyProfile,
+  updateCompanyControlType,
+  updateCompanyControlTypeFolder,
+  updateCompanyMall,
 } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
@@ -771,7 +771,7 @@ export default function ManageControlTypes({ route, navigation }) {
     };
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
         <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
         <MainLayout
           adminMode={true}

@@ -3,8 +3,53 @@
  * Shows all enabled sites with their folders
  */
 
-import { getSharePointNavigationConfig, getAvailableSharePointSites } from '../components/firebase';
+import { getAvailableSharePointSites, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
 import { getDriveItems } from '../services/azure/hierarchyService';
+
+// Bygg ett fullständigt träd av undermappar för en viss sökväg på en specifik site.
+// Detta används för att säkerställa att när en rotmapp (t.ex. "Anbud") är aktiverad
+// i SharePoint Navigation så syns alla dess undermappar i vänsterpanelen – utan begränsning,
+// men med ett rimligt djupskydd för att undvika oändliga loopar.
+async function buildFolderTreeRecursive(siteId, folderPath, depth = 0, maxDepth = 8) {
+  if (!siteId || !folderPath) return [];
+  if (depth >= maxDepth) return [];
+
+  try {
+    const items = await getDriveItems(siteId, folderPath);
+    const folders = (items || []).filter(item => item && item.folder);
+
+    const children = await Promise.all(
+      folders.map(async (item) => {
+        const childName = String(item.name || '').trim();
+        if (!childName) {
+          return null;
+        }
+
+        const childPath = `${folderPath.replace(/\/+$/, '')}/${childName}`
+          .replace(/^\/+/, '')
+          .replace(/\/+/, '/');
+
+        const grandChildren = await buildFolderTreeRecursive(siteId, childPath, depth + 1, maxDepth);
+
+        return {
+          id: item.id || childPath,
+          name: childName,
+          type: 'folder',
+          path: childPath,
+          siteId,
+          webUrl: item.webUrl,
+          children: grandChildren,
+          lastModified: item.lastModifiedDateTime,
+        };
+      })
+    );
+
+    return children.filter(Boolean);
+  } catch (error) {
+    console.error('[filterSharePointHierarchy] Error building folder tree for path', folderPath, 'on site', siteId, error);
+    return [];
+  }
+}
 
 /**
  * Build hierarchy from all enabled SharePoint sites
@@ -53,6 +98,7 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
 
     // Build hierarchy with sites as root items
     const siteHierarchies = [];
+    const invalidPathsBySite = {}; // siteId -> Set(paths) som inte längre finns i SharePoint
     
     for (const siteId of enabledSites) {
       if (!siteId) continue;
@@ -60,23 +106,124 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       const site = sitesMap[siteId];
       const siteName = site?.name || site?.displayName || siteId;
       const siteConfig = siteConfigs[siteId] || {};
+      const hasExplicitSiteConfig = Object.prototype.hasOwnProperty.call(siteConfigs, siteId);
       
       try {
         // Load root folders for this site
         const rootItems = await getDriveItems(siteId, '');
         const rootFolders = (rootItems || []).filter(item => item && item.folder);
-        
-        // Convert to hierarchy format
-        const siteFolders = rootFolders.map(folder => ({
-          id: folder.id || folder.name,
-          name: folder.name || '',
-          type: 'folder',
-          path: folder.name || '',
-          siteId: siteId,
-          webUrl: folder.webUrl,
-          children: [], // Will be loaded on demand
-          lastModified: folder.lastModifiedDateTime,
-        }));
+
+        // Convert to hierarchy format (top-level folders för vänsterpanelen)
+        let siteFolders = [];
+
+        // If adminen har markerat specifika projekt-aktiverade platser för siten,
+        // visa bara dessa mappar i vänsterpanelen.
+        const enabledPathsRaw = Array.isArray(siteConfig.projectEnabledPaths)
+          ? siteConfig.projectEnabledPaths
+          : [];
+        const enabledPaths = enabledPathsRaw
+          .map((p) => String(p || '').trim())
+          .filter((p) => p.length > 0);
+
+        if (enabledPaths.length > 0) {
+          // Bygg en rot-nod per aktiverad sökväg. Detta innebär att om admin
+          // t.ex. markerar "Entreprenad/2024", så visas "2024" som egen rad
+          // i vänsterpanelen – inte huvudmappen "Entreprenad".
+
+          // Hjälpkarta för att kunna plocka metadata för rotmappar (Ramavtal, Service, osv.)
+          const rootByName = {};
+          rootFolders.forEach((folder) => {
+            const n = String(folder?.name || '').trim();
+            if (n) rootByName[n] = folder;
+          });
+
+          // Cache för parent-mappningar så vi inte hämtar samma path flera gånger
+          const parentCache = new Map(); // key: parentPath -> array av mappar
+
+          const addedPaths = new Set();
+
+          for (const rawPath of enabledPaths) {
+            const normalized = String(rawPath || '')
+              .replace(/^\/+/, '')
+              .replace(/\/+$/, '');
+            if (!normalized || addedPaths.has(normalized)) continue;
+
+            const segments = normalized.split('/');
+            const lastSegment = segments[segments.length - 1] || normalized;
+            const rootSegment = segments[0];
+
+            const rootFolder = rootByName[rootSegment];
+
+            // Säkerställ att mappen faktiskt finns i SharePoint.
+            // Om den har tagits bort ska vi inte visa den i vänsterpanelen.
+            const parentPath = segments.length > 1 ? segments.slice(0, -1).join('/') : '';
+            const folderName = lastSegment;
+
+            let parentFolders;
+            if (!parentPath) {
+              // Rotnivå: använd redan hämtade rootFolders
+              parentFolders = rootFolders;
+            } else if (parentCache.has(parentPath)) {
+              parentFolders = parentCache.get(parentPath);
+            } else {
+              try {
+                const parentItems = await getDriveItems(siteId, parentPath);
+                parentFolders = (parentItems || []).filter((item) => item && item.folder);
+              } catch (error) {
+                console.error('[filterSharePointHierarchy] Error loading parent folders for', parentPath, 'on site', siteId, error);
+                parentFolders = [];
+              }
+              parentCache.set(parentPath, parentFolders);
+            }
+
+            const existsInSharePoint = (parentFolders || []).some((item) => {
+              const name = String(item?.name || '').trim();
+              return !!name && name === folderName;
+            });
+
+            if (!existsInSharePoint) {
+              // Mappen finns inte längre i SharePoint -> hoppa över den här sökvägen
+              // och markera den för städning från konfigurationen.
+              if (!invalidPathsBySite[siteId]) {
+                invalidPathsBySite[siteId] = new Set();
+              }
+              invalidPathsBySite[siteId].add(normalized);
+              continue;
+            }
+
+            // Bygg träd under den aktiverade sökvägen (alla undermappar)
+            const children = await buildFolderTreeRecursive(siteId, normalized);
+
+            siteFolders.push({
+              id: (rootFolder && segments.length === 1 ? rootFolder.id : undefined) || `${siteId}-${normalized}`,
+              name: lastSegment,
+              type: 'folder',
+              path: normalized,
+              siteId,
+              webUrl: segments.length === 1 && rootFolder ? rootFolder.webUrl : undefined,
+              children,
+              lastModified: segments.length === 1 && rootFolder ? rootFolder.lastModifiedDateTime : undefined,
+            });
+
+            addedPaths.add(normalized);
+          }
+        } else if (hasExplicitSiteConfig) {
+          // Det finns en explicit konfiguration för siten men inga valda mappar:
+          // tolkas som att inga mappar ska visas i leftpanelen.
+          siteFolders = [];
+        } else {
+          // Ingen specifik konfiguration för siten – visa alla rotmappar (utan barn)
+          siteFolders = rootFolders.map(folder => ({
+            id: folder.id || folder.name,
+            name: folder.name || '',
+            type: 'folder',
+            path: folder.name || '',
+            siteId: siteId,
+            webUrl: folder.webUrl,
+            children: [],
+            lastModified: folder.lastModifiedDateTime,
+          }));
+        }
         
         // Create site as root item with folders as children
         siteHierarchies.push({
@@ -101,6 +248,49 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
           expanded: true,
           error: error?.message || 'Unknown error',
         });
+      }
+    }
+
+    // Om vi hittade paths som inte längre finns i SharePoint, städa bort dem
+    // från nav-konfigurationen så att databasen hålls ren.
+    const siteIdsWithInvalids = Object.keys(invalidPathsBySite);
+    if (siteIdsWithInvalids.length > 0 && companyId) {
+      try {
+        const nextSiteConfigs = { ...siteConfigs };
+        let changed = false;
+
+        for (const sid of siteIdsWithInvalids) {
+          const invalidSet = invalidPathsBySite[sid];
+          const currentCfg = nextSiteConfigs[sid] || {};
+          const currentPathsRaw = Array.isArray(currentCfg.projectEnabledPaths)
+            ? currentCfg.projectEnabledPaths
+            : [];
+
+          const filteredPaths = currentPathsRaw.filter((p) => {
+            const norm = String(p || '')
+              .replace(/^\/+/, '')
+              .replace(/\/+$/, '');
+            return norm && !invalidSet.has(norm);
+          });
+
+          if (filteredPaths.length !== currentPathsRaw.length) {
+            nextSiteConfigs[sid] = {
+              ...currentCfg,
+              projectEnabledPaths: filteredPaths,
+            };
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          await saveSharePointNavigationConfig(companyId, {
+            ...(config || {}),
+            enabledSites,
+            siteConfigs: nextSiteConfigs,
+          });
+        }
+      } catch (cleanupError) {
+        console.error('[filterSharePointHierarchy] Error cleaning up invalid projectEnabledPaths:', cleanupError);
       }
     }
 

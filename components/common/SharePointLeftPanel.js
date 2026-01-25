@@ -1,11 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import ContextMenu from '../ContextMenu';
-import { ProjectTree } from './ProjectTree';
-import { isProjectFolder, extractProjectMetadata } from '../../utils/isProjectFolder';
 import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
+import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
+import ContextMenu from '../ContextMenu';
 import { getSharePointNavigationConfig } from '../firebase';
+import { ProjectTree } from './ProjectTree';
+import SharePointSiteIcon from './SharePointSiteIcon';
 
 function RecursiveFolderView({
   folder,
@@ -24,7 +25,6 @@ function RecursiveFolderView({
   if (!folder) return null;
 
   const safeName = folder.name || folder.id || '';
-  const fontSize = Math.max(12, 15 - level);
   const marginLeft = 12 + level * 8;
   
   // Check if this folder is a project (if not already determined)
@@ -101,7 +101,14 @@ function RecursiveFolderView({
               }}
             />
           )}
-          <span style={{ fontSize, color: folderIsProject ? '#1976D2' : '#222', fontWeight: folderIsProject ? '600' : '400' }}>
+          <span
+            style={{
+              fontSize: 14,
+              color: '#1976D2',
+              fontWeight: '600',
+              fontFamily: 'Inter_400Regular, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            }}
+          >
             {safeName}
           </span>
         </div>
@@ -170,7 +177,13 @@ function RecursiveFolderView({
             }}
           />
         )}
-        <Text style={{ fontSize, color: folderIsProject ? '#1976D2' : '#222', fontWeight: folderIsProject ? '600' : '400' }}>
+        <Text
+          style={{
+            fontSize: 14,
+            color: '#1976D2',
+            fontWeight: '600',
+          }}
+        >
           {safeName}
         </Text>
       </TouchableOpacity>
@@ -222,6 +235,7 @@ export function SharePointLeftPanel({
   selectedProjectFolders,
   navigation,
   companyId,
+    reloadKey,
   handleSelectFunction,
   projectStatusFilter,
   loadingHierarchy,
@@ -245,6 +259,8 @@ export function SharePointLeftPanel({
   const isWeb = Platform.OS === 'web';
   const [filteredHierarchy, setFilteredHierarchy] = useState([]);
   const [navConfig, setNavConfig] = useState(null);
+  const [navLoading, setNavLoading] = useState(false);
+  const [expandedSites, setExpandedSites] = useState({}); // siteId -> boolean
 
   // Load navigation config and build hierarchy from enabled sites
   useEffect(() => {
@@ -256,6 +272,7 @@ export function SharePointLeftPanel({
       }
 
       try {
+        setNavLoading(true);
         const config = await getSharePointNavigationConfig(companyId);
         if (!mounted) return;
         setNavConfig(config);
@@ -278,9 +295,12 @@ export function SharePointLeftPanel({
         // On error, show empty (admin must configure properly)
         if (mounted) setFilteredHierarchy([]);
       }
+      finally {
+        if (mounted) setNavLoading(false);
+      }
     })();
     return () => { mounted = false; };
-  }, [companyId]);
+  }, [companyId, reloadKey]);
 
   return (
     <>
@@ -488,6 +508,27 @@ export function SharePointLeftPanel({
             // Always use filteredHierarchy - never fallback to raw hierarchy
             // If no config exists or no sites enabled, filteredHierarchy will be empty
             const displayHierarchy = filteredHierarchy || [];
+            if (navLoading) {
+              return (
+                <View
+                  style={{ paddingHorizontal: 4 }}
+                  nativeID={isWeb ? 'dk-tree-root' : undefined}
+                >
+                  <View style={{ paddingVertical: 16 }}>
+                    <Text
+                      style={{
+                        paddingHorizontal: 4,
+                        color: '#666',
+                        fontSize: 14,
+                      }}
+                    >
+                      Laddar SharePoint-mappar...
+                    </Text>
+                  </View>
+                </View>
+              );
+            }
+
             if (!displayHierarchy.length) {
               return (
                 <View
@@ -519,19 +560,37 @@ export function SharePointLeftPanel({
                 {displayHierarchy.map(siteItem => {
                   // Site items have type 'site' and contain folders as children
                   if (siteItem.type === 'site') {
+                    const isExpanded = expandedSites[siteItem.siteId] !== false; // default: expanded
+
                     return (
                       <View key={siteItem.id} style={{ marginBottom: 8 }}>
                         {/* Site header */}
-                        <View style={{ 
-                          flexDirection: 'row', 
-                          alignItems: 'center', 
-                          paddingVertical: 8,
-                          paddingHorizontal: 8,
-                          backgroundColor: '#f0f7ff',
-                          borderRadius: 4,
-                          marginBottom: 4,
-                        }}>
-                          <Ionicons name="folder" size={16} color="#1976D2" style={{ marginRight: 6 }} />
+                        <TouchableOpacity
+                          onPress={() => {
+                            setExpandedSites(prev => ({
+                              ...prev,
+                              [siteItem.siteId]: !isExpanded,
+                            }));
+                          }}
+                          activeOpacity={0.8}
+                          style={{ 
+                            flexDirection: 'row', 
+                            alignItems: 'center', 
+                            paddingVertical: 8,
+                            paddingHorizontal: 8,
+                            backgroundColor: '#f0f7ff',
+                            borderRadius: 4,
+                            marginBottom: 4,
+                            ...(isWeb ? { cursor: 'pointer' } : {}),
+                          }}
+                        >
+                          <Ionicons
+                            name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+                            size={16}
+                            color="#1976D2"
+                            style={{ marginRight: 4 }}
+                          />
+                          <SharePointSiteIcon size={18} color="#1976D2" style={{ marginRight: 6 }} />
                           <Text style={{ 
                             fontSize: 14, 
                             fontWeight: '600', 
@@ -540,10 +599,10 @@ export function SharePointLeftPanel({
                           }}>
                             {siteItem.name}
                           </Text>
-                        </View>
+                        </TouchableOpacity>
                         
                         {/* Site folders */}
-                        {siteItem.children && siteItem.children.length > 0 ? (
+                        {isExpanded && siteItem.children && siteItem.children.length > 0 && (
                           <View style={{ marginLeft: 12 }}>
                             {siteItem.children.map(folder => {
                               const folderIsProject = isProjectFolder(folder);
@@ -567,7 +626,8 @@ export function SharePointLeftPanel({
                               );
                             })}
                           </View>
-                        ) : (
+                        )}
+                        {isExpanded && (!siteItem.children || siteItem.children.length === 0) && (
                           <Text style={{ 
                             fontSize: 12, 
                             color: '#888', 

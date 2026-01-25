@@ -2,12 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getAllPhaseSharePointConfigs, getCompanySharePointSiteId, getSharePointSiteForPhase, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, uploadCompanyLogo } from '../components/firebase';
-import { PROJECT_PHASES } from '../features/projects/constants';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getAllPhaseSharePointConfigs, getCompanySharePointSiteId, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, uploadCompanyLogo } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
+import { PROJECT_PHASES } from '../features/projects/constants';
 
 export default function ManageCompany({ navigation, route }) {
   const [companyId, setCompanyId] = useState('');
@@ -1347,7 +1347,7 @@ export default function ManageCompany({ navigation, route }) {
                     </div>
                   </View>
 
-                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%', maxHeight: 400, overflowY: 'auto' }}>
+                      <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%' }}>
                         <View style={{ padding: 12, paddingBottom: 24 }}>
                           {!auditCompanyId ? (
                             <Text style={{ fontSize: 13, color: '#666' }}>Välj ett företag för att se admin-loggen.</Text>
@@ -1429,7 +1429,7 @@ export default function ManageCompany({ navigation, route }) {
                         </div>
                       </View>
 
-                        <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%', maxHeight: 400, overflowY: 'auto' }}>
+                        <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, backgroundColor: '#fafafa', width: '100%' }}>
                           <View style={{ padding: 12, paddingBottom: 24 }}>
                             {!auditCompanyId ? (
                               <Text style={{ fontSize: 13, color: '#666' }}>Välj ett företag för att se admin-loggen.</Text>

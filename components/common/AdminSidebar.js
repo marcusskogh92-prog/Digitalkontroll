@@ -5,10 +5,10 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { auth, fetchCompanies } from '../firebase';
-import { useNavigation } from '@react-navigation/native';
 
 export default function AdminSidebar({ 
   currentScreen = null, // 'manage_company', 'manage_users', etc.
@@ -91,19 +91,19 @@ export default function AdminSidebar({
   }, [isSuperadmin, showCompanySelector, loadCompanies]);
 
   const adminMenuItems = [];
-  
-  // Superadmin items
+
+  // Företag - endast superadmin
   if (isSuperadmin) {
     adminMenuItems.push(
       { key: 'manage_company', label: 'Företag', icon: 'business', color: '#2E7D32', screen: 'ManageCompany' },
-      { key: 'manage_users', label: 'Användare', icon: 'person', color: '#1976D2', screen: 'ManageUsers' },
-      { key: 'manage_control_types', label: 'Kontrolltyper', icon: 'options-outline', color: '#6A1B9A', screen: 'ManageControlTypes' },
     );
   }
 
-  // Admin + superadmin items
+  // Delade admin-menyer: Användare + Kontrolltyper + övriga adminverktyg
   if (isCompanyAdmin || isSuperadmin) {
     adminMenuItems.push(
+      { key: 'manage_users', label: 'Användare', icon: 'person', color: '#1976D2', screen: 'ManageUsers' },
+      { key: 'manage_control_types', label: 'Kontrolltyper', icon: 'options-outline', color: '#6A1B9A', screen: 'ManageControlTypes' },
       { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#0f172a', screen: 'ContactRegistry' },
       { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#43A047', screen: 'Suppliers' },
       { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#FB8C00', screen: 'Customers' },
@@ -267,13 +267,13 @@ export default function AdminSidebar({
                         padding: '8px 12px',
                         marginBottom: 4,
                         borderRadius: 6,
-                        backgroundColor: isSelected ? '#e8f5e9' : 'transparent',
+                        backgroundColor: isSelected ? '#DBEAFE' : 'transparent',
                         cursor: 'pointer',
-                        borderLeft: isSelected ? '3px solid #43A047' : '3px solid transparent',
+                        borderLeft: isSelected ? '3px solid #1D4ED8' : '3px solid transparent',
                         transition: 'background-color 0.15s',
                       }}
                       onMouseEnter={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = '#f0f0f0';
+                        if (!isSelected) e.currentTarget.style.backgroundColor = '#EFF6FF';
                       }}
                       onMouseLeave={(e) => {
                         if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
@@ -282,13 +282,13 @@ export default function AdminSidebar({
                       <Ionicons 
                         name="business" 
                         size={16} 
-                        color={isSelected ? '#43A047' : '#666'} 
+                        color={isSelected ? '#1D4ED8' : '#666'} 
                         style={{ marginRight: 8 }}
                       />
                       <span style={{ 
                         fontSize: 13, 
                         fontWeight: isSelected ? '600' : '400',
-                        color: isSelected ? '#43A047' : '#222',
+                        color: isSelected ? '#1D4ED8' : '#222',
                       }}>
                         {company.name || company.id}
                       </span>
@@ -310,17 +310,26 @@ export default function AdminSidebar({
                     justifyContent: 'center',
                     padding: '10px 12px',
                     marginTop: 8,
-                    borderRadius: 6,
-                    backgroundColor: '#43A047',
+                    borderRadius: 8,
+                    backgroundColor: '#1976D2',
                     cursor: 'pointer',
-                    border: '1px solid #2E7D32',
-                    transition: 'background-color 0.15s',
+                    border: '1px solid #1565C0',
+                    transition: 'background-color 0.15s, box-shadow 0.15s, transform 0.05s',
+                    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.15)',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#2E7D32';
+                    e.currentTarget.style.backgroundColor = '#1565C0';
+                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(15, 23, 42, 0.2)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#43A047';
+                    e.currentTarget.style.backgroundColor = '#1976D2';
+                    e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.15)';
+                  }}
+                  onMouseDown={(e) => {
+                    e.currentTarget.style.transform = 'translateY(1px)';
+                  }}
+                  onMouseUp={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
                   }}
                 >
                   <Ionicons 
@@ -463,27 +472,27 @@ export default function AdminSidebar({
                   <TouchableOpacity
                     key={company.id}
                     onPress={() => handleCompanySelect(company)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      padding: 8,
-                      marginBottom: 4,
-                      borderRadius: 6,
-                      backgroundColor: isSelected ? '#e8f5e9' : 'transparent',
-                      borderLeftWidth: 3,
-                      borderLeftColor: isSelected ? '#43A047' : 'transparent',
-                    }}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        padding: 8,
+                        marginBottom: 4,
+                        borderRadius: 6,
+                        backgroundColor: isSelected ? '#DBEAFE' : 'transparent',
+                        borderLeftWidth: 3,
+                        borderLeftColor: isSelected ? '#1D4ED8' : 'transparent',
+                      }}
                   >
                     <Ionicons 
                       name="business" 
-                      size={16} 
-                      color={isSelected ? '#43A047' : '#666'} 
+                        size={16} 
+                        color={isSelected ? '#1D4ED8' : '#666'} 
                       style={{ marginRight: 8 }}
                     />
                     <Text style={{ 
                       fontSize: 13, 
-                      fontWeight: isSelected ? '600' : '400',
-                      color: isSelected ? '#43A047' : '#222',
+                        fontWeight: isSelected ? '600' : '400',
+                        color: isSelected ? '#1D4ED8' : '#222',
                     }}>
                       {company.name || company.id}
                     </Text>
@@ -505,10 +514,10 @@ export default function AdminSidebar({
                   justifyContent: 'center',
                   padding: 10,
                   marginTop: 8,
-                  borderRadius: 6,
-                  backgroundColor: '#43A047',
+                  borderRadius: 8,
+                  backgroundColor: '#1976D2',
                   borderWidth: 1,
-                  borderColor: '#2E7D32',
+                  borderColor: '#1565C0',
                 }}
               >
                 <Ionicons 

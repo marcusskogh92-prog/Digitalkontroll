@@ -205,5 +205,13 @@ service cloud.firestore {
     match /foretag/{company}/projects/{projectId}/phaseData/{phaseKey} {
       allow read, write: if isCompanyMember(company);
     }
+
+    // SharePoint navigation configuration per company
+    // Used by adminvyn "SharePoint Navigation" och av vänsterpanelen på startsidan.
+    // Medlemmar i företaget får hantera sin egen navigation, och globala admins
+    // (superadmin / MS Byggsystem-admin) får hantera alla företags navigation.
+    match /foretag/{company}/sharepoint_navigation/{docId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
   }
 }

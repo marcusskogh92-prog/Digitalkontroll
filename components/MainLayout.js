@@ -5,11 +5,11 @@ import CompanyBanner from './common/CompanyBanner';
 const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle, sidebarSearchPlaceholder, sidebarCompaniesMode, sidebarShowMembers = false, topBar = null, sidebarRestrictCompanyId = null, sidebarHideCompanyActions = false, sidebarAutoExpandMembers = false, sidebarSearchMembersOnly = false, sidebarAllowCompanyManagementActions = true, sidebarIconName = null, sidebarIconColor = null, sidebarControlTypesMode = false, sidebarSelectedCompanyId = null, sidebarOnAddMainFolder = null, adminMode = false, adminCurrentScreen = null, adminOnSelectCompany = null, adminShowCompanySelector = true, adminCompanyBannerOnEdit = null, adminHideCompanyBanner = false }) => {
   const topBarHeight = topBar ? 96 : 0;
   const showCompanyBanner = adminMode && sidebarSelectedCompanyId && !adminHideCompanyBanner;
-  
+
   return (
-    <div style={{ height: '100vh', maxHeight: '100vh', background: '#f4f6fa', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', overflow: 'hidden' }}>
+	<div style={{ height: '100vh', background: '#f4f6fa', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {topBar ? <div style={{ width: '100%', borderBottom: '1px solid #e6e6e6', background: '#fff' }}>{topBar}</div> : null}
-      <div style={{ display: 'flex', height: `calc(100vh - ${topBarHeight}px)`, maxHeight: `calc(100vh - ${topBarHeight}px)`, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {adminMode ? (
           <AdminSidebar
             currentScreen={adminCurrentScreen}
@@ -36,8 +36,8 @@ const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle
             onAddMainFolder={sidebarOnAddMainFolder}
           />
         )}
-        <div style={{ flex: 1, padding: 32, paddingBottom: 80, overflowY: 'auto', overflowX: 'hidden', height: `calc(100vh - ${topBarHeight}px)`, maxHeight: `calc(100vh - ${topBarHeight}px)`, minHeight: 0, WebkitOverflowScrolling: 'touch' }}>
-          <div style={{ minHeight: 'calc(100% - 32px)', paddingBottom: 60, width: '100%', maxWidth: 1200, margin: '0 auto' }}>
+        <div style={{ flex: 1, padding: 32, paddingBottom: 80, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ paddingBottom: 60, width: '100%', maxWidth: 1200, margin: '0 auto' }}>
             {showCompanyBanner && (
               <CompanyBanner 
                 companyId={sidebarSelectedCompanyId} 

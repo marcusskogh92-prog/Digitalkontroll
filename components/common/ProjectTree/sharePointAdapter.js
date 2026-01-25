@@ -263,11 +263,14 @@ function getFunctionIcon(folderName) {
  */
 export function isProjectFolder(item) {
   if (item.type !== 'folder') return false;
-  
-  // Check if folder name matches project number pattern
-  // Examples: "825-10", "P-1001", "2026-01"
-  const projectPattern = /^[A-Z]?[0-9]+(?:-[0-9]+)?/;
-  return projectPattern.test(item.name);
+
+  // Check if folder name matches projekt-nummermönster med bindestreck,
+  // t.ex. "2024-100 Test", "825-10 Opus", "P100-01 Något".
+  // Vi kräver minst två siffror före bindestrecket för att filtrera bort
+  // mappar som bara heter "8 Något" osv.
+  const name = String(item.name || '').trim();
+  const projectPattern = /^([A-Z]?[0-9]{2,}-[0-9]+)(?:\s+.+)?$/;
+  return projectPattern.test(name);
 }
 
 /**
