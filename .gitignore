@@ -10,6 +10,12 @@ pnpm-lock.yaml
 .metro-health-check*
 expo-env.d.ts
 
+# Firebase local caches
+.firebase/
+
+# Local test artifacts
+test-results/
+
 # Web builds
 dist/
 web-build/
