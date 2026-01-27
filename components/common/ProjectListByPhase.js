@@ -3,9 +3,9 @@
  * Projects are not expandable - clicking navigates to project view
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { Platform, Text, TouchableOpacity, View } from 'react-native';
 import { PROJECT_PHASES } from '../../features/projects/constants';
 
 export default function ProjectListByPhase({
@@ -26,13 +26,11 @@ export default function ProjectListByPhase({
     });
   };
 
-  // Render a single project item
-  const renderProject = (project) => {
+  const ProjectItem = ({ project }) => {
     const projectLabel = project.fullName || `${project.number} ${project.name}`;
     const [isHovered, setIsHovered] = React.useState(false);
 
     const handleClick = () => {
-      // Prepare project data
       const projectData = {
         id: project.id,
         name: project.name,
@@ -41,17 +39,15 @@ export default function ProjectListByPhase({
         phase: project.phase,
         path: project.path,
         type: 'project',
-        ...project.folder, // Include all folder properties
+        ...project.folder,
       };
-      
-      // If navigation is available, navigate directly
+
       if (navigation) {
         navigation.navigate('ProjectDetails', {
           project: projectData,
           companyId,
         });
       } else if (onSelectProject) {
-        // Fallback: use onSelectProject callback
         onSelectProject(projectData);
       }
     };
@@ -59,7 +55,6 @@ export default function ProjectListByPhase({
     if (Platform.OS === 'web') {
       return (
         <div
-          key={project.id}
           onClick={handleClick}
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
@@ -104,7 +99,6 @@ export default function ProjectListByPhase({
 
     return (
       <TouchableOpacity
-        key={project.id}
         onPress={handleClick}
         style={{
           flexDirection: 'row',
@@ -185,7 +179,9 @@ export default function ProjectListByPhase({
         </View>
         {projects.length > 0 ? (
           <View style={{ paddingLeft: 8 }}>
-            {projects.map(project => renderProject(project))}
+            {projects.map((project) => (
+              <ProjectItem key={project.id} project={project} />
+            ))}
           </View>
         ) : search ? (
           <Text style={{ color: '#888', fontSize: 13, paddingLeft: 12, fontStyle: 'italic' }}>
@@ -207,7 +203,9 @@ export default function ProjectListByPhase({
             Övriga projekt ({filterProjects(projectsByPhase.unknown || []).length})
           </Text>
           <View style={{ paddingLeft: 8 }}>
-            {filterProjects(projectsByPhase.unknown || []).map(project => renderProject(project))}
+            {filterProjects(projectsByPhase.unknown || []).map((project) => (
+              <ProjectItem key={project.id} project={project} />
+            ))}
           </View>
         </View>
       )}

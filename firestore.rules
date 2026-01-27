@@ -16,6 +16,7 @@ service cloud.firestore {
       return request.auth != null
         && (
           // Token-baserade superadmins
+          request.auth.token.globalAdmin == true ||
           request.auth.token.superadmin == true ||
           request.auth.token.role == 'superadmin' ||
           // Admin i MS Byggsystem
@@ -206,11 +207,32 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Project organisation (company-scoped, project-specific)
+    // Used by "Organisation och roller" (Översikt) for custom groups and members.
+    // Collection: foretag/{company}/project_organisation/{projectId}
+    match /foretag/{company}/project_organisation/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project timeline (company-scoped, project-specific)
+    // Used by "Tidsplan och viktiga datum" (Översikt) for custom dates and site visits.
+    // Collection: foretag/{company}/project_timeline/{projectId}
+    match /foretag/{company}/project_timeline/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
     // SharePoint navigation configuration per company
     // Used by adminvyn "SharePoint Navigation" och av vänsterpanelen på startsidan.
     // Medlemmar i företaget får hantera sin egen navigation, och globala admins
     // (superadmin / MS Byggsystem-admin) får hantera alla företags navigation.
     match /foretag/{company}/sharepoint_navigation/{docId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // SharePoint project metadata (company-scoped)
+    // Used for phase/structure indicators per SharePoint-backed project folder.
+    // Collection: foretag/{company}/sharepoint_project_metadata/{docId}
+    match /foretag/{company}/sharepoint_project_metadata/{docId} {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
     }
   }

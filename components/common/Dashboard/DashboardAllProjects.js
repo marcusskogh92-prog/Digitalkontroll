@@ -111,14 +111,6 @@ const DashboardAllProjects = ({
     });
   }, [hierarchy]);
 
-  const dashboardSectionTitleStyle = useMemo(() => ({ 
-    fontSize: 20, 
-    fontWeight: '700', 
-    color: '#222', 
-    marginTop: 12, 
-    marginBottom: 16 
-  }), []);
-
   const tableHeaderStyle = useMemo(() => ({
     flexDirection: 'row',
     paddingVertical: 12,

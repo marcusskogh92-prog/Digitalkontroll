@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { loadFolderChildren } from '../../services/azure/hierarchyService';
+import { folderHasFilesDeep, loadFolderChildren } from '../../services/azure/hierarchyService';
 import { isWeb } from '../../utils/platform';
 import ContextMenu from '../ContextMenu';
 import { ProjectTree } from './ProjectTree';
@@ -236,6 +236,278 @@ export function HomeSidebar({
   createPortal,
 }) {
   const spin = phaseChangeSpinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const [projectFolderTree, setProjectFolderTree] = useState([]);
+  const [lastProjectId, setLastProjectId] = useState(null);
+  const contentCacheRef = useRef(new Map());
+  const contentPendingRef = useRef(new Set());
+
+  useEffect(() => {
+    if (!companyId || !selectedProject) return;
+    if (!Array.isArray(projectFolderTree) || projectFolderTree.length === 0) return;
+
+    const targets = [];
+    const collect = (nodes) => {
+      (nodes || []).forEach((n) => {
+        if (!n) return;
+        const p = String(n.path || n.sharePointPath || '').trim();
+        if (p) {
+          const cached = contentCacheRef.current.get(p);
+          if (typeof cached === 'boolean' && n.hasFilesDeep !== cached) {
+            targets.push({ path: p, value: cached });
+          } else if (typeof cached !== 'boolean' && n.hasFilesDeep === undefined && !contentPendingRef.current.has(p)) {
+            targets.push({ path: p, value: null });
+          }
+        }
+        if (Array.isArray(n.children) && n.children.length > 0) collect(n.children);
+      });
+    };
+    collect(projectFolderTree);
+
+    const cachedUpdates = targets.filter((t) => typeof t.value === 'boolean');
+    if (cachedUpdates.length > 0) {
+      setProjectFolderTree((prev) => {
+        const apply = (nodes) =>
+          (nodes || []).map((n) => {
+            if (!n) return n;
+            const p = String(n.path || n.sharePointPath || '').trim();
+            const match = cachedUpdates.find((u) => u.path === p);
+            const next = match ? { ...n, hasFilesDeep: match.value } : n;
+            if (Array.isArray(next.children) && next.children.length > 0) {
+              return { ...next, children: apply(next.children) };
+            }
+            return next;
+          });
+        return apply(prev);
+      });
+    }
+
+    const toCheck = targets
+      .filter((t) => t.value === null)
+      .map((t) => t.path)
+      .filter((p) => !contentPendingRef.current.has(p))
+      .slice(0, 12);
+
+    if (toCheck.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const path of toCheck) {
+        if (cancelled) return;
+        contentPendingRef.current.add(path);
+        try {
+          const hasFiles = await folderHasFilesDeep(companyId, path, 4);
+          contentCacheRef.current.set(path, hasFiles);
+          if (cancelled) return;
+          setProjectFolderTree((prev) => {
+            const apply = (nodes) =>
+              (nodes || []).map((n) => {
+                if (!n) return n;
+                const p = String(n.path || n.sharePointPath || '').trim();
+                const next = p === path ? { ...n, hasFilesDeep: hasFiles } : n;
+                if (Array.isArray(next.children) && next.children.length > 0) {
+                  return { ...next, children: apply(next.children) };
+                }
+                return next;
+              });
+            return apply(prev);
+          });
+        } catch (_e) {
+          contentCacheRef.current.set(path, false);
+        } finally {
+          contentPendingRef.current.delete(path);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, selectedProject, projectFolderTree]);
+
+  // Keep a local, mutable tree for the selected-project folders so we can expand and lazy-load children.
+  // This avoids requiring a setter from the parent.
+  useEffect(() => {
+    if (!selectedProject || !Array.isArray(selectedProjectFolders)) {
+      setProjectFolderTree([]);
+      setLastProjectId(null);
+      return;
+    }
+
+    const currentProjectId = String(selectedProject?.id || '').trim() || null;
+
+    const projectRootPath = String(
+      selectedProject?.path || selectedProject?.projectPath || selectedProject?.sharePointPath || ''
+    ).trim();
+
+    const normalizeNode = (node) => {
+      const safeName = String(node?.name || '').trim();
+      const basePath = String(node?.path || node?.sharePointPath || '').trim();
+      const derivedPath =
+        !basePath && projectRootPath && safeName
+          ? `${projectRootPath}/${safeName}`.replace(/^\/+/, '').replace(/\/+$/, '')
+          : basePath.replace(/^\/+/, '').replace(/\/+$/, '');
+
+      return {
+        ...node,
+        id: node?.id || derivedPath || safeName,
+        name: node?.name || safeName,
+        type: 'folder',
+        path: derivedPath,
+        sharePointPath: derivedPath,
+        expanded: Boolean(node?.expanded),
+        loading: Boolean(node?.loading),
+        error: node?.error || null,
+        children: Array.isArray(node?.children) ? node.children : [],
+      };
+    };
+
+    const mergeTrees = (incomingNodes, existingNodes) => {
+      const existingById = new Map((existingNodes || []).filter(Boolean).map((n) => [n.id, n]));
+
+      return (incomingNodes || []).filter(Boolean).map((incoming) => {
+        const existing = existingById.get(incoming.id);
+        if (!existing) return incoming;
+
+        const incomingChildren = Array.isArray(incoming.children) ? incoming.children : [];
+        const existingChildren = Array.isArray(existing.children) ? existing.children : [];
+        const childrenToUse = incomingChildren.length > 0 ? incomingChildren : existingChildren;
+
+        return {
+          ...incoming,
+          expanded: typeof existing.expanded === 'boolean' ? existing.expanded : Boolean(incoming.expanded),
+          loading: typeof existing.loading === 'boolean' ? existing.loading : Boolean(incoming.loading),
+          error: existing.error || incoming.error || null,
+          children: mergeTrees(childrenToUse, existingChildren),
+        };
+      });
+    };
+
+    const incoming = selectedProjectFolders.map(normalizeNode);
+
+    if (currentProjectId && currentProjectId !== lastProjectId) {
+      setLastProjectId(currentProjectId);
+      setProjectFolderTree(incoming);
+      return;
+    }
+
+    if (incoming.length === 0) {
+      return;
+    }
+
+    setProjectFolderTree((prev) => mergeTrees(incoming, prev));
+  }, [
+    selectedProject,
+    selectedProject?.id,
+    selectedProject?.path,
+    selectedProject?.projectPath,
+    selectedProject?.sharePointPath,
+    selectedProjectFolders,
+    lastProjectId,
+  ]);
+
+  const handleToggleProjectFolder = async (folderId) => {
+    if (!folderId) return;
+
+    let pathToLoad = null;
+    let shouldDispatch = null;
+
+    setProjectFolderTree((prev) => {
+      const walk = (nodes) =>
+        (nodes || []).map((n) => {
+          if (!n) return n;
+          if (n.id === folderId) {
+            const nextExpanded = !n.expanded;
+            const folderPathRaw = String(n.path || n.sharePointPath || '').trim();
+            const normalizedPath = folderPathRaw
+              .replace(/:/g, '')
+              .replace(/^\/+/, '')
+              .replace(/\/+/, '/')
+              .trim()
+              .replace(/\/+$/, '');
+
+            const shouldLoad =
+              nextExpanded && !n.loading && !n.error && (!Array.isArray(n.children) || n.children.length === 0);
+
+            if (shouldLoad && normalizedPath) {
+              pathToLoad = normalizedPath;
+            }
+            if (normalizedPath) {
+              shouldDispatch = { folderPath: normalizedPath, folderName: n.name };
+            }
+
+            return {
+              ...n,
+              expanded: nextExpanded,
+              ...(shouldLoad ? { loading: true, error: null } : null),
+            };
+          }
+          if (Array.isArray(n.children) && n.children.length > 0) {
+            return { ...n, children: walk(n.children) };
+          }
+          return n;
+        });
+
+      return walk(prev);
+    });
+
+    if (shouldDispatch && typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('dkFolderSelected', { detail: shouldDispatch }));
+      } catch (_e) {}
+    }
+
+    if (!companyId || !pathToLoad) {
+      setProjectFolderTree((prev) => {
+        const clearLoadingIfNeeded = (nodes) =>
+          (nodes || []).map((n) => {
+            if (!n) return n;
+            if (n.id === folderId) {
+              return { ...n, loading: false };
+            }
+            if (Array.isArray(n.children) && n.children.length > 0) {
+              return { ...n, children: clearLoadingIfNeeded(n.children) };
+            }
+            return n;
+          });
+        return clearLoadingIfNeeded(prev);
+      });
+      return;
+    }
+
+    try {
+      const children = await loadFolderChildren(companyId, pathToLoad);
+      setProjectFolderTree((prev) => {
+        const applyChildren = (nodes) =>
+          (nodes || []).map((n) => {
+            if (!n) return n;
+            if (n.id === folderId) {
+              return { ...n, loading: false, error: null, children: Array.isArray(children) ? children : [] };
+            }
+            if (Array.isArray(n.children) && n.children.length > 0) {
+              return { ...n, children: applyChildren(n.children) };
+            }
+            return n;
+          });
+        return applyChildren(prev);
+      });
+    } catch (err) {
+      const message = err?.message || 'Kunde inte ladda undermappar';
+      setProjectFolderTree((prev) => {
+        const applyError = (nodes) =>
+          (nodes || []).map((n) => {
+            if (!n) return n;
+            if (n.id === folderId) {
+              return { ...n, loading: false, error: message };
+            }
+            if (Array.isArray(n.children) && n.children.length > 0) {
+              return { ...n, children: applyError(n.children) };
+            }
+            return n;
+          });
+        return applyError(prev);
+      });
+    }
+  };
 
   const filteredHierarchy = hierarchy;
 
@@ -368,15 +640,43 @@ export function HomeSidebar({
             const projectHierarchy = selectedProject
               ? [
                   {
+                    ...selectedProject,
                     id: selectedProject.id,
-                    name: selectedProject.name || selectedProject.id,
+                    name: (() => {
+                      const rawName = String(
+                        selectedProject.projectName || selectedProject.name || selectedProject.fullName || ''
+                      ).trim();
+
+                      let number = String(
+                        selectedProject.projectNumber || selectedProject.number || ''
+                      ).trim();
+
+                      if (!number) {
+                        const firstToken = String(rawName.split(/\s+/)[0] || '').trim();
+                        if (firstToken && firstToken.includes('-')) {
+                          number = firstToken;
+                        }
+                      }
+
+                      const cleanedName = (() => {
+                        if (!rawName) return '';
+                        if (selectedProject.projectName) return rawName;
+                        if (number && rawName.startsWith(number)) {
+                          let rest = rawName.slice(number.length).trim();
+                          if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) {
+                            rest = rest.slice(1).trim();
+                          }
+                          return rest || rawName;
+                        }
+                        return rawName;
+                      })();
+
+                      if (number && cleanedName) return `${number} — ${cleanedName}`;
+                      return number || cleanedName || selectedProject.id;
+                    })(),
                     type: 'project',
                     expanded: true,
-                    children: selectedProjectFolders.map(folder => ({
-                      ...folder,
-                      type: 'projectFunction',
-                    })),
-                    ...selectedProject,
+                    children: projectFolderTree,
                   },
                 ]
               : [];
@@ -386,6 +686,10 @@ export function HomeSidebar({
                 hierarchy={projectHierarchy}
                 selectedProject={selectedProject}
                 selectedPhase={projectPhaseKey}
+                compact={isWeb}
+                hideFolderIcons
+                staticRootHeader
+                onToggleSubFolder={handleToggleProjectFolder}
                 onSelectProject={project => {
                   if (isWeb) {
                     navigation?.setParams?.({});

@@ -4,7 +4,7 @@
  * or are located in specific phase folders
  */
 
-import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
+import { DEFAULT_PHASE } from '../features/projects/constants';
 
 /**
  * Check if a folder name matches project pattern
@@ -98,12 +98,14 @@ export function extractProjectsByPhase(hierarchy, currentPath = '', currentPhase
       const projectName = parts.slice(1).join(' ') || folder.name;
 
       projects.push({
-        id: folder.id || folder.name,
+        // IMPORTANT: `id` should be the human project number, not SharePoint's internal id.
+        id: projectNumber || folder.name,
         name: projectName,
         number: projectNumber,
         fullName: folder.name,
         phase: folderPhase || DEFAULT_PHASE,
         path: currentPath ? `${currentPath}/${folder.name}` : folder.name,
+        sharePointId: folder.id || null,
         folder: folder, // Keep reference to original folder
       });
       

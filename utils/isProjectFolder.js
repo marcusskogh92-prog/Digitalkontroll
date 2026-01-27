@@ -77,13 +77,17 @@ export function extractProjectMetadata(folder) {
   
   const folderName = String(folder.name).trim();
   const parts = folderName.split(/\s+/);
+  const projectNumber = parts[0] || '';
   
   return {
-    id: folder.id || folderName,
-    number: parts[0] || '',
+    // IMPORTANT: `id` should be the human project number used throughout the app
+    // (e.g. "2026-00010"), not SharePoint's internal driveItem id.
+    id: projectNumber,
+    number: projectNumber,
     name: parts.slice(1).join(' ') || folderName,
     fullName: folderName,
     path: folder.path || folderName,
+    sharePointId: folder?.id || null,
     folder: folder,
   };
 }

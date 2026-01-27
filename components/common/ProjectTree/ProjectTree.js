@@ -21,13 +21,11 @@
  * />
  */
 
-import React, { useRef } from 'react';
-import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { PlatformComponent } from '../../../utils/platform';
-import ProjectTreeNode from './ProjectTreeNode';
-import ProjectTreeFolder from './ProjectTreeFolder';
+import { Text, TouchableOpacity, View } from 'react-native';
 import ProjectTreeFile from './ProjectTreeFile';
+import ProjectTreeFolder from './ProjectTreeFolder';
+import ProjectTreeNode from './ProjectTreeNode';
 import { useProjectTree } from './useProjectTree';
 
 export default function ProjectTree({
@@ -39,6 +37,7 @@ export default function ProjectTree({
   projectStatusFilter = 'all',
   onToggleMainFolder,
   onToggleSubFolder,
+  onPressFolder,
   onAddSubFolder,
   onAddProject,
   onAddMainFolder,
@@ -50,6 +49,9 @@ export default function ProjectTree({
   spinOnce,
   selectedProject = null,
   selectedPhase = null,
+  compact = false,
+  hideFolderIcons = false,
+  staticRootHeader = false,
 }) {
   const {
     hierarchy: hierarchyWithFunctions,
@@ -142,34 +144,69 @@ export default function ProjectTree({
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
         .map((folder) => {
           // Handle both old structure (main/sub) and new SharePoint structure (folder)
-          const folderType = folder.type || 'folder';
-          const isPhaseFolder = folder.isPhaseFolder || folderType === 'folder';
           const mainSpinAnim = mainChevronSpinAnim[folder.id];
           const isExpanded = folder.expanded || false;
+          const isProjectRootHeader = staticRootHeader && folder?.type === 'project';
+
+          const handleToggleMain = onToggleMainFolder
+            ? (id) => {
+                if (spinOnce && mainSpinAnim) {
+                  spinOnce(mainSpinAnim);
+                }
+                onToggleMainFolder(id);
+                if (folder.path && typeof window !== 'undefined') {
+                  try {
+                    window.dispatchEvent(
+                      new CustomEvent('dkFolderSelected', {
+                        detail: { folderPath: folder.path, folderName: folder.name },
+                      }),
+                    );
+                  } catch (_e) {}
+                }
+              }
+            : undefined;
+
+          const handleAddChild = onAddSubFolder ? () => onAddSubFolder(folder.id) : undefined;
 
           return (
-            <View key={folder.id} style={{ backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 8, paddingVertical: 10, paddingHorizontal: 12, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
+            <View
+              key={folder.id}
+              style={
+                compact
+                  ? {
+                      backgroundColor: '#fff',
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#e6e6e6',
+                      marginBottom: 6,
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                    }
+                  : {
+                      backgroundColor: '#fff',
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: '#e0e0e0',
+                      marginBottom: 8,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      shadowColor: '#1976D2',
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.1,
+                      shadowRadius: 6,
+                      elevation: 2,
+                    }
+              }
+            >
               {/* Folder (can be phase folder or any SharePoint folder) */}
               <ProjectTreeFolder
                 folder={folder}
                 level={0}
                 isExpanded={isExpanded}
-                onToggle={(id) => {
-                  if (spinOnce && mainSpinAnim) {
-                    spinOnce(mainSpinAnim);
-                  }
-                  if (onToggleMainFolder) {
-                    onToggleMainFolder(id);
-                  }
-                  // Track active folder for UI color
-                  if (folder.path && typeof window !== 'undefined') {
-                    try {
-                      window.dispatchEvent(new CustomEvent('dkFolderSelected', { 
-                        detail: { folderPath: folder.path, folderName: folder.name } 
-                      }));
-                    } catch (_e) {}
-                  }
-                }}
+                compact={compact}
+                hideFolderIcon={hideFolderIcons}
+                staticHeader={isProjectRootHeader}
+                onToggle={isProjectRootHeader ? undefined : handleToggleMain}
                 onLongPress={() => {
                   if (onEditMainFolder) {
                     onEditMainFolder(folder.id, folder.name);
@@ -191,194 +228,253 @@ export default function ProjectTree({
                   }
                 }}
                 spinAnim={mainSpinAnim}
-                showAddButton={isExpanded && !folder.children?.some(child => child.expanded)}
-                onAddChild={() => {
-                  if (onAddSubFolder) {
-                    onAddSubFolder(folder.id);
-                  }
-                }}
+                showAddButton={!isProjectRootHeader && isExpanded && !folder.children?.some(child => child.expanded)}
+                onAddChild={!isProjectRootHeader ? handleAddChild : undefined}
               />
 
-            {/* Children: folders, files, and projects */}
-            {isExpanded && (
-              !folder.children || folder.children.length === 0 ? (
-                <Text style={{ color: '#888', fontSize: 14, marginLeft: 18, marginTop: 8 }}>
-                  Tom mapp
-                </Text>
-              ) : (
-                <View style={{ marginTop: 8 }}>
-                  {/* Files */}
-                  {folder.children
-                    .filter(child => child.type === 'file')
-                    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                    .map((file) => (
-                      <ProjectTreeFile
-                        key={file.id}
-                        file={file}
-                        level={1}
-                      />
-                    ))}
-                  
-                  {/* Recursive rendering of sub-folders, projects, and files */}
-                  {folder.children
-                    .filter(child => child.type === 'folder' || child.type === 'sub' || child.type === 'project')
-                    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                    .map((child) => {
-                      // Check if child is a project (has project number pattern in name)
-                      const { isProjectFolder } = require('./sharePointAdapter');
-                      const isProject = child.type === 'project' || (child.type === 'folder' && isProjectFolder(child));
-                      
-                      if (isProject && child.type !== 'folder') {
-                        // Render as project
-                        const { getProjectPhase, DEFAULT_PHASE } = require('../../../features/projects/constants');
-                        const projectPhase = getProjectPhase(child);
-                        const effectivePhase = child?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
-                        
-                        const projectWithFunctions = {
-                          ...child,
-                          phase: effectivePhase,
-                          expanded: expandedProjects[child.id] || false,
-                        };
-                        
-                        const isKalkylskede = projectPhase.key === 'kalkylskede' || (!child?.phase && DEFAULT_PHASE === 'kalkylskede') || effectivePhase === 'kalkylskede';
-                        const effectiveExpanded = isKalkylskede ? false : projectWithFunctions.expanded;
-                        
-                        return (
-                          <ProjectTreeNode
-                            key={child.id}
-                            project={projectWithFunctions}
-                            isExpanded={effectiveExpanded}
-                            onToggle={isKalkylskede ? undefined : (projectId) => {
-                              handleProjectClick({ ...child, id: projectId });
-                            }}
-                            onSelect={(project) => {
-                              if (onSelectProject) {
-                                onSelectProject({
-                                  ...project,
-                                  phase: project.phase || effectivePhase
-                                });
+              {isProjectRootHeader && (
+                <View
+                  style={{
+                    height: 1,
+                    backgroundColor: '#e6e6e6',
+                    marginTop: compact ? 10 : 12,
+                    marginBottom: compact ? 8 : 10,
+                  }}
+                />
+              )}
+
+              {(() => {
+                const { isProjectFolder } = require('./sharePointAdapter');
+                const { getProjectPhase, DEFAULT_PHASE } = require('../../../features/projects/constants');
+
+                const isOverviewFolder = (node) => {
+                  const name = String(node?.name || '').trim().toLowerCase();
+                  if (!name) return false;
+                  return name.startsWith('01 - översikt') || name.startsWith('01 - oversikt');
+                };
+
+                const getTwoDigitPrefix = (name) => {
+                  const s = String(name || '').trim();
+                  const m = s.match(/^([0-9]{2})\s*[-–—]/);
+                  return m ? m[1] : null;
+                };
+
+                const isOverviewPageNode = (node, parentNode) => {
+                  if (!node || !parentNode) return false;
+                  if (!isOverviewFolder(parentNode)) return false;
+
+                  const prefix = getTwoDigitPrefix(node?.name);
+                  return prefix === '01' || prefix === '02' || prefix === '03' || prefix === '04';
+                };
+
+                const renderNodes = (nodes, level, parentNode = null) => {
+                  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+
+                  const sortedNodes = [...nodes].sort((a, b) =>
+                    (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' }),
+                  );
+
+                  const files = sortedNodes.filter((n) => n?.type === 'file');
+                  const containers = sortedNodes.filter((n) => {
+                    const t = n?.type;
+                    return t === 'folder' || t === 'sub' || t === 'project' || t === 'projectFunction' || !t;
+                  });
+
+                  return (
+                    <>
+                      {files.map((file) => (
+                        <ProjectTreeFile key={file.id} file={file} level={level} compact={compact} />
+                      ))}
+
+                      {containers.map((node) => {
+                        const isProject = node.type === 'project' || (node.type === 'folder' && isProjectFolder(node));
+
+                        if (isProject && node.type !== 'folder') {
+                          const projectPhase = getProjectPhase(node);
+                          const effectivePhase =
+                            node?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
+
+                          const projectWithFunctions = {
+                            ...node,
+                            phase: effectivePhase,
+                            expanded: expandedProjects[node.id] || false,
+                          };
+
+                          const isKalkylskede =
+                            projectPhase.key === 'kalkylskede' ||
+                            (!node?.phase && DEFAULT_PHASE === 'kalkylskede') ||
+                            effectivePhase === 'kalkylskede';
+                          const effectiveExpanded = isKalkylskede ? false : projectWithFunctions.expanded;
+
+                          return (
+                            <ProjectTreeNode
+                              key={node.id}
+                              project={projectWithFunctions}
+                              isExpanded={effectiveExpanded}
+                              onToggle={
+                                isKalkylskede
+                                  ? undefined
+                                  : (projectId) => {
+                                      handleProjectClick({ ...node, id: projectId });
+                                    }
                               }
-                            }}
-                            onSelectFunction={handleFunctionClick}
-                            navigation={navigation}
-                            companyId={companyId}
-                            isSelected={selectedProject && selectedProject.id === child.id}
-                            selectedPhase={selectedPhase}
-                          />
-                        );
-                      } else {
-                        // Render as folder (recursive)
-                        const subSpinAnim = subChevronSpinAnim[child.id];
-                        const isSubExpanded = child.expanded || false;
-                        
-                        return (
-                          <View key={child.id} style={{ marginTop: 4 }}>
-                            <ProjectTreeFolder
-                              folder={child}
-                              level={1}
-                              isExpanded={isSubExpanded}
-                              onToggle={(id) => {
-                                if (spinOnce && subSpinAnim) {
-                                  spinOnce(subSpinAnim);
-                                }
-                                if (onToggleSubFolder) {
-                                  onToggleSubFolder(id);
+                              onSelect={(project) => {
+                                if (onSelectProject) {
+                                  onSelectProject({
+                                    ...project,
+                                    phase: project.phase || effectivePhase,
+                                  });
                                 }
                               }}
+                              onSelectFunction={handleFunctionClick}
+                              navigation={navigation}
+                              companyId={companyId}
+                              isSelected={selectedProject && selectedProject.id === node.id}
+                              selectedPhase={selectedPhase}
+                              compact={compact}
+                            />
+                          );
+                        }
+
+                        const folderNode = {
+                          ...node,
+                          type: node?.type === 'projectFunction' ? 'folder' : (node?.type || 'folder'),
+                        };
+
+                        const isOverviewPage = isOverviewPageNode(folderNode, parentNode);
+
+                        const subSpinAnim = subChevronSpinAnim[folderNode.id];
+                        const isSubExpanded = folderNode.expanded || false;
+
+                        const handlePressFolder =
+                          isOverviewPage && typeof onPressFolder === 'function'
+                            ? () => {
+                                onPressFolder(folderNode, { parent: parentNode });
+                              }
+                            : undefined;
+
+                        return (
+                          <View key={folderNode.id} style={{ marginTop: 4 }}>
+                            <ProjectTreeFolder
+                              folder={folderNode}
+                              level={level}
+                              isExpanded={isSubExpanded}
+                              compact={compact}
+                              hideFolderIcon={hideFolderIcons}
+                              reserveChevronSpace={isOverviewPage}
+                              onPress={handlePressFolder}
+                              onToggle={
+                                isOverviewPage
+                                  ? undefined
+                                  : (id) => {
+                                      if (spinOnce && subSpinAnim) {
+                                        spinOnce(subSpinAnim);
+                                      }
+                                      if (onToggleSubFolder) {
+                                        onToggleSubFolder(id);
+                                      }
+                                    }
+                              }
                               onLongPress={() => {
                                 if (onEditSubFolder) {
-                                  onEditSubFolder(child.id, child.name);
+                                  onEditSubFolder(folderNode.id, folderNode.name);
                                 }
                               }}
                               spinAnim={subSpinAnim}
-                              showAddButton={isSubExpanded}
-                              onAddChild={() => {
-                                if (onAddProject) {
-                                  onAddProject(child.id);
-                                }
-                              }}
-                            />
-                            
-                            {/* Recursively render children */}
-                            {isSubExpanded && child.children && child.children.length > 0 && (
-                              <View style={{ marginLeft: 12, marginTop: 4 }}>
-                                {/* Files */}
-                                {child.children
-                                  .filter(grandchild => grandchild.type === 'file')
-                                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                  .map((file) => (
-                                    <ProjectTreeFile
-                                      key={file.id}
-                                      file={file}
-                                      level={2}
-                                    />
-                                  ))}
-                                
-                                {/* Recursively render sub-folders and projects */}
-                                {child.children
-                                  .filter(grandchild => grandchild.type === 'folder' || grandchild.type === 'sub' || grandchild.type === 'project')
-                                  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
-                                  .map((grandchild) => {
-                                    const isGrandchildProject = grandchild.type === 'project' || (grandchild.type === 'folder' && isProjectFolder(grandchild));
-                                    
-                                    if (isGrandchildProject && grandchild.type !== 'folder') {
-                                      // Render as project
-                                      const { getProjectPhase, DEFAULT_PHASE } = require('../../../features/projects/constants');
-                                      const projectPhase = getProjectPhase(grandchild);
-                                      const effectivePhase = grandchild?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
-                                      
-                                      const projectWithFunctions = {
-                                        ...grandchild,
-                                        phase: effectivePhase,
-                                        expanded: expandedProjects[grandchild.id] || false,
-                                      };
-                                      
-                                      const isKalkylskede = projectPhase.key === 'kalkylskede' || (!grandchild?.phase && DEFAULT_PHASE === 'kalkylskede') || effectivePhase === 'kalkylskede';
-                                      const effectiveExpanded = isKalkylskede ? false : projectWithFunctions.expanded;
-                                      
-                                      return (
-                                        <ProjectTreeNode
-                                          key={grandchild.id}
-                                          project={projectWithFunctions}
-                                          isExpanded={effectiveExpanded}
-                                          onToggle={isKalkylskede ? undefined : (projectId) => {
-                                            handleProjectClick({ ...grandchild, id: projectId });
-                                          }}
-                                          onSelect={(project) => {
-                                            if (onSelectProject) {
-                                              onSelectProject({
-                                                ...project,
-                                                phase: project.phase || effectivePhase
-                                              });
-                                            }
-                                          }}
-                                          onSelectFunction={handleFunctionClick}
-                                          navigation={navigation}
-                                          companyId={companyId}
-                                          isSelected={selectedProject && selectedProject.id === grandchild.id}
-                                          selectedPhase={selectedPhase}
-                                        />
-                                      );
-                                    } else {
-                                      // Render as folder (would need another level of recursion, but limit to 2 levels for now)
-                                      return (
-                                        <View key={grandchild.id} style={{ marginTop: 4 }}>
-                                          <Text style={{ color: '#666', fontSize: 13, marginLeft: 12 }}>
-                                            {grandchild.name} (mapp)
-                                          </Text>
-                                        </View>
-                                      );
+                              showAddButton={!isOverviewPage && isSubExpanded}
+                              onAddChild={
+                                !isOverviewPage && onAddProject
+                                  ? () => {
+                                      onAddProject(folderNode.id);
                                     }
-                                  })}
-                              </View>
+                                  : undefined
+                              }
+                            />
+
+                            {isSubExpanded && !isOverviewPage && (
+                              folderNode.loading ? (
+                                <Text
+                                  style={{
+                                    color: '#888',
+                                    fontSize: compact ? 12 : 13,
+                                    marginLeft: compact ? 14 : 18,
+                                    marginTop: 4,
+                                    fontStyle: 'italic',
+                                  }}
+                                >
+                                  Laddar undermappar...
+                                </Text>
+                              ) : folderNode.error ? (
+                                <Text
+                                  style={{
+                                    color: '#D32F2F',
+                                    fontSize: compact ? 12 : 13,
+                                    marginLeft: compact ? 14 : 18,
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  Fel: {folderNode.error}
+                                </Text>
+                              ) : !folderNode.children || folderNode.children.length === 0 ? (
+                                <Text
+                                  style={{
+                                    color: '#888',
+                                    fontSize: compact ? 12 : 13,
+                                    marginLeft: hideFolderIcons
+                                      ? (compact ? 10 : 12) + 12 * Math.max(1, level + 1) + 8 + (compact ? 22 : 26)
+                                      : (compact ? 14 : 18),
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  Tom mapp
+                                </Text>
+                              ) : (
+                                <View style={{ marginLeft: compact ? 10 : 12, marginTop: 4 }}>
+                                  {renderNodes(folderNode.children, level + 1, folderNode)}
+                                </View>
+                              )
                             )}
                           </View>
                         );
-                      }
-                    })}
-                </View>
-              )
-            )}
+                      })}
+                    </>
+                  );
+                };
+
+                if (!isExpanded) return null;
+                if (folder.loading) {
+                  return (
+                    <Text
+                      style={{
+                        color: '#888',
+                        fontSize: compact ? 12 : 14,
+                        marginLeft: compact ? 14 : 18,
+                        marginTop: compact ? 6 : 8,
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      Laddar...
+                    </Text>
+                  );
+                }
+                if (!folder.children || folder.children.length === 0) {
+                  return (
+                    <Text
+                      style={{
+                        color: '#888',
+                        fontSize: compact ? 12 : 14,
+                        marginLeft: hideFolderIcons
+                          ? 12 + 8 + (compact ? 22 : 26)
+                          : (compact ? 14 : 18),
+                        marginTop: compact ? 6 : 8,
+                      }}
+                    >
+                      Tom mapp
+                    </Text>
+                  );
+                }
+                return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(folder.children, 1, folder)}</View>;
+              })()}
             </View>
           );
         })}

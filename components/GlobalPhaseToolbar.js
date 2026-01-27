@@ -3,10 +3,10 @@
  * This toolbar is always visible at the top of the app, regardless of current view
  */
 
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Platform, Alert, ActivityIndicator, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { DEFAULT_PHASE, PROJECT_PHASES } from '../features/projects/constants';
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -39,7 +39,7 @@ export default function GlobalPhaseToolbar({ navigation, route }) {
   const [selectedPhase, setSelectedPhase] = useState(DEFAULT_PHASE);
   const [phaseDropdownOpen, setPhaseDropdownOpen] = useState(false);
   const [changingPhase, setChangingPhase] = useState(false);
-  const [pendingPhaseChange, setPendingPhaseChange] = useState(null);
+  const [, setPendingPhaseChange] = useState(null);
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
 
@@ -75,7 +75,7 @@ export default function GlobalPhaseToolbar({ navigation, route }) {
             setPhaseDropdownOpen(false);
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore errors
       }
     };

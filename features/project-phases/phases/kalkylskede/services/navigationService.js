@@ -6,6 +6,53 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../../components/firebase';
 import { getDefaultNavigation } from '../../../constants';
 
+const NAV_SCHEMA_VERSION = 2;
+
+function normalizeSections(sections) {
+  return Array.isArray(sections) ? sections.filter(Boolean) : [];
+}
+
+function normalizeItems(items, fallbackItems) {
+  const a = Array.isArray(items) ? items : null;
+  const b = Array.isArray(fallbackItems) ? fallbackItems : [];
+  // If stored items are missing or empty, backfill from defaults.
+  // (Empty arrays in stored docs are almost always legacy/partial saves.)
+  if (!a || a.length === 0) return b;
+  return a;
+}
+
+function mergeNavigationWithDefaults(defaultNav, storedNav) {
+  const defaultSections = normalizeSections(defaultNav?.sections);
+  const storedSections = normalizeSections(storedNav?.sections);
+
+  const defaultById = new Map(defaultSections.map((s) => [s?.id, s]));
+  const storedIds = new Set(storedSections.map((s) => s?.id).filter(Boolean));
+
+  // Preserve stored section order, but backfill missing content from defaults.
+  const mergedSections = storedSections.map((storedSection) => {
+    const def = storedSection?.id ? defaultById.get(storedSection.id) : null;
+    const fallbackItems = def?.items;
+    return {
+      ...(def || {}),
+      ...storedSection,
+      items: normalizeItems(storedSection?.items, fallbackItems),
+    };
+  });
+
+  // Add any default sections that are missing entirely.
+  for (const def of defaultSections) {
+    if (!def?.id) continue;
+    if (storedIds.has(def.id)) continue;
+    mergedSections.push(def);
+  }
+
+  return {
+    ...defaultNav,
+    ...storedNav,
+    sections: mergedSections,
+  };
+}
+
 /**
  * Get navigation structure for a project phase
  * Returns custom navigation if exists, otherwise default
@@ -29,9 +76,16 @@ export async function getProjectPhaseNavigation(companyId, projectId, phaseKey) 
     const docSnap = await getDoc(docRef);
 
     if (docSnap.exists()) {
-      const data = docSnap.data();
+      const data = docSnap.data() || {};
+      const defaultNav = getDefaultNavigation(phaseKey);
+
+      // Always merge with defaults so legacy/partial docs don't hide section items
+      // (e.g. Översikt showing "Tom mapp").
+      const merged = mergeNavigationWithDefaults(defaultNav, data);
+
       return {
-        ...data,
+        ...merged,
+        schemaVersion: Number(data?.schemaVersion || 0) || NAV_SCHEMA_VERSION,
         isDefault: false
       };
     }
@@ -76,6 +130,7 @@ export async function saveProjectPhaseNavigation(
       docRef,
       {
         ...navigation,
+        schemaVersion: NAV_SCHEMA_VERSION,
         lastModified: new Date().toISOString(),
         modifiedBy: auth.currentUser?.uid || 'system',
         version: (navigation.version || 0) + 1

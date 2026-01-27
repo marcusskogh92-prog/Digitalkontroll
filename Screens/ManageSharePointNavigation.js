@@ -9,7 +9,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ImageBackground, Platform, Text, TouchableOpacity, View } from 'react-native';
 import SharePointSiteIcon from '../components/common/SharePointSiteIcon';
 import { auth, getAvailableSharePointSites, getCompanySharePointSiteId, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
@@ -79,11 +79,63 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       } catch (_e) {}
     };
 
+    const handleRefresh = () => {
+      (async () => {
+        const cid = String(companyId || '').trim();
+        if (!cid) return;
+
+        // Reload available sites
+        try {
+          setLoadingSites(true);
+          const allSites = await getAvailableSharePointSites();
+          let nextSites = Array.isArray(allSites) ? allSites : [];
+
+          if (!isSuperadmin) {
+            const primarySiteId = await getCompanySharePointSiteId(cid).catch(() => null);
+            if (primarySiteId) {
+              nextSites = nextSites.filter((s) => String(s.id || '').trim() === String(primarySiteId || '').trim());
+            } else {
+              nextSites = [];
+            }
+          }
+
+          setAvailableSites(nextSites);
+        } catch (_e) {
+          setAvailableSites([]);
+        } finally {
+          setLoadingSites(false);
+        }
+
+        // Reload navigation config
+        try {
+          setLoading(true);
+          const navConfig = await getSharePointNavigationConfig(cid);
+          setConfig(navConfig || { enabledSites: [], siteConfigs: {} });
+          setNavigationInitialized(false);
+        } catch (_e) {
+          // Keep current config if fetch fails
+        } finally {
+          setLoading(false);
+        }
+
+        // Force reload folder trees
+        try {
+          setFolderTrees({});
+          setExpandedFolders({});
+          if (selectedSiteId) {
+            loadFolderTree(selectedSiteId, { force: true });
+          }
+        } catch (_e) {}
+      })();
+    };
+
     window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
     return () => {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
-  }, [navigation]);
+  }, [navigation, companyId, isSuperadmin, selectedSiteId]);
 
   // Load available SharePoint sites
   useEffect(() => {
@@ -176,8 +228,8 @@ export default function ManageSharePointNavigation({ navigation, route }) {
   }, []);
 
   // Load folder tree for a site
-  const loadFolderTree = async (siteId) => {
-    if (folderTrees[siteId] || loadingFolders[siteId]) return;
+  const loadFolderTree = async (siteId, { force = false } = {}) => {
+    if (!force && (folderTrees[siteId] || loadingFolders[siteId])) return;
     
     setLoadingFolders(prev => ({ ...prev, [siteId]: true }));
     try {
@@ -589,7 +641,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     }
   }, [companyId, availableSites, config, navigationInitialized, selectedSiteId]);
 
-  return (
+  const content = (
     <View style={{ flex: 1 }}>
       {/* Fullscreen overlay vid sparning / laddning av config */}
       {(saving || loading) && (
@@ -625,7 +677,19 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       adminShowCompanySelector={true}
       sidebarSelectedCompanyId={companyId}
       topBar={
-        <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+        <View
+          style={{
+            height: 96,
+            paddingLeft: 24,
+            paddingRight: 24,
+            backgroundColor: 'rgba(25, 118, 210, 0.2)',
+            justifyContent: 'center',
+            borderBottomWidth: 1,
+            borderColor: 'rgba(25, 118, 210, 0.3)',
+            borderLeftWidth: 4,
+            borderLeftColor: '#1976D2',
+          }}
+        >
           <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
               <View style={{ marginRight: 10 }}>
@@ -803,4 +867,22 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     </MainLayout>
   </View>
   );
+
+  if (Platform.OS === 'web') {
+    const RootContainer = ImageBackground;
+    const rootProps = {
+      source: require('../assets/images/inlogg.webb.png'),
+      resizeMode: 'cover',
+      imageStyle: { width: '100%', height: '100%' },
+    };
+
+    return (
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0, pointerEvents: 'none' }} />
+        <View style={{ flex: 1, zIndex: 1 }}>{content}</View>
+      </RootContainer>
+    );
+  }
+
+  return content;
 }

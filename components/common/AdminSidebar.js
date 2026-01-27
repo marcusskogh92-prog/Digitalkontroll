@@ -21,7 +21,6 @@ export default function AdminSidebar({
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
-  const [expandedCompanies, setExpandedCompanies] = useState({});
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
 
@@ -163,7 +162,13 @@ export default function AdminSidebar({
   };
 
   const handleHardRefresh = async () => {
-    // Refresh companies list
+    // Refresh current admin screen (web) + refresh companies list (superadmin)
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('dkRefresh'));
+      }
+    } catch (_e) {}
+
     await loadCompanies();
   };
 

@@ -3,9 +3,10 @@
  * Extracted from HomeScreen.js to improve code organization
  */
 
-import React, { useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { getProjectPhase } from '../../../features/projects/constants';
 
 const SelectProjectModal = ({
   visible,
@@ -90,7 +91,7 @@ const SelectProjectModal = ({
                             style={{ padding: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', alignItems: 'center' }}
                             onPress={() => handleSelectProject(proj)}
                           >
-                            <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: (proj.status || 'ongoing') === 'completed' ? '#222' : '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
+                            <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: getProjectPhase(proj)?.color || '#43A047', marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
                             <Text style={{ fontSize: 14, color: '#1976D2', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} - {proj.name}</Text>
                           </TouchableOpacity>
                         ))
@@ -151,7 +152,7 @@ const SelectProjectModal = ({
                                     style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent', borderRadius: 4, padding: '2px 4px', marginBottom: 0 }}
                                     onPress={() => handleSelectProject(proj)}
                                   >
-                                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: proj.status === 'completed' ? '#222' : '#43A047', marginRight: 6, borderWidth: 1, borderColor: '#bbb' }} />
+                                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: getProjectPhase(proj)?.color || '#43A047', marginRight: 6, borderWidth: 1, borderColor: '#bbb' }} />
                                     <Text style={{ fontSize: 13, color: '#1976D2', fontWeight: '400', marginLeft: 2, marginRight: 6, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{proj.id} — {proj.name}</Text>
                                   </TouchableOpacity>
                                 </View>

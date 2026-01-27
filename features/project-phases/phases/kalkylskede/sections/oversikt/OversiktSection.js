@@ -2,7 +2,6 @@
  * Översikt Section - Overview section for kalkylskede
  */
 
-import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 // Import items
@@ -12,7 +11,20 @@ import ProjektstatusView from './items/Projektstatus/ProjektstatusView';
 import RiskerView from './items/Risker/RiskerView';
 import OversiktSummary from './OversiktSummary';
 
+// New "Översikt 01–04" views (SharePoint filmappar)
+import FragaSvarView from './items/FragaSvar/FragaSvarView';
+import OrganisationRollerView from './items/OrganisationRoller/OrganisationRollerView';
+import ProjektinformationView from './items/Projektinformation/ProjektinformationView';
+import TidsplanViktigaDatumView from './items/TidsplanViktigaDatum/TidsplanViktigaDatumView';
+
 const ITEM_COMPONENTS = {
+  // SharePoint filmappar (01–04)
+  projektinfo: ProjektinformationView,
+  'organisation-roller': OrganisationRollerView,
+  'tidsplan-viktiga-datum': TidsplanViktigaDatumView,
+  'status-beslut': FragaSvarView,
+
+  // Existing oversikt items
   projektstatus: ProjektstatusView,
   flodesschema: FlodesschemaView,
   deadlines: DeadlinesView,
@@ -56,7 +68,9 @@ export default function OversiktSection({ projectId, companyId, project, activeI
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
   },
   emptyText: {
     fontSize: 16,

@@ -2,9 +2,8 @@
  * ProjectFunctionNode - Renders a function under a project
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Text, TouchableOpacity } from 'react-native';
 
 export default function ProjectFunctionNode({
   functionItem,

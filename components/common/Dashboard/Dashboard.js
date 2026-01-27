@@ -52,11 +52,6 @@ const Dashboard = ({
 }) => {
   // Dashboard styles (moved from HomeScreen)
   const dashboardContainerStyle = React.useMemo(() => ({ width: '100%', maxWidth: 1180, alignSelf: 'center' }), []);
-  const dashboardColumnsStyle = React.useMemo(() => ({
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: Platform.OS === 'web' ? 16 : 0,
-    alignItems: Platform.OS === 'web' ? 'flex-start' : 'stretch',
-  }), []);
 
   return (
     <View style={dashboardContainerStyle}>

@@ -2661,6 +2661,114 @@ export async function getSharePointNavigationConfig(companyIdOverride) {
   }
 }
 
+// ============================================================================
+// SHAREPOINT PROJECT METADATA (phase/structure)
+// ============================================================================
+
+function encodeSharePointProjectMetaId(siteId, projectPath) {
+  const sid = String(siteId || '').trim();
+  const p = String(projectPath || '').trim();
+  return encodeURIComponent(`${sid}|${p}`);
+}
+
+/**
+ * Persist metadata for a SharePoint-backed project folder.
+ * Used to show phase/structure indicators in the UI.
+ *
+ * Collection: foretag/{companyId}/sharepoint_project_metadata/{docId}
+ */
+export async function saveSharePointProjectMetadata(companyIdOverride, meta) {
+  const companyId = await resolveCompanyId(companyIdOverride, meta);
+  if (!companyId) throw new Error('Company ID is required');
+  const siteId = String(meta?.siteId || '').trim();
+  const projectPath = String(meta?.projectPath || '').trim();
+  if (!siteId || !projectPath) throw new Error('siteId and projectPath are required');
+
+  const docId = encodeSharePointProjectMetaId(siteId, projectPath);
+  const ref = doc(db, 'foretag', companyId, 'sharepoint_project_metadata', docId);
+
+  const payload = {
+    siteId,
+    projectPath,
+    projectNumber: meta?.projectNumber != null ? String(meta.projectNumber) : null,
+    projectName: meta?.projectName != null ? String(meta.projectName) : null,
+    phaseKey: meta?.phaseKey != null ? String(meta.phaseKey) : null,
+    structureType: meta?.structureType != null ? String(meta.structureType) : null,
+    status: meta?.status != null ? String(meta.status) : null,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return { id: docId, ...payload };
+}
+
+/**
+ * Patch (partial update) for a SharePoint-backed project metadata doc.
+ * Only fields explicitly provided are written (others are left untouched).
+ */
+export async function patchSharePointProjectMetadata(companyIdOverride, meta) {
+  const companyId = await resolveCompanyId(companyIdOverride, meta);
+  if (!companyId) throw new Error('Company ID is required');
+  const siteId = String(meta?.siteId || '').trim();
+  const projectPath = String(meta?.projectPath || '').trim();
+  if (!siteId || !projectPath) throw new Error('siteId and projectPath are required');
+
+  const docId = encodeSharePointProjectMetaId(siteId, projectPath);
+  const ref = doc(db, 'foretag', companyId, 'sharepoint_project_metadata', docId);
+
+  const payload = {
+    siteId,
+    projectPath,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  if ('projectNumber' in meta) {
+    payload.projectNumber = meta?.projectNumber != null ? String(meta.projectNumber) : null;
+  }
+  if ('projectName' in meta) {
+    payload.projectName = meta?.projectName != null ? String(meta.projectName) : null;
+  }
+  if ('phaseKey' in meta) {
+    payload.phaseKey = meta?.phaseKey != null ? String(meta.phaseKey) : null;
+  }
+  if ('structureType' in meta) {
+    payload.structureType = meta?.structureType != null ? String(meta.structureType) : null;
+  }
+  if ('status' in meta) {
+    payload.status = meta?.status != null ? String(meta.status) : null;
+  }
+
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return { id: docId, ...payload };
+}
+
+/**
+ * Fetch all saved SharePoint project metadata for a company.
+ * Returns a map keyed by `${siteId}|${projectPath}`.
+ */
+export async function fetchSharePointProjectMetadataMap(companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const colRef = collection(db, 'foretag', companyId, 'sharepoint_project_metadata');
+  const snap = await getDocs(colRef);
+  const out = new Map();
+
+  snap.forEach((docSnap) => {
+    try {
+      const d = docSnap.data() || {};
+      const sid = String(d.siteId || '').trim();
+      const p = String(d.projectPath || '').trim();
+      if (!sid || !p) return;
+      out.set(`${sid}|${p}`, { id: docSnap.id, ...d });
+    } catch (_e) {}
+  });
+
+  return out;
+}
+
 /**
  * Save SharePoint navigation configuration for a company
  * @param {string} companyIdOverride - Optional explicit company ID
@@ -2722,7 +2830,6 @@ export async function getAvailableSharePointSites() {
       }),
     ]);
 
-    const sites = [];
     const siteMap = new Map();
 
     // Process followed sites

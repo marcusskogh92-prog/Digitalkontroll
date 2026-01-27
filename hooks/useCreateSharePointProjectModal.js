@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { getSharePointNavigationConfig } from '../components/firebase';
+import { getSharePointNavigationConfig, saveSharePointProjectMetadata } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
@@ -146,6 +146,27 @@ export function useCreateSharePointProjectModal({ companyId }) {
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] ✅ Project folder created: ${projectPath}`);
 
+      // Persist metadata for phase/structure so UI can show the correct indicator
+      try {
+        const phaseKeyForMeta =
+          structureType === 'system' && systemPhase
+            ? String(systemPhase || '').trim() || 'kalkylskede'
+            : 'free';
+        const statusForMeta = phaseKeyForMeta === 'avslut' ? 'completed' : 'ongoing';
+        await saveSharePointProjectMetadata(companyId, {
+          siteId,
+          projectPath,
+          projectNumber: String(projectNumber),
+          projectName: String(projectName),
+          phaseKey: phaseKeyForMeta,
+          structureType: String(structureType || '').trim() || null,
+          status: statusForMeta,
+        });
+      } catch (metaError) {
+        // eslint-disable-next-line no-console
+        console.warn('[useCreateSharePointProjectModal] Warning saving project metadata:', metaError?.message || metaError);
+      }
+
       // Apply system structure inside the project folder if structureType is 'system'
       // This must complete before closing modal to ensure structure is created
       // eslint-disable-next-line no-console
@@ -180,136 +201,63 @@ export function useCreateSharePointProjectModal({ companyId }) {
         console.log(`[useCreateSharePointProjectModal] Mapped phaseKey: "${phaseKey}"`);
 
         // Create phase-specific structure inside the project folder
-        if (phaseKey === 'kalkylskede') {
+        try {
           // eslint-disable-next-line no-console
-          console.log('[useCreateSharePointProjectModal] ===== STARTING KALKYLSKEDE STRUCTURE CREATION =====');
+          console.log(`[useCreateSharePointProjectModal] ===== STARTING STRUCTURE CREATION =====`);
           // eslint-disable-next-line no-console
           console.log(`[useCreateSharePointProjectModal] phaseKey: "${phaseKey}", projectPath: "${projectPath}"`);
-          try {
-            // eslint-disable-next-line no-console
-            console.log('[useCreateSharePointProjectModal] Loading kalkylskede navigation structure...');
-            const { getDefaultNavigation } = await import('../features/project-phases/constants');
-            const navigation = getDefaultNavigation('kalkylskede');
-            
-            if (!navigation || !navigation.sections) {
-              throw new Error('Navigation structure not found');
-            }
-            
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] ✅ Navigation loaded: ${navigation.sections.length} sections`);
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] Creating ${navigation.sections.length} sections with items...`);
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] Project path: ${projectPath}, siteId: ${siteId}, companyId: ${companyId}`);
-            
-            // Create all section folders (huvudmappar) in parallel for speed
-            const sectionPromises = navigation.sections.map(async (section) => {
-              // Use section name as-is (includes number prefix like "01 - Översikt")
-              const sectionFolderName = section.name;
-              const sectionPath = `${projectPath}/${sectionFolderName}`;
-              
-              try {
-                // eslint-disable-next-line no-console
-                console.log(`[useCreateSharePointProjectModal] Creating section: ${sectionFolderName} at path: ${sectionPath} (siteId: ${siteId})`);
-                // Create the section folder (huvudmapp)
-                await ensureFolderPath(sectionPath, companyId, siteId);
-                // eslint-disable-next-line no-console
-                console.log(`[useCreateSharePointProjectModal] ✅ Section folder created: ${sectionFolderName}`);
-                
-                // Create all items (undermappar) inside this section in parallel
-                if (section.items && Array.isArray(section.items)) {
-                  const enabledItems = section.items.filter(item => item.enabled !== false);
-                  // eslint-disable-next-line no-console
-                  console.log(`[useCreateSharePointProjectModal] Creating ${enabledItems.length} items in ${sectionFolderName}`);
-                  
-                  const itemPromises = enabledItems.map(async (item) => {
-                    const itemPath = `${sectionPath}/${item.name}`;
-                    try {
-                      // eslint-disable-next-line no-console
-                      console.log(`[useCreateSharePointProjectModal] Creating item: ${item.name} at path: ${itemPath}`);
-                      await ensureFolderPath(itemPath, companyId, siteId);
-                      // eslint-disable-next-line no-console
-                      console.log(`[useCreateSharePointProjectModal] ✅ Item folder created: ${item.name}`);
-                    } catch (itemError) {
-                      // eslint-disable-next-line no-console
-                      console.error(`[useCreateSharePointProjectModal] Error creating item folder ${itemPath}:`, itemError?.message || itemError);
-                      // Don't throw - continue with other items
-                    }
-                  });
-                  
-                  // Wait for all items in this section to be created
-                  const itemResults = await Promise.allSettled(itemPromises);
-                  const failedItems = itemResults.filter(r => r.status === 'rejected');
-                  if (failedItems.length > 0) {
-                    // eslint-disable-next-line no-console
-                    console.warn(`[useCreateSharePointProjectModal] ${failedItems.length} items failed in ${sectionFolderName}`);
-                  }
-                }
-              } catch (sectionError) {
-                // eslint-disable-next-line no-console
-                console.error(`[useCreateSharePointProjectModal] Error creating section folder ${sectionPath}:`, sectionError);
-                // Don't throw - continue with other sections
-              }
-            });
-            
-            // Wait for all sections to be created (in parallel)
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] Waiting for ${sectionPromises.length} sections to complete...`);
-            const sectionResults = await Promise.allSettled(sectionPromises);
-            const failedSections = sectionResults.filter(r => r.status === 'rejected');
-            const successfulSections = sectionResults.filter(r => r.status === 'fulfilled');
-            
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] Section creation complete: ${successfulSections.length} succeeded, ${failedSections.length} failed`);
-            
-            if (failedSections.length > 0) {
-              // eslint-disable-next-line no-console
-              console.warn(`[useCreateSharePointProjectModal] ${failedSections.length} sections failed to create:`, failedSections.map(r => r.reason?.message || r.reason));
-            }
-            
-            // Log detailed results for each section
-            sectionResults.forEach((result, index) => {
-              if (result.status === 'rejected') {
-                // eslint-disable-next-line no-console
-                console.error(`[useCreateSharePointProjectModal] Section ${index + 1} failed:`, result.reason);
-              } else {
-                // eslint-disable-next-line no-console
-                console.log(`[useCreateSharePointProjectModal] Section ${index + 1} succeeded`);
-              }
-            });
-            
-            const totalItems = navigation.sections.reduce((sum, s) => sum + (s.items?.filter(i => i.enabled !== false).length || 0), 0);
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] ✅ Created kalkylskede structure: ${navigation.sections.length} sections, ${totalItems} items`);
-          } catch (error) {
-            // eslint-disable-next-line no-console
-            console.error(`[useCreateSharePointProjectModal] Could not create kalkylskede structure:`, error);
-            // eslint-disable-next-line no-console
-            console.error('[useCreateSharePointProjectModal] Error details:', error.message, error.stack);
-            // Fallback to standard subfolders
-            // eslint-disable-next-line no-console
-            console.log('[useCreateSharePointProjectModal] Falling back to standard subfolders');
-            const standardSubfolders = ['Documents', 'Drawings', 'Meetings', 'Controls'];
-            for (const subfolder of standardSubfolders) {
-              const subfolderPath = `${projectPath}/${subfolder}`;
-              try {
-                await ensureFolderPath(subfolderPath, companyId, siteId);
-              } catch (subfolderError) {
-                // eslint-disable-next-line no-console
-                console.warn(`[useCreateSharePointProjectModal] Warning creating subfolder ${subfolderPath}:`, subfolderError);
-              }
-            }
+
+          const { getDefaultNavigation } = await import('../features/project-phases/constants');
+          const navigation = getDefaultNavigation(phaseKey);
+          if (!navigation || !Array.isArray(navigation.sections)) {
+            throw new Error('Navigation structure not found');
           }
-        } else {
-          // For other phases, create standard subfolders
+
+          // eslint-disable-next-line no-console
+          console.log(`[useCreateSharePointProjectModal] ✅ Navigation loaded: ${navigation.sections.length} sections`);
+
+          const sectionPromises = navigation.sections.map(async (section) => {
+            const sectionFolderName = section.name;
+            const sectionPath = `${projectPath}/${sectionFolderName}`;
+
+            try {
+              await ensureFolderPath(sectionPath, companyId, siteId);
+
+              if (section.items && Array.isArray(section.items)) {
+                const enabledItems = section.items.filter((item) => item && item.enabled !== false);
+                const itemPromises = enabledItems.map(async (item) => {
+                  const itemPath = `${sectionPath}/${item.name}`;
+                  try {
+                    await ensureFolderPath(itemPath, companyId, siteId);
+                  } catch (itemError) {
+                    // eslint-disable-next-line no-console
+                    console.error(`[useCreateSharePointProjectModal] Error creating item folder ${itemPath}:`, itemError?.message || itemError);
+                  }
+                });
+                await Promise.allSettled(itemPromises);
+              }
+            } catch (sectionError) {
+              // eslint-disable-next-line no-console
+              console.error(`[useCreateSharePointProjectModal] Error creating section folder ${sectionPath}:`, sectionError);
+            }
+          });
+
+          await Promise.allSettled(sectionPromises);
+          const totalItems = navigation.sections.reduce((sum, s) => sum + (s.items?.filter((i) => i && i.enabled !== false).length || 0), 0);
+          // eslint-disable-next-line no-console
+          console.log(`[useCreateSharePointProjectModal] ✅ Created structure: ${navigation.sections.length} sections, ${totalItems} items`);
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error(`[useCreateSharePointProjectModal] Could not create structure for phase ${phaseKey}:`, error);
+          // Fallback to standard subfolders
           const standardSubfolders = ['Documents', 'Drawings', 'Meetings', 'Controls'];
           for (const subfolder of standardSubfolders) {
             const subfolderPath = `${projectPath}/${subfolder}`;
             try {
               await ensureFolderPath(subfolderPath, companyId, siteId);
-            } catch (error) {
+            } catch (subfolderError) {
               // eslint-disable-next-line no-console
-              console.warn(`[useCreateSharePointProjectModal] Warning creating subfolder ${subfolderPath}:`, error);
+              console.warn(`[useCreateSharePointProjectModal] Warning creating subfolder ${subfolderPath}:`, subfolderError);
             }
           }
         }

@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { PROJECT_PHASES } from '../../../features/projects/constants';
 import { getSharePointNavigationConfig } from '../../firebase';
 
 // STRUCTURES removed - projects are no longer phase-based
@@ -26,6 +27,9 @@ export default function CreateProjectModal({
   const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
   const [selectedProjectRoot, setSelectedProjectRoot] = useState(null); // { siteId, siteName, folderPath, folderName }
+
+  // Project structure/phase selection
+  const [selectedStructureKey, setSelectedStructureKey] = useState('');
   
   // State for location picker
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
@@ -36,6 +40,11 @@ export default function CreateProjectModal({
   const [loadingLocationFolders, setLoadingLocationFolders] = useState(false);
   const [locationPathHistory, setLocationPathHistory] = useState([]); // For breadcrumb navigation
   const [navConfig, setNavConfig] = useState(null);
+
+  // State for structure picker (web dropdown)
+  const [structurePickerOpen, setStructurePickerOpen] = useState(false);
+  const structurePickerRef = useRef(null);
+  const [structurePickerPosition, setStructurePickerPosition] = useState({ top: 0, left: 0, width: 0 });
   
   // Refs för att mäta dropdown-trigger positioner
   const locationPickerRef = useRef(null);
@@ -52,16 +61,76 @@ export default function CreateProjectModal({
     async function loadFolders() {
       setLoadingLocationFolders(true);
       try {
-        // Använd samma källa som vänsterpanelen (getDriveItems)
-        // så vi får exakt samma mappstruktur som användarna ser där.
-        const { getDriveItems } = await import('../../services/azure/hierarchyService');
-        const items = await getDriveItems(activeSite.id, currentPath || '');
+        // Root-nivå: använd samma källa som SharePointLeftPanel (filterHierarchyByConfig)
+        // så att vi får EXAKT samma mapplista som i vänsterpanelen för den aktiva siten.
+        if (!currentPath) {
+          try {
+            const { filterHierarchyByConfig } = await import('../../../utils/filterSharePointHierarchy');
+            const filtered = await filterHierarchyByConfig([], companyId, navConfig || undefined);
+            if (cancelled) return;
+
+            // Hitta den aktiva siten i det filtrerade trädet
+            const siteNode = (filtered || []).find((site) => {
+              if (!site) return false;
+              const siteId = String(site.siteId || '').trim();
+              const activeId = String(activeSite?.id || '').trim();
+              return siteId && activeId && siteId === activeId;
+            });
+
+            const siteFolders = Array.isArray(siteNode?.children) ? siteNode.children : [];
+
+            const folders = siteFolders
+              .filter((item) => item && (item.type === 'folder' || item.folder))
+              .map((item) => {
+                const name = String(item.name || '').trim();
+                let path = String(item.path || '').trim();
+                if (!path) {
+                  const base = String(currentPath || '').replace(/\/+$/, '');
+                  path = base ? `${base}/${name}` : name;
+                }
+                return { name, path };
+              });
+
+            setLocationFolders(folders);
+            return;
+          } catch (e) {
+            console.error('[CreateProjectModal] Error filtering hierarchy by config, falling back to raw root folders:', e);
+            const { getSharePointHierarchy } = await import('../../../services/azure/hierarchyService');
+            const rootFolders = await getSharePointHierarchy(companyId, null, 1);
+            if (cancelled) return;
+
+            const folders = (rootFolders || [])
+              .filter((item) => item && (item.folder || item.type === 'folder'))
+              .map((item) => {
+                const name = String(item.name || '').trim();
+                let path = String(item.path || '').trim();
+                if (!path) {
+                  const base = String(currentPath || '').replace(/\/+$/, '');
+                  path = base ? `${base}/${name}` : name;
+                }
+                return { name, path };
+              });
+
+            setLocationFolders(folders);
+            return;
+          }
+        }
+
+        // Undermappar: använd loadFolderChildren (samma som lazy load i ProjectSidebar)
+        const { loadFolderChildren } = await import('../../../services/azure/hierarchyService');
+        const items = await loadFolderChildren(companyId, currentPath || '', 1);
         if (cancelled) return;
 
         const folders = (items || [])
-          .filter((item) => item && item.folder)
+          .filter((item) => item && (item.folder || item.type === 'folder'))
           .map((item) => {
             const name = String(item.name || '').trim();
+
+            if (item.path) {
+              const path = String(item.path || '').trim();
+              return { name, path };
+            }
+
             const base = String(currentPath || '').replace(/\/+$/, '');
             const path = base ? `${base}/${name}` : name;
             return { name, path };
@@ -108,6 +177,9 @@ export default function CreateProjectModal({
       setProjectNumber('');
       setProjectName('');
       setSelectedProjectRoot(null);
+
+      // Default structure when opening modal
+      setSelectedStructureKey('');
       
       // Reset location picker state
       setLocationPickerOpen(false);
@@ -120,19 +192,14 @@ export default function CreateProjectModal({
       
       // Reset dropdown positions
       setLocationPickerPosition({ top: 0, left: 0, width: 0 });
+
+      // Reset structure picker state
+      setStructurePickerOpen(false);
+      setStructurePickerPosition({ top: 0, left: 0, width: 0 });
     }
   }, [visible]);
 
-  // Initialize location picker when it opens - reset to sites step
-  useEffect(() => {
-    if (locationPickerOpen) {
-      setLocationPickerStep('sites');
-      setActiveSite(null);
-      setCurrentPath('');
-      setLocationPathHistory([]);
-      setLocationFolders([]);
-    }
-  }, [locationPickerOpen]);
+  // Location picker state initieras via openLocationPicker
 
   // Derived booleans for status + validering
   const hasProjectNumber = projectNumber.trim().length > 0;
@@ -142,9 +209,23 @@ export default function CreateProjectModal({
   const hasProjectRoot = !!selectedProjectRoot;
   const isStorageSectionComplete = hasProjectRoot;
 
+  const hasStructure = !!selectedStructureKey;
+  const isStructureSectionComplete = hasStructure;
+
+  const selectedStructureLabel = (() => {
+    try {
+      const key = String(selectedStructureKey || '').trim();
+      const hit = (PROJECT_PHASES || []).find((p) => String(p?.key || '').trim() === key);
+      return String(hit?.name || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  })();
+
   const canCreate = Boolean(
     isProjectSectionComplete &&
-    isStorageSectionComplete
+    isStorageSectionComplete &&
+    isStructureSectionComplete
   );
 
   const getSiteDisplayName = (site) => {
@@ -187,17 +268,20 @@ export default function CreateProjectModal({
     setLocationPathHistory([]);
   };
 
-  const handleSelectSiteRoot = () => {
-    // Select site root
-    if (activeSite) {
-      handleSelectLocation(activeSite, '', 'Root');
-    }
-  };
-
   const handleNavigateToFolder = (folder) => {
     const newPath = folder.path;
     setLocationPathHistory([...locationPathHistory, { path: currentPath, name: currentPath ? currentPath.split('/').pop() : 'Root' }]);
     setCurrentPath(newPath);
+    // När användaren klickar på en mapp, betrakta den direkt som vald lagringsplats
+    // så att valet "sparas" utan extra klick på separat Välj-knapp.
+    if (activeSite) {
+      setSelectedProjectRoot({
+        siteId: activeSite.id,
+        siteName: getSiteDisplayName(activeSite),
+        folderPath: newPath || '',
+        folderName: newPath ? newPath.split('/').pop() : 'Root',
+      });
+    }
   };
 
   const handleNavigateBack = () => {
@@ -214,15 +298,37 @@ export default function CreateProjectModal({
     }
   };
 
+  const openLocationPicker = (startStep = 'sites') => {
+    // Avoid overlapping dropdowns
+    try { setStructurePickerOpen(false); } catch (_e) {}
+
+    if (startStep === 'folders' && selectedProjectRoot?.siteId) {
+      const site = availableSites.find((s) => String(s.id) === String(selectedProjectRoot.siteId));
+      setActiveSite(site || null);
+      setLocationPickerStep('folders');
+      setCurrentPath(selectedProjectRoot.folderPath || '');
+      setLocationPathHistory([]);
+    } else {
+      setLocationPickerStep('sites');
+      setActiveSite(null);
+      setCurrentPath('');
+      setLocationPathHistory([]);
+    }
+    setLocationPickerOpen(true);
+  };
+
   const handleCreate = () => {
     if (!canCreate || !onCreateProject || !selectedProjectRoot) return;
 
-    // eslint-disable-next-line no-console
+    const structureKey = String(selectedStructureKey || '').trim();
+    const isFree = structureKey === 'free';
+
     console.log('[CreateProjectModal] Creating project with:', {
       projectNumber,
       projectName,
       siteId: selectedProjectRoot.siteId,
       parentFolderPath: selectedProjectRoot.folderPath,
+      selectedStructureKey: structureKey,
     });
 
     onCreateProject({
@@ -231,6 +337,8 @@ export default function CreateProjectModal({
       siteId: selectedProjectRoot.siteId,
       parentFolderPath: selectedProjectRoot.folderPath,
       parentFolderName: selectedProjectRoot.folderName,
+      structureType: isFree ? 'free' : 'system',
+      systemPhase: isFree ? null : structureKey,
     });
   };
 
@@ -310,6 +418,32 @@ export default function CreateProjectModal({
                 </View>
               </View>
 
+              {/* Mappstruktur */}
+              <View
+                style={[
+                  styles.statusSection,
+                  isStructureSectionComplete && styles.statusSectionDone,
+                  !isStructureSectionComplete && isStorageSectionComplete && styles.statusSectionActive,
+                ]}
+              >
+                <View style={styles.statusHeaderRow}>
+                  <View
+                    style={[
+                      styles.circle,
+                      isStructureSectionComplete && styles.circleDone,
+                    ]}
+                  >
+                    {isStructureSectionComplete ? <Text style={styles.circleText}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.statusTitle}>Mappstruktur</Text>
+                </View>
+                <View style={styles.statusItems}>
+                  <Text style={styles.statusItemText}>
+                    {hasStructure ? '✓' : '•'} {selectedStructureLabel || 'Välj struktur'}
+                  </Text>
+                </View>
+              </View>
+
             </View>
 
             {/* HÖGER – FORMULÄR */}
@@ -345,9 +479,9 @@ export default function CreateProjectModal({
                 <Text style={styles.sectionHeaderTitle}>SharePoint</Text>
               </View>
 
-              {/* Unified location picker */}
+              {/* Platsval (site + mapp) */}
               <View style={[styles.section, styles.sectionAfterTitle]}>
-                <Text style={styles.label}>Välj projektplats</Text>
+                <Text style={styles.label}>Välj lagringsplats</Text>
 
                 {(!availableSites || availableSites.length === 0) && (
                   <Text style={styles.helperText}>
@@ -389,7 +523,7 @@ export default function CreateProjectModal({
                                 width: rect.width 
                               });
                             }
-                          } catch (e) {
+                          } catch (_e) {
                             // Fallback
                           }
                         } else if (locationPickerRef.current) {
@@ -397,16 +531,8 @@ export default function CreateProjectModal({
                             setLocationPickerPosition({ top: pageY + height + 4, left: pageX, width });
                           });
                         }
-                        setLocationPickerOpen((open) => {
-                          if (!open) {
-                            // Opening picker - reset to sites step
-                            setLocationPickerStep('sites');
-                            setActiveSite(null);
-                            setCurrentPath('');
-                            setLocationPathHistory([]);
-                          }
-                          return !open;
-                        });
+                        const startStep = selectedProjectRoot?.siteId ? 'folders' : 'sites';
+                        openLocationPicker(startStep);
                       }}
                       style={styles.dropdownHeader}
                     >
@@ -415,7 +541,7 @@ export default function CreateProjectModal({
                           ? selectedProjectRoot.folderPath
                             ? `${selectedProjectRoot.siteName} / ${selectedProjectRoot.folderPath}`
                             : `${selectedProjectRoot.siteName} (root)`
-                          : 'Välj projektplats'}
+                          : 'Välj lagringsplats'}
                       </Text>
                       <View style={styles.dropdownChevronWrapper}>
                         <Ionicons
@@ -427,6 +553,143 @@ export default function CreateProjectModal({
                     </TouchableOpacity>
                   </View>
                 )}
+              </View>
+
+              {/* Mappstruktur */}
+              <View style={[styles.sectionHeaderRow, { marginTop: 6 }]}> 
+                <Ionicons name="albums-outline" size={18} color="#1976D2" style={styles.sectionHeaderIcon} />
+                <Text style={styles.sectionHeaderTitle}>Mappstruktur</Text>
+              </View>
+
+              <View style={[styles.section, styles.sectionAfterTitle]}>
+                <Text style={styles.label}>Välj struktur *</Text>
+                <Text style={styles.helperText}>
+                  Styr vilka systemmappar som skapas i projektmappen.
+                </Text>
+
+                {(() => {
+                  const options = (PROJECT_PHASES || [])
+                    .slice()
+                    .sort((a, b) => (a.order || 999) - (b.order || 999));
+
+                  const getDescription = (key) => {
+                    const k = String(key || '').trim();
+                    if (k === 'kalkylskede') return 'Digitalkontrolls kalkylskede skapar en färdig mappstruktur anpassad för tidiga projektfaser.\nInnehåller fördefinierade mappar, sektioner och stöd för AI-assisterad kalkyl, dokumentation och beslut';
+                    if (k === 'produktion') return 'Struktur för produktion (kan byggas ut).';
+                    if (k === 'avslut') return 'Struktur för avslut/överlämning (kan byggas ut).';
+                    if (k === 'eftermarknad') return 'Struktur för eftermarknad (kan byggas ut).';
+                    if (k === 'free') return 'Skapar bara projektmappen utan systemmappar.';
+                    return '';
+                  };
+
+                  if (Platform.OS === 'web') {
+                    const selectedDesc = getDescription(selectedStructureKey);
+                    const selectedName = options.find((o) => String(o?.key || '') === String(selectedStructureKey || ''))?.name;
+                    return (
+                      <View style={{ marginTop: 8 }}>
+                        <View
+                          ref={structurePickerRef}
+                          style={styles.dropdownContainer}
+                          onLayout={(event) => {
+                            if (Platform.OS === 'web') {
+                              const element = event.target;
+                              if (element && element.getBoundingClientRect) {
+                                const rect = element.getBoundingClientRect();
+                                setStructurePickerPosition({
+                                  top: rect.bottom + 4,
+                                  left: rect.left,
+                                  width: rect.width,
+                                });
+                              }
+                            } else if (structurePickerRef.current) {
+                              structurePickerRef.current.measure((_x, _y, _width, _height, pageX, pageY) => {
+                                setStructurePickerPosition({ top: pageY + _height + 4, left: pageX, width: _width });
+                              });
+                            }
+                          }}
+                        >
+                          <TouchableOpacity
+                            onPress={() => {
+                              try { setLocationPickerOpen(false); } catch (_e) {}
+                              if (Platform.OS === 'web' && structurePickerRef.current) {
+                                try {
+                                  const node = structurePickerRef.current;
+                                  if (node && typeof node.getBoundingClientRect === 'function') {
+                                    const rect = node.getBoundingClientRect();
+                                    setStructurePickerPosition({
+                                      top: rect.bottom + 4,
+                                      left: rect.left,
+                                      width: rect.width,
+                                    });
+                                  }
+                                } catch (_e) {}
+                              } else if (structurePickerRef.current) {
+                                structurePickerRef.current.measure((x, y, width, height, pageX, pageY) => {
+                                  setStructurePickerPosition({ top: pageY + height + 4, left: pageX, width });
+                                });
+                              }
+                              setStructurePickerOpen((v) => !v);
+                            }}
+                            style={styles.dropdownHeader}
+                          >
+                            <Text style={styles.dropdownText}>
+                              {selectedName ? String(selectedName) : 'Välj struktur'}
+                            </Text>
+                            <View style={styles.dropdownChevronWrapper}>
+                              <Ionicons
+                                name={structurePickerOpen ? 'chevron-up' : 'chevron-down'}
+                                size={18}
+                                color="#374151"
+                              />
+                            </View>
+                          </TouchableOpacity>
+                        </View>
+
+                        {!!selectedDesc && (
+                          <Text style={[styles.structureDescription, { marginTop: 6 }]}>
+                            {selectedDesc}
+                          </Text>
+                        )}
+
+                        <Text style={[styles.helperText, { marginTop: 6, marginBottom: 0 }]}>
+                          Just nu kan du välja Kalkylskede eller Valfri mappstruktur. Produktion, Avslut och Eftermarknad kommer snart.
+                        </Text>
+                      </View>
+                    );
+                  }
+
+                  return options.map((opt) => {
+                    const selected = String(selectedStructureKey) === String(opt.key);
+                    const disabled = ['produktion', 'avslut', 'eftermarknad'].includes(String(opt.key || '').trim());
+                    const description = getDescription(opt.key);
+
+                    return (
+                      <TouchableOpacity
+                        key={opt.id || opt.key}
+                        onPress={() => {
+                          if (disabled) return;
+                          setSelectedStructureKey(opt.key);
+                        }}
+                        style={[
+                          styles.structureRow,
+                          selected && styles.structureRowSelected,
+                          disabled && styles.structureRowDisabled,
+                        ]}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.radio}>
+                          {selected && <View style={styles.radioDot} />}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.structureTitle}>{opt.name}</Text>
+                          {!!description && (
+                            <Text style={styles.structureDescription}>{description}</Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  });
+                })()}
               </View>
 
 
@@ -472,6 +735,14 @@ export default function CreateProjectModal({
               }}
             />
           )}
+
+          {structurePickerOpen && (
+            <TouchableOpacity
+              style={styles.dropdownBackdrop}
+              activeOpacity={1}
+              onPress={() => setStructurePickerOpen(false)}
+            />
+          )}
           
           {/* Location picker - renderas direkt i modal-root */}
           {locationPickerOpen && (
@@ -496,7 +767,10 @@ export default function CreateProjectModal({
                       return (
                         <TouchableOpacity
                           key={site.id}
-                          onPress={() => handleSelectSite(site)}
+                          onPress={() => {
+                            // Välj site och gå vidare till mappväljaren
+                            handleSelectSite(site);
+                          }}
                           style={[
                             styles.siteRow,
                             isSelected && styles.siteRowSelected,
@@ -537,19 +811,6 @@ export default function CreateProjectModal({
                       </View>
                     )}
 
-                    {/* Select site root button - always visible */}
-                    <TouchableOpacity
-                      onPress={handleSelectSiteRoot}
-                      style={[
-                        styles.selectLocationButton,
-                        !currentPath && selectedProjectRoot?.siteId === activeSite.id && !selectedProjectRoot?.folderPath && styles.selectLocationButtonSelected,
-                        { marginBottom: 8 }
-                      ]}
-                    >
-                      <Ionicons name="home-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
-                      <Text style={styles.selectLocationButtonText}>Välj site root</Text>
-                    </TouchableOpacity>
-
                     {/* Folder list */}
                     <ScrollView style={styles.locationFolders} nestedScrollEnabled>
                       {loadingLocationFolders ? (
@@ -579,7 +840,7 @@ export default function CreateProjectModal({
                               ]}
                             >
                               <Text style={styles.selectLocationButtonText}>
-                                Välj "{currentPath.split('/').pop()}"
+                                Välj “{currentPath.split('/').pop()}”
                               </Text>
                             </TouchableOpacity>
                           )}
@@ -589,6 +850,48 @@ export default function CreateProjectModal({
                   </View>
                 )
               )}
+            </View>
+          )}
+
+          {/* Structure picker - renderas direkt i modal-root */}
+          {structurePickerOpen && Platform.OS === 'web' && (
+            <View style={[
+              styles.dropdownListAbsolute,
+              {
+                top: structurePickerPosition.top,
+                left: structurePickerPosition.left,
+                width: structurePickerPosition.width || 400,
+                maxHeight: 320,
+              }
+            ]}>
+              <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
+                {(PROJECT_PHASES || [])
+                  .slice()
+                  .sort((a, b) => (a.order || 999) - (b.order || 999))
+                  .map((opt) => {
+                    const selected = String(selectedStructureKey) === String(opt.key);
+                    const disabled = ['produktion', 'avslut', 'eftermarknad'].includes(String(opt.key || '').trim());
+
+                    return (
+                      <TouchableOpacity
+                        key={opt.id || opt.key}
+                        onPress={() => {
+                          if (disabled) return;
+                          setSelectedStructureKey(opt.key);
+                          setStructurePickerOpen(false);
+                        }}
+                        style={[
+                          styles.structureOptionRow,
+                          selected && styles.structureOptionRowSelected,
+                          disabled && styles.structureRowDisabled,
+                        ]}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.structureOptionTitle}>{opt.name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+              </ScrollView>
             </View>
           )}
           
@@ -685,6 +988,9 @@ const styles = StyleSheet.create({
       // Web: ensure container doesn't clip dropdown
       overflow: 'visible',
     } : {}),
+  },
+  dropdownDisabled: {
+    opacity: 0.6,
   },
   dropdownHeader: {
     flexDirection: 'row',
@@ -860,12 +1166,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   folderRow: {
-    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#eee',
-    marginBottom: 6,
-    backgroundColor: '#fafafa',
+    marginBottom: 2,
+    backgroundColor: '#fff',
   },
   folderRowSelected: {
     borderColor: '#1976D2',
@@ -879,6 +1188,31 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#777',
     marginTop: 2,
+  },
+  structureOptionRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eee',
+    backgroundColor: '#fff',
+    marginBottom: 6,
+  },
+  structureOptionRowSelected: {
+    borderColor: '#1976D2',
+    backgroundColor: '#F0F6FF',
+  },
+  structureOptionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  structureOptionDescription: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+    lineHeight: 16,
+    whiteSpace: Platform.OS === 'web' ? 'pre-line' : 'normal',
   },
   structureRow: {
     flexDirection: 'row',
@@ -907,6 +1241,7 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 1,
     lineHeight: 16,
+    whiteSpace: Platform.OS === 'web' ? 'pre-line' : 'normal',
   },
   disabledText: {
     color: '#999',

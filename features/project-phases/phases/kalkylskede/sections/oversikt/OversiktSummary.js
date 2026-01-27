@@ -1,14 +1,22 @@
 /**
  * Översikt Summary - Overview summary for kalkylskede
- * Combined layout: Projektstatus at top + simplified card structure
+ * Simplified card structure
  * Shows when no specific item is selected in Översikt section
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
+import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
+import { patchSharePointProjectMetadata } from '../../../../../../components/firebase';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
+import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
+
+function isValidIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
 
 export default function OversiktSummary({ projectId, companyId, project }) {
   // Track if there are unsaved changes per card
@@ -18,12 +26,106 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const [hasChangesTider, setHasChangesTider] = useState(false);
   const [hasChangesAnteckningar, setHasChangesAnteckningar] = useState(false);
 
+  // Saving flag used by multiple save handlers (must always be defined)
+  const [saving, setSaving] = useState(false);
+
+  // Save feedback overlay: keep it visible briefly after saving completes.
+  const [saveFeedback, setSaveFeedback] = useState({
+    visible: false,
+    mode: 'loading', // 'loading' | 'success'
+    title: 'Sparar ändringar…',
+    subtitle: 'Sparar till SharePoint/Firebase. Vänta lite…',
+  });
+  const saveFeedbackRef = React.useRef({ startedAt: 0, timers: [] });
+
+  const clearSaveFeedbackTimers = React.useCallback(() => {
+    const timers = saveFeedbackRef.current?.timers;
+    if (Array.isArray(timers)) {
+      timers.forEach((t) => {
+        try { clearTimeout(t); } catch (_e) {}
+      });
+    }
+    saveFeedbackRef.current.timers = [];
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearSaveFeedbackTimers();
+    };
+  }, [clearSaveFeedbackTimers]);
+
+  const showSavingFeedback = React.useCallback((opts = {}) => {
+    clearSaveFeedbackTimers();
+    saveFeedbackRef.current.startedAt = Date.now();
+    setSaveFeedback({
+      visible: true,
+      mode: 'loading',
+      title: opts.title || 'Sparar ändringar…',
+      subtitle: opts.subtitle || 'Sparar till SharePoint/Firebase. Vänta lite…',
+    });
+  }, [clearSaveFeedbackTimers]);
+
+  const showSaveSuccessFeedback = React.useCallback((subtitle = '') => {
+    const MIN_LOADING_MS = 400;
+    const SUCCESS_MS = 1000;
+    const startedAt = Number(saveFeedbackRef.current.startedAt || 0);
+    const elapsed = startedAt ? (Date.now() - startedAt) : MIN_LOADING_MS;
+    const waitMs = Math.max(0, MIN_LOADING_MS - elapsed);
+
+    const t1 = setTimeout(() => {
+      setSaveFeedback({
+        visible: true,
+        mode: 'success',
+        title: 'Ändringar sparade',
+        subtitle: subtitle ? String(subtitle) : '',
+      });
+    }, waitMs);
+
+    const t2 = setTimeout(() => {
+      setSaveFeedback((prev) => ({ ...prev, visible: false }));
+    }, waitMs + SUCCESS_MS);
+
+    saveFeedbackRef.current.timers = [t1, t2];
+  }, []);
+
+  const hideSaveFeedback = React.useCallback(() => {
+    clearSaveFeedbackTimers();
+    setSaveFeedback((prev) => ({ ...prev, visible: false }));
+  }, [clearSaveFeedbackTimers]);
+
+  // Dropdown state + info modal state (must always be defined)
+  const [upphandlingsformDropdownVisible, setUpphandlingsformDropdownVisible] = useState(false);
+  const [entreprenadformDropdownVisible, setEntreprenadformDropdownVisible] = useState(false);
+  const [phaseDropdownVisible, setPhaseDropdownVisible] = useState(false);
+  const [kontaktpersonSelectorVisible, setKontaktpersonSelectorVisible] = useState(false);
+  const [infoTooltipVisible, setInfoTooltipVisible] = useState(false);
+  const [infoTooltipText, setInfoTooltipText] = useState('');
+
+  // Date picker modal state for ISO dates
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [datePickerField, setDatePickerField] = useState(null); // 'anbudstid' | 'byggstart' | 'fardigstallning'
+
   // Store original values to detect changes
   const [originalValues, setOriginalValues] = useState({});
 
   // Project info state
-  const [projectNumber, setProjectNumber] = useState(project?.id || '');
-  const [projectName, setProjectName] = useState(project?.name || '');
+  const initialProjectNumber = project?.projectNumber || project?.number || project?.id || '';
+  const [projectNumber, setProjectNumber] = useState(initialProjectNumber);
+  const initialRawProjectName = project?.projectName || project?.name || '';
+  const initialProjectName = (() => {
+    const name = String(initialRawProjectName || '').trim();
+    const num = String(initialProjectNumber || '').trim();
+    if (!project?.projectName && num && name.startsWith(num)) {
+      let rest = name.slice(num.length).trim();
+      if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) {
+        rest = rest.slice(1).trim();
+      }
+      return rest;
+    }
+    return name;
+  })();
+  const [projectName, setProjectName] = useState(initialProjectName);
+  const [phaseKey, setPhaseKey] = useState(project?.phase || project?.phaseKey || 'kalkylskede');
 
   // Use ref to track previous project values to avoid unnecessary state updates
   const prevProjectRef = React.useRef(null);
@@ -34,6 +136,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     const projectKey = project ? JSON.stringify({
       id: project.id,
       name: project.name,
+      phase: project.phase || project.phaseKey,
       projectType: project.projectType,
       upphandlingsform: project.upphandlingsform,
       status: project.status,
@@ -60,9 +163,25 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     
     prevProjectRef.current = projectKey;
 
+    const rawProjectNumber = project?.projectNumber || project?.number || project?.id || '';
+    const rawProjectName = project?.projectName || project?.name || '';
+    const cleanedProjectName = (() => {
+      const name = String(rawProjectName || '').trim();
+      const num = String(rawProjectNumber || '').trim();
+      if (!project?.projectName && num && name.startsWith(num)) {
+        let rest = name.slice(num.length).trim();
+        if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) {
+          rest = rest.slice(1).trim();
+        }
+        return rest;
+      }
+      return name;
+    })();
+
     const newValues = {
-      projectNumber: project?.id || '',
-      projectName: project?.name || '',
+      projectNumber: rawProjectNumber,
+      projectName: cleanedProjectName,
+      phaseKey: project?.phase || project?.phaseKey || 'kalkylskede',
       projectType: project?.projectType || '',
       upphandlingsform: project?.upphandlingsform || '',
       status: project?.status || 'ongoing',
@@ -85,6 +204,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setOriginalValues(newValues);
     setProjectNumber(newValues.projectNumber);
     setProjectName(newValues.projectName);
+    setPhaseKey(newValues.phaseKey);
     setProjectType(newValues.projectType);
     setUpphandlingsform(newValues.upphandlingsform);
     setStatus(newValues.status);
@@ -140,31 +260,60 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Helper function to update project in hierarchy
   // Legacy Firestore-hierarki är avvecklad – denna funktion gör inget hierarki-ingrepp längre
   const updateProjectInHierarchy = async (updates) => {
-    console.log('[OversiktSummary] updateProjectInHierarchy skipped (legacy Firestore hierarchy removed).', {
-      companyId,
-      projectId,
-      updates: Object.keys(updates || {})
-    });
-    return null;
+    // Keep UI stable even if backend persistence is handled elsewhere.
+    return Object.assign({}, (project || {}), (updates || {}));
   };
 
-  const statusOptions = [
-    { key: 'ongoing', label: 'Pågående', color: '#1976D2', icon: 'play-circle-outline' },
-    { key: 'on-hold', label: 'Pausad', color: '#FF9800', icon: 'pause-circle-outline' },
-    { key: 'completed', label: 'Avslutad', color: '#4CAF50', icon: 'checkmark-circle-outline' },
-    { key: 'cancelled', label: 'Inställd', color: '#F44336', icon: 'close-circle-outline' }
+  // Defensive defaults: these must exist to prevent render crashes on web.
+  // (If you later wire these to real data/hook, keep these as fallbacks.)
+  const upphandlingsformOptions = [
+    'Offentlig upphandling',
+    'Privat upphandling',
+    'Direktupphandling',
+    'Övrigt'
   ];
+
+  const entreprenadformOptions = [
+    'Totalentreprenad',
+    'Utförandeentreprenad',
+    'Generalentreprenad',
+    'Delad entreprenad',
+    'Övrigt'
+  ];
+
+  const upphandlingsformInfo = {
+    'Offentlig upphandling': 'Upphandling enligt LOU/LUF.',
+    'Privat upphandling': 'Upphandling mellan privata aktörer.',
+    'Direktupphandling': 'Upphandling utan annonsering (tröskelvärden/regler gäller).',
+    'Övrigt': 'Annan typ av upphandling.'
+  };
+
+  const entreprenadformInfo = {
+    'Totalentreprenad': 'Entreprenören ansvarar normalt för projektering och utförande.',
+    'Utförandeentreprenad': 'Beställaren projekterar, entreprenören utför.',
+    'Generalentreprenad': 'Generalentreprenör upphandlar underentreprenörer.',
+    'Delad entreprenad': 'Beställaren upphandlar flera entreprenörer separat.',
+    'Övrigt': 'Annan entreprenadform.'
+  };
 
   // Helper function to check if project info has changes
   const checkInfoChanges = () => {
     return (
       projectNumber.trim() !== (originalValues.projectNumber || '') ||
       projectName.trim() !== (originalValues.projectName || '') ||
+      String(phaseKey || '').trim() !== String(originalValues.phaseKey || '').trim() ||
       projectType.trim() !== (originalValues.projectType || '') ||
       upphandlingsform.trim() !== (originalValues.upphandlingsform || '') ||
       status !== (originalValues.status || 'ongoing')
     );
   };
+
+  const phaseOptions = [
+    { label: 'Kalkylskede', value: 'kalkylskede', color: PROJECT_PHASES.find(p => p.key === 'kalkylskede')?.color || '#1976D2' },
+    { label: 'Produktion', value: 'produktion', color: PROJECT_PHASES.find(p => p.key === 'produktion')?.color || '#43A047' },
+    { label: 'Avslut', value: 'avslut', color: PROJECT_PHASES.find(p => p.key === 'avslut')?.color || '#616161' },
+    { label: 'Eftermarknad', value: 'eftermarknad', color: PROJECT_PHASES.find(p => p.key === 'eftermarknad')?.color || '#7B1FA2' },
+  ];
 
   // Helper function to check if kund info has changes
   const checkKundChanges = () => {
@@ -205,12 +354,12 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Memoize originalValues string to prevent unnecessary recalculations
   const originalValuesKey = React.useMemo(() => {
     return JSON.stringify(originalValues);
-  }, [originalValues.projectNumber, originalValues.projectName, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.anbudstid, originalValues.byggstart, originalValues.fardigstallning, originalValues.bindningstid, originalValues.anteckningar]);
+  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.anbudstid, originalValues.byggstart, originalValues.fardigstallning, originalValues.bindningstid, originalValues.anteckningar]);
 
   // Calculate changes directly in render instead of useEffect to avoid re-renders during typing
   // These are computed values, not state, to prevent blocking input
   // Use string comparison for originalValues to avoid object reference issues
-  const hasChangesInfoComputed = React.useMemo(() => checkInfoChanges(), [projectNumber, projectName, projectType, upphandlingsform, status, originalValuesKey]);
+  const hasChangesInfoComputed = React.useMemo(() => checkInfoChanges(), [projectNumber, projectName, phaseKey, projectType, upphandlingsform, status, originalValuesKey]);
   const hasChangesKundComputed = React.useMemo(() => checkKundChanges(), [kund, organisationsnummer, JSON.stringify(kontaktperson), telefon, epost, originalValuesKey]);
   const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, originalValuesKey]);
   const hasChangesTiderComputed = React.useMemo(() => checkTiderChanges(), [anbudstid, byggstart, fardigstallning, bindningstid, originalValuesKey]);
@@ -300,81 +449,89 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setBindningstid(val);
   }, []);
 
+  const openDatePicker = useCallback((fieldKey) => {
+    setDatePickerField(fieldKey);
+    setDatePickerVisible(true);
+  }, []);
+
+  const closeDatePicker = useCallback(() => {
+    setDatePickerVisible(false);
+    setDatePickerField(null);
+  }, []);
+
+  const datePickerValue = React.useMemo(() => {
+    if (datePickerField === 'anbudstid') return anbudstid;
+    if (datePickerField === 'byggstart') return byggstart;
+    if (datePickerField === 'fardigstallning') return fardigstallning;
+    return '';
+  }, [datePickerField, anbudstid, byggstart, fardigstallning]);
+
+  const handleDatePicked = useCallback((iso) => {
+    const next = isValidIsoDate(iso) ? String(iso) : '';
+    if (!datePickerField) return;
+    if (datePickerField === 'anbudstid') handleAnbudstidChange(next);
+    if (datePickerField === 'byggstart') handleByggstartChange(next);
+    if (datePickerField === 'fardigstallning') handleFardigstallningChange(next);
+  }, [datePickerField, handleAnbudstidChange, handleByggstartChange, handleFardigstallningChange]);
+
   const handleAnteckningarChange = useCallback((val) => {
     setAnteckningar(val);
   }, []);
 
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        {/* 1. Projektstatus - At the top with large status buttons (like ChatGPT's layout) */}
-        <View style={styles.statusSection}>
-          <Text style={styles.statusTitle}>Projektstatus</Text>
-          <Text style={styles.statusSubtitle}>Hantera projektets status och översikt</Text>
-          <View style={styles.statusButtons}>
-            {statusOptions.map(option => (
-              <TouchableOpacity
-                key={option.key}
-                style={[
-                  styles.statusButton,
-                  status === option.key && styles.statusButtonActive,
-                  { borderColor: option.color }
-                ]}
-                onPress={async () => {
-                  const newStatus = option.key;
-                  setStatus(newStatus);
-                  
-                  // Auto-save status change
-                  if (!saving && companyId && projectId) {
-                    setSaving(true);
-                    try {
-                      const updates = { status: newStatus };
-                      const updatedProject = await updateProjectInHierarchy(updates);
-                      emitProjectUpdated(updatedProject);
-                      // Update originalValues to reflect the saved status
-                      setOriginalValues(prev => ({
-                        ...prev,
-                        status: newStatus
-                      }));
-                      // Check if there are still other changes in project info
-                      setHasChangesInfo(checkInfoChanges());
-                    } catch (error) {
-                      console.error('[OversiktSummary] Error saving status:', error);
-                      // Revert status on error
-                      setStatus(project?.status || 'ongoing');
-                      Alert.alert('Fel', `Kunde inte spara status: ${error.message || 'Okänt fel'}`);
-                    } finally {
-                      setSaving(false);
-                    }
-                  }
-                }}
-              >
-                <Ionicons 
-                  name={option.icon} 
-                  size={24} 
-                  color={status === option.key ? option.color : '#666'} 
-                />
-                <Text style={[
-                  styles.statusButtonText,
-                  status === option.key && { color: option.color, fontWeight: '600' }
-                ]}>
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+  const projectInfoDropdownOpen =
+    phaseDropdownVisible || upphandlingsformDropdownVisible || entreprenadformDropdownVisible;
 
-        {/* 2. Projektinfo and Kund & Beställare - Row 1 */}
-        <View style={styles.twoColumnRow}>
+  const confirmPhaseChangeIfNeeded = React.useCallback(async () => {
+    const fromPhase = String(originalValues.phaseKey || '').trim();
+    const toPhase = String(phaseKey || '').trim();
+    if (!fromPhase || !toPhase || fromPhase === toPhase) return true;
+
+    const fromLabel = (phaseOptions || []).find((p) => p?.value === fromPhase)?.label || fromPhase;
+    const toLabel = (phaseOptions || []).find((p) => p?.value === toPhase)?.label || toPhase;
+    const message = `Vill du verkligen byta projektskede från "${fromLabel}" till "${toLabel}"?`;
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return window.confirm(message);
+    }
+
+    return await new Promise((resolve) => {
+      Alert.alert(
+        'Byt projektstatus',
+        message,
+        [
+          { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Byt', style: 'destructive', onPress: () => resolve(true) },
+        ],
+      );
+    });
+  }, [originalValues.phaseKey, phaseKey, phaseOptions]);
+
+  return (
+    <>
+      <PhaseChangeLoadingModal
+        visible={saveFeedback.visible}
+        loadingPhase={phaseKey}
+        title={saveFeedback.title}
+        subtitle={saveFeedback.subtitle}
+        mode={saveFeedback.mode}
+      />
+      <ScrollView style={styles.container}>
+        <View style={styles.content}>
+        {/* 1. Projektinfo and Kund & Best e4llare - Row 1 */}
+        <View style={[styles.twoColumnRow, projectInfoDropdownOpen ? styles.twoColumnRowLifted : null]}>
           <View style={styles.columnCard}>
         <InfoCard
-          title="Projektinfo"
+          title="Projektinformation"
           icon="information-circle-outline"
           hasChanges={hasChangesInfo}
               saving={saving}
+          zIndex={projectInfoDropdownOpen ? 3000 : undefined}
           onSave={async () => {
             if (saving) return;
+
+            // Confirm phase change (project status) before saving
+            const ok = await confirmPhaseChangeIfNeeded();
+            if (!ok) return;
             
             // Validate required fields
             if (!projectNumber.trim()) {
@@ -386,11 +543,13 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               return;
             }
 
+            showSavingFeedback();
             setSaving(true);
             try {
               const updates = {
                 id: projectNumber.trim(),
                 name: projectName.trim(),
+                phase: phaseKey,
                 projectType: projectType.trim(),
                 upphandlingsform: upphandlingsform.trim(),
                 status
@@ -398,7 +557,89 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
               console.log('[OversiktSummary] Starting save of project info:', updates);
               const updatedProject = await updateProjectInHierarchy(updates);
-              console.log('[OversiktSummary] Project updated successfully:', { id: updatedProject.id, name: updatedProject.name });
+
+              // Persist SharePoint project metadata for phase (and display fields) when possible
+              try {
+                const siteId = String(
+                  project?.siteId ||
+                  project?.siteID ||
+                  project?.sharePointSiteId ||
+                  project?.site?.id ||
+                  project?.site?.siteId ||
+                  project?.folder?.siteId ||
+                  project?.folder?.siteID ||
+                  ''
+                ).trim();
+                const projectPath = String(
+                  project?.projectPath ||
+                  project?.path ||
+                  project?.sharePointPath ||
+                  project?.folder?.path ||
+                  ''
+                ).trim();
+
+                // companyIdOverride can be empty here; firebase helpers will resolve via claims/storage.
+                if (siteId && projectPath) {
+                  const metaStatus = phaseKey === 'avslut' ? 'completed' : 'ongoing';
+                  const metaResult = await patchSharePointProjectMetadata(companyId || null, {
+                    companyId: companyId || undefined,
+                    siteId,
+                    projectPath,
+                    phaseKey,
+                    status: metaStatus,
+                    projectNumber: projectNumber.trim(),
+                    projectName: projectName.trim(),
+                  });
+
+                  console.log('[OversiktSummary] SharePoint metadata saved:', {
+                    companyId: companyId || '(resolved)',
+                    key: `${siteId}|${projectPath}`,
+                    docId: metaResult?.id || null,
+                    phaseKey,
+                    status: metaStatus,
+                  });
+
+                  // Kick SharePointLeftPanel/HomeScreen to reload metadata so the color updates immediately.
+                  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+                    try { window.dispatchEvent(new Event('dkSharePointMetaUpdated')); } catch (_e) {}
+                  }
+                } else {
+                  console.warn('[OversiktSummary] Missing siteId/projectPath; cannot persist SharePoint metadata', {
+                    companyId,
+                    siteId,
+                    projectPath,
+                    projectKeys: Object.keys(project || {}),
+                  });
+                  try {
+                    Alert.alert(
+                      'Kunde inte spara projektstatus',
+                      'Saknar koppling till SharePoint för detta projekt (siteId eller projectPath). Testa att gå tillbaka till dashboard och öppna projektet igen.'
+                    );
+                  } catch (_e) {}
+                }
+              } catch (metaErr) {
+                console.error('[OversiktSummary] Failed saving SharePoint project metadata:', {
+                  message: metaErr?.message || String(metaErr || ''),
+                  companyId,
+                  siteId: project?.siteId || project?.siteID || project?.site?.id || null,
+                  projectPath: project?.projectPath || project?.path || project?.sharePointPath || project?.folder?.path || null,
+                });
+
+                // If we can't persist metadata, the dashboard/left panel will NOT update after refresh.
+                // Make this obvious to the user.
+                try {
+                  const msg = String(metaErr?.message || '').toLowerCase();
+                  const isPermission = msg.includes('permission') || msg.includes('denied');
+                  Alert.alert(
+                    'Kunde inte spara projektstatus',
+                    isPermission
+                      ? 'Saknar behörighet att spara projektstatus i databasen. Testa att logga ut/in och kontrollera att du är i rätt företag.'
+                      : 'Projektstatus kunde inte sparas i databasen. Dashboard/vänsterpanelen kan därför visa fel färg tills detta är löst.'
+                  );
+                } catch (_e) {}
+              }
+
+              console.log('[OversiktSummary] Project updated successfully:', { id: updatedProject?.id, name: updatedProject?.name, phase: updatedProject?.phase });
               
               // Check if project ID changed
               const projectIdChanged = updates.id && String(updates.id).trim() !== String(projectId).trim();
@@ -420,15 +661,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 ...prev,
                 projectNumber: projectNumber.trim(),
                 projectName: projectName.trim(),
+                phaseKey: phaseKey,
                 projectType: projectType.trim(),
                 upphandlingsform: upphandlingsform.trim(),
                 status
               }));
               setHasChangesInfo(false);
-              Alert.alert('Sparat', 'Projektinfo har uppdaterats');
+              showSaveSuccessFeedback('Projektinformation har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving project info:', error);
-              Alert.alert('Fel', `Kunde inte spara projektinfo: ${error.message || 'Okänt fel'}`);
+              hideSaveFeedback();
+              Alert.alert('Fel', `Kunde inte spara projektinformation: ${error.message || 'Okänt fel'}`);
             } finally {
               setSaving(false);
             }
@@ -437,6 +680,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             // Reset to original values
             setProjectNumber(originalValues.projectNumber || '');
             setProjectName(originalValues.projectName || '');
+            setPhaseKey(originalValues.phaseKey || 'kalkylskede');
             setProjectType(originalValues.projectType || '');
             setUpphandlingsform(originalValues.upphandlingsform || '');
             setStatus(originalValues.status || 'ongoing');
@@ -458,6 +702,19 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             onChange={handleProjectNameChange}
             placeholder="T.ex. Opus Bilprovning"
             originalValue={originalValues.projectName || ''}
+          />
+          <SelectRow
+            label="Projektstatus"
+            value={phaseKey}
+            options={phaseOptions}
+            onSelect={(val) => {
+              setPhaseKey(val);
+              setHasChangesInfo(true);
+            }}
+            placeholder="Välj projektstatus..."
+            originalValue={originalValues.phaseKey || ''}
+            visible={phaseDropdownVisible}
+            onToggleVisible={() => setPhaseDropdownVisible(!phaseDropdownVisible)}
           />
           <SelectRow
             label="Upphandlingsform"
@@ -504,6 +761,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               saving={saving}
           onSave={async () => {
             if (saving) return;
+            showSavingFeedback();
             setSaving(true);
             try {
               const updates = {
@@ -526,9 +784,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 epost: epost.trim()
               }));
               setHasChangesKund(false);
-              Alert.alert('Sparat', 'Kundinformation har uppdaterats');
+              showSaveSuccessFeedback('Kundinformation har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving kund info:', error);
+              hideSaveFeedback();
               Alert.alert('Fel', `Kunde inte spara kundinformation: ${error.message || 'Okänt fel'}`);
             } finally {
               setSaving(false);
@@ -596,6 +855,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               saving={saving}
           onSave={async () => {
             if (saving) return;
+            showSavingFeedback();
             setSaving(true);
             try {
               const updates = {
@@ -616,9 +876,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 fastighetsbeteckning: fastighetsbeteckning.trim()
               }));
               setHasChangesAdress(false);
-              Alert.alert('Sparat', 'Adressinformation har uppdaterats');
+              showSaveSuccessFeedback('Adressinformation har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving adress info:', error);
+              hideSaveFeedback();
               Alert.alert('Fel', `Kunde inte spara adressinformation: ${error.message || 'Okänt fel'}`);
             } finally {
               setSaving(false);
@@ -675,6 +936,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               saving={saving}
           onSave={async () => {
             if (saving) return;
+            showSavingFeedback();
             setSaving(true);
             try {
               const updates = {
@@ -695,9 +957,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 bindningstid: bindningstid.trim()
               }));
               setHasChangesTider(false);
-              Alert.alert('Sparat', 'Datuminformation har uppdaterats');
+              showSaveSuccessFeedback('Datuminformation har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving tider info:', error);
+              hideSaveFeedback();
               Alert.alert('Fel', `Kunde inte spara datuminformation: ${error.message || 'Okänt fel'}`);
             } finally {
               setSaving(false);
@@ -711,29 +974,29 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             setHasChangesTider(false);
           }}
         >
-          <InfoRow
+          <DateRow
             key="anbudstid"
             label="Anbudstid"
             value={anbudstid}
-            onChange={handleAnbudstidChange}
             originalValue={originalValues.anbudstid || ''}
             placeholder="YYYY-MM-DD"
+            onOpen={() => openDatePicker('anbudstid')}
           />
-          <InfoRow
+          <DateRow
             key="byggstart"
             label="Planerad byggstart"
             value={byggstart}
-            onChange={handleByggstartChange}
             originalValue={originalValues.byggstart || ''}
             placeholder="YYYY-MM-DD"
+            onOpen={() => openDatePicker('byggstart')}
           />
-          <InfoRow
+          <DateRow
             key="fardigstallning"
             label="Planerad färdigställning"
             value={fardigstallning}
-            onChange={handleFardigstallningChange}
             originalValue={originalValues.fardigstallning || ''}
             placeholder="YYYY-MM-DD"
+            onOpen={() => openDatePicker('fardigstallning')}
           />
           <InfoRow
             key="bindningstid"
@@ -755,6 +1018,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           saving={saving}
           onSave={async () => {
             if (saving) return;
+            showSavingFeedback();
             setSaving(true);
             try {
               const updates = {
@@ -769,9 +1033,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 anteckningar: anteckningar.trim()
               }));
               setHasChangesAnteckningar(false);
-              Alert.alert('Sparat', 'Anteckningar har uppdaterats');
+              showSaveSuccessFeedback('Anteckningar har uppdaterats');
             } catch (error) {
               console.error('[OversiktSummary] Error saving anteckningar:', error);
+              hideSaveFeedback();
               Alert.alert('Fel', `Kunde inte spara anteckningar: ${error.message || 'Okänt fel'}`);
             } finally {
               setSaving(false);
@@ -809,6 +1074,14 @@ export default function OversiktSummary({ projectId, companyId, project }) {
         companyId={companyId}
         value={kontaktperson}
         label="Välj kontaktperson"
+      />
+
+      <IsoDatePickerModal
+        visible={datePickerVisible}
+        title="Välj datum"
+        value={datePickerValue}
+        onSelect={handleDatePicked}
+        onClose={closeDatePicker}
       />
 
       {/* Info Tooltip Modal - Rendered after dropdown modals to appear on top */}
@@ -899,7 +1172,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-    </ScrollView>
+      </ScrollView>
+    </>
   );
 }
 
@@ -918,65 +1192,18 @@ const styles = StyleSheet.create({
     gap: 16,
     marginBottom: 24,
     position: 'relative',
-    zIndex: 1, // Lower zIndex so dropdown can go above
+    overflow: 'visible',
+    zIndex: 0,
+  },
+  twoColumnRowLifted: {
+    zIndex: 5000,
   },
   columnCard: {
     flex: 1,
     minWidth: 0, // Allow flex items to shrink below their content size
     alignSelf: 'stretch', // Make cards equal height
     position: 'relative',
-    zIndex: 1, // Lower zIndex so dropdown can go above
-  },
-  // Status section (at top)
-  statusSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    padding: 20,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2
-  },
-  statusTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 4
-  },
-  statusSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16
-  },
-  statusButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12
-  },
-  statusButton: {
-    flex: 1,
-    minWidth: 120,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    backgroundColor: '#fafafa',
-    gap: 8
-  },
-  statusButtonActive: {
-    backgroundColor: '#fff',
-    borderWidth: 2
-  },
-  statusButtonText: {
-    fontSize: 14,
-    color: '#666'
+    overflow: 'visible',
   },
   // Card styles
   card: {
@@ -994,7 +1221,6 @@ const styles = StyleSheet.create({
     flexDirection: 'column', // Ensure column layout for flex to work
     overflow: 'visible', // Allow dropdown to extend outside card
     position: 'relative',
-    zIndex: 1 // Lower zIndex to allow dropdown to go above
   },
   cardHasChanges: {
     borderColor: '#FFA726',
@@ -1071,7 +1297,6 @@ const styles = StyleSheet.create({
     flex: 1, // Allow content to expand and fill available space
     overflow: 'visible', // Allow dropdown to extend outside card content
     position: 'relative',
-    zIndex: 1 // Lower zIndex to allow dropdown to go above
   },
   infoRow: {
     flexDirection: 'row',
@@ -1181,10 +1406,10 @@ const styles = StyleSheet.create({
     elevation: 25,
     maxHeight: 280, // Increased height for better visibility
     overflow: 'scroll', // Make it scrollable
-    zIndex: 999999,
+    zIndex: 6001,
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
-      zIndex: 999999,
+      zIndex: 6001,
       overflowY: 'auto', // Enable vertical scrolling on web
       maxHeight: '280px',
     } : {}),
@@ -1231,8 +1456,14 @@ const styles = StyleSheet.create({
 });
 
 // InfoCard component - defined at module level to prevent re-creation on every render
-const InfoCard = React.memo(({ title, icon, children, hasChanges, onSave, onCancel, saving }) => (
-  <View style={[styles.card, hasChanges && styles.cardHasChanges]}>
+const InfoCard = React.memo(({ title, icon, children, hasChanges, onSave, onCancel, saving, zIndex }) => (
+  <View
+    style={[
+      styles.card,
+      hasChanges && styles.cardHasChanges,
+      zIndex != null ? { zIndex, elevation: zIndex } : null,
+    ]}
+  >
     <View style={styles.cardHeader}>
       <View style={styles.cardTitleRow}>
         <Ionicons name={icon} size={20} color="#1976D2" style={styles.cardIcon} />
@@ -1267,6 +1498,8 @@ const InfoCard = React.memo(({ title, icon, children, hasChanges, onSave, onCanc
     </View>
   </View>
 ));
+
+InfoCard.displayName = 'InfoCard';
 
 // InfoRow component - defined at module level to prevent re-creation on every render
 // Completely uncontrolled - maintains its own state to prevent focus loss
@@ -1320,6 +1553,51 @@ const InfoRow = ({ label, value, onChange, placeholder, multiline = false, origi
         autoCorrect={false}
         blurOnSubmit={false}
       />
+    </View>
+  );
+};
+
+// DateRow component - opens a calendar and stores ISO YYYY-MM-DD
+const DateRow = ({ label, value, placeholder, originalValue = '', onOpen }) => {
+  const displayValue = isValidIsoDate(value) ? String(value) : '';
+  const hasChanged = String(displayValue || '').trim() !== String(originalValue || '').trim();
+
+  return (
+    <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
+      <Text style={styles.infoLabel}>{label}:</Text>
+      <View style={{ flex: 1, position: 'relative' }}>
+        <TouchableOpacity
+          onPress={onOpen}
+          activeOpacity={0.8}
+          style={{ flex: 1 }}
+        >
+          <TextInput
+            value={displayValue}
+            placeholder={placeholder}
+            editable={false}
+            pointerEvents="none"
+            style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: 40 }]}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onOpen}
+          activeOpacity={0.7}
+          style={{
+            position: 'absolute',
+            right: 8,
+            top: 0,
+            bottom: 0,
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 8,
+            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+          }}
+        >
+          <Ionicons name="calendar-outline" size={18} color="#64748B" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -1429,6 +1707,8 @@ const PersonRow = React.memo(({ label, person, onSelect, placeholder, hasChanged
   );
 });
 
+PersonRow.displayName = 'PersonRow';
+
 // InfoTooltip component - shows info icon with description
 const InfoTooltip = ({ info, onPress }) => {
   if (!info) return null;
@@ -1455,142 +1735,155 @@ const InfoTooltip = ({ info, onPress }) => {
 const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue = '', visible, onToggleVisible, optionInfo = {}, onInfoPress }) => {
   const hasChanged = String(value || '').trim() !== String(originalValue || '').trim();
   const inputRef = React.useRef(null);
-  const rowRef = React.useRef(null);
-  const [dropdownPosition, setDropdownPosition] = React.useState({ x: 0, y: 0, width: 0 });
-  
-  const measurePosition = React.useCallback(() => {
-    if (!rowRef.current) return;
-    
-    // Use requestAnimationFrame to ensure layout is complete
-    requestAnimationFrame(() => {
-      try {
-        if (!rowRef.current || !rowRef.current.measure) return;
-        
-        rowRef.current.measure((fx, fy, width, height, px, py) => {
-          if (Platform.OS === 'web') {
-            // On web with position: fixed, convert page coordinates to viewport coordinates
-            const scrollX = typeof window !== 'undefined' ? (window.scrollX || window.pageXOffset || 0) : 0;
-            const scrollY = typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0;
-            setDropdownPosition({ 
-              x: (px + 160) - scrollX,  // Convert to viewport coords for position: fixed
-              y: (py + height - 4) - scrollY,
-              width: Math.max(200, width - 160) 
-            });
-          } else {
-            // Native: use page coordinates directly (position: absolute)
-            setDropdownPosition({ 
-              x: px + 160, 
-              y: py + height - 1,
-              width: Math.max(200, width - 160) 
-            });
-          }
-        });
-      } catch (e) {
-        console.warn('[SelectRow] Error measuring position:', e);
-      }
-    });
-  }, []);
-  
-  React.useEffect(() => {
-    if (visible) {
-      measurePosition();
-      
-      // On web, prevent body scroll lock when dropdown is open
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        const originalOverflow = document.body.style.overflow;
-        document.body.style.overflow = 'auto'; // Allow scrolling
-        
-        return () => {
-          document.body.style.overflow = originalOverflow;
-        };
-      }
+  const inputWrapRef = React.useRef(null);
+
+  const selectedOption = React.useMemo(() => {
+    try {
+      const v = value;
+      const found = (options || []).find((opt) => {
+        if (opt && typeof opt === 'object') return opt.value === v;
+        return opt === v;
+      });
+      return found || null;
+    } catch (_e) {
+      return null;
     }
-  }, [visible, measurePosition]);
+  }, [options, value]);
+
+  const displayValue = React.useMemo(() => {
+    try {
+      const found = selectedOption;
+      if (found && typeof found === 'object') return found.label || String(found.value || '');
+      return value != null ? String(value) : '';
+    } catch (_e) {
+      return value != null ? String(value) : '';
+    }
+  }, [selectedOption, value]);
+
+  const selectedColor = (selectedOption && typeof selectedOption === 'object' && selectedOption.color)
+    ? String(selectedOption.color)
+    : null;
+
+  // Close on outside click (web only), without rendering via portal.
+  React.useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const el = inputWrapRef.current;
+    if (!el || typeof document === 'undefined') return;
+
+    const onDown = (e) => {
+      try {
+        if (!inputWrapRef.current) return;
+        if (typeof inputWrapRef.current.contains === 'function' && inputWrapRef.current.contains(e.target)) return;
+        onToggleVisible();
+      } catch (_e) {
+        onToggleVisible();
+      }
+    };
+
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('touchstart', onDown, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('touchstart', onDown, true);
+    };
+  }, [visible, onToggleVisible]);
   
   return (
     <>
-      <View 
-        ref={rowRef}
-        style={{ 
-          position: 'relative',
-        }}
-        onLayout={(e) => {
-          // Only measure position when dropdown becomes visible (not on every layout change)
-          // Position is already set by measurePosition() when dropdown opens
-        }}
+      <View
+        style={[
+          styles.infoRow,
+          hasChanged && styles.infoRowChanged,
+          {
+            overflow: 'visible',
+            position: 'relative',
+            ...(visible ? { zIndex: 2000 } : {}),
+          },
+        ]}
       >
-        <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
-          <Text style={styles.infoLabel}>{label}:</Text>
-          <View style={{ flex: 1, position: 'relative' }}>
-            <TextInput
-              ref={inputRef}
-              value={value || ''}
-              placeholder={placeholder}
-              editable={false}
-              style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: 35 }]}
-              autoCapitalize="none"
-              autoCorrect={false}
+        <Text style={styles.infoLabel}>{label}:</Text>
+        <View
+          ref={inputWrapRef}
+          style={{
+            flex: 1,
+            position: 'relative',
+            overflow: 'visible',
+          }}
+        >
+          {selectedColor && !!displayValue && (
+            <View
               pointerEvents="none"
-            />
-            <TouchableOpacity
               style={{
                 position: 'absolute',
-                right: 8,
+                left: 12,
                 top: 0,
                 bottom: 0,
                 justifyContent: 'center',
-                alignItems: 'center',
-                paddingHorizontal: 8
+                zIndex: 2,
               }}
-              onPress={onToggleVisible}
             >
-              <Ionicons 
-                name={visible ? 'chevron-up' : 'chevron-down'} 
-                size={20} 
-                color="#666" 
+              <View
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: selectedColor,
+                }}
               />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-      
-      {visible && (
-        Platform.OS === 'web' ? (
-          // On web: Render without Modal, use fixed positioning for scroll-proof dropdown
-          <>
-            <Pressable
-              style={{
-                position: 'fixed',
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 999998,
-                pointerEvents: 'auto',
-                backgroundColor: 'transparent',
-              }}
-              onPress={onToggleVisible}
-            />
-            <Pressable
+            </View>
+          )}
+          <TextInput
+            ref={inputRef}
+            value={displayValue || ''}
+            placeholder={placeholder}
+            editable={false}
+            style={[
+              styles.infoInput,
+              hasChanged && styles.infoInputChanged,
+              { paddingRight: 35, paddingLeft: selectedColor && !!displayValue ? 34 : undefined },
+            ]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            pointerEvents="none"
+          />
+          <TouchableOpacity
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: 0,
+              bottom: 0,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingHorizontal: 8,
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+            }}
+            onPress={onToggleVisible}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={visible ? 'chevron-up' : 'chevron-down'} size={20} color="#666" />
+          </TouchableOpacity>
+
+          {visible && (
+            <View
               style={[
                 styles.dropdownList,
                 {
-                  position: 'fixed',
-                  left: dropdownPosition.x || 160,
-                  top: (dropdownPosition.y || 0) - 4,
-                  width: dropdownPosition.width || 300,
-                  marginTop: 0,
-                  zIndex: 999999,
-                }
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  marginTop: -1,
+                  zIndex: 2001,
+                  elevation: 2001,
+                },
               ]}
-              onPress={(e) => e.stopPropagation()}
             >
               {options.map((option, index) => (
                 <TouchableOpacity
                   key={option.value || option || index}
                   style={[
                     styles.dropdownItem,
-                    (value === option || value === option.value) && styles.dropdownItemSelected
+                    (value === option || value === option.value) && styles.dropdownItemSelected,
                   ]}
                   onPress={() => {
                     onSelect(option.value || option);
@@ -1598,101 +1891,46 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
                   }}
                 >
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={[
-                      styles.dropdownItemText,
-                      (value === option || value === option.value) && styles.dropdownItemTextSelected,
-                      { flex: 1 }
-                    ]}>
-                      {option.label || option}
-                    </Text>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                      {option && typeof option === 'object' && option.color ? (
+                        <View
+                          style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: 5,
+                            backgroundColor: option.color,
+                            marginRight: 10,
+                          }}
+                        />
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          (value === option || value === option.value) && styles.dropdownItemTextSelected,
+                          { flex: 1 },
+                        ]}
+                      >
+                        {option.label || option}
+                      </Text>
+                    </View>
                     {optionInfo[option.label || option] && onInfoPress && (
                       <InfoTooltip
                         info={optionInfo[option.label || option]}
                         onPress={(e) => {
-                          if (e && typeof e.stopPropagation === 'function') {
-                            e.stopPropagation();
-                          }
+                          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
                           const optionText = option.label || option;
                           const infoText = optionInfo[optionText];
-                          if (infoText && onInfoPress) {
-                            onInfoPress(infoText, optionText);
-                          }
+                          if (infoText && onInfoPress) onInfoPress(infoText, optionText);
                         }}
                       />
                     )}
                   </View>
                 </TouchableOpacity>
               ))}
-            </Pressable>
-          </>
-        ) : (
-          // Native: Use Modal as before
-          <Modal
-            visible={visible}
-            transparent={true}
-            animationType="none"
-            onRequestClose={onToggleVisible}
-          >
-            <Pressable
-              style={{ flex: 1 }}
-              onPress={onToggleVisible}
-            >
-              <Pressable
-                style={[
-                  styles.dropdownList,
-                  {
-                    position: 'absolute',
-                    left: dropdownPosition.x || 160,
-                    top: (dropdownPosition.y || 0) - 4,
-                    width: dropdownPosition.width || 300,
-                    marginTop: 0,
-                  }
-                ]}
-                onPress={(e) => e.stopPropagation()}
-              >
-                {options.map((option, index) => (
-                  <TouchableOpacity
-                    key={option.value || option || index}
-                    style={[
-                      styles.dropdownItem,
-                      (value === option || value === option.value) && styles.dropdownItemSelected
-                    ]}
-                    onPress={() => {
-                      onSelect(option.value || option);
-                      onToggleVisible();
-                    }}
-                  >
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={[
-                        styles.dropdownItemText,
-                        (value === option || value === option.value) && styles.dropdownItemTextSelected,
-                        { flex: 1 }
-                      ]}>
-                        {option.label || option}
-                      </Text>
-                      {optionInfo[option.label || option] && onInfoPress && (
-                        <InfoTooltip
-                          info={optionInfo[option.label || option]}
-                          onPress={(e) => {
-                            if (e && typeof e.stopPropagation === 'function') {
-                              e.stopPropagation();
-                            }
-                            const optionText = option.label || option;
-                            const infoText = optionInfo[optionText];
-                            if (infoText && onInfoPress) {
-                              onInfoPress(infoText, optionText);
-                            }
-                          }}
-                        />
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </Pressable>
-            </Pressable>
-          </Modal>
-        )
-      )}
+            </View>
+          )}
+        </View>
+      </View>
     </>
   );
 };

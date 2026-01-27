@@ -1,6 +1,7 @@
 import { Platform, ScrollView, View } from 'react-native';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import { Dashboard } from './Dashboard';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
 
 export default function NativeMainPane({
   rightPaneScrollRef,
@@ -55,7 +56,7 @@ export default function NativeMainPane({
     <ScrollView
       ref={rightPaneScrollRef}
       style={{ flex: 1 }}
-      contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}
+      contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
     >
       {selectedProject ? (
         <View style={{ flex: 1 }}>
@@ -179,7 +180,6 @@ export default function NativeMainPane({
                 });
               } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
                 // If no subfolder exists, show message
-                // eslint-disable-next-line no-alert
                 alert(
                   'Skapa först en undermapp i sidopanelen för att kunna skapa projekt.',
                 );

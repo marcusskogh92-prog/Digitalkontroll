@@ -2,28 +2,41 @@
  * ProjectTreeFolder - Renders a folder (main or sub) in the tree
  */
 
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Animated, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getFolderColor, DEFAULT_FOLDER_COLOR } from './folderColors';
+import { useState } from 'react';
+import { Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { DEFAULT_FOLDER_COLOR, getFolderColor } from './folderColors';
+
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
 
 export default function ProjectTreeFolder({
   folder,
   level = 0, // 0 = main, 1 = sub
   isExpanded,
   onToggle,
+  onPress,
   onLongPress,
   onPressIn,
   onPressOut,
   onAddChild,
   showAddButton = false,
   spinAnim = null,
+  compact = false,
+  hideFolderIcon = false,
+  reserveChevronSpace = false,
+  staticHeader = false,
 }) {
+  const canToggle = typeof onToggle === 'function' && !staticHeader;
+  const canPress = canToggle || typeof onPress === 'function';
   const isMainFolder = level === 0;
-  const paddingLeft = isMainFolder ? 0 : 12;
-  const fontSize = isMainFolder ? 16 : 15;
+  const paddingLeft = isMainFolder ? 0 : 12 * Math.max(1, level);
+  const fontSize = compact ? (isMainFolder ? 14 : 13) : (isMainFolder ? 16 : 15);
   const fontWeight = isMainFolder ? 'bold' : '600';
-  const iconSize = isMainFolder ? 28 : 24; // Larger for better visibility
+  const hasFilesDeep = folder?.hasFilesDeep === true;
+  const displayFontWeight = staticHeader ? fontWeight : (hasFilesDeep ? fontWeight : '400');
+  const iconSize = compact ? (isMainFolder ? 22 : 20) : (isMainFolder ? 28 : 24); // Larger for better visibility
+  const chevronSize = compact ? (isMainFolder ? 18 : 16) : (isMainFolder ? 20 : 18);
   
   // Get folder color - use folder.iconColor or default
   const folderColor = folder?.iconColor 
@@ -32,11 +45,15 @@ export default function ProjectTreeFolder({
 
   // Render folder icon with spin animation if provided
   const renderFolderIcon = () => {
+    if (hideFolderIcon) return null;
+
+    const iconColor = isHovered && canPress ? PRIMARY_BLUE : folderColor.color;
+
     const iconElement = (
       <Ionicons
         name={isExpanded ? 'folder-open' : 'folder'}
         size={iconSize}
-        color={folderColor.color}
+        color={iconColor}
       />
     );
 
@@ -66,20 +83,70 @@ export default function ProjectTreeFolder({
     );
   };
 
+  // Render chevron when folder icons are hidden (used e.g. in project view)
+  const renderChevron = () => {
+    if (!hideFolderIcon) return null;
+
+    if (!canToggle) {
+      if (!reserveChevronSpace) return null;
+      return (
+        <View
+          style={{
+            marginRight: 6,
+            minWidth: chevronSize,
+            alignItems: 'center',
+          }}
+        />
+      );
+    }
+
+    return (
+      <View
+        style={{
+          marginRight: 6,
+          minWidth: chevronSize,
+          alignItems: 'center',
+        }}
+      >
+        <Ionicons
+          name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+          size={chevronSize}
+          color={isHovered && canPress ? PRIMARY_BLUE : '#666'}
+        />
+      </View>
+    );
+  };
+
   const [isHovered, setIsHovered] = useState(false);
+
+  const handleToggle = () => {
+    if (!canToggle) return;
+    onToggle(folder.id);
+  };
+
+  const handlePress = () => {
+    if (canToggle) {
+      handleToggle();
+      return;
+    }
+    if (typeof onPress === 'function') {
+      onPress(folder);
+    }
+  };
 
   // Main folder has different styling
   if (isMainFolder) {
     const folderRowStyle = {
+      display: 'flex',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: 8,
+      paddingVertical: compact ? 5 : 8,
       paddingHorizontal: 8,
       borderRadius: 8,
-      backgroundColor: isHovered ? '#E3F2FD' : 'transparent',
+      backgroundColor: canPress && isHovered ? HOVER_BG : 'transparent',
       ...(Platform.OS === 'web' ? {
-        cursor: 'pointer',
+        cursor: canPress ? 'pointer' : 'default',
         transition: 'background-color 0.15s ease',
       } : {}),
     };
@@ -88,24 +155,43 @@ export default function ProjectTreeFolder({
       return (
         <div
           style={folderRowStyle}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
+          onMouseEnter={() => {
+            if (canPress) setIsHovered(true);
+          }}
+          onMouseLeave={() => {
+            if (canPress) setIsHovered(false);
+          }}
         >
           <div
-            style={{ flexDirection: 'row', alignItems: 'center', flex: 1, cursor: 'pointer' }}
-            onClick={() => onToggle(folder.id)}
-            onContextMenu={(e) => {
-              try { e.preventDefault(); } catch (_) {}
-              if (onLongPress) onLongPress();
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              flex: 1,
+              cursor: canPress ? 'pointer' : 'default',
             }}
+            onClick={canPress ? handlePress : undefined}
+            onContextMenu={
+              canToggle
+                ? (e) => {
+                    try {
+                      e.preventDefault();
+                    } catch (_) {}
+                    if (onLongPress) onLongPress();
+                  }
+                : undefined
+            }
           >
-            {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
+            {renderChevron()}
+            {/* Folder icon with color */}
             {renderFolderIcon()}
             <Text
+              numberOfLines={compact ? 1 : undefined}
+              ellipsizeMode="tail"
               style={{
                 fontSize,
-                fontWeight,
-                color: '#222',
+                fontWeight: displayFontWeight,
+                color: isHovered && canPress ? PRIMARY_BLUE : '#222',
               }}
             >
               {folder.name}
@@ -126,27 +212,47 @@ export default function ProjectTreeFolder({
 
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 0, borderBottomWidth: isExpanded ? 1 : 0, borderColor: '#e0e0e0' }}>
-        <TouchableOpacity
-          style={[folderRowStyle, { flex: 1 }]}
-          onPress={() => onToggle(folder.id)}
-          onLongPress={onLongPress}
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          delayLongPress={2000}
-          activeOpacity={0.7}
-        >
-          {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
-          {renderFolderIcon()}
-          <Text
-            style={{
-              fontSize,
-              fontWeight,
-              color: '#222',
-            }}
+        {canPress ? (
+          <TouchableOpacity
+            style={[folderRowStyle, { flex: 1 }]}
+            onPress={handlePress}
+            onLongPress={canToggle ? onLongPress : undefined}
+            onPressIn={onPressIn}
+            onPressOut={onPressOut}
+            delayLongPress={2000}
+            activeOpacity={0.7}
           >
-            {folder.name}
-          </Text>
-        </TouchableOpacity>
+            {renderChevron()}
+            {renderFolderIcon()}
+            <Text
+              numberOfLines={compact ? 1 : undefined}
+              ellipsizeMode="tail"
+              style={{
+                fontSize,
+                fontWeight: displayFontWeight,
+                color: '#222',
+              }}
+            >
+              {folder.name}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={[folderRowStyle, { flex: 1 }]}>
+            {renderChevron()}
+            {renderFolderIcon()}
+            <Text
+              numberOfLines={compact ? 1 : undefined}
+              ellipsizeMode="tail"
+              style={{
+                fontSize,
+                fontWeight: displayFontWeight,
+                color: '#222',
+              }}
+            >
+              {folder.name}
+            </Text>
+          </View>
+        )}
         
         {isExpanded && showAddButton && onAddChild && (
           <TouchableOpacity
@@ -162,15 +268,16 @@ export default function ProjectTreeFolder({
 
   // Sub folder styling
   const subFolderRowStyle = {
+    display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: compact ? 4 : 6,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: isHovered ? '#E3F2FD' : 'transparent',
+    backgroundColor: canPress && isHovered ? HOVER_BG : 'transparent',
     ...(Platform.OS === 'web' ? {
-      cursor: 'pointer',
+      cursor: canPress ? 'pointer' : 'default',
       transition: 'background-color 0.15s ease',
     } : {}),
   };
@@ -178,26 +285,45 @@ export default function ProjectTreeFolder({
   if (Platform.OS === 'web') {
     return (
       <div
-        style={{ marginVertical: 1, marginLeft: paddingLeft }}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        style={{ marginTop: 1, marginBottom: 1, marginLeft: paddingLeft }}
+        onMouseEnter={() => {
+          if (canPress) setIsHovered(true);
+        }}
+        onMouseLeave={() => {
+          if (canPress) setIsHovered(false);
+        }}
       >
         <div style={subFolderRowStyle}>
           <div
-            style={{ flexDirection: 'row', alignItems: 'center', flex: 1, cursor: 'pointer' }}
-            onClick={() => onToggle(folder.id)}
-            onContextMenu={(e) => {
-              try { e.preventDefault(); } catch (_) {}
-              if (onLongPress) onLongPress();
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              flex: 1,
+              cursor: canPress ? 'pointer' : 'default',
             }}
+            onClick={canPress ? handlePress : undefined}
+            onContextMenu={
+              canToggle
+                ? (e) => {
+                    try {
+                      e.preventDefault();
+                    } catch (_) {}
+                    if (onLongPress) onLongPress();
+                  }
+                : undefined
+            }
           >
-            {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
+            {renderChevron()}
+            {/* Folder icon with color */}
             {renderFolderIcon()}
             <Text
+              numberOfLines={compact ? 1 : undefined}
+              ellipsizeMode="tail"
               style={{
                 fontSize,
-                fontWeight,
-                color: '#222',
+                fontWeight: displayFontWeight,
+                color: isHovered && canPress ? PRIMARY_BLUE : '#222',
               }}
             >
               {folder.name}
@@ -221,14 +347,17 @@ export default function ProjectTreeFolder({
     <View style={{ backgroundColor: '#fff', borderRadius: 12, marginVertical: 1, marginLeft: paddingLeft, padding: 5 }}>
       <TouchableOpacity
         style={subFolderRowStyle}
-        onPress={() => onToggle(folder.id)}
-        onLongPress={onLongPress}
+        onPress={handlePress}
+        onLongPress={canToggle ? onLongPress : undefined}
         delayLongPress={2000}
         activeOpacity={0.7}
       >
-        {/* Folder icon with color - main visual element - ALWAYS VISIBLE with spin animation */}
+        {renderChevron()}
+        {/* Folder icon with color */}
         {renderFolderIcon()}
         <Text
+          numberOfLines={compact ? 1 : undefined}
+          ellipsizeMode="tail"
           style={{
             fontSize,
             fontWeight,

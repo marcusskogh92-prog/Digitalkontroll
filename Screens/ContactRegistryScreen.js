@@ -8,13 +8,13 @@ import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
 import {
-  auth,
-  createCompanyContact,
-  deleteCompanyContact,
-  fetchAllCompanyContacts,
-  fetchCompanyContacts,
-  fetchCompanyProfile,
-  updateCompanyContact,
+    auth,
+    createCompanyContact,
+    deleteCompanyContact,
+    fetchAllCompanyContacts,
+    fetchCompanyContacts,
+    fetchCompanyProfile,
+    updateCompanyContact,
 } from '../components/firebase';
 
 function formatSwedishMobilePhone(input) {
@@ -410,6 +410,32 @@ export default function ContactRegistryScreen({ navigation, route }) {
       if (mountedRef.current) setLoading(false);
     }
   };
+
+  // Listen for global home/refresh events from AdminSidebar (web)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (typeof window === 'undefined') return undefined;
+
+    const handleGoHome = () => {
+      try {
+        navigation?.reset?.({ index: 0, routes: [{ name: 'Home' }] });
+      } catch (_e) {}
+    };
+
+    const handleRefresh = () => {
+      try {
+        loadContacts();
+      } catch (_e) {}
+    };
+
+    window.addEventListener('dkGoHome', handleGoHome);
+    window.addEventListener('dkRefresh', handleRefresh);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handleGoHome); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigation, companyId, allCompaniesMode]);
 
   useEffect(() => {
     // Load when mode/company changes
@@ -1026,7 +1052,19 @@ export default function ContactRegistryScreen({ navigation, route }) {
         adminShowCompanySelector={canSeeAllCompanies}
         sidebarSelectedCompanyId={companyId}
         topBar={
-          <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+          <View
+            style={{
+              height: 96,
+              paddingLeft: 24,
+              paddingRight: 24,
+              backgroundColor: 'rgba(25, 118, 210, 0.2)',
+              justifyContent: 'center',
+              borderBottomWidth: 1,
+              borderColor: 'rgba(25, 118, 210, 0.3)',
+              borderLeftWidth: 4,
+              borderLeftColor: '#1976D2',
+            }}
+          >
             <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                 <View style={{ marginRight: 10 }}>
@@ -1363,12 +1401,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                     </Text>
                   </View>
                 ) : (
-                  <ScrollView 
-                    style={{ maxHeight: 520 }}
-                    contentContainerStyle={{ flexGrow: 1 }}
-                    nestedScrollEnabled={true}
-                    showsVerticalScrollIndicator={true}
-                  >
+                  <View>
                     <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
                       {/* Inline add row */}
                       {hasSelectedCompany ? (
@@ -1641,7 +1674,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                         </View>
                       ))}
                     </View>
-                  </ScrollView>
+                  </View>
                 )}
                   </>
                 ) : (

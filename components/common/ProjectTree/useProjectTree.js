@@ -3,8 +3,8 @@
  * Now fetches project functions (folders) from SharePoint instead of using hardcoded functions
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
-import { getProjectPhase, DEFAULT_PHASE } from '../../../features/projects/constants';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { DEFAULT_PHASE, getProjectPhase } from '../../../features/projects/constants';
 import { getProjectFolders } from '../../../services/azure/hierarchyService';
 
 export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction, selectedPhase, companyId, selectedProjectId = null }) {
@@ -46,7 +46,12 @@ export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction, s
           (async () => {
             try {
               const phaseKey = project.phase || selectedPhase || DEFAULT_PHASE;
-              const functions = await getProjectFolders(companyId, project.id, phaseKey);
+              const functions = await getProjectFolders(
+                companyId,
+                project.id,
+                phaseKey,
+                project.path || project.projectPath || null,
+              );
               
               setProjectFunctionsCache(prev => ({
                 ...prev,
@@ -97,7 +102,12 @@ export function useProjectTree({ hierarchy, onSelectProject, onSelectFunction, s
     projectsToLoad.forEach(async (project) => {
       try {
         const phaseKey = project.phase || selectedPhase || DEFAULT_PHASE;
-        const functions = await getProjectFolders(companyId, project.id, phaseKey);
+        const functions = await getProjectFolders(
+          companyId,
+          project.id,
+          phaseKey,
+          project.path || project.projectPath || null,
+        );
         
         setProjectFunctionsCache(prev => ({
           ...prev,

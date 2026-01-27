@@ -35,6 +35,14 @@ export const PROJECT_PHASES = [
     icon: 'time-outline',
     order: 4
   },
+  {
+    id: 'phase-free',
+    key: 'free',
+    name: 'Valfri mappstruktur',
+    color: '#F59E0B',
+    icon: 'folder-open-outline',
+    order: 5,
+  },
 ];
 
 export const DEFAULT_PHASE = 'kalkylskede';

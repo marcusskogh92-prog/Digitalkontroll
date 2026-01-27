@@ -2,22 +2,22 @@
  * Generic Phase Layout - Works for all project phases
  */
 
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Modal, TouchableOpacity, Platform, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
 import { usePhaseNavigation } from './hooks/usePhaseNavigation';
 import { usePhaseProgress } from './hooks/usePhaseProgress';
 import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
 import PhaseTopNavigator from './kalkylskede/components/PhaseTopNavigator';
-import { PROJECT_PHASES, DEFAULT_PHASE, getProjectPhase } from '../../../features/projects/constants';
 
 // Import kalkylskede sections (for now, other phases can use these or have their own)
-import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
+import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
+import AnteckningarSection from './kalkylskede/sections/anteckningar/AnteckningarSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
-import AnteckningarSection from './kalkylskede/sections/anteckningar/AnteckningarSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
-import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
+import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
 
 const SECTION_COMPONENTS = {
   oversikt: OversiktSection,
@@ -629,6 +629,8 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
             onSelectSection={handleSelectSection}
             onSelectItem={handleSelectItem}
             projectName={projectName}
+            companyId={companyId}
+            project={project}
           />
         )}
 
@@ -748,8 +750,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f4f6fa',
-    height: '100%',
-    width: '100%'
+    minHeight: 0,
+    minWidth: 0,
   },
   phaseSelectorContainer: {
     backgroundColor: '#fff',
@@ -764,12 +766,16 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
-    flexDirection: 'row'
+    flexDirection: 'row',
+    minHeight: 0,
+    minWidth: 0,
   },
   contentArea: {
     flex: 1,
     backgroundColor: '#fff',
-    padding: 24
+    padding: 24,
+    minHeight: 0,
+    minWidth: 0,
   },
   loadingContainer: {
     flex: 1,

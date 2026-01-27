@@ -3,12 +3,14 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState, useEffect } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Modal, Platform } from 'react-native';
-import { auth } from '../../../../../components/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { addSection, removeSection, addItem, removeItem } from '../services/navigationService';
+import React, { useEffect, useState } from 'react';
+import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { auth } from '../../../../../components/firebase';
+import { ensureFolderPath } from '../../../../../services/azure/fileService';
+import { loadFolderChildren } from '../../../../../services/azure/hierarchyService';
 import { getAppVersion } from '../../../../../utils/appVersion';
+import { addItem, addSection, removeItem, removeSection } from '../services/navigationService';
 
 const appVersion = getAppVersion();
 
@@ -20,6 +22,7 @@ export default function PhaseLeftPanel({
   onSelectItem,
   projectName,
   companyId,
+  project,
   loadNavigation,
   saveNavigation
 }) {
@@ -33,6 +36,259 @@ export default function PhaseLeftPanel({
   const [targetSectionIdForItem, setTargetSectionIdForItem] = useState(null);
   const [targetParentItemIdForItem, setTargetParentItemIdForItem] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  const [sharePointTree, setSharePointTree] = useState([]);
+
+  const projectBasePathRaw =
+    project?.path ||
+    project?.sharePointPath ||
+    project?.projectPath ||
+    project?.sharepointPath ||
+    project?.sharePointProjectPath ||
+    '';
+
+  const hasSharePointContext = Boolean(companyId && String(projectBasePathRaw || '').trim());
+
+  const normalizePath = (path) => {
+    if (!path || typeof path !== 'string') return '';
+    return path
+      .trim()
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .replace(/\/+/g, '/');
+  };
+
+  const updateTreeByPath = (nodes, targetPath, updater) => {
+    return nodes.map((node) => {
+      if (!node) return node;
+      if (node.path === targetPath) {
+        return updater(node);
+      }
+      if (Array.isArray(node.children) && node.children.length > 0) {
+        return {
+          ...node,
+          children: updateTreeByPath(node.children, targetPath, updater),
+        };
+      }
+      return node;
+    });
+  };
+
+  const findNodeByPath = (nodes, targetPath) => {
+    for (const node of nodes) {
+      if (!node) continue;
+      if (node.path === targetPath) return node;
+      if (Array.isArray(node.children) && node.children.length > 0) {
+        const found = findNodeByPath(node.children, targetPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const handleToggleSharePointFolder = async (folderPath, sectionId = null) => {
+    const normalizedPath = normalizePath(folderPath);
+    if (!normalizedPath) return;
+
+    // Keep phase navigation in sync when user clicks top-level section folders.
+    if (sectionId && onSelectSection) {
+      onSelectSection(sectionId);
+      if (onSelectItem) {
+        onSelectItem(sectionId, null);
+      }
+    }
+
+    let willExpand = false;
+    let shouldLoad = false;
+    setSharePointTree((prev) => {
+      const snapshot = findNodeByPath(prev, normalizedPath);
+      if (!snapshot) return prev;
+
+      willExpand = !snapshot.expanded;
+      shouldLoad = Boolean(willExpand && !snapshot.childrenLoaded && !snapshot.loading);
+
+      return updateTreeByPath(prev, normalizedPath, (node) => ({
+        ...node,
+        expanded: willExpand,
+      }));
+    });
+
+    if (!willExpand || !shouldLoad) return;
+
+    setSharePointTree((prev) =>
+      updateTreeByPath(prev, normalizedPath, (node) => ({ ...node, loading: true, error: null }))
+    );
+
+    try {
+      const loadAndSort = async (pathToLoad) => {
+        const children = await loadFolderChildren(companyId, pathToLoad, 1);
+        return Array.isArray(children)
+          ? [...children].sort((a, b) =>
+              (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' })
+            )
+          : [];
+      };
+
+      let sorted = await loadAndSort(normalizedPath);
+
+      // If a section folder is empty, it can be because:
+      // 1) Folder does not exist (Graph returns 404 -> []), or
+      // 2) Structure was created without numeric prefixes, or
+      // 3) Item subfolders were never created.
+      // Try a fallback path without numeric prefix for the last segment.
+      if (sorted.length === 0 && sectionId) {
+        const segments = normalizedPath.split('/').filter(Boolean);
+        const last = segments[segments.length - 1] || '';
+        const strippedLast = String(last).replace(/^\d+\s*-\s*/, '').trim();
+        if (strippedLast && strippedLast !== last) {
+          const altPath = [...segments.slice(0, -1), strippedLast].join('/');
+          const altSorted = await loadAndSort(altPath);
+          if (altSorted.length > 0) {
+            // Swap to the existing folder path so future expands work.
+            setSharePointTree((prev) =>
+              updateTreeByPath(prev, normalizedPath, (node) => ({
+                ...node,
+                path: altPath,
+              }))
+            );
+            sorted = altSorted;
+          }
+        }
+      }
+
+      // If still empty and we know this is a top-level section, auto-create missing item folders once.
+      if (sorted.length === 0 && sectionId) {
+        let snapshot = null;
+        setSharePointTree((prev) => {
+          snapshot = findNodeByPath(prev, normalizedPath);
+          return prev;
+        });
+
+        const alreadyTried = Boolean(snapshot?.repairAttempted);
+        const section = (navigation?.sections || []).find((s) => String(s?.id || '') === String(sectionId || ''));
+        const sectionItems = Array.isArray(section?.items) ? section.items.filter((it) => it && it.enabled !== false) : [];
+
+        if (!alreadyTried && sectionItems.length > 0) {
+          setSharePointTree((prev) =>
+            updateTreeByPath(prev, normalizedPath, (node) => ({ ...node, repairAttempted: true }))
+          );
+
+          const base = normalizedPath;
+          await Promise.allSettled(
+            sectionItems.map((it) => {
+              const name = String(it?.name || '').trim();
+              if (!name) return Promise.resolve();
+              const p = normalizePath(`${base}/${name}`);
+              return ensureFolderPath(p, companyId);
+            })
+          );
+
+          // Reload after repair attempt
+          sorted = await loadAndSort(normalizedPath);
+        }
+      }
+
+      setSharePointTree((prev) =>
+        updateTreeByPath(prev, normalizedPath, (node) => ({
+          ...node,
+          loading: false,
+          error: null,
+          childrenLoaded: true,
+          children: sorted,
+        }))
+      );
+    } catch (e) {
+      setSharePointTree((prev) =>
+        updateTreeByPath(prev, normalizedPath, (node) => ({
+          ...node,
+          loading: false,
+          error: e?.message || 'Kunde inte ladda undermappar',
+        }))
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!hasSharePointContext || !navigation?.sections?.length) {
+      setSharePointTree([]);
+      return;
+    }
+
+    const basePath = normalizePath(String(projectBasePathRaw || ''));
+    if (!basePath) {
+      setSharePointTree([]);
+      return;
+    }
+
+    const rootNodes = navigation.sections.map((section) => {
+      const sectionName = String(section?.name || '').trim();
+      const sectionPath = normalizePath(`${basePath}/${sectionName}`);
+      return {
+        id: `section:${section.id}`,
+        name: sectionName,
+        type: 'folder',
+        path: sectionPath,
+        sectionId: section.id,
+        expanded: false,
+        loading: false,
+        error: null,
+        childrenLoaded: false,
+        children: [],
+      };
+    });
+
+    setSharePointTree(rootNodes);
+  }, [hasSharePointContext, project?.path, navigation]);
+
+  const renderSharePointNode = (node, level = 0) => {
+    const marginLeft = 12 + level * 14;
+    const isExpanded = Boolean(node?.expanded);
+    const hasChildren = Array.isArray(node?.children) && node.children.length > 0;
+
+    return (
+      <View key={node.path || node.id} style={{ marginLeft, marginTop: 2 }}>
+        <TouchableOpacity
+          style={styles.spRow}
+          onPress={() => handleToggleSharePointFolder(node.path, node.sectionId || null)}
+        >
+          <Ionicons
+            name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
+            size={14}
+            color="#444"
+            style={{ marginRight: 6 }}
+          />
+          <Ionicons
+            name="folder-outline"
+            size={16}
+            color="#666"
+            style={{ marginRight: 8 }}
+          />
+          <Text style={styles.spName} numberOfLines={1}>{node.name}</Text>
+          {Boolean(node.loading) && (
+            <Text style={styles.spMeta}>Laddar…</Text>
+          )}
+        </TouchableOpacity>
+
+        {isExpanded && Boolean(node.error) && (
+          <View style={{ marginLeft: 28, marginTop: 2 }}>
+            <Text style={styles.spError}>{node.error}</Text>
+          </View>
+        )}
+
+        {isExpanded && !node.loading && node.childrenLoaded && !hasChildren && (
+          <View style={{ marginLeft: 28, marginTop: 2 }}>
+            <Text style={styles.spEmpty}>Mappen är tom</Text>
+          </View>
+        )}
+
+        {isExpanded && hasChildren && (
+          <View style={{ marginTop: 2 }}>
+            {node.children.map((child) => renderSharePointNode(child, level + 1))}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   // Check permissions - allow all company members to edit navigation
   useEffect(() => {
@@ -226,22 +482,31 @@ export default function PhaseLeftPanel({
 
   return (
     <View style={styles.container}>
-      {/* Project name header */}
-      {projectName && (
-        <View style={styles.projectHeader}>
-          <Text style={styles.projectName} numberOfLines={1}>
-            {projectName}
-          </Text>
-          <View style={styles.divider} />
-        </View>
-      )}
+      <View style={styles.panelCard}>
+        {/* Project name header */}
+        {projectName && (
+          <View style={styles.projectHeader}>
+            <Text style={styles.projectName} numberOfLines={1}>
+              {projectName}
+            </Text>
+            <View style={styles.divider} />
+          </View>
+        )}
 
-      {/* Content wrapper - takes flex: 1, status box will be pushed to bottom with marginTop: auto */}
-      <View style={styles.contentWrapper}>
+        {/* Content wrapper - takes flex: 1 */}
+        <View style={styles.contentWrapper}>
         {Platform.OS === 'web' ? (
           <View style={styles.scrollViewContainer}>
             <View style={styles.scrollViewContent}>
-        {navigation.sections.map(section => {
+        {hasSharePointContext && sharePointTree.length > 0 ? (
+          <View style={{ paddingTop: 6 }}>
+            {sharePointTree
+              .sort((a, b) => (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' }))
+              .map((node) => renderSharePointNode(node, 0))}
+          </View>
+        ) : (
+          <>
+            {navigation.sections.map(section => {
           // All sections start collapsed (expanded: false)
           const isExpanded = expandedSections[section.id] ?? false;
           // Only show as active if section is expanded AND matches activeSection
@@ -475,7 +740,9 @@ export default function PhaseLeftPanel({
               )}
             </View>
           );
-        })}
+            })}
+          </>
+        )}
         
         {/* Add section button */}
         {canEdit && (
@@ -498,7 +765,15 @@ export default function PhaseLeftPanel({
             contentContainerStyle={styles.scrollViewContent}
             showsVerticalScrollIndicator={true}
           >
-          {navigation.sections.map(section => {
+          {hasSharePointContext && sharePointTree.length > 0 ? (
+            <View style={{ paddingTop: 6 }}>
+              {sharePointTree
+                .sort((a, b) => (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' }))
+                .map((node) => renderSharePointNode(node, 0))}
+            </View>
+          ) : (
+            <>
+              {navigation.sections.map(section => {
             const isExpanded = expandedSections[section.id] ?? false;
             const isActive = isExpanded && activeSection === section.id;
             const hasItems = section.items && section.items.length > 0;
@@ -687,6 +962,8 @@ export default function PhaseLeftPanel({
               </View>
             );
           })}
+            </>
+          )}
         
           {canEdit && (
             <TouchableOpacity
@@ -699,7 +976,7 @@ export default function PhaseLeftPanel({
               <Ionicons name="add-circle-outline" size={18} color="#1976D2" />
               <Text style={styles.addSectionButtonText}>Lägg till sektion</Text>
             </TouchableOpacity>
-            )}
+          )}
           </ScrollView>
         )}
 
@@ -791,23 +1068,30 @@ export default function PhaseLeftPanel({
           </View>
         </View>
       </Modal>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, // Take full available space in parent
-    flexDirection: 'column', // Ensure column layout
-    backgroundColor: '#f5f6f7',
-    borderRightWidth: 1,
-    borderRightColor: '#e6e6e6',
-    height: '100%', // Use parent height
-    ...(Platform.OS === 'web' ? {
-      maxHeight: '100%', // Constrain to parent
-      overflow: 'hidden',
-      display: 'flex', // Ensure flex layout
-    } : {})
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: 'transparent',
+    padding: 12,
+    height: '100%',
+    ...(Platform.OS === 'web' ? { maxHeight: '100%', overflow: 'hidden', display: 'flex' } : {})
+  },
+  panelCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 6px 20px rgba(17, 24, 39, 0.08)' }
+      : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 2 }),
   },
   projectHeader: {
     padding: 16,
@@ -848,6 +1132,33 @@ const styles = StyleSheet.create({
   scrollViewContent: {
     // Content container for both web and native
     paddingBottom: 8, // Small padding at bottom
+  },
+  spRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  spName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#222',
+    flex: 1,
+  },
+  spMeta: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 8,
+  },
+  spEmpty: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  spError: {
+    fontSize: 12,
+    color: '#D32F2F',
   },
   statusBox: {
     marginTop: 'auto', // Push to bottom - this is the key!

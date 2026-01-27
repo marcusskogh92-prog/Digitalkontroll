@@ -4,22 +4,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, ImageBackground, Platform, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
 import {
-  auth,
-  createCompanyControlType,
-  createCompanyControlTypeFolder,
-  createCompanyMall,
-  DEFAULT_CONTROL_TYPES,
-  deleteCompanyControlType,
-  deleteCompanyControlTypeFolder,
-  deleteCompanyMall,
-  fetchCompanies,
-  fetchCompanyControlTypeFolders,
-  fetchCompanyControlTypes,
-  fetchCompanyMallar,
-  fetchCompanyProfile,
-  updateCompanyControlType,
-  updateCompanyControlTypeFolder,
-  updateCompanyMall,
+    auth,
+    createCompanyControlType,
+    createCompanyControlTypeFolder,
+    createCompanyMall,
+    DEFAULT_CONTROL_TYPES,
+    deleteCompanyControlType,
+    deleteCompanyControlTypeFolder,
+    deleteCompanyMall,
+    fetchCompanies,
+    fetchCompanyControlTypeFolders,
+    fetchCompanyControlTypes,
+    fetchCompanyMallar,
+    fetchCompanyProfile,
+    updateCompanyControlType,
+    updateCompanyControlTypeFolder,
+    updateCompanyMall,
 } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
@@ -368,11 +368,74 @@ export default function ManageControlTypes({ route, navigation }) {
       } catch (_e) {}
     };
 
+    const handleRefresh = () => {
+      (async () => {
+        try {
+          const cid = String(companyId || '').trim();
+          if (!cid) return;
+
+          // Control types
+          try {
+            const list = await fetchCompanyControlTypes(cid);
+            setControlTypes(Array.isArray(list) && list.length > 0 ? list : DEFAULT_CONTROL_TYPES);
+          } catch (_e) {
+            setControlTypes(DEFAULT_CONTROL_TYPES);
+          }
+
+          // Company name
+          try {
+            const profile = await fetchCompanyProfile(cid).catch(() => null);
+            const name = String(profile?.companyName || profile?.name || '').trim();
+            setCompanyName(name || cid);
+          } catch (_e) {
+            setCompanyName(cid);
+          }
+
+          // Templates
+          try {
+            setLoadingTemplates(true);
+            const items = await fetchCompanyMallar(cid);
+            setTemplates(Array.isArray(items) ? items : []);
+          } catch (_e) {
+            setTemplates([]);
+          } finally {
+            setLoadingTemplates(false);
+          }
+
+          // Folders (only if enabled and a control type is selected)
+          try {
+            if (foldersEnabled && String(selectedControlType || '').trim()) {
+              const ct = String(selectedControlType || '').trim();
+              setLoadingFolders(true);
+              const list = await fetchCompanyControlTypeFolders(cid, ct);
+              setFolders(Array.isArray(list) ? list : []);
+              setSelectedFolderId((prev) => {
+                const p = String(prev || '').trim();
+                if (p && Array.isArray(list) && list.some(f => String(f?.id || '') === p)) return p;
+                if (Array.isArray(list) && list.length > 0) return String(list[0].id);
+                return '';
+              });
+            } else {
+              setFolders([]);
+              setSelectedFolderId('');
+            }
+          } catch (_e) {
+            setFolders([]);
+            setSelectedFolderId('');
+          } finally {
+            setLoadingFolders(false);
+          }
+        } catch (_e) {}
+      })();
+    };
+
     window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
     return () => {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
-  }, [navigation]);
+  }, [navigation, companyId, foldersEnabled, selectedControlType]);
 
   // Uppdatera listan om kontrolltyperna ändras via sidomenyn (t.ex. byt namn/dölj/radera)
   useEffect(() => {
@@ -798,7 +861,19 @@ export default function ManageControlTypes({ route, navigation }) {
           adminShowCompanySelector={canSeeAllCompanies}
           sidebarSelectedCompanyId={companyId}
           topBar={
-            <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+            <View
+              style={{
+                height: 96,
+                paddingLeft: 24,
+                paddingRight: 24,
+                backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                justifyContent: 'center',
+                borderBottomWidth: 1,
+                borderColor: 'rgba(25, 118, 210, 0.3)',
+                borderLeftWidth: 4,
+                borderLeftColor: '#1976D2',
+              }}
+            >
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>

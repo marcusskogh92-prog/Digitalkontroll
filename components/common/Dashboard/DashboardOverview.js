@@ -3,9 +3,12 @@
  * TODO: Extract full implementation from HomeScreen.js
  */
 
+import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
 
 const DashboardOverview = ({
   dashboardOverview,
@@ -60,8 +63,8 @@ const DashboardOverview = ({
                 paddingHorizontal: 6,
                 borderRadius: 8,
                 borderWidth: 1,
-                borderColor: isHovered ? '#1976D2' : 'transparent',
-                backgroundColor: isHovered ? '#eee' : 'transparent',
+                borderColor: isHovered ? PRIMARY_BLUE : 'transparent',
+                backgroundColor: isHovered ? HOVER_BG : 'transparent',
                 cursor: isWeb ? 'pointer' : undefined,
                 transition: isWeb ? 'background 0.15s, border 0.15s' : undefined,
               }}
@@ -82,10 +85,10 @@ const DashboardOverview = ({
                 if (l) dashboardStatRowLayoutRef.current[`overview:${row.key}`] = l;
               } : undefined}
             >
-              <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color="#222" style={{ marginRight: 6 }} />
+              <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={isHovered ? PRIMARY_BLUE : '#222'} style={{ marginRight: 6 }} />
               <View style={dashboardStatDotStyle(row.color)} />
-              <Text style={dashboardStatLabelStyle}>{row.label}</Text>
-              <Text style={dashboardStatValueStyle}>{String(row.value ?? 0)}</Text>
+              <Text style={[dashboardStatLabelStyle, isHovered ? { color: PRIMARY_BLUE } : null]}>{row.label}</Text>
+              <Text style={[dashboardStatValueStyle, isHovered ? { color: PRIMARY_BLUE } : null]}>{String(row.value ?? 0)}</Text>
             </TouchableOpacity>
           );
         })}

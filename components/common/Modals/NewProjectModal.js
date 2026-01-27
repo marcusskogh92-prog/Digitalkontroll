@@ -8,11 +8,10 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useRef } from 'react';
-import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Keyboard, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { auth } from '../../../components/firebase';
 import { formatPersonName } from '../../../components/formatPersonName';
 import { DEFAULT_PHASE } from '../../../features/projects/constants';
-import { isValidIsoDateYmd } from '../../../utils/validation';
 
 const NewProjectModal = ({
   // Modal state

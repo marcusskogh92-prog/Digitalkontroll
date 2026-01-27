@@ -3,15 +3,15 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, TouchableOpacity } from 'react-native';
+import { checkSharePointConnection, createSharePointFolder, deleteItem, getSharePointHierarchy, loadFolderChildren } from '../services/azure/hierarchyService';
+import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ContextMenu from './ContextMenu';
-import { ensureProjectFunctions, DEFAULT_PROJECT_FUNCTIONS } from './common/ProjectTree/constants';
-import { PROJECT_PHASES, DEFAULT_PHASE } from '../features/projects/constants';
-import { isProjectFolder, extractProjectMetadata } from '../utils/isProjectFolder';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveCompanySharePointSiteId, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
-import { getSharePointHierarchy, loadFolderChildren, checkSharePointConnection, createSharePointFolder, deleteItem } from '../services/azure/hierarchyService';
-import { createCompanySiteWithStructure } from '../services/azure/siteService';
 import UserEditModal from './UserEditModal';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -65,13 +65,19 @@ function RecursiveFolderItem({
       const projectMetadata = extractProjectMetadata(folder);
       if (projectMetadata) {
         onSelectProject({
+          ...folder,
+          // Display identity
           id: projectMetadata.id,
           name: projectMetadata.name,
           number: projectMetadata.number,
+          projectNumber: projectMetadata.number,
+          projectName: projectMetadata.name,
           fullName: projectMetadata.fullName,
+          // SharePoint identity (internal)
+          sharePointId: projectMetadata.sharePointId || folder.id || null,
+          // Location
           path: projectMetadata.path,
           type: 'project',
-          ...folder,
         });
       }
     } else {
@@ -178,8 +184,13 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [search, setSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
   const [expandedSubs, setExpandedSubs] = useState({});
-  const [expandedProjects, setExpandedProjects] = useState({});
   const [hierarchy, setHierarchy] = useState([]);
+  const [sharePointStatus, setSharePointStatus] = useState({
+    connected: false,
+    checking: false,
+    error: null,
+    siteId: null,
+  });
   // Phase is now just a SharePoint folder - no internal phase logic needed
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -225,7 +236,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [folderContextMenu, setFolderContextMenu] = useState(null); // { folder, x, y } - for SharePoint folder context menu
 
   // Breadcrumb state for web: track last selected project path in the sidebar
-  const [selectedProjectBreadcrumb, setSelectedProjectBreadcrumb] = useState(null); // { group, sub, project }
+  const [selectedProjectBreadcrumb] = useState(null); // { group, sub, project }
   const lastExpandedGroupIdRef = useRef(null);
   const lastExpandedSubIdRef = useRef(null);
 
@@ -1234,7 +1245,6 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
     if (project && project.id != null) segments.push({ label: formatProjectLabel(project), target: { kind: 'project', projectId: String(project.id) } });
 
     publishHomeBreadcrumbSegments(segments);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companiesMode, templatesMode, controlTypesMode, hierarchy, filteredGroups, expandedGroups, expandedSubs, selectedProjectBreadcrumb]);
 
   if (loading) {
@@ -1420,7 +1430,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
         // Project mode: re-fetch ALL root folders from SharePoint (no phase filtering)
         const prevH = Array.isArray(hierarchy) ? hierarchy : [];
         try {
-          const sharePointFolders = await getSharePointHierarchy(companyId, null);
+          const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
           if (Array.isArray(sharePointFolders) && sharePointFolders.length > 0) {
             setHierarchy(sharePointFolders);
           } else {
@@ -1699,12 +1709,12 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                         cursor: 'pointer',
                         userSelect: 'none',
                         flex: 1,
-                        background: hoveredCompany === company.id ? '#eee' : 'transparent',
+                        background: hoveredCompany === company.id ? HOVER_BG : 'transparent',
                         borderRadius: 4,
                         padding: '2px 4px',
                         borderWidth: 1,
                         borderStyle: 'solid',
-                        borderColor: hoveredCompany === company.id ? '#1976D2' : 'transparent',
+                        borderColor: hoveredCompany === company.id ? PRIMARY_BLUE : 'transparent',
                         transition: 'background 0.15s, border-color 0.15s',
                         boxSizing: 'border-box',
                       }}
@@ -1715,7 +1725,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                         border: 'none',
                         padding: 0,
                         cursor: 'pointer',
-                        color: '#222',
+                        color: hoveredCompany === company.id ? PRIMARY_BLUE : '#222',
                         textAlign: 'left',
                         fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
                         fontSize: 15,
@@ -1772,7 +1782,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                           <Ionicons
                             name="briefcase"
                             size={16}
-                            color={company.profile && company.profile.deleted ? '#999' : '#555'}
+                            color={hoveredCompany === company.id ? PRIMARY_BLUE : (company.profile && company.profile.deleted ? '#999' : '#555')}
                             style={{
                               transform: expandedCompanies[company.id] ? 'rotate(360deg)' : 'rotate(0deg)',
                               transition: 'transform 0.4s ease'
@@ -2352,10 +2362,10 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                     padding: '4px 4px',
                                     paddingLeft: 24,
                                     borderRadius: 4,
-                                    backgroundColor: isSelected ? '#e3f2fd' : (isHovered ? '#f5f5f5' : 'transparent'),
+                                    backgroundColor: isSelected ? '#e3f2fd' : (isHovered ? HOVER_BG : 'transparent'),
                                     borderWidth: 1,
                                     borderStyle: 'solid',
-                                    borderColor: isSelected ? '#1976D2' : (isHovered ? '#ccc' : 'transparent'),
+                                    borderColor: isSelected ? PRIMARY_BLUE : (isHovered ? PRIMARY_BLUE : 'transparent'),
                                     transition: 'background 0.15s, border-color 0.15s',
                                   }}
                                   onMouseEnter={() => setHoveredTemplateKey(key)}
@@ -2364,14 +2374,14 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                   <Ionicons
                                     name={icon}
                                     size={14}
-                                    color={color}
+                                    color={isHovered ? PRIMARY_BLUE : color}
                                     style={{
                                       marginRight: 8,
                                       transform: `rotate(${spin * 360}deg)`,
                                       transition: 'transform 0.4s ease',
                                     }}
                                   />
-                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>
+                                  <span style={{ color: isHidden ? '#9E9E9E' : (isHovered ? PRIMARY_BLUE : '#333'), fontStyle: isHidden ? 'italic' : 'normal' }}>
                                     {count > 0 ? `${type} (${count})` : type}
                                   </span>
                                   <span
@@ -2401,7 +2411,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                         <li key={tpl.id}>
                                           <button
                                             style={{
-                                              background: isHoveredItem ? '#eee' : 'transparent',
+                                              background: 'transparent',
                                               border: 'none',
                                               padding: 0,
                                               cursor: 'pointer',
@@ -2443,11 +2453,12 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                                 padding: '3px 4px',
                                                 paddingLeft: 32,
                                                 borderRadius: 4,
+                                                backgroundColor: isHoveredItem ? HOVER_BG : 'transparent',
                                                 borderWidth: 1,
                                                 borderStyle: 'solid',
-                                                borderColor: isHoveredItem ? '#1976D2' : 'transparent',
+                                                borderColor: isHoveredItem ? PRIMARY_BLUE : 'transparent',
                                                 transition: 'background 0.15s, border 0.15s',
-                                                color: isHiddenItem ? '#9E9E9E' : '#444',
+                                                color: isHiddenItem ? '#9E9E9E' : (isHoveredItem ? PRIMARY_BLUE : '#444'),
                                                 fontStyle: isHiddenItem ? 'italic' : 'normal',
                                               }}
                                             >
@@ -2624,10 +2635,10 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                     padding: '4px 4px',
                                     paddingLeft: 24,
                                     borderRadius: 4,
-                                    backgroundColor: isHovered ? '#f5f5f5' : 'transparent',
+                                    backgroundColor: isHovered ? HOVER_BG : 'transparent',
                                     borderWidth: 1,
                                     borderStyle: 'solid',
-                                    borderColor: isHovered ? '#1976D2' : 'transparent',
+                                    borderColor: isHovered ? PRIMARY_BLUE : 'transparent',
                                     transition: 'background 0.15s, border-color 0.15s',
                                   }}
                                   onMouseEnter={() => setHoveredControlTypeKey(key)}
@@ -2636,10 +2647,10 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                   <Ionicons
                                     name={icon}
                                     size={14}
-                                    color={color}
+                                    color={isHovered ? PRIMARY_BLUE : color}
                                     style={{ marginRight: 8 }}
                                   />
-                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
+                                  <span style={{ color: isHidden ? '#9E9E9E' : (isHovered ? PRIMARY_BLUE : '#333'), fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
                                   <span
                                     style={{
                                       marginLeft: 'auto',
@@ -2718,17 +2729,17 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                                     alignItems: 'center',
                                     padding: '2px 4px',
                                     borderRadius: 4,
-                                    background: isHoveredUser ? '#eee' : 'transparent',
+                                    background: isHoveredUser ? HOVER_BG : 'transparent',
                                     borderWidth: 1,
                                     borderStyle: 'solid',
-                                    borderColor: isHoveredUser ? '#1976D2' : 'transparent',
+                                    borderColor: isHoveredUser ? PRIMARY_BLUE : 'transparent',
                                     transition: 'background 0.15s, border-color 0.15s',
                                     cursor: 'pointer',
                                     opacity: disabled ? 0.65 : 1,
                                   }}
                                 >
                                   <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: '18px', color: disabled ? '#9E9E9E' : '#1F2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: '18px', color: disabled ? '#9E9E9E' : (isHoveredUser ? PRIMARY_BLUE : '#1F2937'), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                       {name}
                                     </div>
                                   </div>
@@ -3261,7 +3272,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                 if (!folderName || !folderName.trim()) return;
                 
                 const parentPath = folder.path || folder.name;
-                const newFolder = await createSharePointFolder(resolvedCompanyId, parentPath, folderName.trim());
+                await createSharePointFolder(resolvedCompanyId, parentPath, folderName.trim());
                 
                 // Refresh hierarchy to show new folder
                 const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);

@@ -1,9 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
-import { Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
 import { Dashboard } from './Dashboard';
 import InlineProjectCreationPanel from './InlineProjectCreationPanel';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
 
 export default function WebMainPane(props) {
   const {
@@ -70,210 +70,206 @@ export default function WebMainPane(props) {
     companyProfile,
     companyId,
     routeCompanyId,
-    scrollToEndSafe,
     rightWidth,
     panResponderRight,
     projectPhaseKey,
+    phaseActiveSection,
+    phaseActiveItem,
+    setPhaseActiveSection,
+    setPhaseActiveItem,
     onOpenCreateProjectModal,
   } = props;
 
   const isWeb = Platform.OS === 'web';
+  const PANE_PADDING = 18;
+
+  // Avoid nested vertical ScrollViews on web.
+  // ProjectDetails manages its own scrolling.
+  const showOuterScroll = !(selectedProject || (inlineControlEditor && inlineControlEditor.project));
+
+  const mainContent = inlineControlEditor && inlineControlEditor.project ? (
+    <View style={{ flex: 1, paddingHorizontal: PANE_PADDING, paddingTop: PANE_PADDING, paddingBottom: 0 }}>
+      <TemplateControlScreen
+        project={inlineControlEditor.project}
+        controlType={inlineControlEditor.controlType}
+        route={{
+          params: {
+            templateId: inlineControlEditor.templateId || null,
+            companyId,
+          },
+        }}
+        onExit={closeInlineControlEditor}
+        onFinished={handleInlineControlFinished}
+      />
+    </View>
+  ) : creatingProjectInline && selectedProject?.isTemporary ? (
+    <InlineProjectCreationPanel
+      newProjectNumber={newProjectNumber}
+      setNewProjectNumber={setNewProjectNumber}
+      newProjectName={newProjectName}
+      setNewProjectName={setNewProjectName}
+      creatingProject={creatingProject}
+      auth={auth}
+      creatingProjectInline={creatingProjectInline}
+      hierarchy={hierarchy}
+      setHierarchy={setHierarchy}
+      resetProjectFields={resetProjectFields}
+      requestProjectSwitch={requestProjectSwitch}
+      selectedProjectPath={selectedProjectPath}
+      setCreatingProject={setCreatingProject}
+      setCreatingProjectInline={setCreatingProjectInline}
+      setSelectedProject={setSelectedProject}
+      setSelectedProjectPath={setSelectedProjectPath}
+      isProjectNumberUnique={isProjectNumberUnique}
+    />
+  ) : selectedProject ? (
+    <View style={{ flex: 1 }}>
+      <ProjectDetails
+        route={{
+          params: {
+            project: selectedProject,
+            companyId,
+            selectedAction: projectSelectedAction,
+            onInlineLockChange: handleInlineLockChange,
+            onInlineViewChange: handleInlineViewChange,
+            phaseActiveSection,
+            phaseActiveItem,
+            onPhaseSectionChange: setPhaseActiveSection,
+            onPhaseItemChange: setPhaseActiveItem,
+          },
+        }}
+        navigation={navigation}
+        inlineClose={closeSelectedProject}
+        refreshNonce={projectControlsRefreshNonce}
+      />
+    </View>
+  ) : (
+    <View style={{ flex: 1, paddingHorizontal: PANE_PADDING, paddingTop: PANE_PADDING, paddingBottom: 0 }}>
+      <View style={{ position: 'relative' }}>
+        {isWeb && dashboardFocus ? (
+          <Pressable
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10,
+            }}
+            onPress={() => {
+              setDashboardFocus(null);
+              setDashboardDropdownTop(null);
+              setDashboardHoveredStatKey(null);
+            }}
+          />
+        ) : null}
+
+        <Dashboard
+          dashboardLoading={dashboardLoading}
+          dashboardOverview={dashboardOverview}
+          dashboardRecentProjects={dashboardRecentProjects}
+          companyActivity={companyActivity}
+          dashboardFocus={dashboardFocus}
+          dashboardHoveredStatKey={dashboardHoveredStatKey}
+          dashboardDropdownAnchor={dashboardDropdownAnchor}
+          dashboardDropdownTop={dashboardDropdownTop}
+          dashboardDropdownRowKey={dashboardDropdownRowKey}
+          dashboardActiveProjectsList={dashboardActiveProjectsList}
+          dashboardDraftItems={dashboardDraftItems}
+          dashboardControlsToSignItems={dashboardControlsToSignItems}
+          dashboardOpenDeviationItems={dashboardOpenDeviationItems}
+          dashboardUpcomingSkyddsrondItems={dashboardUpcomingSkyddsrondItems}
+          dashboardBtn1Url={dashboardBtn1Url}
+          dashboardBtn2Url={dashboardBtn2Url}
+          dashboardBtn1Failed={dashboardBtn1Failed}
+          dashboardBtn2Failed={dashboardBtn2Failed}
+          dashboardCardLayoutRef={dashboardCardLayoutRef}
+          dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
+          webPaneHeight={webPaneHeight}
+          onProjectSelect={(project) => requestProjectSwitch(project, { selectedAction: null })}
+          onDraftSelect={(project, draft) => {
+            requestProjectSwitch(project, {
+              selectedAction: {
+                id: `openDraft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                kind: 'openDraft',
+                type: draft?.type || 'Utkast',
+                initialValues: draft,
+              },
+              clearActionAfter: true,
+            });
+            setDashboardFocus(null);
+            setDashboardDropdownTop(null);
+            setDashboardHoveredStatKey(null);
+          }}
+          onControlToSignSelect={(project, control) => {
+            requestProjectSwitch(project, {
+              selectedAction: {
+                id: `openControl-${control?.id || Date.now()}`,
+                kind: 'openControlDetails',
+                control,
+              },
+              clearActionAfter: true,
+            });
+            setDashboardFocus(null);
+            setDashboardDropdownTop(null);
+            setDashboardHoveredStatKey(null);
+          }}
+          onDeviationSelect={(project, entry) => {
+            requestProjectSwitch(project, {
+              selectedAction: {
+                id: `openControl-${entry?.control?.id || Date.now()}`,
+                kind: 'openControlDetails',
+                control: entry.control,
+              },
+              clearActionAfter: true,
+            });
+            setDashboardFocus(null);
+            setDashboardDropdownTop(null);
+            setDashboardHoveredStatKey(null);
+          }}
+          onSkyddsrondSelect={(project) => {
+            requestProjectSwitch(project, { selectedAction: null });
+            setDashboardFocus(null);
+            setDashboardDropdownTop(null);
+            setDashboardHoveredStatKey(null);
+          }}
+          onToggleDashboardFocus={toggleDashboardFocus}
+          onDashboardHover={setDashboardHoveredStatKey}
+          formatRelativeTime={formatRelativeTime}
+          findProjectById={findProjectById}
+          hierarchy={hierarchy}
+          _countProjectStatus={_countProjectStatus}
+          setDashboardBtn1Failed={setDashboardBtn1Failed}
+          setDashboardBtn2Failed={setDashboardBtn2Failed}
+          setDashboardDropdownRowKey={setDashboardDropdownRowKey}
+          companyName={companyProfile?.companyName || companyProfile?.name || companyId || null}
+          companyId={companyId || routeCompanyId}
+          currentUserId={auth?.currentUser?.uid || null}
+          onCreateProject={onOpenCreateProjectModal}
+        />
+      </View>
+    </View>
+  );
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row', minWidth: 0 }}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <ScrollView
-          ref={rightPaneScrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}
-        >
-          {inlineControlEditor && inlineControlEditor.project ? (
-            <View style={{ flex: 1, padding: 18 }}>
-              <TemplateControlScreen
-                project={inlineControlEditor.project}
-                controlType={inlineControlEditor.controlType}
-                route={{
-                  params: {
-                    templateId: inlineControlEditor.templateId || null,
-                    companyId,
-                  },
-                }}
-                onExit={closeInlineControlEditor}
-                onFinished={handleInlineControlFinished}
-              />
-            </View>
-          ) : creatingProjectInline && selectedProject?.isTemporary ? (
-            <InlineProjectCreationPanel
-              newProjectNumber={newProjectNumber}
-              setNewProjectNumber={setNewProjectNumber}
-              newProjectName={newProjectName}
-              setNewProjectName={setNewProjectName}
-              creatingProject={creatingProject}
-              auth={auth}
-              creatingProjectInline={creatingProjectInline}
-              hierarchy={hierarchy}
-              setHierarchy={setHierarchy}
-              resetProjectFields={resetProjectFields}
-              requestProjectSwitch={requestProjectSwitch}
-              selectedProjectPath={selectedProjectPath}
-              setCreatingProject={setCreatingProject}
-              setCreatingProjectInline={setCreatingProjectInline}
-              setSelectedProject={setSelectedProject}
-              setSelectedProjectPath={setSelectedProjectPath}
-              isProjectNumberUnique={isProjectNumberUnique}
-            />
-          ) : selectedProject ? (
-            <View style={{ flex: 1 }}>
-              <ProjectDetails
-                route={{
-                  params: {
-                    project: selectedProject,
-                    companyId,
-                    selectedAction: projectSelectedAction,
-                    onInlineLockChange: handleInlineLockChange,
-                    onInlineViewChange: handleInlineViewChange,
-                  },
-                }}
-                navigation={navigation}
-                inlineClose={closeSelectedProject}
-                refreshNonce={projectControlsRefreshNonce}
-              />
-            </View>
-          ) : (
-            <View style={{ flex: 1, padding: 18 }}>
-              <View style={{ position: 'relative' }}>
-                {isWeb && dashboardFocus ? (
-                  <Pressable
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      zIndex: 10,
-                    }}
-                    onPress={() => {
-                      setDashboardFocus(null);
-                      setDashboardDropdownTop(null);
-                      setDashboardHoveredStatKey(null);
-                    }}
-                  />
-                ) : null}
+    <View style={{ flex: 1, flexDirection: 'row', minWidth: 0, minHeight: 0 }}>
+      <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+        {showOuterScroll ? (
+          <ScrollView
+            ref={rightPaneScrollRef}
+            style={{ flex: 1, minHeight: 0 }}
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
+          >
+            {mainContent}
+          </ScrollView>
+        ) : (
+          <View style={{ flex: 1, minWidth: 0 }}>
+            {mainContent}
+          </View>
+        )}
 
-                <Dashboard
-                  dashboardLoading={dashboardLoading}
-                  dashboardOverview={dashboardOverview}
-                  dashboardRecentProjects={dashboardRecentProjects}
-                  companyActivity={companyActivity}
-                  dashboardFocus={dashboardFocus}
-                  dashboardHoveredStatKey={dashboardHoveredStatKey}
-                  dashboardDropdownAnchor={dashboardDropdownAnchor}
-                  dashboardDropdownTop={dashboardDropdownTop}
-                  dashboardDropdownRowKey={dashboardDropdownRowKey}
-                  dashboardActiveProjectsList={dashboardActiveProjectsList}
-                  dashboardDraftItems={dashboardDraftItems}
-                  dashboardControlsToSignItems={dashboardControlsToSignItems}
-                  dashboardOpenDeviationItems={dashboardOpenDeviationItems}
-                  dashboardUpcomingSkyddsrondItems={dashboardUpcomingSkyddsrondItems}
-                  dashboardBtn1Url={dashboardBtn1Url}
-                  dashboardBtn2Url={dashboardBtn2Url}
-                  dashboardBtn1Failed={dashboardBtn1Failed}
-                  dashboardBtn2Failed={dashboardBtn2Failed}
-                  dashboardCardLayoutRef={dashboardCardLayoutRef}
-                  dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
-                  webPaneHeight={webPaneHeight}
-                  onProjectSelect={(project) =>
-                    requestProjectSwitch(project, { selectedAction: null })
-                  }
-                  onDraftSelect={(project, draft) => {
-                    requestProjectSwitch(project, {
-                      selectedAction: {
-                        id: `openDraft-${Date.now()}-${Math.random()
-                          .toString(36)
-                          .slice(2, 7)}`,
-                        kind: 'openDraft',
-                        type: draft?.type || 'Utkast',
-                        initialValues: draft,
-                      },
-                      clearActionAfter: true,
-                    });
-                    setDashboardFocus(null);
-                    setDashboardDropdownTop(null);
-                    setDashboardHoveredStatKey(null);
-                  }}
-                  onControlToSignSelect={(project, control) => {
-                    requestProjectSwitch(project, {
-                      selectedAction: {
-                        id: `openControl-${control?.id || Date.now()}`,
-                        kind: 'openControlDetails',
-                        control,
-                      },
-                      clearActionAfter: true,
-                    });
-                    setDashboardFocus(null);
-                    setDashboardDropdownTop(null);
-                    setDashboardHoveredStatKey(null);
-                  }}
-                  onDeviationSelect={(project, entry) => {
-                    requestProjectSwitch(project, {
-                      selectedAction: {
-                        id: `openControl-${entry?.control?.id || Date.now()}`,
-                        kind: 'openControlDetails',
-                        control: entry.control,
-                      },
-                      clearActionAfter: true,
-                    });
-                    setDashboardFocus(null);
-                    setDashboardDropdownTop(null);
-                    setDashboardHoveredStatKey(null);
-                  }}
-                  onSkyddsrondSelect={(project) => {
-                    requestProjectSwitch(project, { selectedAction: null });
-                    setDashboardFocus(null);
-                    setDashboardDropdownTop(null);
-                    setDashboardHoveredStatKey(null);
-                  }}
-                  onToggleDashboardFocus={toggleDashboardFocus}
-                  onDashboardHover={setDashboardHoveredStatKey}
-                  formatRelativeTime={formatRelativeTime}
-                  findProjectById={findProjectById}
-                  hierarchy={hierarchy}
-                  _countProjectStatus={_countProjectStatus}
-                  setDashboardBtn1Failed={setDashboardBtn1Failed}
-                  setDashboardBtn2Failed={setDashboardBtn2Failed}
-                  setDashboardDropdownRowKey={setDashboardDropdownRowKey}
-                  companyName={
-                    companyProfile?.companyName ||
-                    companyProfile?.name ||
-                    companyId ||
-                    null
-                  }
-                  companyId={companyId || routeCompanyId}
-                  currentUserId={auth?.currentUser?.uid || null}
-                  onCreateProject={onOpenCreateProjectModal}
-                />
-              </View>
-            </View>
-          )}
-        </ScrollView>
-        <TouchableOpacity
-          onPress={() => scrollToEndSafe(rightPaneScrollRef)}
-          activeOpacity={0.85}
-          style={{
-            position: 'absolute',
-            right: 10,
-            bottom: 10,
-            zIndex: 20,
-            backgroundColor: '#fff',
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: '#e0e0e0',
-            padding: 6,
-          }}
-        >
-          <Ionicons name="chevron-down" size={18} color="#222" />
-        </TouchableOpacity>
       </View>
+
       {!selectedProject || !projectPhaseKey ? (
         <View
           style={{
@@ -324,7 +320,7 @@ export default function WebMainPane(props) {
           <ScrollView
             ref={activityScrollRef}
             style={{ flex: 1 }}
-            contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+            contentContainerStyle={{ padding: 16, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
             scrollEnabled
             nestedScrollEnabled
           >
@@ -337,23 +333,6 @@ export default function WebMainPane(props) {
               </Text>
             </View>
           </ScrollView>
-          <TouchableOpacity
-            onPress={() => scrollToEndSafe(activityScrollRef)}
-            activeOpacity={0.85}
-            style={{
-              position: 'absolute',
-              right: 10,
-              bottom: 10,
-              zIndex: 20,
-              backgroundColor: '#fff',
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: '#e0e0e0',
-              padding: 6,
-            }}
-          >
-            <Ionicons name="chevron-down" size={18} color="#222" />
-          </TouchableOpacity>
         </View>
       ) : null}
     </View>

@@ -19,7 +19,6 @@ export function HomeMainPaneContainer(props) {
     closeInlineControlEditor,
     handleInlineControlFinished,
     creatingProjectInline,
-    selectedProject,
     selectedProjectSafe,
     auth,
     creatingProject,
@@ -27,7 +26,6 @@ export function HomeMainPaneContainer(props) {
     setNewProjectNumber,
     newProjectName,
     setNewProjectName,
-    hierarchy,
     hierarchySafe,
     setHierarchy,
     resetProjectFields,
@@ -93,7 +91,7 @@ export function HomeMainPaneContainer(props) {
   const isWeb = Platform.OS === 'web';
 
   return (
-    <View style={{ flex: 1, height: webPaneHeight, position: 'relative' }}>
+    <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
       {isWeb ? (
         <WebMainPane
           webPaneHeight={webPaneHeight}
@@ -163,6 +161,10 @@ export function HomeMainPaneContainer(props) {
           rightWidth={rightWidth}
           panResponderRight={panResponderRight}
           projectPhaseKey={projectPhaseKeySafe}
+          phaseActiveSection={phaseActiveSection}
+          phaseActiveItem={phaseActiveItem}
+          setPhaseActiveSection={setPhaseActiveSection}
+          setPhaseActiveItem={setPhaseActiveItem}
           onOpenCreateProjectModal={onOpenCreateProjectModal}
         />
       ) : (

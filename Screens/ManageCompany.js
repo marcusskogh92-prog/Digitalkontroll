@@ -353,11 +353,57 @@ export default function ManageCompany({ navigation, route }) {
       } catch (_e) {}
     };
 
+    const handleRefresh = () => {
+      (async () => {
+        try {
+          const cid = String(companyId || '').trim();
+
+          // Refresh audit company list (used for audit dropdown)
+          if (isSuperadmin) {
+            try {
+              const items = await fetchCompanies().catch(() => []);
+              setCompaniesForAudit(Array.isArray(items) ? items : []);
+            } catch (_e) {
+              setCompaniesForAudit([]);
+            }
+          }
+
+          // Refresh selected company profile
+          if (cid) {
+            try {
+              const profile = await fetchCompanyProfile(cid).catch(() => null);
+              if (profile) {
+                setCompanyName(String(profile.companyName || profile.name || '').trim() || cid);
+                setUserLimit(typeof profile.userLimit !== 'undefined' && profile.userLimit !== null ? String(profile.userLimit) : String(userLimit || '10'));
+                setCompanyEnabled(typeof profile.enabled === 'boolean' ? !!profile.enabled : true);
+                setCompanyDeleted(typeof profile.deleted === 'boolean' ? !!profile.deleted : false);
+                if (Platform.OS === 'web') {
+                  const resolved = await resolveCompanyLogoUrl(cid).catch(() => '');
+                  setLogoUrl(resolved || profile.logoUrl || '');
+                } else {
+                  setLogoUrl(profile.logoUrl || '');
+                }
+              }
+            } catch (_e) {}
+
+            // Refresh audit log for selected company (superadmin)
+            if (Platform.OS === 'web' && isSuperadmin) {
+              try {
+                await loadAuditForCompany(cid, 50, { setLogEvents: true, setSelectedCompanyEvents: true });
+              } catch (_e) {}
+            }
+          }
+        } catch (_e) {}
+      })();
+    };
+
     window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
     return () => {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
-  }, [navigation]);
+  }, [navigation, companyId, isSuperadmin, userLimit]);
 
   // Handle route params for creating new company
   useEffect(() => {
@@ -754,7 +800,19 @@ export default function ManageCompany({ navigation, route }) {
           adminCompanyBannerOnEdit={hasSelectedCompany && allowedTools && !isCreatingNew ? openEditModal : null}
           adminHideCompanyBanner={isCreatingNew}
           topBar={
-            <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+            <View
+              style={{
+                height: 96,
+                paddingLeft: 24,
+                paddingRight: 24,
+                backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                justifyContent: 'center',
+                borderBottomWidth: 1,
+                borderColor: 'rgba(25, 118, 210, 0.3)',
+                borderLeftWidth: 4,
+                borderLeftColor: '#1976D2',
+              }}
+            >
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>

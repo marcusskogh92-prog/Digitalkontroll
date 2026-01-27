@@ -27,7 +27,7 @@ async function buildFolderTreeRecursive(siteId, folderPath, depth = 0, maxDepth 
 
         const childPath = `${folderPath.replace(/\/+$/, '')}/${childName}`
           .replace(/^\/+/, '')
-          .replace(/\/+/, '/');
+          .replace(/\/+/g, '/');
 
         const grandChildren = await buildFolderTreeRecursive(siteId, childPath, depth + 1, maxDepth);
 

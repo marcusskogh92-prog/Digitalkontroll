@@ -59,7 +59,7 @@ export default function InlineProjectCreationPanel({
                     id: String(Math.random() * 100000).toFixed(0),
                     name: 'Ny undermapp',
                     type: 'sub',
-                    phase: selectedPhase,
+                    phase: DEFAULT_PHASE,
                     children: [newProj],
                   },
                 ],

@@ -3,14 +3,15 @@
  * Files are opened via SharePoint webUrl
  */
 
-import React, { useState } from 'react';
-import { Text, TouchableOpacity, View, Platform, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
+import { Linking, Platform, Text, TouchableOpacity } from 'react-native';
 
 export default function ProjectTreeFile({
   file,
   level = 0,
   isSelected = false,
+  compact = false,
 }) {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -63,8 +64,8 @@ export default function ProjectTreeFile({
   const fileRowStyle = {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: compact ? 4 : 6,
+    paddingHorizontal: compact ? 8 : 10,
     borderRadius: 6,
     marginVertical: 1,
     marginLeft: level * 12,
@@ -85,13 +86,13 @@ export default function ProjectTreeFile({
     <>
       <Ionicons
         name={getFileIcon()}
-        size={18}
+        size={compact ? 16 : 18}
         color="#666"
-        style={{ marginRight: 8 }}
+        style={{ marginRight: compact ? 6 : 8 }}
       />
       <Text
         style={{
-          fontSize: 14,
+          fontSize: compact ? 12 : 14,
           color: '#222',
           fontWeight: isSelected ? '600' : '400',
           flex: 1,
@@ -104,7 +105,7 @@ export default function ProjectTreeFile({
       {file.size && (
         <Text
           style={{
-            fontSize: 12,
+            fontSize: compact ? 11 : 12,
             color: '#666',
             marginLeft: 8,
           }}
@@ -115,7 +116,7 @@ export default function ProjectTreeFile({
       {file.webUrl && (
         <Ionicons
           name="open-outline"
-          size={16}
+          size={compact ? 14 : 16}
           color="#1976D2"
           style={{ marginLeft: 8 }}
         />

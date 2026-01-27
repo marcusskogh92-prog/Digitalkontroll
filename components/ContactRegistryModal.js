@@ -144,7 +144,6 @@ export default function ContactRegistryModal({ visible, onClose, companyId, comp
 
       const label = String(contact?.name || '').trim() || 'kontakten';
       if (Platform.OS === 'web') {
-        // eslint-disable-next-line no-alert
         const ok = typeof window !== 'undefined' && window.confirm ? window.confirm(`Radera ${label}?`) : false;
         if (!ok) return;
       } else {

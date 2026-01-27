@@ -66,11 +66,27 @@ export default function AdminAuditLog({ navigation }) {
       } catch (_e) {}
     };
 
+    const handleRefresh = () => {
+      (async () => {
+        try {
+          setLoading(true);
+          const items = await fetchAdminAuditEvents({ companyId: filterCompanyId || null, limitCount: 100 }).catch(() => []);
+          setEvents(Array.isArray(items) ? items : []);
+        } catch (_e) {
+          setEvents([]);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    };
+
     window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
     return () => {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
-  }, [navigation]);
+  }, [navigation, filterCompanyId]);
 
   // Fetch latest events (global or filtered by companyId)
   useEffect(() => {
@@ -129,7 +145,19 @@ export default function AdminAuditLog({ navigation }) {
           sidebarCompaniesMode={true}
           sidebarShowMembers={allowedTools}
           topBar={
-            <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+            <View
+              style={{
+                height: 96,
+                paddingLeft: 24,
+                paddingRight: 24,
+                backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                justifyContent: 'center',
+                borderBottomWidth: 1,
+                borderColor: 'rgba(25, 118, 210, 0.3)',
+                borderLeftWidth: 4,
+                borderLeftColor: '#1976D2',
+              }}
+            >
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>
@@ -201,11 +229,11 @@ export default function AdminAuditLog({ navigation }) {
                 ) : null}
               </View>
 
-              <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, maxHeight: 440, overflow: 'hidden', backgroundColor: '#fafafa' }}>
+              <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, backgroundColor: '#fafafa' }}>
                 {loading ? (
                   <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
                 ) : (Array.isArray(events) && events.length > 0 ? (
-                  <ScrollView style={{ maxHeight: 420 }}>
+                  <View>
                     {events.map((ev) => {
                       const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
                       const tsText = ts ? ts.toLocaleString('sv-SE') : '';
@@ -241,7 +269,7 @@ export default function AdminAuditLog({ navigation }) {
                         </View>
                       );
                     })}
-                  </ScrollView>
+                  </View>
                 ) : (
                   <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
                 ))}

@@ -16,18 +16,13 @@ export function useHomeProjectFolders({
       return;
     }
 
-    // Ladda inte mappar för kalkylskede-projekt
-    if (projectPhaseKey === 'kalkylskede') {
-      setSelectedProjectFolders([]);
-      return;
-    }
-
     (async () => {
       try {
         const folders = await getProjectFolders(
           companyId,
           selectedProject.id,
           projectPhaseKey,
+          selectedProject.path || selectedProject.projectPath || null,
         );
         setSelectedProjectFolders(folders);
       } catch (error) {

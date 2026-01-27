@@ -6,21 +6,21 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Easing,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  useWindowDimensions,
-  View
+    Animated,
+    Easing,
+    Image,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    useWindowDimensions,
+    View
 } from 'react-native';
 import Svg, { Circle, Text as SvgText } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,12 +29,12 @@ import { buildPdfHtmlForControl } from '../components/pdfExport';
 import { emitProjectUpdated, onProjectUpdated } from '../components/projectBus';
 
 import {
-  ArbetsberedningControl,
-  EgenkontrollControl,
-  FuktmätningControl,
-  MottagningskontrollControl,
-  RiskbedömningControl,
-  SkyddsrondControl,
+    ArbetsberedningControl,
+    EgenkontrollControl,
+    FuktmätningControl,
+    MottagningskontrollControl,
+    RiskbedömningControl,
+    SkyddsrondControl,
 } from '../features/kma/components/controls';
 import ControlDetails from './ControlDetails';
 
@@ -42,6 +42,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import ProjectDocumentsView from '../components/common/ProjectDocumentsView';
 import ProjectInternalNavigation from '../components/common/ProjectInternalNavigation';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
 import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
@@ -632,14 +633,17 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   
   // Loading state for kalkylskede projects
   // Check if project is in a phase that uses PhaseLayout
-  // All phases (kalkylskede, produktion, avslut, eftermarknad) should use PhaseLayout
+  // Only phase-based structures (kalkylskede/produktion/avslut/eftermarknad) use PhaseLayout.
+  // "Valfri mappstruktur" (phase key: free) falls back to the classic ProjectDetails view.
   let projectPhaseKey = null;
   let PhaseLayoutComponent = null;
+  const PHASE_LAYOUT_KEYS = new Set(['kalkylskede', 'produktion', 'avslut', 'eftermarknad']);
   
   if (project && companyId && project.id) {
     try {
       const projectPhase = getProjectPhase(project);
-      projectPhaseKey = projectPhase.key || (!project?.phase ? DEFAULT_PHASE : null);
+      const candidatePhaseKey = projectPhase?.key || (!project?.phase ? DEFAULT_PHASE : null);
+      projectPhaseKey = candidatePhaseKey && PHASE_LAYOUT_KEYS.has(candidatePhaseKey) ? candidatePhaseKey : null;
       
       // Lazy load PhaseLayout for all phases
       if (projectPhaseKey) {
@@ -1608,7 +1612,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       ref={scrollRef}
       style={styles.container}
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: 240 }}
+      contentContainerStyle={{ paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
     >
       {/* Rubrik för projektinfo (med tillbaka-pil i appen och redigera-knapp till höger) */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, gap: 12 }}>

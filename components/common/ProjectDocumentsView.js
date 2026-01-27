@@ -2,11 +2,11 @@
  * ProjectDocumentsView - Shows SharePoint folder structure inside a project
  */
 
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { DEFAULT_PHASE } from '../../features/projects/constants';
 import { getProjectFolders } from '../../services/azure/hierarchyService';
-import { getProjectPhase, DEFAULT_PHASE } from '../../features/projects/constants';
 
 function RecursiveFolderView({
   folder,
@@ -151,7 +151,12 @@ export default function ProjectDocumentsView({
         setError(null);
         
         const phaseKey = project.phase || DEFAULT_PHASE;
-        const projectFolders = await getProjectFolders(companyId, project.id, phaseKey);
+        const projectFolders = await getProjectFolders(
+          companyId,
+          project.id,
+          phaseKey,
+          project.path || project.projectPath || null,
+        );
         
         if (!cancelled) {
           setFolders(Array.isArray(projectFolders) ? projectFolders : []);

@@ -5,9 +5,19 @@
  */
 
 import { getAccessToken } from './authService';
-import { getAzureConfig } from './config';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+
+const isFolderLikeDriveItem = (item) => {
+  if (!item) return false;
+  // Normal folders
+  if (item.folder) return true;
+  // Some SharePoint/Graph items can behave like folders (shortcuts/remote items)
+  if (item.remoteItem?.folder) return true;
+  // Packages (e.g., OneNote) are container-like; treat as folder for navigation
+  if (item.package) return true;
+  return false;
+};
 
 /**
  * Get SharePoint site ID for a company
@@ -104,7 +114,13 @@ export async function getDriveItems(siteId, itemPath = '') {
           });
           endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root/children`;
         } else {
-          endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${cleanPath}:/children`;
+          // Graph paths should be URL-encoded per segment, but keep '/' separators.
+          // This prevents 404s for folders containing spaces, å/ä/ö, parentheses, etc.
+          const encodedPath = cleanPath
+            .split('/')
+            .map((seg) => encodeURIComponent(seg))
+            .join('/');
+          endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encodedPath}:/children`;
         }
       }
     } else {
@@ -294,7 +310,7 @@ export async function loadFolderChildren(companyId, folderPath, maxDepth = 1) {
     // Process children - only folders for now (files can be added later if needed)
     const processedChildren = await Promise.all(
       children
-        .filter(item => item.folder) // Only folders for navigation
+        .filter((item) => isFolderLikeDriveItem(item)) // Only folders/containers for navigation
         .map(async (item) => {
           // For lazy loading, we want immediate children only
           // So we pass maxDepth=1 and currentDepth=0, which means we'll get the folder but not its children
@@ -335,6 +351,65 @@ export async function loadFolderChildren(companyId, folderPath, maxDepth = 1) {
   } catch (error) {
     console.error('[hierarchyService] Error loading folder children:', error);
     return [];
+  }
+}
+
+/**
+ * Check whether a folder contains any files in its subtree.
+ * Depth-limited to avoid excessive Graph calls.
+ *
+ * Used for UI styling (bold when content exists).
+ *
+ * @param {string} companyId
+ * @param {string} folderPath
+ * @param {number} [maxDepth]
+ * @returns {Promise<boolean>}
+ */
+export async function folderHasFilesDeep(companyId, folderPath, maxDepth = 4) {
+  if (!companyId) return false;
+
+  const siteId = await getCompanySiteId(companyId);
+  if (!siteId) return false;
+
+  let normalizedFolderPath = '';
+  if (folderPath && typeof folderPath === 'string') {
+    normalizedFolderPath = folderPath.replace(/^\/+/, '').replace(/\/+/, '/').trim();
+    normalizedFolderPath = normalizedFolderPath.replace(/\/+$/, '');
+  }
+
+  const visited = new Set();
+
+  const walk = async (path, depth) => {
+    const key = String(path || '').trim();
+    if (depth < 0) return false;
+    if (!key) return false;
+    if (visited.has(key)) return false;
+    visited.add(key);
+
+    const items = await getDriveItems(siteId, key);
+    if (Array.isArray(items) && items.some((it) => !!it?.file)) {
+      return true;
+    }
+
+    if (depth === 0) return false;
+
+    const folders = Array.isArray(items) ? items.filter((it) => !!it?.folder) : [];
+    for (const folder of folders) {
+      const childName = String(folder?.name || '').trim();
+      if (!childName) continue;
+      const childPath = `${key}/${childName}`.replace(/^\/+/, '').replace(/\/+/, '/').replace(/\/+$/, '');
+      // eslint-disable-next-line no-await-in-loop
+      const found = await walk(childPath, depth - 1);
+      if (found) return true;
+    }
+    return false;
+  };
+
+  try {
+    return await walk(normalizedFolderPath, Number.isFinite(maxDepth) ? maxDepth : 4);
+  } catch (error) {
+    console.warn('[hierarchyService] folderHasFilesDeep - failed, defaulting to false', error);
+    return false;
   }
 }
 
@@ -568,7 +643,7 @@ export async function createFolder(companyId, parentPath, folderName) {
  * @param {string} phaseKey - Phase key (e.g., "kalkylskede", "produktion")
  * @returns {Promise<Array>} Array of folders (project functions) in the project
  */
-export async function getProjectFolders(companyId, projectId, phaseKey) {
+export async function getProjectFolders(companyId, projectId, phaseKey, projectPathOverride = null) {
   if (!companyId || !projectId) {
     return [];
   }
@@ -580,6 +655,49 @@ export async function getProjectFolders(companyId, projectId, phaseKey) {
   }
 
   try {
+    const directProjectPath = String(projectPathOverride || '').trim();
+    if (directProjectPath) {
+      const projectChildren = await getDriveItems(siteId, directProjectPath);
+      return projectChildren
+        .filter((child) => isFolderLikeDriveItem(child))
+        .map((folder) => {
+          const folderNameLower = String(folder.name || '').toLowerCase();
+          let functionType = folderNameLower.replace(/\s+/g, '-');
+
+          if (folderNameLower.includes('handling') || folderNameLower.includes('dokument')) {
+            functionType = 'handlingar';
+          } else if (folderNameLower.includes('ritning')) {
+            functionType = 'ritningar';
+          } else if (folderNameLower.includes('möte') || folderNameLower.includes('mote')) {
+            functionType = 'moten';
+          } else if (folderNameLower.includes('förfrågning') || folderNameLower.includes('forfragning')) {
+            functionType = 'forfragningsunderlag';
+          } else if (folderNameLower.includes('kma') || folderNameLower.includes('kontroll')) {
+            functionType = 'kma';
+          } else if (folderNameLower.includes('överblick') || folderNameLower.includes('overblick')) {
+            functionType = 'overblick';
+          } else if (folderNameLower.includes('felanmälan') || folderNameLower.includes('felanmalning')) {
+            functionType = 'felanmalningar';
+          } else if (folderNameLower.includes('service') || folderNameLower.includes('besök') || folderNameLower.includes('besok')) {
+            functionType = 'servicebesok';
+          } else if (folderNameLower.includes('garanti') || folderNameLower.includes('besiktning')) {
+            functionType = 'garantier';
+          }
+
+          return {
+            id: folder.id,
+            name: folder.name,
+            type: 'folder',
+            functionType,
+            webUrl: folder.webUrl,
+            path: `${directProjectPath}/${folder.name}`.replace(/^\/+/, '').replace(/\/+$/, ''),
+            sharePointPath: `${directProjectPath}/${folder.name}`.replace(/^\/+/, '').replace(/\/+$/, ''),
+            children: [],
+            lastModified: folder.lastModifiedDateTime,
+          };
+        });
+    }
+
     // Map phase key to folder name
     const phaseMap = {
       'kalkylskede': 'Kalkylskede',
@@ -608,7 +726,7 @@ export async function getProjectFolders(companyId, projectId, phaseKey) {
             
             // Return folders as project functions
             return projectChildren
-              .filter(child => child.folder)
+              .filter((child) => isFolderLikeDriveItem(child))
               .map((folder, index) => {
                 // Map folder name to functionType for compatibility
                 const folderNameLower = folder.name.toLowerCase();

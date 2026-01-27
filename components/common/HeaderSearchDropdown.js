@@ -1,4 +1,5 @@
 import { Animated, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { getProjectPhase } from '../../features/projects/constants';
 
 export function HeaderSearchDropdown({
   headerProjectQuery,
@@ -104,8 +105,7 @@ export function HeaderSearchDropdown({
                   width: 12,
                   height: 12,
                   borderRadius: 6,
-                  backgroundColor:
-                    (proj.status || 'ongoing') === 'completed' ? '#222' : '#43A047',
+                  backgroundColor: getProjectPhase(proj)?.color || '#43A047',
                   marginRight: 10,
                   borderWidth: 1,
                   borderColor: '#bbb',

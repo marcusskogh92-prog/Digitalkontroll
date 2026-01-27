@@ -7,6 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
+
 const DashboardReminders = ({
   dashboardLoading,
   dashboardOverview,
@@ -43,7 +46,6 @@ const DashboardReminders = ({
   const dashboardStatDotStyle = React.useCallback((color) => ({ width: 10, height: 10, borderRadius: 5, backgroundColor: color, marginRight: 12 }), []);
   const dashboardStatLabelStyle = React.useMemo(() => ({ flex: 1, fontSize: 15, color: '#222' }), []);
   const dashboardStatValueStyle = React.useMemo(() => ({ fontSize: 16, fontWeight: '400', color: '#222' }), []);
-  const dashboardEmptyTextStyle = React.useMemo(() => ({ color: '#777', padding: 12 }), []);
 
   // This is a simplified version - full implementation needs to be extracted from HomeScreen.js
   // For now, this provides the basic structure
@@ -87,8 +89,8 @@ const DashboardReminders = ({
               style={{
                 ...dashboardStatRowStyle(ridx),
                 borderWidth: 1,
-                borderColor: isHovered ? '#1976D2' : 'transparent',
-                backgroundColor: isHovered ? '#eee' : 'transparent',
+                borderColor: isHovered ? PRIMARY_BLUE : 'transparent',
+                backgroundColor: isHovered ? HOVER_BG : 'transparent',
                 cursor: isWeb ? 'pointer' : undefined,
                 transition: isWeb ? 'background 0.15s, border 0.15s' : undefined,
               }}
@@ -108,10 +110,10 @@ const DashboardReminders = ({
                 if (l) dashboardStatRowLayoutRef.current[`reminders:${row.key}`] = l;
               } : undefined}
             >
-              <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color="#222" style={{ marginRight: 6 }} />
+              <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={isHovered ? PRIMARY_BLUE : '#222'} style={{ marginRight: 6 }} />
               <View style={dashboardStatDotStyle(row.color)} />
-              <Text style={dashboardStatLabelStyle}>{row.label}</Text>
-              <Text style={dashboardStatValueStyle}>{String(row.value ?? 0)}</Text>
+              <Text style={[dashboardStatLabelStyle, isHovered ? { color: PRIMARY_BLUE } : null]}>{row.label}</Text>
+              <Text style={[dashboardStatValueStyle, isHovered ? { color: PRIMARY_BLUE } : null]}>{String(row.value ?? 0)}</Text>
             </TouchableOpacity>
           );
         })}

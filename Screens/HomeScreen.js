@@ -12,6 +12,7 @@ import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleP
 import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
 import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
@@ -242,6 +243,21 @@ export default function HomeScreen({ navigation, route }) {
       setHierarchyReloadKey((k) => k + 1);
     }, 60000); // var 60:e sekund
     return () => clearInterval(interval);
+  }, []);
+
+  // Refresh SharePoint metadata/hierarchy when a project updates its phase metadata.
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+
+    const onMetaUpdated = () => {
+      setHierarchyReloadKey((k) => k + 1);
+    };
+
+    window.addEventListener('dkSharePointMetaUpdated', onMetaUpdated);
+    return () => {
+      try { window.removeEventListener('dkSharePointMetaUpdated', onMetaUpdated); } catch (_e) {}
+    };
   }, []);
 
   // Laddningsstate för hierarkin + referens till aktuell hierarki (SharePoint)
@@ -1150,7 +1166,13 @@ export default function HomeScreen({ navigation, route }) {
             style={{
               flex: 1,
               width: '100%',
-              ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
+              ...(Platform.OS === 'web'
+                ? {
+                    minHeight: 0,
+                    height: '100vh',
+                    overflow: 'hidden',
+                  }
+                : {}),
             }}
           >
               <View
@@ -1173,36 +1195,242 @@ export default function HomeScreen({ navigation, route }) {
               portalRootId={portalRootId}
             />
 
-            <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} scrollEnabled={scrollEnabled} contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}>
-        {/* Header */}
-        <HomeHeader
-          headerHeight={headerHeight}
-          setHeaderHeight={setHeaderHeight}
-          navigation={navigation}
-          route={route}
-          auth={auth}
-          isSuperAdmin={isSuperAdmin}
-          allowedTools={allowedTools}
-          showHeaderUserMenu={showHeaderUserMenu}
-          canShowSupportToolsInHeader={canShowSupportToolsInHeader}
-          supportMenuOpen={supportMenuOpen}
-          setSupportMenuOpen={setSupportMenuOpen}
-          companyId={companyId}
-          routeCompanyId={routeCompanyId}
-          showAdminButton={showAdminButton}
-          adminActionRunning={adminActionRunning}
-          localFallbackExists={localFallbackExists}
-          handleMakeDemoAdmin={handleMakeDemoAdmin}
-          refreshLocalFallbackFlag={refreshLocalFallbackFlag}
-          dumpLocalRemoteControls={dumpLocalRemoteControls}
-          showLastFsError={showLastFsError}
-          saveControlToFirestore={saveControlToFirestore}
-          saveDraftToFirestore={saveDraftToFirestore}
-          searchSpinAnim={searchSpinAnim}
-          sharePointStatus={sharePointStatus}
-        />
-        
-        {/* Allt under headern är skrollbart */}
+            {Platform.OS === 'web' ? (
+              <View style={{ flex: 1, backgroundColor: 'transparent', minHeight: 0, overflow: 'hidden' }}>
+                {/* Header */}
+                <HomeHeader
+                  headerHeight={headerHeight}
+                  setHeaderHeight={setHeaderHeight}
+                  navigation={navigation}
+                  route={route}
+                  auth={auth}
+                  selectedProject={selectedProjectSafe}
+                  isSuperAdmin={isSuperAdmin}
+                  allowedTools={allowedTools}
+                  showHeaderUserMenu={showHeaderUserMenu}
+                  canShowSupportToolsInHeader={canShowSupportToolsInHeader}
+                  supportMenuOpen={supportMenuOpen}
+                  setSupportMenuOpen={setSupportMenuOpen}
+                  companyId={companyId}
+                  routeCompanyId={routeCompanyId}
+                  showAdminButton={showAdminButton}
+                  adminActionRunning={adminActionRunning}
+                  localFallbackExists={localFallbackExists}
+                  handleMakeDemoAdmin={handleMakeDemoAdmin}
+                  refreshLocalFallbackFlag={refreshLocalFallbackFlag}
+                  dumpLocalRemoteControls={dumpLocalRemoteControls}
+                  showLastFsError={showLastFsError}
+                  saveControlToFirestore={saveControlToFirestore}
+                  saveDraftToFirestore={saveDraftToFirestore}
+                  searchSpinAnim={searchSpinAnim}
+                  sharePointStatus={sharePointStatus}
+                />
+
+                {/* Web: scroll ägs av HomeMainPaneContainer/WebMainPane (inte här) */}
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'stretch', minHeight: 0, minWidth: 0 }}>
+                  <SharePointLeftPanel
+                    leftWidth={leftWidth}
+                    webPaneHeight={webPaneHeight}
+                    panResponder={panResponder}
+                    spinSidebarHome={spinSidebarHome}
+                    spinSidebarRefresh={spinSidebarRefresh}
+                    onPressHome={() => {
+                      setSpinSidebarHome((n) => n + 1);
+                      if (selectedProject) closeSelectedProject();
+                    }}
+                    onPressRefresh={() => {
+                      setSpinSidebarRefresh((n) => n + 1);
+                      // Tvinga om-laddning av SharePoint-hierarkin
+                      try { setHierarchyReloadKey((k) => k + 1); } catch (_e) {}
+
+                      if (selectedProject) {
+                        setProjectControlsRefreshNonce((n) => n + 1);
+                      } else {
+                        try { loadDashboard(); } catch(_e) {}
+                      }
+                    }}
+                    leftTreeScrollRef={leftTreeScrollRef}
+                    selectedProject={selectedProjectSafe}
+                    projectPhaseKey={projectPhaseKeySafe}
+                    phaseNavigation={phaseNavigation}
+                    phaseNavigationLoading={phaseNavigationLoading}
+                    selectedProjectFolders={selectedProjectFoldersSafe}
+                    navigation={navigation}
+                    companyId={companyId}
+                    reloadKey={hierarchyReloadKey}
+                    handleSelectFunction={handleSelectFunction}
+                    projectStatusFilter={projectStatusFilterSafe}
+                    loadingHierarchy={loadingHierarchy}
+                    phaseChangeSpinAnim={phaseChangeSpinAnim}
+                    hierarchy={hierarchy}
+                    expandedSubs={expandedSubs}
+                    spinSub={spinSub}
+                    handleToggleSubFolder={handleToggleSubFolder}
+                    setHierarchy={setHierarchy}
+                    contextMenu={contextMenu}
+                    contextMenuItems={contextMenuItems}
+                    handleContextMenuSelect={handleContextMenuSelect}
+                    closeContextMenu={closeContextMenu}
+                    syncStatus={syncStatus}
+                    appVersion={appVersion}
+                    buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
+                    scrollToEndSafe={scrollToEndSafe}
+                    createPortal={createPortal}
+                    onSelectProject={(projectData) => {
+                      try {
+                        if (!projectData || !projectData.id) {
+                          console.warn('[HomeScreen] Invalid projectData in onSelectProject:', projectData);
+                          return;
+                        }
+
+                        const project = {
+                          id: projectData.id,
+                          name: projectData.name || projectData.fullName || projectData.id,
+                          phase: projectData.phase || DEFAULT_PHASE,
+                          ...projectData,
+                        };
+
+                        if (requestProjectSwitch) {
+                          requestProjectSwitch(project, {
+                            selectedAction: null,
+                            path: {
+                              mainId: '',
+                              subId: '',
+                              mainName: '',
+                              subName: '',
+                            },
+                          });
+                        } else {
+                          console.warn('[HomeScreen] requestProjectSwitch not available');
+                        }
+                      } catch (error) {
+                        console.error('[HomeScreen] Error in onSelectProject callback:', error);
+                      }
+                    }}
+                    onOpenPhaseItem={(sectionId, itemId) => {
+                      try {
+                        if (sectionId) setPhaseActiveSection(sectionId);
+                        if (itemId) setPhaseActiveItem(itemId);
+                      } catch (_e) {}
+                    }}
+                  />
+
+                  <HomeMainPaneContainer
+                    webPaneHeight={webPaneHeight}
+                    rightPaneScrollRef={rightPaneScrollRef}
+                    activityScrollRef={activityScrollRef}
+                    inlineControlEditor={inlineControlEditor}
+                    closeInlineControlEditor={closeInlineControlEditor}
+                    handleInlineControlFinished={handleInlineControlFinished}
+                    creatingProjectInline={creatingProjectInline}
+                    selectedProject={selectedProject}
+                    selectedProjectSafe={selectedProjectSafe}
+                    auth={auth}
+                    creatingProject={creatingProject}
+                    newProjectNumber={newProjectNumber}
+                    setNewProjectNumber={setNewProjectNumber}
+                    newProjectName={newProjectName}
+                    setNewProjectName={setNewProjectName}
+                    hierarchy={hierarchy}
+                    hierarchySafe={hierarchySafe}
+                    setHierarchy={setHierarchy}
+                    resetProjectFields={resetProjectFields}
+                    requestProjectSwitch={requestProjectSwitch}
+                    selectedProjectPath={selectedProjectPath}
+                    setCreatingProject={setCreatingProject}
+                    setCreatingProjectInline={setCreatingProjectInline}
+                    setSelectedProject={setSelectedProject}
+                    setSelectedProjectPath={setSelectedProjectPath}
+                    isProjectNumberUnique={isProjectNumberUnique}
+                    projectSelectedAction={projectSelectedAction}
+                    handleInlineLockChange={handleInlineLockChange}
+                    handleInlineViewChange={handleInlineViewChange}
+                    projectControlsRefreshNonce={projectControlsRefreshNonce}
+                    navigation={navigation}
+                    toggleDashboardFocus={toggleDashboardFocus}
+                    closeSelectedProject={closeSelectedProject}
+                    dashboardFocus={dashboardFocus}
+                    setDashboardFocus={setDashboardFocus}
+                    dashboardDropdownTop={dashboardDropdownTop}
+                    setDashboardDropdownTop={setDashboardDropdownTop}
+                    dashboardHoveredStatKey={dashboardHoveredStatKey}
+                    setDashboardHoveredStatKey={setDashboardHoveredStatKey}
+                    dashboardDropdownAnchor={dashboardDropdownAnchor}
+                    dashboardDropdownRowKey={dashboardDropdownRowKey}
+                    setDashboardDropdownRowKey={setDashboardDropdownRowKey}
+                    dashboardLoading={dashboardLoading}
+                    dashboardOverview={dashboardOverview}
+                    dashboardRecentProjects={dashboardRecentProjects}
+                    companyActivity={companyActivity}
+                    dashboardActiveProjectsList={dashboardActiveProjectsList}
+                    dashboardDraftItems={dashboardDraftItems}
+                    dashboardControlsToSignItems={dashboardControlsToSignItems}
+                    dashboardOpenDeviationItems={dashboardOpenDeviationItems}
+                    dashboardUpcomingSkyddsrondItems={dashboardUpcomingSkyddsrondItems}
+                    dashboardBtn1Url={dashboardBtn1Url}
+                    dashboardBtn2Url={dashboardBtn2Url}
+                    dashboardBtn1Failed={dashboardBtn1Failed}
+                    dashboardBtn2Failed={dashboardBtn2Failed}
+                    setDashboardBtn1Failed={setDashboardBtn1Failed}
+                    setDashboardBtn2Failed={setDashboardBtn2Failed}
+                    dashboardCardLayoutRef={dashboardCardLayoutRef}
+                    dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
+                    formatRelativeTime={formatRelativeTime}
+                    findProjectById={findProjectById}
+                    _countProjectStatus={_countProjectStatus}
+                    companyProfile={companyProfile}
+                    companyId={companyId}
+                    routeCompanyId={routeCompanyId}
+                    setNewProjectModal={setNewProjectModal}
+                    scrollToEndSafe={scrollToEndSafe}
+                    rightWidth={rightWidth}
+                    panResponderRight={panResponderRight}
+                    projectPhaseKeySafe={projectPhaseKeySafe}
+                    phaseActiveSection={phaseActiveSection}
+                    phaseActiveItem={phaseActiveItem}
+                    setPhaseActiveSection={setPhaseActiveSection}
+                    setPhaseActiveItem={setPhaseActiveItem}
+                    onOpenCreateProjectModal={openCreateProjectModal}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View style={{ flex: 1, backgroundColor: 'transparent', minHeight: 0 }}>
+                {/* Header (always visible) */}
+                <HomeHeader
+                  headerHeight={headerHeight}
+                  setHeaderHeight={setHeaderHeight}
+                  navigation={navigation}
+                  route={route}
+                  auth={auth}
+                  selectedProject={selectedProjectSafe}
+                  isSuperAdmin={isSuperAdmin}
+                  allowedTools={allowedTools}
+                  showHeaderUserMenu={showHeaderUserMenu}
+                  canShowSupportToolsInHeader={canShowSupportToolsInHeader}
+                  supportMenuOpen={supportMenuOpen}
+                  setSupportMenuOpen={setSupportMenuOpen}
+                  companyId={companyId}
+                  routeCompanyId={routeCompanyId}
+                  showAdminButton={showAdminButton}
+                  adminActionRunning={adminActionRunning}
+                  localFallbackExists={localFallbackExists}
+                  handleMakeDemoAdmin={handleMakeDemoAdmin}
+                  refreshLocalFallbackFlag={refreshLocalFallbackFlag}
+                  dumpLocalRemoteControls={dumpLocalRemoteControls}
+                  showLastFsError={showLastFsError}
+                  saveControlToFirestore={saveControlToFirestore}
+                  saveDraftToFirestore={saveDraftToFirestore}
+                  searchSpinAnim={searchSpinAnim}
+                  sharePointStatus={sharePointStatus}
+                />
+
+                {/* Allt under headern är skrollbart */}
+                <ScrollView
+                  style={{ flex: 1, backgroundColor: 'transparent' }}
+                  scrollEnabled={scrollEnabled}
+                  contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
+                >
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <SharePointLeftPanel
@@ -1284,6 +1512,12 @@ export default function HomeScreen({ navigation, route }) {
                 } catch (error) {
                   console.error('[HomeScreen] Error in onSelectProject callback:', error);
                 }
+              }}
+              onOpenPhaseItem={(sectionId, itemId) => {
+                try {
+                  if (sectionId) setPhaseActiveSection(sectionId);
+                  if (itemId) setPhaseActiveItem(itemId);
+                } catch (_e) {}
               }}
             />
 
@@ -1442,7 +1676,10 @@ export default function HomeScreen({ navigation, route }) {
             searchRotate={searchRotate}
             openSearchModal={openSearchModal}
           />
-      </ScrollView>
+                </ScrollView>
+              </View>
+
+              )}
         
         </RootContainer>
       );

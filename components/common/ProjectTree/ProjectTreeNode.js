@@ -2,12 +2,13 @@
  * ProjectTreeNode - Renders a single project with its functions
  */
 
-import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
-import { Text, TouchableOpacity, View, Platform } from 'react-native';
+import { useState } from 'react';
+import { Platform, Text, TouchableOpacity, View } from 'react-native';
 import { DEFAULT_PHASE, getProjectPhase } from '../../../features/projects/constants';
 import { isWeb } from '../../../utils/platform';
-import ProjectFunctionNode from './ProjectFunctionNode';
+
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
 
 export default function ProjectTreeNode({
   project,
@@ -19,6 +20,7 @@ export default function ProjectTreeNode({
   companyId,
   isSelected = false,
   selectedPhase = null,
+  compact = false,
 }) {
   // Check if project is in kalkylskede - these should NEVER have functions or expand
   const projectPhase = getProjectPhase(project);
@@ -33,11 +35,6 @@ export default function ProjectTreeNode({
   
   const hasFunctions = !isKalkylskede && Array.isArray(projectWithoutFunctions.children) && 
     projectWithoutFunctions.children.some(child => child.type === 'projectFunction');
-
-  const functions = hasFunctions 
-    ? projectWithoutFunctions.children.filter(child => child.type === 'projectFunction')
-        .sort((a, b) => (a.order || 999) - (b.order || 999))
-    : [];
 
   const handlePress = (e) => {
     // Prevent event propagation to avoid any parent handlers
@@ -100,24 +97,24 @@ export default function ProjectTreeNode({
     }
   };
 
-  const statusColor = project.status === 'completed' ? '#222' : '#43A047';
-  const phase = getProjectPhase(project);
+  const effectivePhaseKey = project?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
+  const phase = getProjectPhase({ ...project, phase: effectivePhaseKey });
   const [isHovered, setIsHovered] = useState(false);
 
   const projectRowStyle = {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingVertical: compact ? 5 : 8,
+    paddingHorizontal: compact ? 8 : 10,
     borderRadius: 8,
     marginVertical: 2,
     backgroundColor: isSelected 
       ? '#E8F5E9' 
       : isHovered 
-        ? '#E3F2FD' 
+        ? HOVER_BG 
         : 'transparent',
     borderWidth: isSelected ? 1 : 0,
-    borderColor: isSelected ? '#43A047' : 'transparent',
+    borderColor: isSelected ? (phase?.color || '#43A047') : 'transparent',
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
       transition: 'background-color 0.15s ease, border-color 0.15s ease',
@@ -129,26 +126,24 @@ export default function ProjectTreeNode({
       {/* Projects are no longer expandable - chevron removed */}
       {/* All projects navigate directly to project view */}
       
-      {/* Status indicator - dölj för eftermarknad */}
-      {selectedPhase !== 'eftermarknad' && (
-        <View
-          style={{
-            width: 14,
-            height: 14,
-            borderRadius: 7,
-            backgroundColor: statusColor,
-            marginRight: 8,
-            borderWidth: 1,
-            borderColor: '#bbb'
-          }}
-        />
-      )}
+      {/* Phase indicator (5 states) */}
+      <View
+        style={{
+          width: compact ? 10 : 14,
+          height: compact ? 10 : 14,
+          borderRadius: compact ? 5 : 7,
+          backgroundColor: phase?.color || '#43A047',
+          marginRight: compact ? 6 : 8,
+          borderWidth: 1,
+          borderColor: '#bbb'
+        }}
+      />
       
       {/* Project name */}
       <Text
         style={{
-          fontSize: 15,
-          color: '#222',
+          fontSize: compact ? 13 : 15,
+          color: !isSelected && isHovered ? PRIMARY_BLUE : '#222',
           fontWeight: isSelected ? '700' : '400',
           flexShrink: 1
         }}
@@ -161,7 +156,7 @@ export default function ProjectTreeNode({
   );
 
   // Functions are no longer shown in the sidebar - they will be shown inside the project view
-  // const functionsList = null;
+  const functionsList = null;
 
   if (Platform.OS === 'web') {
     return (

@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as XLSX from 'xlsx';
@@ -9,12 +8,12 @@ import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
 import {
-  auth,
-  createCompanySupplier,
-  deleteCompanySupplier,
-  fetchCompanySuppliers,
-  fetchCompanyProfile,
-  updateCompanySupplier,
+    auth,
+    createCompanySupplier,
+    deleteCompanySupplier,
+    fetchCompanyProfile,
+    fetchCompanySuppliers,
+    updateCompanySupplier,
 } from '../components/firebase';
 
 export default function SuppliersScreen({ navigation, route }) {
@@ -87,6 +86,32 @@ export default function SuppliersScreen({ navigation, route }) {
       setLoading(false);
     }
   };
+
+  // Listen for global home/refresh events from AdminSidebar (web)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (typeof window === 'undefined') return undefined;
+
+    const handleGoHome = () => {
+      try {
+        navigation?.reset?.({ index: 0, routes: [{ name: 'Home' }] });
+      } catch (_e) {}
+    };
+
+    const handleRefresh = () => {
+      try {
+        loadSuppliers();
+      } catch (_e) {}
+    };
+
+    window.addEventListener('dkGoHome', handleGoHome);
+    window.addEventListener('dkRefresh', handleRefresh);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handleGoHome); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigation, companyId]);
 
   useEffect(() => {
     loadSuppliers();
@@ -653,7 +678,19 @@ export default function SuppliersScreen({ navigation, route }) {
         sidebarAutoExpandMembers={true}
         sidebarAllowCompanyManagementActions={false}
         topBar={
-          <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+          <View
+            style={{
+              height: 96,
+              paddingLeft: 24,
+              paddingRight: 24,
+              backgroundColor: 'rgba(25, 118, 210, 0.2)',
+              justifyContent: 'center',
+              borderBottomWidth: 1,
+              borderColor: 'rgba(25, 118, 210, 0.3)',
+              borderLeftWidth: 4,
+              borderLeftColor: '#1976D2',
+            }}
+          >
             <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                 <View style={{ marginRight: 10 }}>
@@ -1210,12 +1247,7 @@ export default function SuppliersScreen({ navigation, route }) {
                         </Text>
                       </View>
                     ) : filtered.length > 0 ? (
-                      <ScrollView 
-                        style={{ maxHeight: 520 }}
-                        contentContainerStyle={{ flexGrow: 1 }}
-                        nestedScrollEnabled={true}
-                        showsVerticalScrollIndicator={true}
-                      >
+                      <View>
                         <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
                           {/* Supplier rows */}
                           {shownSuppliers.map((supplier, idx) => (
@@ -1247,7 +1279,7 @@ export default function SuppliersScreen({ navigation, route }) {
                             </TouchableOpacity>
                           ))}
                         </View>
-                      </ScrollView>
+                      </View>
                     ) : null}
                   </>
                 )}

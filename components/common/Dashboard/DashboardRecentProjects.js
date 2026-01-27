@@ -2,10 +2,10 @@
  * DashboardRecentProjects - Recent projects list with phase color coding
  */
 
-import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
-import { PROJECT_PHASES, getPhaseConfig } from '../../../features/projects/constants';
+import { getPhaseConfig } from '../../../features/projects/constants';
 
 const DashboardRecentProjects = ({
   dashboardLoading,

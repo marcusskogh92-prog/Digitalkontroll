@@ -2,7 +2,7 @@
  * Kalkylskede Layout - Main layout component for kalkylskede phase
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { onProjectUpdated } from '../../../../components/projectBus';
 import PhaseLeftPanel from './components/PhaseLeftPanel';
@@ -172,6 +172,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
           onSelectItem={handleSelectItem}
           projectName={projectName}
           companyId={companyId}
+          project={project}
           loadNavigation={loadNavigation}
           saveNavigation={saveNavigation}
         />
