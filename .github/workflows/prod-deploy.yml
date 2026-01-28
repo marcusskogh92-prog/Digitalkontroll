@@ -15,40 +15,18 @@ jobs:
           node-version: '20.19.4'
       - name: Install dependencies
         run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
-      - name: Install expo-cli
-        run: npm install -g expo-cli@^6
-      - name: Diagnose environment
-        run: |
-          set -euo pipefail
-          echo "Node: $(node -v)"
-          echo "npm: $(npm -v)"
-          echo "npx: $(npx --version || true)"
-          echo "expo (global): $(expo --version 2>/dev/null || true)"
-          npx expo --version || true
-          echo "--- package.json ---"
-          cat package.json
-          echo "--- top-level files ---"
-          ls -la
-          echo "--- check webpack deps ---"
-          npm ls webpack webpack-cli --depth=0 || true
-      - name: Build web bundle
-        run: |
-          set -euo pipefail
-          echo "Running expo export for web..."
-          npx expo export --platform web || npx expo export:web || true
-          echo "Checking for expected output dirs..."
-          if [ -d web-build ]; then
-            echo "web-build exists"
-          elif [ -d web ]; then
-            echo "found 'web' — moving to 'web-build'"
-            mv web web-build
-          elif [ -d dist ]; then
-            echo "found 'dist' — moving to 'web-build'"
-            mv dist web-build
-          else
-            echo "No web output directory found; listing workspace:" && ls -la
-            false
-          fi
+
+      - name: Install Playwright (Chromium)
+        run: npx playwright install --with-deps chromium
+      - name: Build web bundle (includes icon/font verification)
+        env:
+          EXPO_NO_TELEMETRY: '1'
+        run: npm run build
+
+      - name: Smoke test (gate deploy)
+        env:
+          CI: '1'
+        run: npm run test:smoke:web
       - name: Deploy to Firebase Hosting (production)
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}

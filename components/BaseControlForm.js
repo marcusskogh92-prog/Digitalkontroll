@@ -15,6 +15,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import 'react-native-get-random-values';
 import Svg, { Path } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './common/layoutConstants';
 import { createByggdelMall, deleteByggdelMall, deleteDraftControlFromFirestore, fetchByggdelHierarchy, fetchByggdelMallar, saveByggdelHierarchy, saveDraftToFirestore, updateByggdelMall } from './firebase';
 import { CompanyHeaderLogo } from './HeaderComponents';
 // Load ImagePicker dynamically inside handlers to avoid web-only export issues
@@ -4239,7 +4240,7 @@ export default function BaseControlForm({
               keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 20}
               style={{ flex: 1 }}
             >
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 140, paddingBottom: 24 }}>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 140, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
                 <View style={{ width: '100%', maxWidth: 300, backgroundColor: '#fff', borderRadius: 12, padding: 16, marginTop: 0, marginVertical: 8 }}>
                   <TouchableOpacity
                     onPress={() => setShowAddParticipantModal(false)}

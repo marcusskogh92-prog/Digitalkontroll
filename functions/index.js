@@ -1,20 +1,493 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const nodemailer = require('nodemailer');
 
-// Ensure a project id is available when running locally or against the emulator.
-// Prefer existing env vars (set by firebase emulators or CI), otherwise fall back
-// to the known project id for local testing.
-const resolvedProjectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || process.env.FIREBASE_PROJECT || process.env.FIREBASE_CONFIG && (() => {
+const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true";
+
+if (!admin.apps.length) { admin.initializeApp(); }
+
+const db = getFirestore();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeSharePointSiteSlug(rawName) {
+  const s = String(rawName || '').trim();
+  if (!s) return '';
+  // SharePoint site "name" must be URL-friendly. Keep alnum only.
+  // NOTE: this mirrors the client-side sanitization style in services/azure/siteService.js.
+  return s
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .replace(/\s+/g, '')
+    .substring(0, 50)
+    .toLowerCase();
+}
+
+function getSharePointHostname() {
+  // Prefer a full URL when available so we can reliably extract hostname.
+  const url =
+    process.env.SHAREPOINT_SITE_URL ||
+    process.env.EXPO_PUBLIC_SHAREPOINT_SITE_URL ||
+    readFunctionsConfigValue('sharepoint.site_url', null) ||
+    readFunctionsConfigValue('sharepoint.siteUrl', null) ||
+    readFunctionsConfigValue('azure.sharepoint_site_url', null) ||
+    readFunctionsConfigValue('azure.sharepointSiteUrl', null);
+  if (url) {
+    try {
+      return new URL(String(url)).hostname;
+    } catch (_e) {
+      // fall through
+    }
+  }
+
+  // As a fallback allow directly configured hostname.
+  const host =
+    process.env.SHAREPOINT_HOSTNAME ||
+    readFunctionsConfigValue('sharepoint.hostname', null) ||
+    readFunctionsConfigValue('azure.sharepoint_hostname', null);
+  return host ? String(host).trim() : null;
+}
+
+function getSharePointProvisioningAccessToken() {
+  const token =
+    process.env.SHAREPOINT_PROVISION_ACCESS_TOKEN ||
+    process.env.SHAREPOINT_GRAPH_ACCESS_TOKEN ||
+    readFunctionsConfigValue('sharepoint.provision_access_token', null) ||
+    readFunctionsConfigValue('sharepoint.provisionAccessToken', null) ||
+    readFunctionsConfigValue('sharepoint.access_token', null) ||
+    readFunctionsConfigValue('sharepoint.accessToken', null);
+  return token ? String(token).trim() : null;
+}
+
+function getSharePointProvisioningOwnerEmail(actorEmail) {
+  const configured =
+    process.env.SHAREPOINT_OWNER_EMAIL ||
+    readFunctionsConfigValue('sharepoint.owner_email', null) ||
+    readFunctionsConfigValue('sharepoint.ownerEmail', null);
+  const fallback = 'marcus@msbyggsystem.se';
+  const actor = actorEmail ? String(actorEmail).trim() : '';
+  return (configured ? String(configured).trim() : null) || (actor || null) || fallback;
+}
+
+async function graphGetSiteByUrl({ hostname, siteSlug, accessToken }) {
+  const slug = String(siteSlug || '').trim();
+  const host = String(hostname || '').trim();
+  if (!slug || !host) throw new Error('hostname and siteSlug are required');
+  const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${host}:/sites/${slug}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    const txt = await res.text();
+    throw new Error(`Graph getSiteByUrl failed: ${res.status} - ${txt}`);
+  }
+  const data = await res.json();
+  return { siteId: data.id, webUrl: data.webUrl };
+}
+
+async function graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
+  const payload = {
+    displayName: String(displayName || '').trim(),
+    name: String(siteSlug || '').trim(),
+    description: String(description || '').trim(),
+    siteCollection: { hostname: String(hostname || '').trim() },
+    template: 'teamSite',
+    ownerIdentityToResolve: { email: String(ownerEmail || '').trim() },
+  };
+
+  const res = await fetch('https://graph.microsoft.com/beta/sites', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    // Common outcomes when slug exists/URL conflicts.
+    if (res.status === 409 || res.status === 400) {
+      return null;
+    }
+    throw new Error(`Graph createSite failed: ${res.status} - ${txt}`);
+  }
+
+  const data = await res.json();
+  return { siteId: data.id, webUrl: data.webUrl };
+}
+
+async function ensureSharePointSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
+  const existing = await graphGetSiteByUrl({ hostname, siteSlug, accessToken });
+  if (existing) return existing;
+
+  await graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail });
+
+  // Newly created sites can take a moment before they are resolvable via /sites/{hostname}:/sites/{slug}
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await sleep(1500);
+    const after = await graphGetSiteByUrl({ hostname, siteSlug, accessToken });
+    if (after) return after;
+  }
+  throw new Error(`SharePoint site created but not yet resolvable: ${siteSlug}`);
+}
+
+async function ensureCompanySharePointSites({ companyId, companyName, actorUid, actorEmail }) {
+  const hostname = getSharePointHostname();
+  const accessToken = getSharePointProvisioningAccessToken();
+  const ownerEmail = getSharePointProvisioningOwnerEmail(actorEmail);
+  if (!hostname) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'SharePoint hostname is not configured (set SHAREPOINT_SITE_URL/EXPO_PUBLIC_SHAREPOINT_SITE_URL or sharepoint.hostname in functions config)'
+    );
+  }
+  if (!accessToken) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'SharePoint provisioning access token is not configured (set SHAREPOINT_PROVISION_ACCESS_TOKEN or sharepoint.provision_access_token in functions config)'
+    );
+  }
+
+  const cfgRef = db.doc(`foretag/${companyId}/sharepoint_system/config`);
+  const navRef = db.doc(`foretag/${companyId}/sharepoint_navigation/config`);
+  const profRef = db.doc(`foretag/${companyId}/profil/public`);
+  const metaCol = db.collection(`foretag/${companyId}/sharepoint_sites`);
+
+  // Acquire a lightweight lock in Firestore so re-runs are safe and concurrent calls won't create duplicates.
+  const lockId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(cfgRef);
+    const cur = snap.exists ? (snap.data() || {}) : {};
+    const sp = cur.sharepoint && typeof cur.sharepoint === 'object' ? cur.sharepoint : {};
+    const baseOk = !!(sp.baseSite && sp.baseSite.siteId);
+    const workOk = !!(sp.workspaceSite && sp.workspaceSite.siteId);
+    if (baseOk && workOk) {
+      return;
+    }
+    const inProg = sp.provisioning && sp.provisioning.state === 'in_progress';
+    const startedAtMs = sp.provisioning && sp.provisioning.startedAtMs ? Number(sp.provisioning.startedAtMs) : null;
+    const stale = startedAtMs && Number.isFinite(startedAtMs) ? (Date.now() - startedAtMs > 15 * 60 * 1000) : true;
+    if (inProg && !stale) {
+      // Another call is provisioning; let it finish.
+      throw new functions.https.HttpsError('aborted', 'SharePoint provisioning already in progress');
+    }
+
+    tx.set(cfgRef, {
+      sharepoint: {
+        ...(sp || {}),
+        provisioning: {
+          state: 'in_progress',
+          lockId,
+          startedAt: FieldValue.serverTimestamp(),
+          startedAtMs: Date.now(),
+          startedBy: actorUid || null,
+        },
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid || null,
+    }, { merge: true });
+  });
+
+  // Read current config (after lock)
+  const cfgSnap = await cfgRef.get();
+  const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
+  const spCfg = cfg.sharepoint && typeof cfg.sharepoint === 'object' ? cfg.sharepoint : {};
+
+  const baseDisplayName = `${companyName}-bas`;
+  const workspaceDisplayName = `${companyName}`;
+  const baseSlug = normalizeSharePointSiteSlug(baseDisplayName);
+  const workspaceSlug = normalizeSharePointSiteSlug(workspaceDisplayName);
+  if (!baseSlug || !workspaceSlug) {
+    throw new functions.https.HttpsError('invalid-argument', 'Company name could not be converted to a valid SharePoint site slug');
+  }
+
+  let baseSite = spCfg.baseSite && spCfg.baseSite.siteId ? spCfg.baseSite : null;
+  let workspaceSite = spCfg.workspaceSite && spCfg.workspaceSite.siteId ? spCfg.workspaceSite : null;
+
   try {
-    const cfg = JSON.parse(process.env.FIREBASE_CONFIG);
-    return cfg.projectId;
-  } catch (e) { return null; }
-})() || 'digitalkontroll-8fd05';
+    if (!baseSite) {
+      const created = await ensureSharePointSite({
+        hostname,
+        siteSlug: baseSlug,
+        displayName: baseDisplayName,
+        description: `Digitalkontroll system site for ${companyName}`,
+        accessToken,
+        ownerEmail,
+      });
+      baseSite = {
+        siteId: created.siteId,
+        webUrl: created.webUrl,
+        type: 'base',
+        visibility: 'hidden',
+        siteName: baseDisplayName,
+        siteSlug: baseSlug,
+      };
+    }
 
-admin.initializeApp({ projectId: resolvedProjectId });
+    if (!workspaceSite) {
+      const created = await ensureSharePointSite({
+        hostname,
+        siteSlug: workspaceSlug,
+        displayName: workspaceDisplayName,
+        description: `Digitalkontroll workspace site for ${companyName}`,
+        accessToken,
+        ownerEmail,
+      });
+      workspaceSite = {
+        siteId: created.siteId,
+        webUrl: created.webUrl,
+        type: 'workspace',
+        visibility: 'company',
+        siteName: workspaceDisplayName,
+        siteSlug: workspaceSlug,
+      };
+    }
 
-const firestore = admin.firestore();
-const db = admin.firestore();
+    // Persist system-level SharePoint metadata (global-admin only).
+    await cfgRef.set({
+      sharepoint: {
+        baseSite,
+        workspaceSite,
+        enabledSites: [workspaceSite.siteId],
+        provisioning: {
+          state: 'complete',
+          lockId,
+          completedAt: FieldValue.serverTimestamp(),
+          completedBy: actorUid || null,
+        },
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid || null,
+    }, { merge: true });
+
+    // Seed SharePoint Navigation so the UI immediately shows exactly one site.
+    const navSnap = await navRef.get();
+    const nav = navSnap.exists ? (navSnap.data() || {}) : {};
+    const existingEnabled = Array.isArray(nav.enabledSites) ? nav.enabledSites.map((x) => String(x || '').trim()).filter(Boolean) : [];
+
+    // Only auto-seed if empty (new companies). Never include base site.
+    let enabledSites = existingEnabled;
+    if (enabledSites.length === 0) {
+      enabledSites = [workspaceSite.siteId];
+    } else {
+      enabledSites = enabledSites.filter((sid) => sid !== baseSite.siteId);
+      if (!enabledSites.includes(workspaceSite.siteId)) enabledSites = [...enabledSites, workspaceSite.siteId];
+    }
+
+    const siteConfigs = (nav.siteConfigs && typeof nav.siteConfigs === 'object') ? nav.siteConfigs : {};
+    const nextSiteConfigs = {
+      ...siteConfigs,
+      [workspaceSite.siteId]: {
+        ...(siteConfigs[workspaceSite.siteId] || {}),
+        siteId: workspaceSite.siteId,
+        webUrl: workspaceSite.webUrl || null,
+        siteName: workspaceSite.siteName || companyName,
+      },
+    };
+    // Ensure base site never exists in configs.
+    if (baseSite && baseSite.siteId && nextSiteConfigs[baseSite.siteId]) {
+      delete nextSiteConfigs[baseSite.siteId];
+    }
+
+    await navRef.set({
+      enabledSites,
+      siteConfigs: nextSiteConfigs,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid || null,
+    }, { merge: true });
+
+    // Backwards-compatible fields used in other parts of the app.
+    await profRef.set({
+      sharePointSiteId: workspaceSite.siteId,
+      sharePointSiteWebUrl: workspaceSite.webUrl || null,
+      // New canonical linkage object
+      primarySharePointSite: {
+        siteId: workspaceSite.siteId,
+        siteUrl: workspaceSite.webUrl || null,
+        linkedAt: FieldValue.serverTimestamp(),
+        linkedBy: actorUid || null,
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // Seed Digitalkontroll-owned visibility metadata
+    try {
+      if (workspaceSite && workspaceSite.siteId) {
+        await metaCol.doc(workspaceSite.siteId).set({
+          siteId: workspaceSite.siteId,
+          siteUrl: workspaceSite.webUrl || null,
+          siteName: workspaceSite.siteName || companyName,
+          role: 'projects',
+          visibleInLeftPanel: true,
+          systemManaged: true,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid || null,
+        }, { merge: true });
+      }
+      if (baseSite && baseSite.siteId) {
+        await metaCol.doc(baseSite.siteId).set({
+          siteId: baseSite.siteId,
+          siteUrl: baseSite.webUrl || null,
+          siteName: baseSite.siteName || baseDisplayName,
+          role: 'system',
+          visibleInLeftPanel: false,
+          systemManaged: true,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid || null,
+        }, { merge: true });
+      }
+    } catch (_e) {
+      // Non-fatal: UI will attempt to sync later.
+    }
+
+    return { baseSite, workspaceSite };
+  } catch (e) {
+    await cfgRef.set({
+      sharepoint: {
+        ...(spCfg || {}),
+        provisioning: {
+          state: 'error',
+          lockId,
+          errorAt: FieldValue.serverTimestamp(),
+          errorBy: actorUid || null,
+          errorMessage: String(e && e.message ? e.message : e),
+        },
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid || null,
+    }, { merge: true });
+    throw e;
+  }
+}
+
+// Callable: ensure sharepoint_sites visibility metadata is correct for a company.
+// This enables the UI to filter left-panel sites without relying on SharePoint Navigation.
+exports.syncSharePointSiteVisibility = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  // Allow company members or global admins to trigger the sync.
+  const token = context.auth.token || {};
+  const isGlobal = !!token.globalAdmin || !!token.superadmin || token.role === 'superadmin' || (token.companyId === 'MS Byggsystem' && (token.admin === true || token.role === 'admin'));
+  const isMember = token.companyId === companyId;
+  if (!isMember && !isGlobal) {
+    throw new functions.https.HttpsError('permission-denied', 'Not allowed');
+  }
+
+  const cfgRef = db.doc(`foretag/${companyId}/sharepoint_system/config`);
+  const profRef = db.doc(`foretag/${companyId}/profil/public`);
+  const navRef = db.doc(`foretag/${companyId}/sharepoint_navigation/config`);
+  const metaCol = db.collection(`foretag/${companyId}/sharepoint_sites`);
+
+  const cfgSnap = await cfgRef.get().catch(() => null);
+  const cfg = cfgSnap && cfgSnap.exists ? (cfgSnap.data() || {}) : {};
+  const sp = cfg.sharepoint && typeof cfg.sharepoint === 'object' ? cfg.sharepoint : {};
+  const baseSite = sp.baseSite && sp.baseSite.siteId ? sp.baseSite : null;
+  const workspaceSite = sp.workspaceSite && sp.workspaceSite.siteId ? sp.workspaceSite : null;
+
+  // Write metadata for known system sites
+  const writes = [];
+  if (workspaceSite && workspaceSite.siteId) {
+    writes.push(
+      metaCol.doc(workspaceSite.siteId).set({
+        siteId: workspaceSite.siteId,
+        siteUrl: workspaceSite.webUrl || null,
+        siteName: workspaceSite.siteName || null,
+        role: 'projects',
+        visibleInLeftPanel: true,
+        systemManaged: true,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: context.auth.uid,
+      }, { merge: true })
+    );
+  }
+  if (baseSite && baseSite.siteId) {
+    writes.push(
+      metaCol.doc(baseSite.siteId).set({
+        siteId: baseSite.siteId,
+        siteUrl: baseSite.webUrl || null,
+        siteName: baseSite.siteName || null,
+        role: 'system',
+        visibleInLeftPanel: false,
+        systemManaged: true,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: context.auth.uid,
+      }, { merge: true })
+    );
+  }
+
+  await Promise.all(writes);
+
+  // Ensure any existing metadata docs have a role field.
+  // Default is 'system' unless it's the known workspace site.
+  try {
+    const snap = await metaCol.get();
+    const batch = db.batch();
+    let changed = 0;
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      const rid = docSnap.id;
+      const roleRaw = (d.role !== undefined && d.role !== null) ? String(d.role).trim() : '';
+      if (roleRaw) return;
+
+      const inferred = (workspaceSite && workspaceSite.siteId && rid === workspaceSite.siteId)
+        ? 'projects'
+        : 'system';
+      batch.set(metaCol.doc(rid), {
+        role: inferred,
+        // Never allow system sites to become visible by mistake
+        visibleInLeftPanel: inferred === 'projects' ? (d.visibleInLeftPanel === true) : false,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: context.auth.uid,
+      }, { merge: true });
+      changed += 1;
+    });
+    if (changed > 0) await batch.commit();
+  } catch (_e) {}
+
+  // Ensure legacy nav config never includes base site, and includes workspace.
+  if (workspaceSite && workspaceSite.siteId) {
+    try {
+      const navSnap = await navRef.get();
+      const nav = navSnap.exists ? (navSnap.data() || {}) : {};
+      const enabled = Array.isArray(nav.enabledSites) ? nav.enabledSites.map((x) => String(x || '').trim()).filter(Boolean) : [];
+      let nextEnabled = enabled;
+      if (baseSite && baseSite.siteId) nextEnabled = nextEnabled.filter((sid) => sid !== baseSite.siteId);
+      if (!nextEnabled.includes(workspaceSite.siteId)) nextEnabled = [...nextEnabled, workspaceSite.siteId];
+      if (nextEnabled.length === 0) nextEnabled = [workspaceSite.siteId];
+      await navRef.set({ enabledSites: nextEnabled, updatedAt: FieldValue.serverTimestamp(), updatedBy: context.auth.uid }, { merge: true });
+    } catch (_e) {}
+  }
+
+  // Ensure profile has primarySharePointSite for workspace if available
+  if (workspaceSite && workspaceSite.siteId) {
+    try {
+      await profRef.set({
+        primarySharePointSite: {
+          siteId: workspaceSite.siteId,
+          siteUrl: workspaceSite.webUrl || null,
+          linkedAt: FieldValue.serverTimestamp(),
+          linkedBy: context.auth.uid,
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (_e) {}
+  }
+
+  return { ok: true, companyId, workspaceSiteId: workspaceSite?.siteId || null, baseSiteId: baseSite?.siteId || null };
+});
 
 // Helper to write a global admin audit event. This is separate from the
 // per-company /foretag/{company}/activity feed and is intended for
@@ -23,7 +496,7 @@ async function logAdminAuditEvent(event) {
   try {
     const payload = Object.assign(
       {
-        ts: admin.firestore.FieldValue.serverTimestamp(),
+        ts: FieldValue.serverTimestamp(),
       },
       event || {}
     );
@@ -65,18 +538,32 @@ async function provisionCompanyImpl(data, context) {
 
   try {
     // 1) Create/merge profile
-    const profRef = firestore.doc(`foretag/${companyId}/profil/public`);
-    await profRef.set({ companyName, createdAt: admin.firestore.FieldValue.serverTimestamp(), enabled: true }, { merge: true });
+    const profRef = db.doc(`foretag/${companyId}/profil/public`);
+    await profRef.set({ companyName, createdAt: FieldValue.serverTimestamp(), enabled: true }, { merge: true });
 
     // 2) Initialize hierarchy state
-    const hierRef = firestore.doc(`foretag/${companyId}/hierarki/state`);
-    await hierRef.set({ items: [], updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    const hierRef = db.doc(`foretag/${companyId}/hierarki/state`);
+    await hierRef.set({ items: [], updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
     // 3) Minimal 'mallar' placeholder so UI won't break
-    const mallarRef = firestore.doc(`foretag/${companyId}/mallar/defaults`);
-    await mallarRef.set({ createdAt: admin.firestore.FieldValue.serverTimestamp(), templates: [] }, { merge: true });
+    const mallarRef = db.doc(`foretag/${companyId}/mallar/defaults`);
+    await mallarRef.set({ createdAt: FieldValue.serverTimestamp(), templates: [] }, { merge: true });
 
-    // 4) Do NOT automatically add the caller as a member or change their
+    if (IS_EMULATOR === true) {
+      console.log('Emulator mode: skipping SharePoint provisioning');
+      return { success: true, skippedSharePoint: true };
+    }
+
+    // 4) SharePoint provisioning (Step 1): ensure base + workspace sites exist.
+    //    This is idempotent and safe to re-run.
+    await ensureCompanySharePointSites({
+      companyId,
+      companyName,
+      actorUid: callerUid,
+      actorEmail: callerEmail,
+    });
+
+    // 5) Do NOT automatically add the caller as a member or change their
     //    custom claims. Superadmins/MS Byggsystem-admins manage the new
     //    company's users via the separate user management functions instead.
 
@@ -120,10 +607,66 @@ function callerIsAdmin(context) {
   return token.admin === true || token.role === 'admin' || token.globalAdmin === true;
 }
 
+function readFunctionsConfigValue(path, fallback = null) {
+  try {
+    const cfg = functions.config && typeof functions.config === 'function' ? functions.config() : {};
+    const parts = String(path || '').split('.').filter(Boolean);
+    let cur = cfg;
+    for (const p of parts) {
+      if (!cur || typeof cur !== 'object') return fallback;
+      cur = cur[p];
+    }
+    if (cur === undefined || cur === null || cur === '') return fallback;
+    return cur;
+  } catch (_e) {
+    return fallback;
+  }
+}
+
+function getSmtpConfig() {
+  const host = process.env.SMTP_HOST || readFunctionsConfigValue('smtp.host', null);
+  const portRaw = process.env.SMTP_PORT || readFunctionsConfigValue('smtp.port', null);
+  const user = process.env.SMTP_USER || readFunctionsConfigValue('smtp.user', null);
+  const pass = process.env.SMTP_PASS || readFunctionsConfigValue('smtp.pass', null);
+  const secureRaw = process.env.SMTP_SECURE || readFunctionsConfigValue('smtp.secure', null);
+  const from = process.env.SMTP_FROM || readFunctionsConfigValue('smtp.from', null) || user;
+
+  const port = portRaw !== null && portRaw !== undefined && String(portRaw).trim() !== '' ? parseInt(String(portRaw).trim(), 10) : null;
+  const secure = String(secureRaw).toLowerCase() === 'true' || secureRaw === true;
+
+  return {
+    host: host ? String(host).trim() : null,
+    port: Number.isFinite(port) ? port : null,
+    user: user ? String(user).trim() : null,
+    pass: pass ? String(pass).trim() : null,
+    secure,
+    from: from ? String(from).trim() : null,
+  };
+}
+
+async function sendSupportEmail({ to, subject, text }) {
+  const smtp = getSmtpConfig();
+  if (!smtp.host || !smtp.port || !smtp.user || !smtp.pass || !smtp.from) {
+    return { ok: false, skipped: true, reason: 'SMTP not configured' };
+  }
+  const transport = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: !!smtp.secure,
+    auth: { user: smtp.user, pass: smtp.pass },
+  });
+  await transport.sendMail({ from: smtp.from, to, subject, text });
+  return { ok: true };
+}
+
 // Delete all Firebase Auth users that belong to a specific companyId
 // (based on custom claims). This scans users in pages of 1000 which is
 // fine for the expected scale of this project.
 async function deleteAuthUsersForCompany(companyId) {
+  const PROTECTED_USER_EMAILS = new Set([
+    'marcus@msbyggsystem.se',
+  ]);
+
   let nextPageToken = undefined;
   let deletedCount = 0;
   let failedCount = 0;
@@ -137,7 +680,10 @@ async function deleteAuthUsersForCompany(companyId) {
     const targets = users.filter((u) => {
       try {
         const claims = u && u.customClaims ? u.customClaims : {};
-        return claims && claims.companyId === companyId;
+        if (!(claims && claims.companyId === companyId)) return false;
+        const email = u && u.email ? String(u.email).toLowerCase() : '';
+        if (email && PROTECTED_USER_EMAILS.has(email)) return false;
+        return true;
       } catch (e) {
         return false;
       }
@@ -174,8 +720,12 @@ exports.createUser = functions.https.onCall(async (data, context) => {
   }
 
   const email = String((data && data.email) || '').trim().toLowerCase();
-  const displayName = (data && (data.displayName || data.name)) || (email ? email.split('@')[0] : '');
+  const firstName = String((data && data.firstName) || '').trim();
+  const lastName = String((data && data.lastName) || '').trim();
+  const displayName = (data && (data.displayName || data.name)) || `${firstName} ${lastName}`.trim() || (email ? email.split('@')[0] : '');
   const companyId = (data && data.companyId) || (context.auth.token && context.auth.token.companyId) || null;
+  const avatarPreset = String((data && data.avatarPreset) || '').trim() || null;
+  const providedPassword = String((data && data.password) || '').trim();
 
   if (!email) throw new functions.https.HttpsError('invalid-argument', 'email is required');
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
@@ -207,7 +757,8 @@ exports.createUser = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'User limit reached for company');
     }
 
-    const tempPassword = generateTempPassword();
+    const tempPassword = providedPassword ? null : generateTempPassword();
+    const passwordToUse = providedPassword || tempPassword;
 
     const role = (data && data.role) || 'user';
 
@@ -215,7 +766,7 @@ exports.createUser = functions.https.onCall(async (data, context) => {
     try {
       userRecord = await admin.auth().createUser({
         email,
-        password: tempPassword,
+        password: passwordToUse,
         displayName,
       });
     } catch (createErr) {
@@ -244,9 +795,12 @@ exports.createUser = functions.https.onCall(async (data, context) => {
       uid: userRecord.uid,
       companyId,
       displayName: displayName || null,
+      firstName: firstName || null,
+      lastName: lastName || null,
       email: email || null,
       role: role,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      avatarPreset,
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     // Log activity
@@ -257,7 +811,7 @@ exports.createUser = functions.https.onCall(async (data, context) => {
         targetUid: userRecord.uid,
         email,
         displayName,
-        ts: admin.firestore.FieldValue.serverTimestamp(),
+        ts: FieldValue.serverTimestamp(),
       });
     } catch (e) { /* non-blocking */ }
 
@@ -271,7 +825,7 @@ exports.createUser = functions.https.onCall(async (data, context) => {
       });
     } catch (_e) {}
 
-    return { ok: true, uid: userRecord.uid, tempPassword };
+    return { ok: true, uid: userRecord.uid, tempPassword, usedProvidedPassword: !!providedPassword };
   } catch (err) {
     console.error('createUser error', err);
 
@@ -308,6 +862,113 @@ exports.createUser = functions.https.onCall(async (data, context) => {
     // Fallback: skicka tillbaka intern-kod med mer detaljerad text
     throw new functions.https.HttpsError('internal', baseMessage);
   }
+});
+
+// Callable: request subscription upgrade. Logs a support request and sends an email to configured recipient.
+exports.requestSubscriptionUpgrade = functions.https.onCall(async (data, context) => {
+  if (!context || !context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  if (!callerIsAdmin(context)) {
+    throw new functions.https.HttpsError('permission-denied', 'Caller must be an admin');
+  }
+
+  const token = context.auth.token || {};
+  const companyId = String((data && data.companyId) || token.companyId || '').trim();
+  if (!companyId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  const actorUid = context.auth.uid;
+  const actorEmail = token.email ? String(token.email).trim().toLowerCase() : null;
+  const actorName = token.name ? String(token.name).trim() : null;
+
+  // Compute current usage from Firestore for accuracy
+  let userLimit = null;
+  let membersCount = null;
+  let seatsLeft = null;
+  try {
+    const profSnap = await db.doc(`foretag/${companyId}/profil/public`).get();
+    const rawUserLimit = profSnap.exists ? profSnap.data().userLimit : null;
+    if (typeof rawUserLimit === 'number') {
+      userLimit = rawUserLimit;
+    } else if (typeof rawUserLimit === 'string') {
+      const m = rawUserLimit.trim().match(/-?\d+/);
+      if (m && m[0]) {
+        const n = parseInt(m[0], 10);
+        if (!Number.isNaN(n) && Number.isFinite(n)) userLimit = n;
+      }
+    }
+  } catch (_e) {}
+  try {
+    const membersSnap = await db.collection(`foretag/${companyId}/members`).get();
+    membersCount = membersSnap.size || 0;
+  } catch (_e) {}
+  if (typeof userLimit === 'number' && typeof membersCount === 'number') {
+    seatsLeft = Math.max(0, userLimit - membersCount);
+  }
+
+  const request = {
+    type: 'upgrade_subscription',
+    companyId,
+    actorUid,
+    actorEmail,
+    actorName,
+    membersCount,
+    userLimit,
+    seatsLeft,
+    status: 'new',
+    ts: FieldValue.serverTimestamp(),
+  };
+
+  const reqRef = await db.collection(`foretag/${companyId}/support_requests`).add(request);
+
+  const defaultTo = 'marcus@msbyggsystem.se';
+  const to = String(process.env.UPGRADE_REQUEST_TO || readFunctionsConfigValue('upgrade.to', null) || defaultTo).trim();
+  const subject = `Uppgradera abonnemang – ${companyId}`;
+  const lines = [
+    'En kund vill utöka sitt abonnemang i Digitalkontroll.',
+    '',
+    `Företag: ${companyId}`,
+    `Medlemmar (nu): ${membersCount === null ? 'okänt' : membersCount}`,
+    `UserLimit: ${userLimit === null ? 'okänt' : userLimit}`,
+    `Platser kvar: ${seatsLeft === null ? 'okänt' : seatsLeft}`,
+    '',
+    `Skickat av: ${actorEmail || actorUid}`,
+    actorName ? `Namn: ${actorName}` : null,
+    `Ärende-id: ${reqRef.id}`,
+  ].filter(Boolean);
+  const text = lines.join('\n');
+
+  let emailSent = false;
+  let emailSkipped = false;
+  let emailError = null;
+  try {
+    const res = await sendSupportEmail({ to, subject, text });
+    emailSent = !!res.ok;
+    emailSkipped = !!res.skipped;
+    if (!res.ok && res.reason) emailError = res.reason;
+  } catch (e) {
+    emailError = String(e?.message || e);
+  }
+
+  try {
+    await reqRef.update({
+      email: { to, subject, sent: emailSent, skipped: emailSkipped, error: emailError || null },
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  } catch (_e) {}
+
+  try {
+    await logAdminAuditEvent({
+      type: 'requestSubscriptionUpgrade',
+      companyId,
+      actorUid,
+      payload: { requestId: reqRef.id, emailSent, emailSkipped },
+    });
+  } catch (_e) {}
+
+  return { ok: true, requestId: reqRef.id, emailSent, emailSkipped };
 });
 
 // Allow existing superadmins to promote another user to superadmin.
@@ -365,12 +1026,29 @@ exports.deleteUser = functions.https.onCall(async (data, context) => {
   if (!uid) throw new functions.https.HttpsError('invalid-argument', 'uid is required');
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
 
+  // Safety: protect key accounts from deletion
+  const PROTECTED_USER_EMAILS = new Set([
+    'marcus@msbyggsystem.se',
+  ]);
+
   try {
     // Optional: verify member belongs to company
     const memberRef = db.doc(`foretag/${companyId}/members/${uid}`);
     const memberSnap = await memberRef.get();
     if (!memberSnap.exists) {
       // allow delete but warn
+    }
+
+    // Hard block protected accounts
+    try {
+      const target = await admin.auth().getUser(uid);
+      const email = target && target.email ? String(target.email).toLowerCase() : '';
+      if (email && PROTECTED_USER_EMAILS.has(email)) {
+        throw new functions.https.HttpsError('failed-precondition', 'This user account is protected and cannot be deleted');
+      }
+    } catch (e) {
+      // If we threw an HttpsError above, rethrow. Otherwise continue to delete.
+      if (e instanceof functions.https.HttpsError) throw e;
     }
 
     // Delete auth user
@@ -385,7 +1063,7 @@ exports.deleteUser = functions.https.onCall(async (data, context) => {
         type: 'deleteUser',
         actorUid: context.auth.uid || null,
         targetUid: uid,
-        ts: admin.firestore.FieldValue.serverTimestamp(),
+        ts: FieldValue.serverTimestamp(),
       });
     } catch (e) {}
 
@@ -418,6 +1096,9 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
   const email = (data && data.email) || null;
   const displayName = (data && (data.displayName || data.name)) || null;
   const role = (data && data.role) || null; // 'admin' | 'user' | null
+  const disabled = (data && Object.prototype.hasOwnProperty.call(data, 'disabled')) ? !!data.disabled : null;
+  const photoURL = (data && Object.prototype.hasOwnProperty.call(data, 'photoURL')) ? (data.photoURL ? String(data.photoURL) : '') : null;
+  const avatarPreset = (data && Object.prototype.hasOwnProperty.call(data, 'avatarPreset')) ? (data.avatarPreset ? String(data.avatarPreset) : '') : null;
 
   if (!uid) throw new functions.https.HttpsError('invalid-argument', 'uid is required');
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
@@ -432,6 +1113,8 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
     if (password) updatePayload.password = String(password);
     if (email) updatePayload.email = String(email).toLowerCase();
     if (displayName) updatePayload.displayName = String(displayName);
+    if (typeof disabled === 'boolean') updatePayload.disabled = disabled;
+    if (photoURL !== null) updatePayload.photoURL = photoURL || null;
     if (Object.keys(updatePayload).length > 0) {
       await admin.auth().updateUser(uid, updatePayload);
     }
@@ -459,8 +1142,11 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
     if (displayName) memberUpdate.displayName = displayName;
     if (email) memberUpdate.email = email;
     if (role) memberUpdate.role = role;
+    if (typeof disabled === 'boolean') memberUpdate.disabled = disabled;
+    if (photoURL !== null) memberUpdate.photoURL = photoURL || null;
+    if (avatarPreset !== null) memberUpdate.avatarPreset = avatarPreset || null;
     if (Object.keys(memberUpdate).length > 0) {
-      await memberRef.set(Object.assign({}, memberUpdate, { updatedAt: admin.firestore.FieldValue.serverTimestamp() }), { merge: true });
+      await memberRef.set(Object.assign({}, memberUpdate, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
     }
 
     // Log activity
@@ -469,8 +1155,8 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
         type: 'updateUser',
         actorUid: context.auth.uid || null,
         targetUid: uid,
-        changes: { password: !!password, role: role || null, email: email || null },
-        ts: admin.firestore.FieldValue.serverTimestamp(),
+        changes: { password: !!password, role: role || null, email: email || null, disabled: (typeof disabled === 'boolean') ? disabled : null, photoURL: (photoURL !== null) ? (photoURL || null) : null, avatarPreset: (avatarPreset !== null) ? (avatarPreset || null) : null },
+        ts: FieldValue.serverTimestamp(),
       });
     } catch (e) { /* non-blocking */ }
 
@@ -480,7 +1166,7 @@ exports.updateUser = functions.https.onCall(async (data, context) => {
         companyId,
         actorUid: context.auth.uid || null,
         targetUid: uid,
-        payload: { role: role || null, email: email || null, passwordChanged: !!password },
+        payload: { role: role || null, email: email || null, passwordChanged: !!password, disabled: (typeof disabled === 'boolean') ? disabled : null, photoURL: (photoURL !== null) ? (photoURL || null) : null, avatarPreset: (avatarPreset !== null) ? (avatarPreset || null) : null },
       });
     } catch (_e) {}
 
@@ -564,6 +1250,11 @@ exports.setCompanyStatus = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
   }
 
+  // Safety: MS Byggsystem must never be deleted.
+  if (String(companyId).trim() === 'MS Byggsystem' && Object.prototype.hasOwnProperty.call(data || {}, 'deleted') && !!data.deleted) {
+    throw new functions.https.HttpsError('failed-precondition', 'MS Byggsystem is protected and cannot be deleted');
+  }
+
   const update = {};
   if (Object.prototype.hasOwnProperty.call(data || {}, 'enabled')) {
     update.enabled = !!data.enabled;
@@ -595,7 +1286,7 @@ exports.setCompanyStatus = functions.https.onCall(async (data, context) => {
       type: 'setCompanyStatus',
       actorUid: context.auth.uid || null,
       update,
-      ts: admin.firestore.FieldValue.serverTimestamp(),
+      ts: FieldValue.serverTimestamp(),
     });
   } catch (e) {
     console.warn('setCompanyStatus activity log failed', { companyId, update, err: e && e.message ? e.message : e });
@@ -666,7 +1357,7 @@ exports.setCompanyUserLimit = functions.https.onCall(async (data, context) => {
       type: 'setCompanyUserLimit',
       actorUid: context.auth.uid || null,
       update,
-      ts: admin.firestore.FieldValue.serverTimestamp(),
+      ts: FieldValue.serverTimestamp(),
     });
   } catch (e) {
     console.warn('setCompanyUserLimit activity log failed', { companyId, update, err: e && e.message ? e.message : e });
@@ -730,7 +1421,7 @@ exports.setCompanyName = functions.https.onCall(async (data, context) => {
       type: 'setCompanyName',
       actorUid: context.auth.uid || null,
       update,
-      ts: admin.firestore.FieldValue.serverTimestamp(),
+      ts: FieldValue.serverTimestamp(),
     });
   } catch (e) {
     console.warn('setCompanyName activity log failed', { companyId, update, err: e && e.message ? e.message : e });
@@ -769,6 +1460,11 @@ exports.purgeCompany = functions.https.onCall(async (data, context) => {
   const companyId = data && data.companyId ? String(data.companyId).trim() : null;
   if (!companyId) {
     throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  // Safety: MS Byggsystem must never be purged.
+  if (String(companyId).trim() === 'MS Byggsystem') {
+    throw new functions.https.HttpsError('failed-precondition', 'MS Byggsystem is protected and cannot be deleted');
   }
 
   const companyRef = db.doc(`foretag/${companyId}`);

@@ -2,14 +2,18 @@ Firebase Hosting setup for this project
 
 Steps to build and deploy the web app to Firebase Hosting (recommended):
 
+Quick path (recommended)
+
+1) Build + verify + deploy
+  npm run deploy:web
+
 1) Build the web bundle
 - If using Expo (managed):
-  npx expo build:web
+  npm run build
   Output folder: web-build
 
-- If using a custom build script (npm):
-  npm run build
-  Output folder: build (or as configured)
+ - If you prefer running Expo directly:
+  npx expo export --platform web --output-dir web-build
 
 2) Install Firebase CLI (if not installed):
   npm install -g firebase-tools
@@ -23,7 +27,8 @@ Steps to build and deploy the web app to Firebase Hosting (recommended):
   - Skip GitHub workflow when prompted (press Enter) unless you want CI
 
 4) Deploy
-  firebase deploy --only hosting
+  npm run deploy:web
+  (or: npx firebase-tools deploy --only hosting)
 
 5) Add custom domain
 - Open Firebase Console -> Hosting -> Add custom domain -> enter www.digitalkontroll.com
@@ -35,4 +40,5 @@ Local testing
 
 Notes
 - This repo's `firebase.json` is configured with `public: "web-build"` and a SPA rewrite to `/index.html`.
+- Web deploy is configured to avoid caching `/index.html`, while allowing long-term caching for hashed static assets.
 - If your build outputs to `build` instead, update `firebase.json` accordingly.

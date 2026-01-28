@@ -1,0 +1,54 @@
+/**
+ * Risker View - Risks component
+ */
+
+import React from 'react';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
+
+export default function RiskerView({ projectId, companyId, project }) {
+  return (
+    <ScrollView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Risker</Text>
+        <Text style={styles.subtitle}>Identifiera och hantera projektrisker</Text>
+      </View>
+
+      <View style={styles.content}>
+        <Text style={styles.placeholderText}>
+          Risker kommer att implementeras här
+        </Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff'
+  },
+  header: {
+    marginBottom: 24
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#222',
+    marginBottom: 8
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#666'
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 400
+  },
+  placeholderText: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center'
+  }
+});

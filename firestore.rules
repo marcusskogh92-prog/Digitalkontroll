@@ -12,10 +12,33 @@ service cloud.firestore {
         );
     }
 
+    function isGlobalAdmin() {
+      return request.auth != null
+        && (
+          // Token-baserade superadmins
+          request.auth.token.globalAdmin == true ||
+          request.auth.token.superadmin == true ||
+          request.auth.token.role == 'superadmin' ||
+          // Admin i MS Byggsystem
+          (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
+          // Whitelist specifika superadmin-mail för robusthet
+          request.auth.token.email == 'marcus@msbyggsystem.se' ||
+          request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
+          request.auth.token.email == 'marcus.skogh@msbyggsystem'
+        );
+    }
+
     // Allow read for hierarchy; writes only when authenticated and token.companyId matches path
     match /foretag/{company}/hierarki/state {
       allow read: if true;
       allow write: if isCompanyMember(company);
+    }
+    
+    // Backup documents for hierarchy (automatic backups before saves)
+    match /foretag/{company}/hierarki/{backupId} {
+      allow read: if isCompanyMember(company) && backupId.matches('backup_.*');
+      allow create, update: if isCompanyMember(company) && backupId.matches('backup_.*');
+      allow delete: if isCompanyMember(company) && backupId.matches('backup_.*');
     }
 
     // Controls (completed)
@@ -99,6 +122,26 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Företags-specifika kontrolltyp-mappar (company-scoped)
+    // Används för att organisera mallar per kontrolltyp i mappar.
+    match /foretag/{company}/kontrolltyp_mappar/{folderId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Kontaktregister (company-scoped)
+    // Varje företag har sitt eget register: foretag/{company}/kontakter/{contactId}
+    // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera kontakter för alla företag.
+    match /foretag/{company}/kontakter/{contactId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Leverantörer (company-scoped)
+    // Varje företag har sitt eget register: foretag/{company}/leverantorer/{supplierId}
+    // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera leverantörer för alla företag.
+    match /foretag/{company}/leverantorer/{supplierId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
     // Company members directory (company-scoped)
     // Used for listing admins/roles in the app without enabling cross-company user queries.
     match /foretag/{company}/members/{uid} {
@@ -143,6 +186,76 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.companyId == resource.data.companyId;
       allow delete: if false;
+    }
+
+    // Project phase navigation (company-scoped, project-specific)
+    // Used for storing custom navigation structures for each project phase
+    match /foretag/{company}/projects/{projectId}/phaseNavigation/{phaseKey} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Phase navigation (company-wide, not per project)
+    // Used for storing custom navigation structures shared across all projects in a company
+    match /foretag/{company}/phaseNavigation/{phaseKey} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project phase data (company-scoped, project-specific)
+    // Used for storing phase-specific data like completions, progress, etc.
+    match /foretag/{company}/projects/{projectId}/phaseData/{phaseKey} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Project organisation (company-scoped, project-specific)
+    // Used by "Organisation och roller" (Översikt) for custom groups and members.
+    // Collection: foretag/{company}/project_organisation/{projectId}
+    match /foretag/{company}/project_organisation/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project timeline (company-scoped, project-specific)
+    // Used by "Tidsplan och viktiga datum" (Översikt) for custom dates and site visits.
+    // Collection: foretag/{company}/project_timeline/{projectId}
+    match /foretag/{company}/project_timeline/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Projects (company-scoped)
+    // Firestore is the source of truth for which projects exist and how they map to SharePoint.
+    // Collection: foretag/{company}/projects/{projectId}
+    match /foretag/{company}/projects/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // SharePoint navigation configuration per company
+    // Used by adminvyn "SharePoint Navigation" och av vänsterpanelen på startsidan.
+    // Medlemmar i företaget får hantera sin egen navigation, och globala admins
+    // (superadmin / MS Byggsystem-admin) får hantera alla företags navigation.
+    match /foretag/{company}/sharepoint_navigation/{docId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // SharePoint site metadata per company (visibility/role)
+    // Digitalkontroll owns which sites are visible in the left panel.
+    // Collection: foretag/{company}/sharepoint_sites/{siteId}
+    match /foretag/{company}/sharepoint_sites/{siteId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      // Writes should be system-controlled (cloud functions / global admins).
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    // SharePoint system configuration per company (base/workspace sites)
+    // This must be hidden from company admins/users.
+    match /foretag/{company}/sharepoint_system/{docId} {
+      allow read, write: if isGlobalAdmin();
+    }
+
+    // SharePoint project metadata (company-scoped)
+    // Used for phase/structure indicators per SharePoint-backed project folder.
+    // Collection: foretag/{company}/sharepoint_project_metadata/{docId}
+    match /foretag/{company}/sharepoint_project_metadata/{docId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
     }
   }
 }

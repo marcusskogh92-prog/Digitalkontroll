@@ -2,17 +2,196 @@
 
 
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
+import { checkSharePointConnection, createSharePointFolder, deleteItem, getSharePointHierarchy, loadFolderChildren } from '../services/azure/hierarchyService';
+import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ContextMenu from './ContextMenu';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchHierarchy, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote } from './firebase';
 import UserEditModal from './UserEditModal';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 
-function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, templatesMode = false, templatesVersion = 0, iconName = null, iconColor = null, controlTypesMode = false }) {
+const PRIMARY_BLUE = '#1976D2';
+const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
+
+const dispatchWindowEvent = (name, detail) => {
+  try {
+    if (typeof window === 'undefined') return;
+    const evt = (typeof CustomEvent === 'function')
+      ? new CustomEvent(name, { detail })
+      : (() => {
+        const e = document.createEvent('Event');
+        e.initEvent(name, true, true);
+        e.detail = detail;
+        return e;
+      })();
+    window.dispatchEvent(evt);
+  } catch (_e) {}
+};
+
+const publishHomeBreadcrumbSegments = (segments) => {
+  try {
+    if (typeof window === 'undefined') return;
+    if (!Array.isArray(segments)) return;
+    try { window.__dkBreadcrumbHomeSegments = segments; } catch (_e) {}
+    dispatchWindowEvent('dkBreadcrumbUpdate', { scope: 'home', segments });
+  } catch (_e) {}
+};
+
+// Recursive folder component - handles infinite nesting levels from SharePoint
+function RecursiveFolderItem({ 
+  folder, 
+  level = 0, 
+  expandedSubs, 
+  spinSubs, 
+  toggleSub, 
+  setFolderContextMenu,
+  resolvedCompanyId,
+  loadFolderChildren,
+  setHierarchy,
+  isProject = false,
+  onSelectProject = null,
+}) {
+  const folderSpin = spinSubs[folder.id] || 0;
+  const folderAngle = expandedSubs[folder.id] ? (folderSpin * 360 + 90) : (folderSpin * 360);
+  const fontSize = Math.max(12, 15 - level); // Slightly smaller font for deeper levels
+  const paddingLeft = 16 + (level * 4); // More indentation for deeper levels
+  
+  // Check if this folder is a project (if not already determined)
+  const folderIsProject = isProject || isProjectFolder(folder);
+  
+  const handleClick = () => {
+    if (folderIsProject && onSelectProject) {
+      // Project folder: navigate to project view
+      const projectMetadata = extractProjectMetadata(folder);
+      if (projectMetadata) {
+        onSelectProject({
+          ...folder,
+          // Display identity
+          id: projectMetadata.id,
+          name: projectMetadata.name,
+          number: projectMetadata.number,
+          projectNumber: projectMetadata.number,
+          projectName: projectMetadata.name,
+          fullName: projectMetadata.fullName,
+          // SharePoint identity (internal)
+          sharePointId: projectMetadata.sharePointId || folder.id || null,
+          // Location
+          path: projectMetadata.path,
+          type: 'project',
+        });
+      }
+    } else {
+      // Regular folder: expand/collapse
+      toggleSub(folder.id);
+    }
+  };
+  
+  return (
+    <li>
+      <div 
+        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
+        onClick={handleClick}
+        onContextMenu={(e) => {
+          if (Platform.OS !== 'web') return;
+          try { e.preventDefault(); } catch(_e) {}
+          const x = (e && e.clientX) ? e.clientX : 60;
+          const y = (e && e.clientY) ? e.clientY : 60;
+          setFolderContextMenu({ folder, x, y });
+        }}
+      >
+        {!folderIsProject && (
+          <span
+            style={{
+              color: '#222',
+              fontSize: fontSize + 1,
+              fontWeight: 500,
+              marginRight: 6,
+              display: 'inline-block',
+              transform: `rotate(${folderAngle}deg)`,
+              transition: 'transform 0.4s ease',
+            }}
+          >
+            &gt;
+          </span>
+        )}
+        {folderIsProject && (
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: '#43A047',
+              marginRight: 8,
+              display: 'inline-block',
+              border: '1px solid #bbb',
+            }}
+          />
+        )}
+        <span style={{ 
+          fontWeight: expandedSubs[folder.id] ? 600 : (folderIsProject ? 600 : 400), 
+          fontSize: fontSize,
+          color: folderIsProject ? '#1976D2' : '#222',
+        }}>{folder.name}</span>
+      </div>
+      {!folderIsProject && expandedSubs[folder.id] && (
+        <ul style={{ listStyle: 'none', paddingLeft: paddingLeft, marginTop: 2 }}>
+          {folder.loading ? (
+            <li style={{ color: '#888', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+              Laddar undermappar från SharePoint...
+            </li>
+          ) : folder.error ? (
+            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8 }}>
+              Fel: {folder.error}
+            </li>
+          ) : folder.children && folder.children.length > 0 ? (
+            // Recursively render children - infinite depth, fully driven by SharePoint structure
+            folder.children.map(childFolder => {
+              const childIsProject = isProjectFolder(childFolder);
+              return (
+                <RecursiveFolderItem
+                  key={childFolder.id}
+                  folder={childFolder}
+                  level={level + 1}
+                  expandedSubs={expandedSubs}
+                  spinSubs={spinSubs}
+                  toggleSub={toggleSub}
+                  setFolderContextMenu={setFolderContextMenu}
+                  resolvedCompanyId={resolvedCompanyId}
+                  loadFolderChildren={loadFolderChildren}
+                  setHierarchy={setHierarchy}
+                  isProject={childIsProject}
+                  onSelectProject={onSelectProject}
+                />
+              );
+            })
+          ) : (
+            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+              Mappen är tom
+            </li>
+          )}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlista', searchPlaceholder = 'Sök projektnamn eller nr...', companiesMode = false, showMembers = false, restrictCompanyId = null, hideCompanyActions = false, autoExpandMembers = false, memberSearchMode = false, allowCompanyManagementActions = true, iconName = null, iconColor = null, controlTypesMode = false, selectedCompanyId = null, selectedPhase: selectedPhaseProp, onPhaseChange, onAddMainFolder }) {
+  // Legacy: "Mallar"-sidan är borttagen och vi vill inte att sidomenyn kan hamna i templates-läge.
+  // Låt flaggan vara hårt avstängd även om någon råkar skicka props från äldre kod.
+  const templatesMode = false;
+  const templatesVersion = 0;
+
   const [search, setSearch] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
   const [expandedSubs, setExpandedSubs] = useState({});
   const [hierarchy, setHierarchy] = useState([]);
+  const [sharePointStatus, setSharePointStatus] = useState({
+    connected: false,
+    checking: false,
+    error: null,
+    siteId: null,
+  });
+  // Phase is now just a SharePoint folder - no internal phase logic needed
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCompanies, setExpandedCompanies] = useState({});
@@ -32,9 +211,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [contextMenuCompany, setContextMenuCompany] = useState(null);
   const [memberFetchErrors, setMemberFetchErrors] = useState({});
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
+  const [isSuperadminViewer, setIsSuperadminViewer] = useState(false);
   const [showDeletedCompanies, setShowDeletedCompanies] = useState(false);
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
+  const [membersPrefetchNonce, setMembersPrefetchNonce] = useState(0);
   const [spinTemplateTypes, setSpinTemplateTypes] = useState({});
   const [spinGroups, setSpinGroups] = useState({});
   const [spinSubs, setSpinSubs] = useState({});
@@ -52,13 +233,48 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   const [templateFetchErrors, setTemplateFetchErrors] = useState({});
   const [controlTypeContextMenu, setControlTypeContextMenu] = useState(null); // { companyId, profile, controlTypeId, controlTypeKey, controlTypeName, builtin, hidden, x, y }
   const [templateContextMenu, setTemplateContextMenu] = useState(null); // { companyId, profile, controlType, template, x, y }
+  const [folderContextMenu, setFolderContextMenu] = useState(null); // { folder, x, y } - for SharePoint folder context menu
+
+  // Breadcrumb state for web: track last selected project path in the sidebar
+  const [selectedProjectBreadcrumb] = useState(null); // { group, sub, project }
+  const lastExpandedGroupIdRef = useRef(null);
+  const lastExpandedSubIdRef = useRef(null);
 
   const templateFetchErrorCount = Object.keys(templateFetchErrors || {}).length;
+  const lastMembersPrefetchNonceRef = useRef(0);
+  const toastTimeoutRef = useRef(null);
 
   const showToast = (msg, timeout = 3000) => {
     try {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
       setToast({ visible: true, message: msg });
-      setTimeout(() => setToast({ visible: false, message: '' }), timeout);
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast({ visible: false, message: '' });
+        toastTimeoutRef.current = null;
+      }, timeout);
+    } catch (_e) {}
+  };
+
+  const showToastSticky = (msg) => {
+    try {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      setToast({ visible: true, message: msg });
+    } catch (_e) {}
+  };
+
+  const hideToast = () => {
+    try {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      setToast({ visible: false, message: '' });
     } catch (_e) {}
   };
 
@@ -89,6 +305,22 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     );
   };
 
+  const isMemberDisabled = (m) => {
+    try {
+      if (!m) return false;
+      if (typeof m.disabled === 'boolean') return m.disabled;
+      if (typeof m.enabled === 'boolean') return !m.enabled;
+      if (typeof m.active === 'boolean') return !m.active;
+      return false;
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  const getMemberDisplayName = (m) => {
+    return m?.displayName || `${m?.firstName || ''} ${m?.lastName || ''}`.trim() || m?.email || m?.uid || m?.id || '';
+  };
+
   const isCompanyEnabled = (company) => {
     try {
       const profile = company && company.profile ? company.profile : {};
@@ -113,15 +345,47 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   });
 
   // Ange ditt företags-ID här (eller hämta dynamiskt från inloggning)
-  // Prefer prop, otherwise try web localStorage (dk_companyId), fallback to 'testdemo' for demos.
-  const propCompanyId = null;
-  let companyId = propCompanyId || '';
-  try {
-    if (!companyId && typeof window !== 'undefined' && window.localStorage) {
-      companyId = String(window.localStorage.getItem('dk_companyId') || '').trim();
-    }
-  } catch (_e) { companyId = '' }
-  if (!companyId) companyId = 'testdemo';
+  // Prefer explicit restriction, then persisted dk_companyId, then auth claims.
+  const [resolvedCompanyId, setResolvedCompanyId] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let cid = String(restrictCompanyId || '').trim();
+
+      if (!cid) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            cid = String(window.localStorage.getItem('dk_companyId') || '').trim();
+          }
+        } catch (_e) {}
+      }
+
+      if (!cid) {
+        try {
+          const user = auth?.currentUser;
+          const tokenRes = user?.getIdTokenResult ? await user.getIdTokenResult(false).catch(() => null) : null;
+          cid = String(tokenRes?.claims?.companyId || '').trim();
+        } catch (_e) {}
+      }
+
+      if (!cid) {
+        try {
+          const emailLower = String(auth?.currentUser?.email || '').trim().toLowerCase();
+          const isEmailSuperadmin = emailLower === 'marcus@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.se' || emailLower === 'marcus.skogh@msbyggsystem.com' || emailLower === 'marcus.skogh@msbyggsystem';
+          if (isEmailSuperadmin) cid = 'MS Byggsystem';
+        } catch (_e) {}
+      }
+
+      // Dev convenience only.
+      if (!cid && __DEV__) cid = 'testdemo';
+
+      if (cancelled) return;
+      setResolvedCompanyId(cid);
+    })();
+
+    return () => { cancelled = true; };
+  }, [restrictCompanyId]);
 
   useEffect(() => {
     setLoading(true);
@@ -163,11 +427,50 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
       });
       return;
     }
-    fetchHierarchy(companyId).then(items => {
-      setHierarchy(items || []);
+    if (!resolvedCompanyId) {
+      setHierarchy([]);
       setLoading(false);
-    }).catch(() => { setHierarchy([]); setLoading(false); });
-  }, [companiesMode, restrictCompanyId, companyId]);
+      return;
+    }
+    
+    // Check SharePoint connection and fetch folders
+    (async () => {
+      try {
+        // First check SharePoint connection status
+        setSharePointStatus({ connected: false, checking: true, error: null, siteId: null });
+        const connectionStatus = await checkSharePointConnection(resolvedCompanyId);
+        setSharePointStatus({
+          connected: connectionStatus.connected,
+          checking: false,
+          error: connectionStatus.error,
+          siteId: connectionStatus.siteId
+        });
+
+        if (connectionStatus.connected) {
+          // Get ALL root folders (all phases) from SharePoint - no filtering
+          const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+          
+          // Use SharePoint folders directly - no adapter needed
+          // Each folder represents a phase (Kalkylskede, Produktion, etc.)
+          setHierarchy(sharePointFolders || []);
+        } else {
+          // No connection - show empty
+          setHierarchy([]);
+        }
+      } catch (error) {
+        console.error('[ProjectSidebar] Error fetching SharePoint hierarchy:', error);
+        setSharePointStatus({
+          connected: false,
+          checking: false,
+          error: error?.message || 'Unknown error',
+          siteId: null
+        });
+        setHierarchy([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [companiesMode, restrictCompanyId, resolvedCompanyId]);
 
   // Web: react to company profile updates from ManageCompany (e.g. userLimit changes)
   useEffect(() => {
@@ -267,6 +570,25 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
     })();
   }, [companiesMode, autoExpandMembers, restrictCompanyId, companies, showMembers, membersByCompany]);
 
+  // Auto-expand selected company in controlTypesMode
+  useEffect(() => {
+    if (!controlTypesMode) return;
+    if (!companiesMode) return;
+    if (!selectedCompanyId) return;
+    if (!Array.isArray(companies) || companies.length === 0) return;
+
+    const cid = String(selectedCompanyId || '').trim();
+    if (!cid) return;
+
+    const hasCompany = companies.some(c => c && c.id === cid);
+    if (!hasCompany) return;
+
+    setExpandedCompanies(prev => {
+      if (prev && prev[cid]) return prev;
+      return { [cid]: true };
+    });
+  }, [controlTypesMode, companiesMode, selectedCompanyId, companies]);
+
   // If the current user är "global" admin (superadmin eller MS Byggsystem-admin),
   // prefetcha medlemmar för alla företag så vi kan visa användarantal i listan.
   // Vanliga företags-admins (t.ex. Wilzéns) räknas inte som global admin här.
@@ -287,17 +609,43 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         const isEmailSuperadmin = userEmail === 'marcus@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.se' || userEmail === 'marcus.skogh@msbyggsystem.com' || userEmail === 'marcus.skogh@msbyggsystem';
         const effectiveGlobalAdmin = isSuperClaim || isMsAdminClaim || isEmailSuperadmin;
         try { setEffectiveGlobalAdmin(!!effectiveGlobalAdmin); } catch (_) {}
+        try { setIsSuperadminViewer(!!(isSuperClaim || isEmailSuperadmin)); } catch (_) {}
         if (!effectiveGlobalAdmin) return;
-        // Fetch members for each company in parallel (but limit concurrency to avoid bursts)
-        const results = await Promise.all(companies.map(async (c) => {
+
+        // Endast i Hantera användare (memberSearchMode) behöver vi hämta medlemmar
+        // för att visa användarräknare per företag.
+        if (!memberSearchMode) return;
+
+        const forceThisRun = membersPrefetchNonce !== lastMembersPrefetchNonceRef.current;
+        if (forceThisRun) lastMembersPrefetchNonceRef.current = membersPrefetchNonce;
+
+        const targets = forceThisRun
+          ? companies
+          : companies.filter(c => !membersByCompany || !Object.prototype.hasOwnProperty.call(membersByCompany, c.id));
+
+        if (!targets || targets.length === 0) return;
+
+        const clearCompanyError = (companyId) => {
+          try {
+            setMemberFetchErrors(prev => {
+              if (!prev || !prev[companyId]) return prev;
+              const next = { ...prev };
+              delete next[companyId];
+              return next;
+            });
+          } catch (_e) {}
+        };
+
+        const fetchForCompany = async (c) => {
           try {
             // Try admin callable first for global admins
-            if (effectiveGlobalAdmin && typeof adminFetchCompanyMembers === 'function') {
+            if (typeof adminFetchCompanyMembers === 'function') {
               try {
                 const r = await adminFetchCompanyMembers(c.id).catch(err => { throw err; });
-                const mems = r && (r.members || r.data && r.data.members) ? (r.members || r.data && r.data.members) : [];
+                const mems = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+                clearCompanyError(c.id);
                 return { id: c.id, members: Array.isArray(mems) ? mems : [] };
-              } catch(e) {
+              } catch (e) {
                 // record non-generic errors for debugging and fall back to client fetch
                 try {
                   const raw = String(e && e.message ? e.message : (e || ''));
@@ -309,21 +657,41 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             }
             try {
               const mems = await fetchCompanyMembers(c.id).catch(err => { throw err; });
+              clearCompanyError(c.id);
               return { id: c.id, members: Array.isArray(mems) ? mems : [] };
             } catch (e) {
               setMemberFetchErrors(prev => ({ ...prev, [c.id]: String(e?.message || e) }));
               return { id: c.id, members: [] };
             }
-          } catch(e) { setMemberFetchErrors(prev => ({ ...prev, [c.id]: String(e?.message || e) })); return { id: c.id, members: [] }; }
-        }));
+          } catch (e) {
+            setMemberFetchErrors(prev => ({ ...prev, [c.id]: String(e?.message || e) }));
+            return { id: c.id, members: [] };
+          }
+        };
+
+        // Concurrency-limit för att undvika bursts som ger deadline-exceeded.
+        const concurrency = 2;
+        let index = 0;
+        const results = new Array(targets.length);
+        const worker = async () => {
+          while (true) {
+            const i = index;
+            index += 1;
+            if (i >= targets.length) return;
+            const c = targets[i];
+            results[i] = await fetchForCompany(c);
+          }
+        };
+
+        await Promise.all(new Array(concurrency).fill(0).map(() => worker()));
         if (cancelled) return;
         const map = {};
-        results.forEach(r => { map[r.id] = r.members; });
+        results.forEach(r => { if (r && r.id) map[r.id] = r.members; });
         setMembersByCompany(prev => ({ ...prev, ...map }));
       } catch(_e) {}
     })();
     return () => { cancelled = true; };
-  }, [companiesMode, companies]);
+  }, [companiesMode, companies, memberSearchMode, membersByCompany, membersPrefetchNonce]);
 
   // When used in Mallar-läge (templatesMode), hämta mallar per företag för att
   // kunna visa räknare både på företagsnivå och per kontrolltyp.
@@ -401,30 +769,483 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   }, [companiesMode, templatesMode, controlTypesMode, companies]);
 
   // Filtrera projekt baserat på söksträng (namn eller "nummer")
-  const filterTree = (tree) => tree
-    .map(group => {
-      const filteredSubs = (group.children || []).map(sub => {
-        const filteredProjects = (sub.children || []).filter(project =>
-          project.name.toLowerCase().includes(search.toLowerCase()) ||
-          String(project.id).toLowerCase().includes(search.toLowerCase())
-        );
-        return { ...sub, children: filteredProjects };
-      }).filter(sub => sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase()));
-      return { ...group, children: filteredSubs };
-    })
-    .filter(group => group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase()));
+  const getProjectNumberText = (project) => {
+    try {
+      const id = String(project?.id || '').trim();
+      if (id) return id;
+      const name = String(project?.name || '').trim();
+      if (!name) return '';
+      // If name contains the common "ID — Name" pattern, use the left part.
+      const parts = name.split('—');
+      return String(parts[0] || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  };
 
-  const filteredGroups = filterTree(hierarchy);
+  // Sort direction: -1 = descending, 1 = ascending
+  // Requested UX: "Alla nummer med 1 kommer först" and e.g.
+  // 1001-100, 1011-200, 6510-2200, 825-10
+  // => compare the prefix (before '-') lexicographically, then compare suffix parts numerically.
+  const PROJECT_NUMBER_SORT_DIRECTION = 1;
 
-  const toggleGroup = (id) => {
-    setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+  const splitProjectNumber = (s) => {
+    try {
+      return String(s || '').trim().split('-').map((x) => String(x || '').trim());
+    } catch (_e) {
+      return [String(s || '').trim()];
+    }
+  };
+
+  const isDigitsOnly = (s) => /^[0-9]+$/.test(String(s || '').trim());
+
+  const compareText = (a, b) => {
+    return String(a || '').localeCompare(String(b || ''), 'sv', { sensitivity: 'base' });
+  };
+
+  const compareNumericish = (a, b) => {
+    const aa = String(a || '').trim();
+    const bb = String(b || '').trim();
+    const aIsNum = isDigitsOnly(aa);
+    const bIsNum = isDigitsOnly(bb);
+    if (aIsNum && bIsNum) {
+      const an = parseInt(aa, 10);
+      const bn = parseInt(bb, 10);
+      if (an !== bn) return an - bn;
+      // Same numeric value: shorter (less zero-padded) first.
+      if (aa.length !== bb.length) return aa.length - bb.length;
+      return 0;
+    }
+    // If one is numeric and the other isn't, keep numeric first.
+    if (aIsNum !== bIsNum) return aIsNum ? -1 : 1;
+    return compareText(aa, bb);
+  };
+
+  const compareProjectsByNumber = (a, b) => {
+    const aKey = getProjectNumberText(a);
+    const bKey = getProjectNumberText(b);
+    const aParts = splitProjectNumber(aKey);
+    const bParts = splitProjectNumber(bKey);
+
+    // 1) Prefix before '-' compared as text (lexicographic)
+    const prefixCmp = compareText(aParts[0] || '', bParts[0] || '');
+    if (prefixCmp !== 0) return PROJECT_NUMBER_SORT_DIRECTION * prefixCmp;
+
+    // 2) Remaining parts compared numerically (natural within same prefix)
+    const maxLen = Math.max(aParts.length, bParts.length);
+    for (let i = 1; i < maxLen; i += 1) {
+      const partCmp = compareNumericish(aParts[i] || '', bParts[i] || '');
+      if (partCmp !== 0) return PROJECT_NUMBER_SORT_DIRECTION * partCmp;
+    }
+
+    // 3) Stable fallback
+    return PROJECT_NUMBER_SORT_DIRECTION * compareText(aKey, bKey);
+  };
+
+  // Filter tree while preserving object references so state updates work correctly
+  const filterTree = (tree) => {
+    if (!search.trim()) {
+      // No search - return tree as-is to preserve references
+      return tree;
+    }
+    return tree
+      .map(group => {
+        // Filter by search for main folder name
+        const groupMatchesSearch = group.name.toLowerCase().includes(search.toLowerCase());
+        
+        const filteredSubs = (group.children || []).map(sub => {
+          // Filter by search for sub folder name
+          const subMatchesSearch = sub.name.toLowerCase().includes(search.toLowerCase());
+          
+          const filteredProjects = (sub.children || []).filter(project => {
+            // Filter by search
+            const matchesSearch = project.name.toLowerCase().includes(search.toLowerCase()) ||
+              String(project.id).toLowerCase().includes(search.toLowerCase());
+            
+            return matchesSearch;
+          }).slice().sort(compareProjectsByNumber);
+          
+          // Preserve sub object reference if no filtering needed, otherwise create new
+          if (subMatchesSearch && filteredProjects.length === (sub.children || []).length) {
+            return sub; // No filtering needed - preserve reference
+          }
+          return { ...sub, children: filteredProjects };
+        }).filter(sub => {
+          // Keep sub folder if it has matching projects OR if sub folder name matches search
+          return sub.children.length > 0 || sub.name.toLowerCase().includes(search.toLowerCase());
+        });
+        
+        // Preserve group object reference if no filtering needed
+        if (groupMatchesSearch && filteredSubs.length === (group.children || []).length) {
+          return group; // No filtering needed - preserve reference
+        }
+        return { ...group, children: filteredSubs };
+      })
+      .filter(group => {
+        // Keep main folder if it has matching sub folders OR if main folder name matches search
+        return group.children.length > 0 || group.name.toLowerCase().includes(search.toLowerCase());
+      });
+  };
+
+  // SharePoint hierarchy is already filtered by phase when fetched
+  // No need to filter projects by phase metadata - SharePoint folders represent phases
+  // The hierarchy structure from SharePoint is: Phase Folder -> Subfolders -> Files/Projects
+  let phaseHierarchy = hierarchy;
+  
+  // Note: With SharePoint-first approach, phase filtering happens at fetch time
+  // The hierarchy already contains only the selected phase folder and its contents
+  // If we need to show all phases, we would fetch without phaseKey filter
+  
+  const filteredGroups = filterTree(phaseHierarchy);
+
+  // Lazy load folder children when expanded
+  const toggleGroup = async (id) => {
+    const folder = hierarchy.find(f => f.id === id);
+    if (!folder) return;
+    
+    const nextOpen = !expandedGroups[id];
+    
+    // If expanding and folder has no children or children not loaded, load them
+    if (nextOpen && (!folder.children || folder.children.length === 0) && resolvedCompanyId) {
+      try {
+        // Use folder.path if available, otherwise construct from folder.name
+        // Ensure path is not empty or just slashes
+        let folderPath = folder.path || folder.name || '';
+        
+        // Normalize path: remove leading/trailing slashes, normalize separators
+        if (folderPath && typeof folderPath === 'string') {
+          folderPath = folderPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+          folderPath = folderPath.replace(/\/+$/, '');
+        } else {
+          folderPath = '';
+        }
+        
+        // Validate path - if empty or invalid, log warning but still try with folder name
+        if (!folderPath || folderPath.length === 0 || folderPath === '/') {
+          console.warn('[ProjectSidebar] toggleGroup - Invalid folder path after normalization, using folder name:', folder.name);
+          folderPath = folder.name || '';
+        }
+        
+        console.log('[ProjectSidebar] toggleGroup - Loading children for folder:', folder.name, 'normalized path:', folderPath, 'current children:', folder.children?.length || 0, 'original path:', folder.path);
+        
+        // Set loading state
+        setHierarchy(prev => prev.map(f => 
+          f.id === id ? { ...f, children: [], loading: true, error: null } : f
+        ));
+        
+        const children = await loadFolderChildren(resolvedCompanyId, folderPath);
+        console.log('[ProjectSidebar] toggleGroup - Loaded', children.length, 'children for', folder.name, 'children:', children.map(c => c.name));
+        
+        // Update with loaded children - make sure to preserve other folder properties
+        setHierarchy(prev => prev.map(f => {
+          if (f.id === id) {
+            return { 
+              ...f, 
+              children, 
+              path: folderPath, 
+              loading: false, 
+              error: null,
+              expanded: true 
+            };
+          }
+          return f;
+        }));
+      } catch (error) {
+        console.error('[ProjectSidebar] Error loading folder children:', error);
+        // Set error state
+        setHierarchy(prev => prev.map(f => 
+          f.id === id ? { ...f, children: [], loading: false, error: error.message } : f
+        ));
+      }
+    }
+    
+    // Update expanded state AFTER loading children (if needed)
+    setExpandedGroups(prev => {
+      const next = { ...prev, [id]: nextOpen };
+      if (nextOpen) lastExpandedGroupIdRef.current = id;
+      else if (lastExpandedGroupIdRef.current === id) lastExpandedGroupIdRef.current = null;
+      return next;
+    });
     setSpinGroups(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   };
 
-  const toggleSub = (id) => {
-    setExpandedSubs(prev => ({ ...prev, [id]: !prev[id] }));
+  // Lazy load subfolder children when expanded
+  const toggleSub = async (id) => {
+    // Find subfolder in hierarchy (recursively search all levels)
+    const findFolder = (folders, targetId) => {
+      for (const folder of folders) {
+        if (folder.id === targetId) return folder;
+        if (folder.children) {
+          const found = findFolder(folder.children, targetId);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const folder = findFolder(hierarchy, id);
+    if (!folder) return;
+    
+    const nextOpen = !expandedSubs[id];
+    
+    // If expanding and folder has no children or children not loaded, load them
+    if (nextOpen && (!folder.children || folder.children.length === 0) && resolvedCompanyId) {
+      try {
+        // Use folder.path if available, otherwise construct from folder.name
+        // For nested folders, we need the full path from root
+        let folderPath = folder.path;
+        if (!folderPath || (typeof folderPath === 'string' && folderPath.trim().length === 0)) {
+          // If no path, try to construct it by finding parent path
+          // This is critical for nested folders where path might not be set initially
+          const findParentPath = (folders, targetId, currentPath = '') => {
+            for (const f of folders) {
+              // Use f.path if available (more reliable), otherwise construct from currentPath
+              let fPath = f.path;
+              if (!fPath || (typeof fPath === 'string' && fPath.trim().length === 0)) {
+                // No path on folder, construct from currentPath
+                fPath = currentPath ? `${currentPath}/${f.name}` : f.name;
+              }
+              
+              if (f.id === targetId) {
+                return fPath;
+              }
+              
+              if (f.children && Array.isArray(f.children) && f.children.length > 0) {
+                const found = findParentPath(f.children, targetId, fPath);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          const constructedPath = findParentPath(hierarchy, id);
+          folderPath = constructedPath || folder.name;
+          console.log('[ProjectSidebar] toggleSub - No path found on folder, constructed:', folderPath, 'from folder name:', folder.name, 'folder.id:', id);
+        }
+        
+        // Normalize path: remove leading/trailing slashes, normalize separators
+        if (folderPath && typeof folderPath === 'string') {
+          folderPath = folderPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+          folderPath = folderPath.replace(/\/+$/, '');
+        } else {
+          folderPath = '';
+        }
+        
+        // CRITICAL VALIDATION: Ensure path is never empty or invalid before calling loadFolderChildren
+        // Empty paths will cause ::/children errors in Graph API
+        if (!folderPath || folderPath.length === 0 || folderPath === '/' || (typeof folderPath === 'string' && folderPath.trim().length === 0)) {
+          console.error('[ProjectSidebar] toggleSub - CRITICAL: Invalid folder path after normalization!', {
+            folderName: folder.name,
+            folderId: id,
+            originalPath: folder.path,
+            normalizedPath: folderPath,
+            folderType: typeof folderPath
+          });
+          
+          // Try to use folder name as fallback, but validate it too
+          if (folder.name && typeof folder.name === 'string' && folder.name.trim().length > 0) {
+            folderPath = folder.name.trim();
+            console.warn('[ProjectSidebar] toggleSub - Using folder name as fallback path:', folderPath);
+          } else {
+            console.error('[ProjectSidebar] toggleSub - Cannot construct valid path, skipping loadFolderChildren');
+            // Don't call loadFolderChildren with invalid path - it will cause 400 error
+            setExpandedSubs(prev => ({ ...prev, [id]: false }));
+            setHierarchy(prev => {
+              const updateFolder = (folders) => folders.map(f => {
+                if (f.id === id) {
+                  return { ...f, loading: false, error: 'Invalid folder path - cannot load children' };
+                }
+                if (f.children) {
+                  return { ...f, children: updateFolder(f.children) };
+                }
+                return f;
+              });
+              return updateFolder(prev);
+            });
+            return;
+          }
+        }
+        
+        console.log('[ProjectSidebar] toggleSub - Loading children', {
+          folderName: folder.name,
+          folderId: id,
+          normalizedPath: folderPath,
+          pathType: typeof folderPath,
+          pathLength: folderPath.length,
+          currentChildren: folder.children?.length || 0,
+          originalPath: folder.path
+        });
+        
+        // Set loading state (recursively update hierarchy)
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              return { ...f, children: [], loading: true, error: null };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+        
+        const children = await loadFolderChildren(resolvedCompanyId, folderPath);
+        console.log('[ProjectSidebar] toggleSub - Loaded', children.length, 'children for subfolder:', folder.name, 'children:', children.map(c => c.name));
+        
+        // Update with loaded children (recursively update hierarchy)
+        // CRITICAL: Ensure all loaded children have their paths preserved
+        // This is essential for recursive rendering to work correctly at all levels
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              // Ensure children have paths - they should already have paths from loadFolderChildren
+              // but double-check to prevent issues with deeper nesting
+              const childrenWithPaths = children.map(child => {
+                // Validate and ensure child has a valid path
+                let childPath = child.path;
+                if (!childPath || (typeof childPath === 'string' && childPath.trim().length === 0)) {
+                  // Child missing path, construct it from parent path
+                  // This is critical for recursive rendering to work at all levels
+                  if (folderPath && folderPath.length > 0 && folderPath !== '/') {
+                    childPath = `${folderPath}/${child.name}`;
+                  } else {
+                    childPath = child.name;
+                  }
+                  console.warn('[ProjectSidebar] toggleSub - Child missing path, constructed:', childPath, 'for child:', child.name, 'parent path:', folderPath);
+                }
+                
+                // Normalize child path to ensure consistency
+                if (childPath && typeof childPath === 'string') {
+                  childPath = childPath.replace(/^\/+/, '').replace(/\/+/g, '/').trim();
+                  childPath = childPath.replace(/\/+$/, '');
+                }
+                
+                // Final validation - path should never be empty
+                if (!childPath || childPath.length === 0) {
+                  console.error('[ProjectSidebar] toggleSub - CRITICAL: Cannot construct valid path for child:', child.name, 'parent path:', folderPath);
+                  childPath = child.name || '';
+                }
+                
+                return { 
+                  ...child, 
+                  path: childPath 
+                };
+              });
+              
+              return { 
+                ...f, 
+                children: childrenWithPaths, 
+                path: folderPath, 
+                loading: false, 
+                error: null,
+                expanded: true 
+              };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+      } catch (error) {
+        console.error('[ProjectSidebar] toggleSub - Error loading subfolder children:', error);
+        // Set error state (recursively update hierarchy)
+        setHierarchy(prev => {
+          const updateFolder = (folders) => folders.map(f => {
+            if (f.id === id) {
+              return { ...f, children: [], loading: false, error: error.message };
+            }
+            if (f.children) {
+              return { ...f, children: updateFolder(f.children) };
+            }
+            return f;
+          });
+          return updateFolder(prev);
+        });
+      }
+    }
+    
+    setExpandedSubs(prev => {
+      const next = { ...prev, [id]: nextOpen };
+      if (nextOpen) lastExpandedSubIdRef.current = id;
+      else if (lastExpandedSubIdRef.current === id) lastExpandedSubIdRef.current = null;
+      return next;
+    });
     setSpinSubs(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   };
+
+  // Web: publish breadcrumb based on sidebar expansion/selection so it updates even outside HomeScreen.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    if (companiesMode) return;
+    if (templatesMode || controlTypesMode) return;
+
+    const resolveLabel = (node, fallback) => {
+      try {
+        const text = String(node?.name || node?.title || node?.label || '').trim();
+        if (text) return text;
+        const idText = String(node?.id || '').trim();
+        return idText || fallback;
+      } catch (_e) {
+        return fallback;
+      }
+    };
+
+    const formatProjectLabel = (p) => {
+      try {
+        const pid = String(p?.id || '').trim();
+        const pname = String(p?.name || '').trim();
+        const combined = `${pid}${pid && pname ? ' — ' : ''}${pname}`.trim();
+        return combined.replace(/^—\s*/, '') || 'Projekt';
+      } catch (_e) {
+        return 'Projekt';
+      }
+    };
+
+    const getActiveGroup = () => {
+      try {
+        const preferredId = lastExpandedGroupIdRef.current;
+        if (preferredId && expandedGroups?.[preferredId]) {
+          return (filteredGroups || hierarchy || []).find((g) => g && String(g.id) === String(preferredId)) || null;
+        }
+        const openId = Object.keys(expandedGroups || {}).find((k) => expandedGroups?.[k]);
+        if (!openId) return null;
+        return (filteredGroups || hierarchy || []).find((g) => g && String(g.id) === String(openId)) || null;
+      } catch (_e) {
+        return null;
+      }
+    };
+
+    const getActiveSub = (group) => {
+      try {
+        const subs = Array.isArray(group?.children) ? group.children : [];
+        const preferredId = lastExpandedSubIdRef.current;
+        if (preferredId && expandedSubs?.[preferredId]) {
+          const hit = subs.find((s) => s && String(s.id) === String(preferredId));
+          if (hit) return hit;
+        }
+        const openId = Object.keys(expandedSubs || {}).find((k) => expandedSubs?.[k] && subs.some((s) => s && String(s.id) === String(k)));
+        if (!openId) return null;
+        return subs.find((s) => s && String(s.id) === String(openId)) || null;
+      } catch (_e) {
+        return null;
+      }
+    };
+
+    const selected = selectedProjectBreadcrumb;
+    const group = selected?.group || getActiveGroup();
+    const sub = selected?.sub || (group ? getActiveSub(group) : null);
+    const project = selected?.project || null;
+
+    const segments = [{ label: 'Startsida', target: { kind: 'dashboard' } }];
+    if (group) segments.push({ label: resolveLabel(group, 'Huvudmapp'), target: { kind: 'main', mainId: group.id } });
+    if (group && sub) segments.push({ label: resolveLabel(sub, 'Undermapp'), target: { kind: 'sub', mainId: group.id, subId: sub.id } });
+    if (project && project.id != null) segments.push({ label: formatProjectLabel(project), target: { kind: 'project', projectId: String(project.id) } });
+
+    publishHomeBreadcrumbSegments(segments);
+  }, [companiesMode, templatesMode, controlTypesMode, hierarchy, filteredGroups, expandedGroups, expandedSubs, selectedProjectBreadcrumb]);
 
   if (loading) {
     return (
@@ -498,6 +1319,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           setAddCompanySaving(false);
           return;
         }
+        
+        // After company is created, instruct admin to link an existing SharePoint site.
+        const msg = `✅ Företag skapat!\n\n` +
+          `Nästa steg: koppla en redan existerande SharePoint-site.\n\n` +
+          `Gå till Admin → Företag → välj företaget → "Koppla SharePoint Site".`;
+        try { if (typeof window !== 'undefined') window.alert(msg); } catch (_e) {}
+        console.log('[ProjectSidebar] Company created. Link SharePoint site via ManageCompany.');
       } catch (e) {
         console.error('[debug] provisionCompanyRemote threw', e);
         const rawCode = e && e.code ? String(e.code) : '';
@@ -548,6 +1376,15 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
             setCompanies(prev);
           }
 
+          // I Hantera användare vill vi visa användarräknare per företag.
+          // Uppdatera-knappen ska därför trigga en kontrollerad omhämtning (utan burst).
+          try {
+            if (memberSearchMode) {
+              setMemberFetchErrors({});
+              setMembersPrefetchNonce((n) => n + 1);
+            }
+          } catch (_e) {}
+
           // If we show members and some companies are expanded, refresh those member lists
           if (showMembers && expandedCompanies) {
             Object.keys(expandedCompanies).forEach(async (compId) => {
@@ -562,12 +1399,19 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           return;
         }
 
-        // Project mode: re-fetch hierarchy for current companyId without hiding UI
+        // Project mode: re-fetch ALL root folders from SharePoint (no phase filtering)
         const prevH = Array.isArray(hierarchy) ? hierarchy : [];
-        const items = await fetchHierarchy(companyId);
-        if (Array.isArray(items) && items.length > 0) setHierarchy(items);
-        else {
-          showToast('Uppdateringen gav inga nya projekt.');
+        try {
+          const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+          if (Array.isArray(sharePointFolders) && sharePointFolders.length > 0) {
+            setHierarchy(sharePointFolders);
+          } else {
+            showToast('Uppdateringen gav inga nya mappar.');
+            setHierarchy(prevH);
+          }
+        } catch (error) {
+          console.error('[ProjectSidebar] Error refreshing SharePoint hierarchy:', error);
+          showToast('Kunde inte uppdatera mappstruktur från SharePoint.');
           setHierarchy(prevH);
         }
         return;
@@ -588,7 +1432,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
   };
 
   return (
-    <div style={{ width: 320, minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', overflowX: 'hidden', borderRight: '1px solid #ddd', padding: 16, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative', boxSizing: 'border-box', flexShrink: 0 }}>
+    <div style={{ width: 320, minWidth: 280, background: '#f7f7f7', height: '100vh', overflowY: 'auto', overflowX: 'hidden', borderRight: '1px solid #ddd', padding: 0, fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', position: 'relative', boxSizing: 'border-box', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
       {addDialogOpen && (
         <div
           style={{
@@ -676,68 +1520,74 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {iconName ? (
-            <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name={iconName} size={13} color="#fff" />
+      {(() => {
+        // Visa normal rubrik (fasväljaren, hem- och uppdatera-knapparna finns nu i GlobalPhaseToolbar)
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingLeft: 16, paddingRight: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {iconName ? (
+                <div style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: iconColor || '#1976D2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={iconName} size={13} color="#fff" />
+                </div>
+              ) : null}
+              <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
+              {templatesMode && templateFetchErrorCount > 0 ? (
+                <span title={`Mallfel: ${templateFetchErrorCount}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, borderRadius: 999, padding: '0 6px', backgroundColor: '#D32F2F', color: '#fff', fontSize: 12, fontWeight: 700 }}>
+                  {templateFetchErrorCount}
+                </span>
+              ) : null}
             </div>
-          ) : null}
-          <h3 style={{ margin: 0, fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, letterSpacing: 0.2, color: '#222', fontSize: 20 }}>{title}</h3>
-          {templatesMode && templateFetchErrorCount > 0 ? (
-            <span title={`Mallfel: ${templateFetchErrorCount}`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, borderRadius: 999, padding: '0 6px', backgroundColor: '#D32F2F', color: '#fff', fontSize: 12, fontWeight: 700 }}>
-              {templateFetchErrorCount}
-            </span>
-          ) : null}
-        </div>
-        {companiesMode ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={() => {
-                setSpinHome(n => n + 1);
-                handleGoHome();
-              }}
-              accessibilityLabel="Hem"
-            >
-              <Ionicons
-                name="home-outline"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: `rotate(${spinHome * 360}deg)`,
-                  transition: 'transform 0.4s ease'
-                }}
-              />
-            </TouchableOpacity>
+            {companiesMode ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
+                <TouchableOpacity
+                  style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+                  onPress={() => {
+                    setSpinHome(n => n + 1);
+                    handleGoHome();
+                  }}
+                  accessibilityLabel="Hem"
+                >
+                  <Ionicons
+                    name="home-outline"
+                    size={18}
+                    color="#1976D2"
+                    style={{
+                      transform: `rotate(${spinHome * 360}deg)`,
+                      transition: 'transform 0.4s ease'
+                    }}
+                  />
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
-              onPress={() => {
-                setSpinRefresh(n => n + 1);
-                handleHardRefresh();
-              }}
-              accessibilityLabel="Uppdatera"
-            >
-              <Ionicons
-                name="refresh"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: `rotate(${spinRefresh * 360}deg)`,
-                  transition: 'transform 0.4s ease'
-                }}
-              />
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ padding: 6, borderRadius: 8, marginRight: 6, backgroundColor: 'transparent' }}
+                  onPress={() => {
+                    setSpinRefresh(n => n + 1);
+                    handleHardRefresh();
+                  }}
+                  accessibilityLabel="Uppdatera"
+                >
+                  <Ionicons
+                    name="refresh"
+                    size={18}
+                    color="#1976D2"
+                    style={{
+                      transform: `rotate(${spinRefresh * 360}deg)`,
+                      transition: 'transform 0.4s ease'
+                    }}
+                  />
+                </TouchableOpacity>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        );
+      })()}
         {/* Toast/snackbar (döljs när dialogen för nytt företag är öppen) */}
         {toast.visible && !addDialogOpen ? (
           <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '8px 12px', borderRadius: 6, fontSize: 13, zIndex: 40 }}>
             {toast.message}
           </div>
         ) : null}
+      <div style={{ padding: '0 16px', flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
       <input
         type="text"
         placeholder={searchPlaceholder}
@@ -778,7 +1628,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           ) : null}
         </>
       ) : null}
-      <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
+        <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
       {companiesMode ? (<>
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {(() => {
@@ -831,12 +1681,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         cursor: 'pointer',
                         userSelect: 'none',
                         flex: 1,
-                        background: hoveredCompany === company.id ? '#eee' : 'transparent',
+                        background: hoveredCompany === company.id ? HOVER_BG : 'transparent',
                         borderRadius: 4,
                         padding: '2px 4px',
                         borderWidth: 1,
                         borderStyle: 'solid',
-                        borderColor: hoveredCompany === company.id ? '#1976D2' : 'transparent',
+                        borderColor: hoveredCompany === company.id ? PRIMARY_BLUE : 'transparent',
                         transition: 'background 0.15s, border-color 0.15s',
                         boxSizing: 'border-box',
                       }}
@@ -847,7 +1697,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                         border: 'none',
                         padding: 0,
                         cursor: 'pointer',
-                        color: '#222',
+                        color: hoveredCompany === company.id ? PRIMARY_BLUE : '#222',
                         textAlign: 'left',
                         fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
                         fontSize: 15,
@@ -904,7 +1754,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           <Ionicons
                             name="briefcase"
                             size={16}
-                            color={company.profile && company.profile.deleted ? '#999' : '#555'}
+                            color={hoveredCompany === company.id ? PRIMARY_BLUE : (company.profile && company.profile.deleted ? '#999' : '#555')}
                             style={{
                               transform: expandedCompanies[company.id] ? 'rotate(360deg)' : 'rotate(0deg)',
                               transition: 'transform 0.4s ease'
@@ -948,7 +1798,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             return ` (${used})`;
                           })()}
                         </span>
-                        {effectiveGlobalAdmin ? (
+                        {isSuperadminViewer ? (
                           <span
                             style={{
                               marginLeft: 8,
@@ -960,19 +1810,46 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               boxSizing: 'border-box',
                               flexShrink: 0,
                             }}
-                            title={companyEnabled ? 'Företaget är aktivt (visas bara för superadmin)' : 'Företaget är pausat/inaktivt (visas bara för superadmin)'}
+                            title={(() => {
+                              const deleted = !!(company.profile && company.profile.deleted);
+                              if (deleted) return 'Företaget är dolt (visas bara för superadmin)';
+                              return companyEnabled ? 'Företaget är aktivt (visas bara för superadmin)' : 'Företaget är pausat/inaktivt (visas bara för superadmin)';
+                            })()}
                           >
                             <span
                               style={{
-                                width: 12,
-                                height: 12,
                                 borderRadius: 999,
-                                backgroundColor: companyEnabled ? '#4CAF50' : '#E53935',
-                                border: '1px solid rgba(0,0,0,0.08)',
+                                padding: '2px 8px',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                lineHeight: '16px',
+                                backgroundColor: (() => {
+                                  const deleted = !!(company.profile && company.profile.deleted);
+                                  if (deleted) return '#F3F4F6';
+                                  return companyEnabled ? '#E8F5E9' : '#FFEBEE';
+                                })(),
+                                border: (() => {
+                                  const deleted = !!(company.profile && company.profile.deleted);
+                                  if (deleted) return '1px solid #E5E7EB';
+                                  return companyEnabled ? '1px solid #C8E6C9' : '1px solid #FFCDD2';
+                                })(),
+                                color: (() => {
+                                  const deleted = !!(company.profile && company.profile.deleted);
+                                  if (deleted) return '#6B7280';
+                                  return companyEnabled ? '#2E7D32' : '#C62828';
+                                })(),
                                 boxSizing: 'border-box',
-                                display: 'inline-block',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
                               }}
-                            />
+                            >
+                              {(() => {
+                                const deleted = !!(company.profile && company.profile.deleted);
+                                if (deleted) return 'Dolt';
+                                return companyEnabled ? 'Aktiv' : 'Inaktiv';
+                              })()}
+                            </span>
                           </span>
                         ) : null}
                       </button>
@@ -985,13 +1862,11 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                       items={(() => {
                         const enabled = companyEnabled;
                         const deleted = !!(company.profile && company.profile.deleted);
+                        const isProtectedCompany = String(company.id || '').trim() === 'MS Byggsystem';
 
-                        // I Kontrolltyper-läget använder vi ett enklare menyupplägg
-                        // där huvudfokus är att lägga till kontrolltyper.
+                        // I Kontrolltyper-läget: ingen context-meny för företag (använd knappen i mittenpanelen istället)
                         if (controlTypesMode) {
-                          return [
-                            { key: 'addControlType', label: 'Lägg till kontrolltyp', icon: '➕' },
-                          ];
+                          return [];
                         }
 
                         // I Mallar-läget: företagsmenyn ska bara erbjuda "Lägg till mall".
@@ -1003,17 +1878,20 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
 
                         const base = [{ key: 'addUser', label: 'Lägg till användare', icon: '➕' }];
                         if (!effectiveGlobalAdmin || !allowCompanyManagementActions) return base;
+                        if (!isSuperadminViewer) return base;
                         return base.concat([
                           { key: 'rename', label: 'Byt företagsnamn', icon: '✏️' },
                           { key: 'setLimit', label: 'Justera antal användare (userLimit)', icon: '👥' },
+                          ...(deleted ? [{ key: 'unhideCompany', label: 'Gör synligt igen', icon: '👁️' }] : []),
                           { key: 'activate', label: 'Aktivera företag', icon: '▶️', disabled: enabled },
                           { key: 'pause', label: 'Pausa företag', icon: '⏸️', disabled: !enabled },
-                          { key: 'deleteCompany', label: deleted ? 'Radera företag' : 'Dölj företag', icon: '🗑️', danger: true },
+                          { key: 'deleteCompany', label: deleted ? 'Radera företag' : 'Dölj företag', icon: '🗑️', danger: true, disabled: isProtectedCompany || (!deleted && enabled) },
                         ]);
                       })()}
                       onSelect={async (item) => {
                         if (!contextMenuCompany) return;
                         const compId = contextMenuCompany.id;
+                        const isProtectedCompany = String(compId || '').trim() === 'MS Byggsystem';
                         if (controlTypesMode && item.key === 'addControlType') {
                           setContextMenuVisible(false);
                           if (onSelectProject) {
@@ -1034,13 +1912,40 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           setEditingUser({ companyId: compId, member: {}, create: true });
                           setContextMenuVisible(false);
                           return;
+                        } else if (item.key === 'unhideCompany') {
+                          const conf = (typeof window !== 'undefined') ? window.confirm('Gör företaget ' + compId + ' synligt i listan igen?') : true;
+                          if (!conf) return;
+                          showToastSticky('Laddar…');
+                          try {
+                            const res = await setCompanyStatusRemote({ companyId: compId, deleted: false });
+                            const ok = !!(res && (res.ok === true || res.success === true));
+                            if (!ok) {
+                              showToast('Kunde inte göra företaget synligt (servern avvisade ändringen).');
+                              return;
+                            }
+                            try { Alert.alert('Ok', 'Företaget är nu synligt i listan.'); } catch(_e) { try { window.alert('Ok'); } catch(_) {} }
+                            try {
+                              const updated = await fetchCompanyProfile(compId);
+                              setCompanies(prev => prev.map(c => c.id === compId ? { ...c, profile: updated || c.profile } : c));
+                            } catch(_e) {}
+                          } catch (e) {
+                            const rawCode = e && e.code ? String(e.code) : '';
+                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                            showToast('Kunde inte göra företaget synligt: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte göra företaget synligt: ' + combined); } catch(_) { try { window.alert('Kunde inte göra företaget synligt'); } catch(__) {} }
+                          } finally {
+                            hideToast();
+                          }
                         } else if (item.key === 'activate' || item.key === 'pause') {
                           const wantEnable = item.key === 'activate';
                           const label = wantEnable ? 'aktivera' : 'pausa';
                           const conf = (typeof window !== 'undefined') ? window.confirm(label.charAt(0).toUpperCase() + label.slice(1) + ' företaget ' + compId + '?') : true;
                           if (!conf) return;
+                          showToastSticky('Laddar…');
                           try {
-                            const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable });
+                            // Aktivering ska alltid göra bolaget synligt igen.
+                            const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable, ...(wantEnable ? { deleted: false } : {}) });
                             const ok = !!(res && (res.ok === true || res.success === true));
                             if (!ok) {
                               showToast('Kunde inte ändra företagsstatus (servern avvisade ändringen).');
@@ -1057,16 +1962,31 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
                             showToast('Kunde inte ändra företagsstatus: ' + combined);
                             try { Alert.alert('Fel', 'Kunde inte ändra status: ' + combined); } catch(_) { try { window.alert('Kunde inte ändra status'); } catch(__) {} }
+                          } finally {
+                            hideToast();
                           }
                         } else if (item.key === 'deleteCompany') {
+                          if (isProtectedCompany) {
+                            showToast('MS Byggsystem kan aldrig raderas.');
+                            return;
+                          }
                           const prof = contextMenuCompany && contextMenuCompany.profile ? contextMenuCompany.profile : {};
                           const alreadyDeleted = !!prof.deleted;
 
                           if (!alreadyDeleted) {
+                            // Dölja ska bara gå när bolaget är pausat (för att undvika att dölja aktiva bolag av misstag).
+                            try {
+                              const enabledNow = !prof.deleted && (typeof prof.enabled === 'boolean' ? !!prof.enabled : true);
+                              if (enabledNow) {
+                                showToast('Pausa företaget först innan du döljer det.');
+                                return;
+                              }
+                            } catch (_e) {}
                             const conf = (typeof window !== 'undefined')
                               ? window.confirm('Dölj företaget ' + compId + '? Företaget pausas och döljs i listan. Du kan visa det igen via "Visa dolda företag".')
                               : true;
                             if (!conf) return;
+                            showToastSticky('Laddar…');
                             try {
                               const res = await setCompanyStatusRemote({ companyId: compId, deleted: true, enabled: false });
                               const ok = !!(res && (res.ok === true || res.success === true));
@@ -1095,6 +2015,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
                               showToast('Kunde inte radera företaget: ' + combined);
                               try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget.'); } catch (__ ) {} }
+                            } finally {
+                              hideToast();
                             }
                           } else {
                             const conf = (typeof window !== 'undefined')
@@ -1105,6 +2027,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                 )
                               : true;
                             if (!conf) return;
+                            showToastSticky('Laddar…');
                             try {
                               const res = await purgeCompanyRemote({ companyId: compId });
                               const ok = !!(res && (res.ok === true || res.success === true));
@@ -1124,6 +2047,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                               const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
                               showToast('Kunde inte radera företaget permanent: ' + combined);
                               try { Alert.alert('Fel', 'Kunde inte radera företaget permanent: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget permanent.'); } catch (__ ) {} }
+                            } finally {
+                              hideToast();
                             }
                           }
                         } else if (item.key === 'setLimit') {
@@ -1154,6 +2079,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                           }
 
                           try {
+                            showToastSticky('Laddar…');
                             const res = await setCompanyUserLimitRemote({ companyId: compId, userLimit: parsed });
                             const ok = !!(res && (res.ok === true || res.success === true));
                             if (!ok) {
@@ -1171,6 +2097,8 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
                             showToast('Kunde inte uppdatera userLimit: ' + combined);
                             try { Alert.alert('Fel', 'Kunde inte uppdatera userLimit: ' + combined); } catch(_) { try { window.alert('Kunde inte uppdatera userLimit.'); } catch(__) {} }
+                          } finally {
+                            hideToast();
                           }
                         } else if (item.key === 'rename') {
                           if (typeof window === 'undefined') return;
@@ -1406,10 +2334,10 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                     padding: '4px 4px',
                                     paddingLeft: 24,
                                     borderRadius: 4,
-                                    backgroundColor: isSelected ? '#e3f2fd' : (isHovered ? '#f5f5f5' : 'transparent'),
+                                    backgroundColor: isSelected ? '#e3f2fd' : (isHovered ? HOVER_BG : 'transparent'),
                                     borderWidth: 1,
                                     borderStyle: 'solid',
-                                    borderColor: isSelected ? '#1976D2' : (isHovered ? '#ccc' : 'transparent'),
+                                    borderColor: isSelected ? PRIMARY_BLUE : (isHovered ? PRIMARY_BLUE : 'transparent'),
                                     transition: 'background 0.15s, border-color 0.15s',
                                   }}
                                   onMouseEnter={() => setHoveredTemplateKey(key)}
@@ -1418,14 +2346,14 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   <Ionicons
                                     name={icon}
                                     size={14}
-                                    color={color}
+                                    color={isHovered ? PRIMARY_BLUE : color}
                                     style={{
                                       marginRight: 8,
                                       transform: `rotate(${spin * 360}deg)`,
                                       transition: 'transform 0.4s ease',
                                     }}
                                   />
-                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>
+                                  <span style={{ color: isHidden ? '#9E9E9E' : (isHovered ? PRIMARY_BLUE : '#333'), fontStyle: isHidden ? 'italic' : 'normal' }}>
                                     {count > 0 ? `${type} (${count})` : type}
                                   </span>
                                   <span
@@ -1455,7 +2383,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                         <li key={tpl.id}>
                                           <button
                                             style={{
-                                              background: isHoveredItem ? '#eee' : 'transparent',
+                                              background: 'transparent',
                                               border: 'none',
                                               padding: 0,
                                               cursor: 'pointer',
@@ -1497,11 +2425,12 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                                 padding: '3px 4px',
                                                 paddingLeft: 32,
                                                 borderRadius: 4,
+                                                backgroundColor: isHoveredItem ? HOVER_BG : 'transparent',
                                                 borderWidth: 1,
                                                 borderStyle: 'solid',
-                                                borderColor: isHoveredItem ? '#1976D2' : 'transparent',
+                                                borderColor: isHoveredItem ? PRIMARY_BLUE : 'transparent',
                                                 transition: 'background 0.15s, border 0.15s',
-                                                color: isHiddenItem ? '#9E9E9E' : '#444',
+                                                color: isHiddenItem ? '#9E9E9E' : (isHoveredItem ? PRIMARY_BLUE : '#444'),
                                                 fontStyle: isHiddenItem ? 'italic' : 'normal',
                                               }}
                                             >
@@ -1678,10 +2607,10 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                     padding: '4px 4px',
                                     paddingLeft: 24,
                                     borderRadius: 4,
-                                    backgroundColor: isHovered ? '#f5f5f5' : 'transparent',
+                                    backgroundColor: isHovered ? HOVER_BG : 'transparent',
                                     borderWidth: 1,
                                     borderStyle: 'solid',
-                                    borderColor: isHovered ? '#1976D2' : 'transparent',
+                                    borderColor: isHovered ? PRIMARY_BLUE : 'transparent',
                                     transition: 'background 0.15s, border-color 0.15s',
                                   }}
                                   onMouseEnter={() => setHoveredControlTypeKey(key)}
@@ -1690,10 +2619,10 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   <Ionicons
                                     name={icon}
                                     size={14}
-                                    color={color}
+                                    color={isHovered ? PRIMARY_BLUE : color}
                                     style={{ marginRight: 8 }}
                                   />
-                                  <span style={{ color: isHidden ? '#9E9E9E' : '#333', fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
+                                  <span style={{ color: isHidden ? '#9E9E9E' : (isHovered ? PRIMARY_BLUE : '#333'), fontStyle: isHidden ? 'italic' : 'normal' }}>{type}</span>
                                   <span
                                     style={{
                                       marginLeft: 'auto',
@@ -1740,6 +2669,57 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                             );
                           }
                           const roleState = expandedMemberRoles[company.id] || {};
+
+                          const renderMemberRow = (m, groupKey) => {
+                            const memKey = String(m?.uid || m?.id || '');
+                            const hoverKey = `${company.id}:${groupKey}:${memKey}`;
+                            const isHoveredUser = hoveredUser === hoverKey;
+                            const disabled = isMemberDisabled(m);
+                            const name = getMemberDisplayName(m);
+
+                            return (
+                              <li key={memKey}>
+                                <div
+                                  onMouseEnter={() => setHoveredUser(hoverKey)}
+                                  onMouseLeave={() => setHoveredUser(null)}
+                                  onContextMenu={(e) => {
+                                    try { e.preventDefault(); } catch(_) {}
+                                    const x = (e && e.clientX) ? e.clientX : 60;
+                                    const y = (e && e.clientY) ? e.clientY : 60;
+                                    setUserContextMenu({ companyId: company.id, member: m, x, y });
+                                  }}
+                                  onClick={() => {
+                                    try {
+                                      if (onSelectProject) onSelectProject({ companyId: company.id, profile: company.profile, member: m });
+                                    } catch (_e) {}
+                                  }}
+                                  onDoubleClick={() => {
+                                    try { setEditingUser({ companyId: company.id, member: m }); } catch (_e) {}
+                                  }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    padding: '2px 4px',
+                                    borderRadius: 4,
+                                    background: isHoveredUser ? HOVER_BG : 'transparent',
+                                    borderWidth: 1,
+                                    borderStyle: 'solid',
+                                    borderColor: isHoveredUser ? PRIMARY_BLUE : 'transparent',
+                                    transition: 'background 0.15s, border-color 0.15s',
+                                    cursor: 'pointer',
+                                    opacity: disabled ? 0.65 : 1,
+                                  }}
+                                >
+                                  <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: '18px', color: disabled ? '#9E9E9E' : (isHoveredUser ? PRIMARY_BLUE : '#1F2937'), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {name}
+                                    </div>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          };
+
                           return (
                             <>
                               <li>
@@ -1747,7 +2727,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   onClick={() => setExpandedMemberRoles(prev => ({ ...prev, [company.id]: { ...(prev[company.id] || {}), admin: !prev[company.id]?.admin } }))}
                                   style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 0' }}
                                 >
-                                  <span style={{ fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ fontWeight: 800, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, color: '#111' }}>
                                     <Ionicons
                                       name="shield-checkmark"
                                       size={14}
@@ -1757,51 +2737,13 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                         transition: 'transform 0.4s ease'
                                       }}
                                     />
-                                    Admin ({admins.length})
+                                    Administratörer ({admins.length})
                                   </span>
                                 </div>
                                 {roleState.admin && (
-                                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                                    {admins.length === 0 && (<li style={{ color: '#D32F2F', fontSize: 13 }}>Ingen admin skapad.</li>)}
-                                    {admins.map(m => {
-                                      const memKey = String(m.uid || m.id || '');
-                                      const isHoveredUser = hoveredUser === `${company.id}:${memKey}`;
-                                      return (
-                                        <li key={memKey}>
-                                          <div
-                                            onMouseEnter={() => setHoveredUser(`${company.id}:${memKey}`)}
-                                            onMouseLeave={() => setHoveredUser(null)}
-                                            onContextMenu={(e) => {
-                                              try { e.preventDefault(); } catch(_) {}
-                                              const x = (e && e.clientX) ? e.clientX : 60;
-                                              const y = (e && e.clientY) ? e.clientY : 60;
-                                              setUserContextMenu({ companyId: company.id, member: m, x, y });
-                                            }}
-                                            onClick={() => {
-                                              // open edit form
-                                              setEditingUser({ companyId: company.id, member: m });
-                                            }}
-                                            style={{
-                                              fontSize: 14,
-                                              color: '#333',
-                                              display: 'block',
-                                              borderRadius: 4,
-                                              padding: '4px 4px',
-                                              paddingLeft: 24,
-                                              background: isHoveredUser ? '#eee' : 'transparent',
-                                              borderWidth: 1,
-                                              borderStyle: 'solid',
-                                              borderColor: isHoveredUser ? '#1976D2' : 'transparent',
-                                              transition: 'background 0.15s, border 0.15s',
-                                              cursor: 'pointer',
-                                              whiteSpace: 'nowrap',
-                                            }}
-                                          >
-                                            <span style={{ fontWeight: isHoveredUser ? '700' : '400' }}>{m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || m.uid || m.id}</span>
-                                          </div>
-                                        </li>
-                                      );
-                                    })}
+                                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {admins.length === 0 && (<li style={{ color: '#D32F2F', fontSize: 13 }}>Ingen administratör skapad.</li>)}
+                                    {admins.map(m => renderMemberRow(m, 'admin'))}
                                   </ul>
                                 )}
                               </li>
@@ -1811,7 +2753,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   onClick={() => setExpandedMemberRoles(prev => ({ ...prev, [company.id]: { ...(prev[company.id] || {}), users: !prev[company.id]?.users } }))}
                                   style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 0' }}
                                 >
-                                  <span style={{ fontWeight: 700, fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ fontWeight: 800, fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, color: '#111' }}>
                                     <Ionicons
                                       name="person"
                                       size={14}
@@ -1825,46 +2767,9 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                                   </span>
                                 </div>
                                 {roleState.users && (
-                                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
+                                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     {usersList.length === 0 && (<li style={{ color: '#D32F2F', fontSize: 13 }}>Ingen användare skapad.</li>)}
-                                    {usersList.map(m => {
-                                      const memKey = String(m.uid || m.id || '');
-                                      const isHoveredUser = hoveredUser === `${company.id}:${memKey}`;
-                                      return (
-                                        <li key={memKey}>
-                                          <div
-                                            onMouseEnter={() => setHoveredUser(`${company.id}:${memKey}`)}
-                                            onMouseLeave={() => setHoveredUser(null)}
-                                            onContextMenu={(e) => {
-                                              try { e.preventDefault(); } catch(_) {}
-                                              const x = (e && e.clientX) ? e.clientX : 60;
-                                              const y = (e && e.clientY) ? e.clientY : 60;
-                                              setUserContextMenu({ companyId: company.id, member: m, x, y });
-                                            }}
-                                            onClick={() => {
-                                              setEditingUser({ companyId: company.id, member: m });
-                                            }}
-                                            style={{
-                                              fontSize: 14,
-                                              color: '#333',
-                                              display: 'block',
-                                              borderRadius: 4,
-                                              padding: '4px 4px',
-                                              paddingLeft: 24,
-                                              background: isHoveredUser ? '#eee' : 'transparent',
-                                              borderWidth: 1,
-                                              borderStyle: 'solid',
-                                              borderColor: isHoveredUser ? '#1976D2' : 'transparent',
-                                              transition: 'background 0.15s, border 0.15s',
-                                              cursor: 'pointer',
-                                              whiteSpace: 'nowrap',
-                                            }}
-                                          >
-                                            <span style={{ fontWeight: isHoveredUser ? '700' : '400' }}>{m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || m.uid || m.id}</span>
-                                          </div>
-                                        </li>
-                                      );
-                                    })}
+                                    {usersList.map(m => renderMemberRow(m, 'user'))}
                                   </ul>
                                 )}
                               </li>
@@ -1885,13 +2790,19 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           x={userContextMenu.x}
           y={userContextMenu.y}
           onClose={() => setUserContextMenu(null)}
-          items={[{ key: 'delete', label: 'Ta bort användare', danger: true, icon: '🗑️' }]}
+          items={[{ key: 'delete', label: 'Ta bort användare', danger: true, icon: '🗑️', disabled: String(userContextMenu?.member?.email || '').trim().toLowerCase() === 'marcus@msbyggsystem.se' }]}
           onSelect={async (item) => {
             if (!userContextMenu || item.key !== 'delete') return;
             const compId = userContextMenu.companyId;
             const member = userContextMenu.member || {};
             const uid = member.uid || member.id;
             if (!uid || !compId) return;
+            const emailLower = String(member.email || '').trim().toLowerCase();
+            if (emailLower === 'marcus@msbyggsystem.se') {
+              try { Alert.alert('Skyddad användare', 'Kontot marcus@msbyggsystem.se kan aldrig raderas.'); } catch(_e) { try { window.alert('Kontot marcus@msbyggsystem.se kan aldrig raderas.'); } catch(_) {} }
+              setUserContextMenu(null);
+              return;
+            }
             const name = member.displayName || `${member.firstName || ''} ${member.lastName || ''}`.trim() || member.email || uid;
             const confirmed = (typeof window !== 'undefined') ? window.confirm(`Ta bort användaren ${name} från ${compId}? Detta tar även bort Auth-kontot.`) : true;
             if (!confirmed) return;
@@ -1925,7 +2836,7 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         onClose={() => setEditingUser(null)}
         saving={savingUser}
         errorMessage={editingUserError}
-        onSave={async ({ firstName, lastName, email, role, password }) => {
+        onSave={async ({ firstName, lastName, email, role, password, avatarPreset, avatarFile }) => {
           if (!editingUser) return;
           const displayName = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim() || (email ? email.split('@')[0] : '');
           setEditingUserError('');
@@ -1933,7 +2844,16 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
           try {
             if (editingUser.create) {
               // Create new user via callable
-              const createRes = await createUserRemote({ companyId: editingUser.companyId, email: String(email || '').trim().toLowerCase(), displayName, role: role || 'user' });
+              const createRes = await createUserRemote({
+                companyId: editingUser.companyId,
+                email: String(email || '').trim().toLowerCase(),
+                displayName,
+                role: role || 'user',
+                password: password || undefined,
+                firstName: (firstName || '').trim(),
+                lastName: (lastName || '').trim(),
+                avatarPreset: avatarPreset || undefined,
+              });
               const newUid = createRes && (createRes.uid || (createRes.data && createRes.data.uid)) ? (createRes.uid || (createRes.data && createRes.data.uid)) : null;
               const tempPassword = createRes && (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) ? (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) : null;
               if (!newUid) {
@@ -1948,14 +2868,17 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 return;
               }
               if (newUid) {
-                // If role or password specified different from default, call updateUserRemote to set them
-                const needRoleChange = role && role !== 'user';
-                const needPassword = password && password.length > 0;
-                if (needRoleChange || needPassword) {
-                  try { await updateUserRemote({ companyId: editingUser.companyId, uid: newUid, displayName, email, role: role || 'user', password: needPassword ? password : undefined }); } catch(_e) {}
+                let photoURL = undefined;
+                if (avatarFile) {
+                  try {
+                    photoURL = await uploadUserAvatar({ companyId: editingUser.companyId, uid: newUid, file: avatarFile });
+                    await updateUserRemote({ companyId: editingUser.companyId, uid: newUid, photoURL, avatarPreset: avatarPreset || undefined });
+                  } catch (_e) {
+                    // Non-blocking
+                  }
                 }
                 // update client-side users doc
-                try { await saveUserProfile(newUid, { displayName, email, firstName, lastName }); } catch(_e) {}
+                try { await saveUserProfile(newUid, { displayName, email, firstName, lastName, avatarPreset: avatarPreset || null, photoURL: photoURL || null }); } catch(_e) {}
                 try {
                   let mems = [];
                   try {
@@ -1968,15 +2891,28 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
                 } catch(_e) {}
               }
               setEditingUser(null);
-              try { Alert.alert('Ok', `Användare skapad. Temporärt lösenord: ${tempPassword || ''}`); } catch(_e) { try { window.alert('Användare skapad.'); } catch(_) {} }
+              const pwToShow = String(password || '').trim() || String(tempPassword || '').trim();
+              if (pwToShow) {
+                try { Alert.alert('Ok', `Användare skapad. Lösenord: ${pwToShow}`); } catch(_e) { try { window.alert('Användare skapad.'); } catch(_) {} }
+              } else {
+                try { Alert.alert('Ok', 'Användare skapad.'); } catch(_e) { try { window.alert('Användare skapad.'); } catch(_) {} }
+              }
             } else {
               // Edit existing user
               const uid = editingUser.member && (editingUser.member.uid || editingUser.member.id);
               if (!uid) return;
               const theRole = role || (editingUser.member && (editingUser.member.role || (editingUser.member.isAdmin ? 'admin' : 'user'))) || 'user';
               try {
-                await updateUserRemote({ companyId: editingUser.companyId, uid, displayName, email, role: theRole, password });
-                try { await saveUserProfile(uid, { displayName, email, firstName, lastName }); } catch(_e) {}
+                let photoURL = undefined;
+                if (avatarFile) {
+                  try {
+                    photoURL = await uploadUserAvatar({ companyId: editingUser.companyId, uid, file: avatarFile });
+                  } catch (_e) {
+                    photoURL = undefined;
+                  }
+                }
+                await updateUserRemote({ companyId: editingUser.companyId, uid, displayName, email, role: theRole, password, photoURL, avatarPreset: avatarPreset || undefined });
+                try { await saveUserProfile(uid, { displayName, email, firstName, lastName, avatarPreset: avatarPreset || null, photoURL: photoURL || null }); } catch(_e) {}
                 try {
                   if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
                     await auth.currentUser.getIdToken(true);
@@ -2044,91 +2980,351 @@ function ProjectSidebar({ onSelectProject, title = 'Projektlista', searchPlaceho
         </div>
       )}
       </> ) : (
+        // Show raw SharePoint structure - folders expand, project folders navigate
         <ul style={{ listStyle: 'none', padding: 0 }}>
           {filteredGroups.length === 0 && (
-            <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga projekt hittades.</li>
-          )}
-          {filteredGroups.map(group => {
-            const groupSpin = spinGroups[group.id] || 0;
-            const groupAngle = expandedGroups[group.id] ? (groupSpin * 360 + 90) : (groupSpin * 360);
-            return (
-            <li key={group.id}>
-              <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleGroup(group.id)}>
-                <span
-                  style={{
-                    color: '#222',
-                    fontSize: 18,
-                    fontWeight: 700,
-                    marginRight: 6,
-                    display: 'inline-block',
-                    transform: `rotate(${groupAngle}deg)`,
-                    transition: 'transform 0.4s ease',
-                  }}
-                >
-                  &gt;
-                </span>
-                <span style={{ fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', fontWeight: 700, fontSize: 16, letterSpacing: 0.1 }}>{group.name}</span>
-              </div>
-              {expandedGroups[group.id] && group.children.length > 0 && (
-                <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
-                  {group.children.map(sub => {
-                    const subSpin = spinSubs[sub.id] || 0;
-                    const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
-                    return (
-                    <li key={sub.id}>
-                      <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSub(sub.id)}>
-                        <span
-                          style={{
-                            color: '#222',
-                            fontSize: 15,
-                            fontWeight: 600,
-                            marginRight: 6,
-                            display: 'inline-block',
-                            transform: `rotate(${subAngle}deg)`,
-                            transition: 'transform 0.4s ease',
-                          }}
-                        >
-                          &gt;
-                        </span>
-                        <span style={{ fontWeight: 600, fontSize: 15 }}>{sub.name}</span>
-                      </div>
-                      {expandedSubs[sub.id] && sub.children.length > 0 && (
-                        <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
-                          {sub.children.map(project => (
-                            <li key={project.id}>
-                              <button
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  padding: 0,
-                                  cursor: 'pointer',
-                                  color: '#1976d2',
-                                  fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif',
-                                  fontSize: 15,
-                                  letterSpacing: 0.1,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  width: '100%',
-                                  justifyContent: 'space-between',
-                                }}
-                                onClick={() => onSelectProject && onSelectProject(project)}
-                              >
-                                <span>{project.name}</span>
-                                <span style={{ color: '#222', fontSize: 18, marginLeft: 8, display: 'inline-flex', alignItems: 'center' }}>&gt;</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                  })}
-                </ul>
+            <li style={{ textAlign: 'center', marginTop: 24 }}>
+              {search.trim() === '' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                  <div style={{ color: '#888', fontSize: 15, marginBottom: 8 }}>Inga mappar ännu</div>
+                </div>
+              ) : (
+                <div style={{ color: '#888', fontSize: 15 }}>Inga mappar hittades.</div>
               )}
             </li>
-          );
+          )}
+          {filteredGroups.map(group => {
+            const groupIsProject = isProjectFolder(group);
+            const groupSpin = spinGroups[group.id] || 0;
+            const groupAngle = expandedGroups[group.id] ? (groupSpin * 360 + 90) : (groupSpin * 360);
+            
+            return (
+              <li key={group.id}>
+                <div 
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    cursor: 'pointer', 
+                    userSelect: 'none',
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                  }} 
+                  onClick={() => {
+                    if (groupIsProject && onSelectProject) {
+                      const projectMetadata = extractProjectMetadata(group);
+                      if (projectMetadata) {
+                        onSelectProject({
+                          id: projectMetadata.id,
+                          name: projectMetadata.name,
+                          number: projectMetadata.number,
+                          fullName: projectMetadata.fullName,
+                          path: projectMetadata.path,
+                          type: 'project',
+                          ...group,
+                        });
+                      }
+                    } else {
+                      toggleGroup(group.id);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    if (Platform.OS !== 'web') return;
+                    try { e.preventDefault(); } catch(_e) {}
+                    const x = (e && e.clientX) ? e.clientX : 60;
+                    const y = (e && e.clientY) ? e.clientY : 60;
+                    setFolderContextMenu({ folder: group, x, y });
+                  }}
+                >
+                  {!groupIsProject && (
+                    <span
+                      style={{
+                        color: '#222',
+                        fontSize: 18,
+                        fontWeight: 700,
+                        marginRight: 6,
+                        display: 'inline-block',
+                        transform: `rotate(${groupAngle}deg)`,
+                        transition: 'transform 0.4s ease',
+                      }}
+                    >
+                      &gt;
+                    </span>
+                  )}
+                  {groupIsProject && (
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 5,
+                        backgroundColor: '#43A047',
+                        marginRight: 8,
+                        display: 'inline-block',
+                        border: '1px solid #bbb',
+                      }}
+                    />
+                  )}
+                  <span style={{ 
+                    fontFamily: 'Inter_700Bold, Inter, Arial, sans-serif', 
+                    fontWeight: expandedGroups[group.id] ? 700 : (groupIsProject ? 600 : 400), 
+                    fontSize: 16, 
+                    letterSpacing: 0.1,
+                    color: groupIsProject ? '#1976D2' : '#222',
+                  }}>{group.name}</span>
+                </div>
+                {!groupIsProject && expandedGroups[group.id] && (
+                  <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 4 }}>
+                    {group.loading ? (
+                      <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                        Laddar undermappar...
+                      </li>
+                    ) : group.error ? (
+                      <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                        Fel: {group.error}
+                      </li>
+                    ) : group.children && group.children.length > 0 ? (
+                      group.children.map(sub => {
+                        const subIsProject = isProjectFolder(sub);
+                        const subSpin = spinSubs[sub.id] || 0;
+                        const subAngle = expandedSubs[sub.id] ? (subSpin * 360 + 90) : (subSpin * 360);
+                        return (
+                          <li key={sub.id}>
+                            <div 
+                              style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', padding: '2px 4px' }} 
+                              onClick={() => {
+                                if (subIsProject && onSelectProject) {
+                                  const projectMetadata = extractProjectMetadata(sub);
+                                  if (projectMetadata) {
+                                    onSelectProject({
+                                      id: projectMetadata.id,
+                                      name: projectMetadata.name,
+                                      number: projectMetadata.number,
+                                      fullName: projectMetadata.fullName,
+                                      path: projectMetadata.path,
+                                      type: 'project',
+                                      ...sub,
+                                    });
+                                  }
+                                } else {
+                                  toggleSub(sub.id);
+                                }
+                              }}
+                              onContextMenu={(e) => {
+                                if (Platform.OS !== 'web') return;
+                                try { e.preventDefault(); } catch(_e) {}
+                                const x = (e && e.clientX) ? e.clientX : 60;
+                                const y = (e && e.clientY) ? e.clientY : 60;
+                                setFolderContextMenu({ folder: sub, x, y });
+                              }}
+                            >
+                              {!subIsProject && (
+                                <span
+                                  style={{
+                                    color: '#222',
+                                    fontSize: 15,
+                                    fontWeight: 600,
+                                    marginRight: 6,
+                                    display: 'inline-block',
+                                    transform: `rotate(${subAngle}deg)`,
+                                    transition: 'transform 0.4s ease',
+                                  }}
+                                >
+                                  &gt;
+                                </span>
+                              )}
+                              {subIsProject && (
+                                <span
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    backgroundColor: '#43A047',
+                                    marginRight: 8,
+                                    display: 'inline-block',
+                                    border: '1px solid #bbb',
+                                  }}
+                                />
+                              )}
+                              <span style={{ 
+                                fontWeight: expandedSubs[sub.id] ? 600 : (subIsProject ? 600 : 400), 
+                                fontSize: 15,
+                                color: subIsProject ? '#1976D2' : '#222',
+                              }}>{sub.name}</span>
+                            </div>
+                            {!subIsProject && expandedSubs[sub.id] && (
+                              <ul style={{ listStyle: 'none', paddingLeft: 16, marginTop: 2 }}>
+                                {sub.loading ? (
+                                  <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                                    Laddar undermappar från SharePoint...
+                                  </li>
+                                ) : sub.error ? (
+                                  <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8 }}>
+                                    Fel: {sub.error}
+                                  </li>
+                                ) : sub.children && sub.children.length > 0 ? (
+                                  sub.children.map(childFolder => {
+                                    const childIsProject = isProjectFolder(childFolder);
+                                    return (
+                                      <RecursiveFolderItem
+                                        key={childFolder.id}
+                                        folder={childFolder}
+                                        level={1}
+                                        expandedSubs={expandedSubs}
+                                        spinSubs={spinSubs}
+                                        toggleSub={(folderId) => {
+                                          if (childIsProject && onSelectProject) {
+                                            const projectMetadata = extractProjectMetadata(childFolder);
+                                            if (projectMetadata) {
+                                              onSelectProject({
+                                                id: projectMetadata.id,
+                                                name: projectMetadata.name,
+                                                number: projectMetadata.number,
+                                                fullName: projectMetadata.fullName,
+                                                path: projectMetadata.path,
+                                                type: 'project',
+                                                ...childFolder,
+                                              });
+                                            }
+                                          } else {
+                                            toggleSub(folderId);
+                                          }
+                                        }}
+                                        setFolderContextMenu={setFolderContextMenu}
+                                        resolvedCompanyId={resolvedCompanyId}
+                                        loadFolderChildren={loadFolderChildren}
+                                        setHierarchy={setHierarchy}
+                                        isProject={childIsProject}
+                                        onSelectProject={onSelectProject}
+                                      />
+                                    );
+                                  })
+                                ) : (
+                                  <li style={{ color: '#D32F2F', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                                    Mappen är tom
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      })
+                    ) : (
+                      <li style={{ color: '#888', fontSize: 14, paddingLeft: 8, fontStyle: 'italic' }}>
+                        {group.loading ? 'Laddar undermappar från SharePoint...' : 'Inga undermappar i SharePoint'}
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            );
           })}
         </ul>
+      )}
+      </div>
+      
+      {/* SharePoint Folder Context Menu */}
+      {folderContextMenu && (
+        <ContextMenu
+          visible={!!folderContextMenu}
+          x={folderContextMenu.x}
+          y={folderContextMenu.y}
+          onClose={() => setFolderContextMenu(null)}
+          items={[
+            { key: 'createFolder', label: 'Lägg till mapp i SharePoint' },
+            { key: 'rename', label: 'Byt namn' },
+            { key: 'delete', label: 'Radera mapp', danger: true },
+          ]}
+          onSelect={async (item) => {
+            const folder = folderContextMenu?.folder;
+            if (!folder || !resolvedCompanyId) return;
+            setFolderContextMenu(null);
+
+            try {
+              if (item.key === 'createFolder') {
+                const folderName = window.prompt('Namn på ny mapp:', '');
+                if (!folderName || !folderName.trim()) return;
+                
+                const parentPath = folder.path || folder.name;
+                await createSharePointFolder(resolvedCompanyId, parentPath, folderName.trim());
+                
+                // Refresh hierarchy to show new folder
+                const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+                setHierarchy(sharePointFolders || []);
+                
+                showToast(`Mappen "${folderName}" har skapats i SharePoint`);
+              } else if (item.key === 'delete') {
+                const confirmed = window.confirm(`Är du säker på att du vill radera mappen "${folder.name}" från SharePoint? Detta går inte att ångra.`);
+                if (!confirmed) return;
+                
+                const folderPath = folder.path || folder.name;
+                await deleteItem(resolvedCompanyId, folderPath);
+                
+                // Refresh hierarchy
+                const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
+                setHierarchy(sharePointFolders || []);
+                
+                showToast(`Mappen "${folder.name}" har raderats från SharePoint`);
+              } else if (item.key === 'rename') {
+                const newName = window.prompt('Nytt namn på mappen:', folder.name);
+                if (!newName || !newName.trim() || newName.trim() === folder.name) return;
+                
+                // Note: SharePoint rename requires PATCH to update item name
+                // For now, show message that rename should be done in SharePoint
+                window.alert('För att byta namn på mappar, gör det direkt i SharePoint. Ändringen synkas automatiskt.');
+              }
+            } catch (error) {
+              console.error('[ProjectSidebar] Error handling folder action:', error);
+              showToast(`Fel: ${error?.message || 'Okänt fel'}`);
+            }
+          }}
+        />
+      )}
+      
+      {/* SharePoint Connection Status Indicator */}
+      {!companiesMode && resolvedCompanyId && (
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          padding: '10px 16px',
+          backgroundColor: '#fff',
+          borderTop: '2px solid #ddd',
+          fontSize: 12,
+          color: '#666',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          zIndex: 100,
+          boxShadow: '0 -2px 8px rgba(0,0,0,0.15)',
+          minHeight: 40
+        }}>
+          {sharePointStatus.checking ? (
+            <>
+              <Ionicons name="hourglass-outline" size={16} color="#888" />
+              <span>Kontrollerar SharePoint...</span>
+            </>
+          ) : sharePointStatus.connected ? (
+            <>
+              <Ionicons name="checkmark-circle" size={18} color="#43A047" />
+              <span style={{ color: '#43A047', fontWeight: '600' }}>SharePoint: Ansluten</span>
+              {sharePointStatus.siteId && (
+                <span style={{ color: '#999', fontSize: 10, marginLeft: 'auto' }}>
+                  Site: {sharePointStatus.siteId.substring(0, 8)}...
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <Ionicons name="close-circle" size={18} color="#D32F2F" />
+              <span style={{ color: '#D32F2F' }}>SharePoint: Ej ansluten</span>
+              {sharePointStatus.error && (
+                <span style={{ color: '#999', fontSize: 10, marginLeft: 'auto' }} title={sharePointStatus.error}>
+                  {sharePointStatus.error.length > 25 ? sharePointStatus.error.substring(0, 25) + '...' : sharePointStatus.error}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );

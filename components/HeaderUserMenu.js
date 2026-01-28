@@ -85,17 +85,32 @@ export default function HeaderUserMenu() {
   }, []);
 
   const menuItems = [];
+  
+  // Lägg till admin-funktioner först (flyttat från HeaderAdminMenu)
   const isSuperOrMsAdmin = isOwner || isMsAdmin;
-  // För superadmin: visa samma admin-menypunkter som tidigare
-  if (isSuperadmin) {
-    if (isSuperOrMsAdmin) {
-      menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-    }
-    if (isOwner || isCompanyAdmin) {
-      menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
-      menuItems.push({ key: 'manage_templates', label: 'Mallar', icon: <Ionicons name="copy-outline" size={16} color="#00897B" /> });
-    }
+
+  // Superadmin (ägare/MS-admin) får hantera företag
+  if (isSuperadmin && isSuperOrMsAdmin) {
+    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
+  }
+
+  // Både företags-admin och superadmin ska kunna hantera användare + kontrolltyper
+  if (isCompanyAdmin || isSuperadmin) {
+    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
+    menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
+  }
+
+  // Admin + superadmin: kontaktregister
+  if (isCompanyAdmin || isSuperadmin) {
+    menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#0f172a" /> });
+    menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#43A047" /> });
+    menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#FB8C00" /> });
+    menuItems.push({ key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: <Ionicons name="folder-outline" size={16} color="#7B1FA2" /> });
+  }
+
+  // Separator om det finns admin-funktioner
+  if (menuItems.length > 0) {
+    menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
   }
 
   // Alla roller (superadmin, admin, användare) ska kunna logga ut här
@@ -110,13 +125,11 @@ export default function HeaderUserMenu() {
       onClose={() => setMenuVisible(false)}
       onSelect={async (it) => {
         try {
-          setMenuVisible(false);
           if (!it) return;
-          const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-          if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
-          if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
-          if (it.key === 'manage_control_types') return navigation.navigate('ManageControlTypes', { companyId: cid });
-          if (it.key === 'manage_templates') return navigation.navigate('ManageTemplates', { companyId: cid });
+          
+          // Stäng menyn för alla val
+          setMenuVisible(false);
+          
           if (it.key === 'logout') {
             try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
             try { await auth.signOut(); } catch(_e) {}
@@ -126,6 +139,42 @@ export default function HeaderUserMenu() {
               try { navigation.navigate('Login'); } catch(__e) {}
             }
             return;
+          }
+
+          // Hantera admin-funktioner (flyttat från HeaderAdminMenu)
+          if (it.key === 'manage_company') {
+            return navigation.navigate('ManageCompany');
+          }
+          if (it.key === 'manage_users') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ManageUsers', { companyId: cid });
+          }
+          if (it.key === 'manage_control_types') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ManageControlTypes', { companyId: cid });
+          }
+          if (it.key === 'contact_registry') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ContactRegistry', {
+              companyId: cid,
+              allCompanies: !!isSuperadmin,
+            });
+          }
+          if (it.key === 'suppliers') {
+            return navigation.navigate('Suppliers', {
+              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
+            });
+          }
+          if (it.key === 'customers') {
+            return navigation.navigate('Customers', {
+              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
+            });
+          }
+          if (it.key === 'sharepoint_navigation') {
+            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            return navigation.navigate('ManageSharePointNavigation', {
+              companyId: cid,
+            });
           }
         } catch(_e) {}
       }}

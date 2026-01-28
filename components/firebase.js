@@ -6,8 +6,9 @@ import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage';
+import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { Alert, Platform } from 'react-native';
+import { uploadFile as uploadFileToAzure } from '../services/azure/fileService';
 
 // Firebase-konfiguration för DigitalKontroll
 const firebaseConfig = {
@@ -38,57 +39,18 @@ if (Platform.OS === 'web') {
 }
 export { auth };
 export const db = getFirestore(app);
-// Functions client
-let _functionsClient = null;
-try {
-  _functionsClient = getFunctions(app);
-} catch (_e) {
-  _functionsClient = null;
-}
-export const functionsClient = _functionsClient;
-
-// Emulator connection disabled - using production Firebase
-// If running in a browser on localhost, connect the Functions client to the emulator
-/*
-try {
-  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    try {
-      if (functionsClient && typeof connectFunctionsEmulator === 'function') {
-        // default emulator port used by firebase emulators: 5001
-        connectFunctionsEmulator(functionsClient, 'localhost', 5001);
-        console.log('[firebase] connected functions client to emulator at localhost:5001');
-      }
-    } catch (e) { console.warn('[firebase] could not connect functions emulator', e); }
-  }
-} catch(e) {}
-
-// Also connect Firestore and Auth clients to local emulators when running on localhost
-try {
-  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    try {
-      if (typeof connectFirestoreEmulator === 'function' && db) {
-        // Firestore emulator in this project configured to 8085
-        connectFirestoreEmulator(db, 'localhost', 8085);
-        console.log('[firebase] connected firestore client to emulator at localhost:8085');
-      }
-    } catch (e) { console.warn('[firebase] could not connect firestore emulator', e); }
-    try {
-      if (typeof connectAuthEmulator === 'function' && auth) {
-        // Auth emulator default port 9099
-        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch(_e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
-        console.log('[firebase] connected auth client to emulator at http://localhost:9099');
-      }
-    } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
-  }
-} catch(e) {}
-*/
+export const functionsClient = getFunctions(app);
 
 // Callable wrappers
-export async function createUserRemote({ companyId, email, displayName, role }) {
+export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'createUser');
   const payload = { companyId, email, displayName };
   if (role !== undefined) payload.role = role;
+  if (password !== undefined) payload.password = password;
+  if (firstName !== undefined) payload.firstName = firstName;
+  if (lastName !== undefined) payload.lastName = lastName;
+  if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
@@ -100,7 +62,7 @@ export async function deleteUserRemote({ companyId, uid }) {
   return res && res.data ? res.data : res;
 }
 
-export async function updateUserRemote({ companyId, uid, displayName, email, role, password }) {
+export async function updateUserRemote({ companyId, uid, displayName, email, role, password, disabled, photoURL, avatarPreset }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'updateUser');
   const payload = { companyId, uid };
@@ -108,8 +70,113 @@ export async function updateUserRemote({ companyId, uid, displayName, email, rol
   if (email !== undefined) payload.email = email;
   if (role !== undefined) payload.role = role;
   if (password !== undefined) payload.password = password;
+  if (disabled !== undefined) payload.disabled = disabled;
+  if (photoURL !== undefined) payload.photoURL = photoURL;
+  if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
+}
+
+export async function uploadUserAvatar({ companyId, uid, file }) {
+  if (!companyId) throw new Error('companyId is required');
+  if (!uid) throw new Error('uid is required');
+  if (!file) throw new Error('file is required');
+  
+  const safeName = String(file?.name || 'avatar').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const fileName = `${Date.now()}_${safeName}`;
+  const azurePath = `01-Company/${companyId}/Users/${uid}/${fileName}`;
+  
+  try {
+    // IMPORTANT GUARD:
+    // DK Site (role=projects) must remain a pure project site.
+    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
+    const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+
+    // Ensure system folder structure exists (best-effort; may require auth)
+    const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+    await ensureSystemFolderStructure(systemSiteId || null);
+
+    const url = await uploadFileToAzure({
+      file,
+      path: azurePath,
+      companyId, // keep company context
+      siteId: systemSiteId || null, // DK Bas (system)
+      siteRole: 'system',
+    });
+    console.log('[uploadUserAvatar] ✅ Uploaded to Azure (DK Bas/system site):', url);
+    return url;
+  } catch (error) {
+    // Fallback to Firebase Storage (for backwards compatibility)
+    console.warn('[uploadUserAvatar] ⚠️ Azure upload failed, falling back to Firebase:', error);
+    const path = `user-avatars/${companyId}/${uid}/${fileName}`;
+    const r = storageRef(storage, path);
+    const contentType = String(file?.type || '').trim() || 'image/jpeg';
+    await uploadBytes(r, file, { contentType });
+    return await getDownloadURL(r);
+  }
+}
+
+/**
+ * Upload company logo to Azure (with fallback to Firebase Storage)
+ * @param {Object} options - Upload options
+ * @param {string} options.companyId - Company ID
+ * @param {File|Blob} options.file - Logo file
+ * @returns {Promise<string>} Logo URL
+ */
+export async function uploadCompanyLogo({ companyId, file }) {
+  if (!companyId) throw new Error('companyId is required');
+  if (!file) throw new Error('file is required');
+  
+  const safeCompanyId = String(companyId).trim();
+  const fileName = `${Date.now()}_${file.name}`;
+  const azurePath = `01-Company/${safeCompanyId}/Logos/${fileName}`;
+  
+  try {
+    // IMPORTANT GUARD:
+    // DK Site (role=projects) must remain a pure project site.
+    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
+    const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+
+    // Try to ensure system folder structure exists first (but don't fail if auth is not available)
+    try {
+      const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+      await ensureSystemFolderStructure(systemSiteId || null);
+    } catch (folderError) {
+      // Folder structure creation failed (likely auth issue) - this is OK, uploadFile will create folders as needed
+      if (folderError?.message && !folderError.message.includes('Popup window was blocked')) {
+        console.warn('[uploadCompanyLogo] Warning ensuring folder structure:', folderError);
+      }
+    }
+    
+    const url = await uploadFileToAzure({
+      file,
+      path: azurePath,
+      companyId, // keep company context
+      siteId: systemSiteId || null, // DK Bas (system)
+      siteRole: 'system',
+    });
+    console.log('[uploadCompanyLogo] ✅ Uploaded to Azure (DK Bas/system site):', url);
+    return url;
+  } catch (error) {
+    // Check if error is related to authentication/popup blocking
+    const isAuthError = error?.message && (
+      error.message.includes('Popup window was blocked') ||
+      error.message.includes('authenticate') ||
+      error.message.includes('access token')
+    );
+    
+    // Fallback to Firebase Storage (for backwards compatibility)
+    if (isAuthError) {
+      console.log('[uploadCompanyLogo] ℹ️ Azure authentication not available, using Firebase Storage (this is normal until you authenticate with SharePoint)');
+    } else {
+      console.warn('[uploadCompanyLogo] ⚠️ Azure upload failed, falling back to Firebase:', error);
+    }
+    
+    const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${fileName}`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file);
+    return await getDownloadURL(ref);
+  }
 }
 
 export async function adminFetchCompanyMembers(companyId) {
@@ -123,6 +190,13 @@ export async function provisionCompanyRemote({ companyId, companyName }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'provisionCompany');
   const res = await fn({ companyId, companyName });
+  return res && res.data ? res.data : res;
+}
+
+export async function requestSubscriptionUpgradeRemote({ companyId }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'requestSubscriptionUpgrade');
+  const res = await fn({ companyId });
   return res && res.data ? res.data : res;
 }
 
@@ -323,16 +397,164 @@ function sanitizeForFirestore(value) {
 
 // Helpers for syncing hierarchy per company
 export async function fetchHierarchy(companyId) {
-  if (!companyId) return [];
+  if (!companyId) {
+    console.log('[fetchHierarchy] No companyId provided');
+    return [];
+  }
   try {
+    console.log('[fetchHierarchy] Fetching hierarchy for company:', companyId);
     const ref = doc(db, 'foretag', companyId, 'hierarki', 'state');
     const snap = await getDoc(ref);
     if (snap.exists()) {
       const data = snap.data();
-      return Array.isArray(data.items) ? data.items : [];
+      console.log('[fetchHierarchy] Document exists, checking structure...');
+      
+      // Check if we have the new structure (items array)
+      const hasItems = Array.isArray(data.items) && data.items.length > 0;
+      const hasChildren = data.children && Array.isArray(data.children) && data.children.length > 0;
+      
+      // IMPORTANT: If both items and children exist, we have a mixed structure
+      // Check if children contains projects that are not in items
+      if (hasItems && hasChildren) {
+        console.warn('[fetchHierarchy] ⚠️ WARNING: Both items and children exist! This is a mixed structure.');
+        console.warn('[fetchHierarchy] ⚠️ Items has', data.items.length, 'items, children has', data.children.length, 'items');
+        
+        // Helper function to find all projects in a hierarchy
+        const findAllProjects = (items) => {
+          const projects = [];
+          const walk = (nodes) => {
+            if (!Array.isArray(nodes)) return;
+            nodes.forEach(node => {
+              if (node && node.type === 'project' && node.id) {
+                projects.push({ id: node.id, name: node.name });
+              }
+              if (node && node.children && Array.isArray(node.children)) {
+                walk(node.children);
+              }
+            });
+          };
+          walk(items);
+          return projects;
+        };
+        
+        const projectsInItems = findAllProjects(data.items);
+        const projectsInChildren = findAllProjects(data.children);
+        
+        console.log('[fetchHierarchy] Projects in items:', projectsInItems.map(p => p.id).join(', '));
+        console.log('[fetchHierarchy] Projects in children:', projectsInChildren.map(p => p.id).join(', '));
+        
+        // If children has projects that are not in items, we need to merge them
+        const missingProjects = projectsInChildren.filter(p => 
+          !projectsInItems.some(ip => String(ip.id).trim() === String(p.id).trim())
+        );
+        
+        if (missingProjects.length > 0) {
+          console.warn('[fetchHierarchy] ⚠️ Found', missingProjects.length, 'projects in children that are not in items:', missingProjects.map(p => p.id).join(', '));
+          console.warn('[fetchHierarchy] ⚠️ Using children as source and migrating to items...');
+          
+          // Use children as the source (it has the actual project data)
+          try {
+            await setDoc(ref, { 
+              items: data.children, 
+              updatedAt: serverTimestamp() 
+            }, { merge: false });
+            console.log('[fetchHierarchy] ✅ Migrated children to items - removed children from root');
+            return data.children;
+          } catch(migrateErr) {
+            console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+            // Return children anyway so the app can work
+            return data.children;
+          }
+        } else {
+          // All projects are in items, just remove children
+          console.warn('[fetchHierarchy] ⚠️ All projects are in items. Removing children from root...');
+          try {
+            await setDoc(ref, { 
+              items: data.items, 
+              updatedAt: serverTimestamp() 
+            }, { merge: false });
+            console.log('[fetchHierarchy] ✅ Migrated mixed structure - removed children from root');
+            return data.items;
+          } catch(migrateErr) {
+            console.error('[fetchHierarchy] ❌ Failed to migrate mixed structure:', migrateErr);
+            // Return items anyway
+            return data.items;
+          }
+        }
+      }
+      
+      if (hasItems) {
+        console.log('[fetchHierarchy] ✅ Found new structure with', data.items.length, 'items');
+        return data.items;
+      }
+      
+      // Check if we have old structure with children directly in document (not in items)
+      // This happens when data was saved incorrectly or migrated from old structure
+      if (hasChildren) {
+        console.warn('[fetchHierarchy] ⚠️ Found old structure (children directly in document, not in items). Migrating to new structure...');
+        console.log('[fetchHierarchy] Old structure has', data.children.length, 'children');
+        
+        // Migrate: wrap children in items array
+        const migratedItems = data.children;
+        
+        // Save the migrated structure (remove children from root, put in items)
+        try {
+          await setDoc(ref, { 
+            items: migratedItems, 
+            updatedAt: serverTimestamp() 
+          }, { merge: false });
+          console.log('[fetchHierarchy] ✅ Migrated old structure (children) to new structure (items)');
+          console.log('[fetchHierarchy] ✅ Migration complete. Project should now be in items array.');
+          return migratedItems;
+        } catch(migrateErr) {
+          console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+          // Return the children anyway so the app can work
+          return migratedItems;
+        }
+      }
+      
+      // Check if we have old structure (project directly in document)
+      // This is a migration case - convert old structure to new
+      if (data.type === 'project' && data.id) {
+        console.warn('[fetchHierarchy] ⚠️ Found old structure (project directly in document). Migrating to new structure...');
+        console.log('[fetchHierarchy] Old project data:', { id: data.id, name: data.name });
+        // Create a new structure with the project in items array
+        const migratedItems = [{
+          type: 'main',
+          id: 'main-migrated',
+          name: 'Migrerad',
+          children: [{
+            type: 'sub',
+            id: 'sub-migrated',
+            name: 'Migrerad',
+            children: [{
+              ...data,
+              // Keep all project fields
+            }]
+          }]
+        }];
+        
+        // Save the migrated structure
+        try {
+          await setDoc(ref, { items: migratedItems, updatedAt: serverTimestamp() }, { merge: false });
+          console.log('[fetchHierarchy] ✅ Migrated old structure to new structure');
+          return migratedItems;
+        } catch(migrateErr) {
+          console.error('[fetchHierarchy] ❌ Failed to migrate structure:', migrateErr);
+          // Return empty array if migration fails
+          return [];
+        }
+      }
+      
+      // No valid structure found
+      console.warn('[fetchHierarchy] ⚠️ No valid structure found in document');
+      return [];
+    } else {
+      console.log('[fetchHierarchy] Document does not exist');
     }
   } catch(_e) {
     // Silent fail -> caller can fall back to local storage
+    console.error('[fetchHierarchy] ❌ Error fetching hierarchy:', _e);
   }
   return [];
 }
@@ -341,10 +563,139 @@ export async function saveHierarchy(companyId, items) {
   if (!companyId) return false;
   try {
     const ref = doc(db, 'foretag', companyId, 'hierarki', 'state');
-    // write items with server timestamp
-    await setDoc(ref, { items, updatedAt: serverTimestamp() }, { merge: true });
+    
+    // SÄKERHET: Skapa backup innan vi skriver över data
+    // Hämta befintlig hierarki först
+    try {
+      const existingSnap = await getDoc(ref);
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data();
+        let existingItems = Array.isArray(existingData?.items) ? existingData.items : [];
+        
+        // Handle old structure where project is directly in document
+        if (existingItems.length === 0 && existingData?.type === 'project' && existingData?.id) {
+          console.warn('[saveHierarchy] ⚠️ Found old structure (project directly in document). Will be migrated on next fetch.');
+          // Don't create backup for old structure - it will be migrated by fetchHierarchy
+          existingItems = [];
+        }
+        
+        // IMPORTANT: If children exists directly in document, we need to migrate it to items
+        // This happens when there's a mixed structure
+        if (existingItems.length === 0 && existingData?.children && Array.isArray(existingData.children) && existingData.children.length > 0) {
+          console.warn('[saveHierarchy] ⚠️ Found children in document but items is empty. Migrating children to items...');
+          existingItems = existingData.children;
+        }
+        
+        // VALIDERING: Förhindra att tom hierarki skriver över befintlig data
+        // Om den nya hierarkin är tom men det fanns data tidigare, avbryt
+        const newItems = Array.isArray(items) ? items : [];
+        if (newItems.length === 0 && existingItems.length > 0) {
+          console.warn('[saveHierarchy] Förhindrade att skriva över befintlig hierarki med tom array');
+          return false;
+        }
+        
+        // Skapa backup i Firestore (spara senaste versionen)
+        if (existingItems.length > 0) {
+          const backupRef = doc(db, 'foretag', companyId, 'hierarki', 'backup_' + Date.now());
+          try {
+            await setDoc(backupRef, {
+              items: existingItems,
+              backedUpAt: serverTimestamp(),
+              reason: 'pre_save_backup'
+            });
+            // Behåll bara de 5 senaste backup:erna (rensar gamla)
+            // Kör asynkront så det inte blockerar huvudoperationen
+            // Behåll bara de 5 senaste backup:erna (rensar gamla)
+            // Kör asynkront så det inte blockerar huvudoperationen, men vänta lite för att säkerställa att backup sparades
+            // Backup-rensning körs asynkront i bakgrunden
+            // Kör direkt (inte setTimeout) för att säkerställa att den faktiskt körs
+            (async () => {
+              // Vänta lite för att säkerställa att backup sparades
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              try {
+                console.log('[saveHierarchy] Startar backup-rensning...');
+                const backupsRef = collection(db, 'foretag', companyId, 'hierarki');
+                // Hämta alla backup-dokument (sortera efter ID som innehåller timestamp)
+                const backupsSnap = await getDocs(backupsRef);
+                const backups = [];
+                backupsSnap.forEach(d => {
+                  if (d.id.startsWith('backup_') && d.id !== 'state') {
+                    const timestamp = parseInt(d.id.replace('backup_', '')) || 0;
+                    backups.push({ id: d.id, timestamp });
+                  }
+                });
+                
+                console.log(`[saveHierarchy] Hittade ${backups.length} backup-filer`);
+                
+                // Sortera efter timestamp (nyaste först)
+                backups.sort((a, b) => b.timestamp - a.timestamp);
+                
+                // Ta bort alla utom de 5 senaste
+                if (backups.length > 5) {
+                  console.log(`[saveHierarchy] Rensar ${backups.length - 5} gamla backup-filer...`);
+                  let deletedCount = 0;
+                  let permissionErrors = 0;
+                  for (let i = 5; i < backups.length; i++) {
+                    try {
+                      await deleteDoc(doc(backupsRef, backups[i].id));
+                      deletedCount++;
+                      console.log(`[saveHierarchy] ✅ Raderade backup: ${backups[i].id}`);
+                    } catch(deleteErr) {
+                      // Check if it's a permission error
+                      if (deleteErr?.code === 'permission-denied') {
+                        permissionErrors++;
+                        console.log(`[saveHierarchy] ℹ️ Backup ${backups[i].id} kunde inte raderas (permissions)`);
+                      } else {
+                        console.warn(`[saveHierarchy] ⚠️ Kunde inte radera backup ${backups[i].id}:`, deleteErr);
+                      }
+                    }
+                  }
+                  if (deletedCount > 0) {
+                    console.log(`[saveHierarchy] ✅ Backup-rensning klar. Raderade ${deletedCount} filer, behöll ${Math.min(5, backups.length)} backup-filer.`);
+                  }
+                  if (permissionErrors > 0) {
+                    console.log(`[saveHierarchy] ℹ️ ${permissionErrors} backup-filer kunde inte raderas automatiskt (permissions). De kan rensas manuellt i Firebase.`);
+                  }
+                } else {
+                  console.log(`[saveHierarchy] ✅ Inga backup-filer att rensa (${backups.length} totalt, max 5 tillåtet)`);
+                }
+              } catch(cleanupErr) {
+                // Don't log as error if it's just a permission issue
+                if (cleanupErr?.code === 'permission-denied') {
+                  console.log('[saveHierarchy] ℹ️ Backup-rensning kräver permissions (kan rensas manuellt i Firebase)');
+                } else {
+                  console.warn('[saveHierarchy] ⚠️ Backup-rensning misslyckades:', cleanupErr);
+                }
+              }
+            })();
+          } catch(_e) {
+            // Backup misslyckades, men fortsätt ändå med huvudoperationen
+            console.warn('[saveHierarchy] Backup misslyckades:', _e);
+          }
+        }
+      }
+    } catch(_e) {
+      // Om vi inte kan läsa befintlig data, fortsätt ändå
+      console.warn('[saveHierarchy] Kunde inte läsa befintlig hierarki för backup:', _e);
+    }
+    
+    // Skriv den nya hierarkin
+    // VIKTIGT: Använd { merge: false } för att ersätta hela dokumentet, inte bara uppdatera fält
+    // Detta säkerställer att items-arrayen uppdateras korrekt och tar bort gamla fält
+    // Rensa bort alla fält som inte ska finnas (t.ex. gamla projekt-fält direkt i dokumentet)
+    const cleanData = {
+      items: Array.isArray(items) ? items : [],
+      updatedAt: serverTimestamp()
+    };
+    
+    // Ta bort alla andra fält genom att använda merge: false
+    await setDoc(ref, cleanData, { merge: false });
+    console.log('[saveHierarchy] ✅ Hierarchy sparad till Firestore. Items count:', cleanData.items.length);
+    console.log('[saveHierarchy] ✅ Dokumentet har rensats - bara items och updatedAt finns kvar');
     return true;
   } catch(_e) {
+    console.error('[saveHierarchy] Fel vid sparande:', _e);
     return false;
   }
 }
@@ -358,6 +709,61 @@ export async function fetchCompanyProfile(companyId) {
     if (snap.exists()) return snap.data();
   } catch(_e) {}
   return null;
+}
+
+/**
+ * Get SharePoint Site ID for a company
+ * @param {string} companyId - Company ID
+ * @returns {Promise<string|null>} SharePoint Site ID or null if not configured
+ */
+export async function getCompanySharePointSiteId(companyId) {
+  if (!companyId) return null;
+  try {
+    const profile = await fetchCompanyProfile(companyId);
+    const primary = profile?.primarySharePointSite;
+    const primaryId = primary && typeof primary === 'object' ? String(primary.siteId || '').trim() : '';
+    if (primaryId) return primaryId;
+    return profile?.sharePointSiteId || null;
+  } catch (error) {
+    console.warn('[getCompanySharePointSiteId] Error fetching site ID:', error);
+    return null;
+  }
+}
+
+/**
+ * Save SharePoint Site ID to company profile
+ * @param {string} companyId - Company ID
+ * @param {string} siteId - SharePoint Site ID
+ * @param {string} [webUrl] - SharePoint Site Web URL (optional)
+ * @returns {Promise<void>}
+ */
+export async function saveCompanySharePointSiteId(companyId, siteId, webUrl = null) {
+  if (!companyId || !siteId) {
+    throw new Error('Company ID and Site ID are required');
+  }
+  try {
+    const ref = doc(db, 'foretag', companyId, 'profil', 'public');
+    const updateData = {
+      // Legacy fields (kept for backwards compatibility)
+      sharePointSiteId: siteId,
+      sharePointWebUrl: webUrl || null,
+
+      // New canonical linkage object
+      primarySharePointSite: {
+        siteId,
+        siteUrl: webUrl || null,
+        linkedAt: serverTimestamp(),
+        linkedBy: auth.currentUser?.uid || null,
+      },
+
+      updatedAt: serverTimestamp(),
+    };
+    await updateDoc(ref, updateData);
+    console.log(`[saveCompanySharePointSiteId] ✅ Saved SharePoint Site ID for company: ${companyId}`);
+  } catch (error) {
+    console.error('[saveCompanySharePointSiteId] Error saving site ID:', error);
+    throw error;
+  }
 }
 
 // Fetch a flat list of companies (foretag). Returns array of { id, profile }
@@ -1160,6 +1566,9 @@ export async function fetchCompanyControlTypes(companyIdOverride) {
         if (Object.prototype.hasOwnProperty.call(data, 'hidden')) {
           patch.hidden = !!data.hidden;
         }
+        if (Object.prototype.hasOwnProperty.call(data, 'foldersEnabled')) {
+          patch.foldersEnabled = !!data.foldersEnabled;
+        }
         extras.push(patch);
       } catch (_e) {}
     });
@@ -1252,6 +1661,9 @@ export async function updateCompanyControlType(payload, companyIdOverride) {
   if (Object.prototype.hasOwnProperty.call(payload, 'hidden')) {
     patch.hidden = !!payload.hidden;
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'foldersEnabled')) {
+    patch.foldersEnabled = !!payload.foldersEnabled;
+  }
 
   if (Object.keys(patch).length === 0) return true;
 
@@ -1302,7 +1714,93 @@ export async function fetchCompanyMallar(companyIdOverride) {
   }
 }
 
-export async function createCompanyMall({ title, description, controlType, layout, version }, companyIdOverride) {
+// Kontrolltyp-mappar per företag
+// Data model: foretag/{companyId}/kontrolltyp_mappar/{folderId}
+// Fields: { controlType: string, name: string, order?: number, createdAt, updatedAt }
+export async function fetchCompanyControlTypeFolders(companyIdOverride, controlType) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const ct = String(controlType || '').trim();
+    if (!ct) return [];
+
+    const colRef = collection(db, 'foretag', companyId, 'kontrolltyp_mappar');
+    const q = query(colRef, where('controlType', '==', ct));
+    const snap = await getDocs(q);
+    const out = [];
+    snap.forEach((docSnap) => {
+      try {
+        const d = docSnap.data() || {};
+        out.push({ id: docSnap.id, ...d });
+      } catch (_e) {}
+    });
+    out.sort((a, b) => {
+      const ao = typeof a.order === 'number' && Number.isFinite(a.order) ? a.order : 9999;
+      const bo = typeof b.order === 'number' && Number.isFinite(b.order) ? b.order : 9999;
+      if (ao !== bo) return ao - bo;
+      const an = String(a?.name || '').trim().toLowerCase();
+      const bn = String(b?.name || '').trim().toLowerCase();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCompanyControlTypeFolder({ controlType, name, order }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const ct = String(controlType || '').trim();
+  const n = String(name || '').trim();
+  if (!ct) throw new Error('controlType is required');
+  if (!n) throw new Error('name is required');
+
+  const colRef = collection(db, 'foretag', companyId, 'kontrolltyp_mappar');
+  const payload = sanitizeForFirestore({
+    controlType: ct,
+    name: n,
+    ...(typeof order === 'number' && Number.isFinite(order) ? { order } : {}),
+    createdAt: serverTimestamp(),
+  });
+  const docRef = await addDoc(colRef, payload);
+  return { id: docRef.id, ...payload };
+}
+
+export async function updateCompanyControlTypeFolder({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const folderId = String(id || '').trim();
+  if (!folderId) throw new Error('folder id is required');
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  safePatch.updatedAt = serverTimestamp();
+  const ref = doc(db, 'foretag', companyId, 'kontrolltyp_mappar', folderId);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+export async function deleteCompanyControlTypeFolder({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const folderId = String(id || '').trim();
+  if (!folderId) throw new Error('folder id is required');
+  await deleteDoc(doc(db, 'foretag', companyId, 'kontrolltyp_mappar', folderId));
+  return true;
+}
+
+export async function createCompanyMall({ title, description, controlType, folderId, folderName, layout, version }, companyIdOverride) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
   if (!companyId) {
     const err = new Error('no_company');
@@ -1312,6 +1810,8 @@ export async function createCompanyMall({ title, description, controlType, layou
   const t = String(title || '').trim();
   const desc = String(description || '').trim();
   const ct = String(controlType || '').trim();
+  const fid = folderId === null || folderId === undefined ? null : String(folderId || '').trim();
+  const fname = folderName === null || folderName === undefined ? null : String(folderName || '').trim();
   const layoutData = layout || null;
   const versionNumber = Number.isFinite(Number(version)) && Number(version) > 0 ? Number(version) : 1;
   let createdBy = null;
@@ -1338,6 +1838,8 @@ export async function createCompanyMall({ title, description, controlType, layou
     title: t,
     description: desc,
     controlType: ct || null,
+    folderId: fid || null,
+    folderName: fname || null,
     layout: layoutData,
     createdBy: createdBy || null,
     hidden: false,
@@ -1387,6 +1889,285 @@ export async function deleteCompanyMall({ id }, companyIdOverride) {
   }
 
   await deleteDoc(doc(db, 'foretag', companyId, 'mallar', mallId));
+  return true;
+}
+
+// Kontaktregister per företag
+// Data model: foretag/{companyId}/kontakter/{contactId}
+// Fields: { name, companyName (systemföretag), contactCompanyName (företag kontakten jobbar på), role, phone, email, createdAt, updatedAt, createdBy? }
+export async function fetchCompanyContacts(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'kontakter'));
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a?.name || '').trim();
+      const bn = String(b?.name || '').trim();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+// Superadmin: hämta kontakter från alla företag.
+// Uses collectionGroup('kontakter') where docs live under foretag/{companyId}/kontakter/{contactId}
+export async function fetchAllCompanyContacts({ max = 2000 } = {}) {
+  try {
+    const lim = Number.isFinite(max) ? Math.max(1, Math.min(10000, max)) : 2000;
+    const q = query(collectionGroup(db, 'kontakter'), limit(lim));
+    const snap = await getDocs(q);
+    const out = [];
+    snap.forEach((docSnap) => {
+      try {
+        const d = docSnap.data() || {};
+        // Path: foretag/{companyId}/kontakter/{contactId}
+        const companyId = docSnap?.ref?.parent?.parent?.id ? String(docSnap.ref.parent.parent.id) : '';
+        out.push({ ...d, id: docSnap.id, companyId });
+      } catch (_e) {
+        // ignore single doc
+      }
+    });
+    out.sort((a, b) => {
+      const ac = String(a?.companyName || a?.companyId || '').trim();
+      const bc = String(b?.companyName || b?.companyId || '').trim();
+      const cn = ac.localeCompare(bc, 'sv');
+      if (cn !== 0) return cn;
+      const an = String(a?.name || '').trim();
+      const bn = String(b?.name || '').trim();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCompanyContact({ name, companyName, contactCompanyName, role, phone, email }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const n = String(name || '').trim();
+  if (!n) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  const payload = {
+    name: n,
+    companyName: String(companyName || '').trim() || String(companyId || '').trim(), // Systemföretag som äger kontakten
+    contactCompanyName: String(contactCompanyName || '').trim(), // Företag som kontakten jobbar på (kan vara externt)
+    role: String(role || '').trim(),
+    phone: String(phone || '').trim(),
+    email: String(email || '').trim(),
+    createdAt: serverTimestamp(),
+  };
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
+  if (createdBy) payload.createdBy = createdBy;
+
+  const colRef = collection(db, 'foretag', companyId, 'kontakter');
+  const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
+  return docRef.id;
+}
+
+export async function updateCompanyContact({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const contactId = String(id || '').trim();
+  if (!contactId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'name')) {
+    const n = String(safePatch.name || '').trim();
+    if (!n) throw new Error('Namn är obligatoriskt.');
+    safePatch.name = n;
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyName')) {
+    safePatch.companyName = String(safePatch.companyName || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'contactCompanyName')) {
+    safePatch.contactCompanyName = String(safePatch.contactCompanyName || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'role')) {
+    safePatch.role = String(safePatch.role || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'phone')) {
+    safePatch.phone = String(safePatch.phone || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'email')) {
+    safePatch.email = String(safePatch.email || '').trim();
+  }
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'kontakter', contactId);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+export async function deleteCompanyContact({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const contactId = String(id || '').trim();
+  if (!contactId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  await deleteDoc(doc(db, 'foretag', companyId, 'kontakter', contactId));
+  return true;
+}
+
+// Leverantörer per företag
+// Data model: foretag/{companyId}/leverantorer/{supplierId} with fields:
+// { companyName: string, organizationNumber: string, vatNumber: string, address: string, category: string, createdAt, updatedAt }
+export async function fetchCompanySuppliers(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'leverantorer'));
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a?.companyName || '').trim();
+      const bn = String(b?.companyName || '').trim();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCompanySupplier({ companyName, organizationNumber, vatNumber, address, category }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const n = String(companyName || '').trim();
+  if (!n) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  const payload = {
+    companyName: n,
+    organizationNumber: String(organizationNumber || '').trim(),
+    vatNumber: String(vatNumber || '').trim(),
+    address: String(address || '').trim(),
+    category: String(category || '').trim(),
+    createdAt: serverTimestamp(),
+  };
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
+  if (createdBy) payload.createdBy = createdBy;
+
+  const colRef = collection(db, 'foretag', companyId, 'leverantorer');
+  const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
+  return docRef.id;
+}
+
+export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const supplierId = String(id || '').trim();
+  if (!supplierId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyName')) {
+    const n = String(safePatch.companyName || '').trim();
+    if (!n) throw new Error('Företagsnamn är obligatoriskt.');
+    safePatch.companyName = n;
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'organizationNumber')) {
+    safePatch.organizationNumber = String(safePatch.organizationNumber || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'vatNumber')) {
+    safePatch.vatNumber = String(safePatch.vatNumber || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'address')) {
+    safePatch.address = String(safePatch.address || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'category')) {
+    safePatch.category = String(safePatch.category || '').trim();
+  }
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'leverantorer', supplierId);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+export async function deleteCompanySupplier({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const supplierId = String(id || '').trim();
+  if (!supplierId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  await deleteDoc(doc(db, 'foretag', companyId, 'leverantorer', supplierId));
   return true;
 }
 
@@ -1713,3 +2494,697 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
   }
 }
 
+// ============================================================================
+// PER-FAS SHAREPOINT KONFIGURATION
+// ============================================================================
+
+/**
+ * Get SharePoint Site ID for a specific phase
+ * Returns external site if configured, otherwise returns primary (fallback) site
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad')
+ * @returns {Promise<{siteId: string, webUrl: string, isExternal: boolean, phaseKey: string, siteName?: string}>}
+ */
+export async function getSharePointSiteForPhase(companyId, phaseKey) {
+  if (!companyId || !phaseKey) {
+    throw new Error('Company ID and Phase Key are required');
+  }
+
+  try {
+    // First, check if there's an external site configured for this phase
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    const phaseConfigSnap = await getDoc(phaseConfigRef);
+    
+    if (phaseConfigSnap.exists()) {
+      const phaseConfig = phaseConfigSnap.data();
+      if (phaseConfig.enabled && phaseConfig.siteId) {
+        return {
+          siteId: phaseConfig.siteId,
+          webUrl: phaseConfig.webUrl || null,
+          isExternal: true,
+          phaseKey: phaseKey,
+          siteName: phaseConfig.siteName || null,
+        };
+      }
+    }
+    
+    // Fallback to primary site
+    const primarySiteId = await getCompanySharePointSiteId(companyId);
+    if (!primarySiteId) {
+      throw new Error(`No SharePoint site configured for company ${companyId}`);
+    }
+    
+    const profile = await fetchCompanyProfile(companyId);
+    return {
+      siteId: primarySiteId,
+      webUrl: profile?.sharePointWebUrl || null,
+      isExternal: false,
+      phaseKey: phaseKey,
+      siteName: null,
+    };
+  } catch (error) {
+    console.error('[getSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Set external SharePoint site for a specific phase
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key
+ * @param {string} siteId - SharePoint Site ID
+ * @param {string} [webUrl] - SharePoint Web URL
+ * @param {string} [siteName] - Site display name
+ * @returns {Promise<void>}
+ */
+export async function setSharePointSiteForPhase(companyId, phaseKey, siteId, webUrl = null, siteName = null) {
+  if (!companyId || !phaseKey || !siteId) {
+    throw new Error('Company ID, Phase Key, and Site ID are required');
+  }
+
+  try {
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    await setDoc(phaseConfigRef, {
+      enabled: true,
+      siteId: siteId,
+      webUrl: webUrl || null,
+      siteName: siteName || null,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    }, { merge: true });
+    
+    console.log(`[setSharePointSiteForPhase] ✅ Set external SharePoint site for ${companyId}/${phaseKey}`);
+  } catch (error) {
+    console.error('[setSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Remove external SharePoint site for a phase (revert to primary)
+ * @param {string} companyId - Company ID
+ * @param {string} phaseKey - Phase key
+ * @returns {Promise<void>}
+ */
+export async function removeSharePointSiteForPhase(companyId, phaseKey) {
+  if (!companyId || !phaseKey) {
+    throw new Error('Company ID and Phase Key are required');
+  }
+
+  try {
+    const phaseConfigRef = doc(db, 'foretag', companyId, 'sharepoint_phases', phaseKey);
+    await updateDoc(phaseConfigRef, {
+      enabled: false,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    });
+    
+    console.log(`[removeSharePointSiteForPhase] ✅ Removed external SharePoint site for ${companyId}/${phaseKey}`);
+  } catch (error) {
+    console.error('[removeSharePointSiteForPhase] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get SharePoint navigation configuration for a company
+ * @param {string} companyIdOverride - Optional explicit company ID
+ * @returns {Promise<Object>} Navigation configuration
+ */
+export async function getSharePointNavigationConfig(companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const configRef = doc(db, 'foretag', companyId, 'sharepoint_navigation', 'config');
+    const configSnap = await getDoc(configRef);
+    
+    if (configSnap.exists()) {
+      return configSnap.data();
+    }
+    
+    // Return default empty config
+    return {
+      enabledSites: [],
+      siteConfigs: {},
+      updatedAt: null,
+      updatedBy: null,
+    };
+  } catch (error) {
+    console.error('[getSharePointNavigationConfig] Error:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// SHAREPOINT PROJECT METADATA (phase/structure)
+// ============================================================================
+
+function encodeSharePointProjectMetaId(siteId, projectPath) {
+  const sid = String(siteId || '').trim();
+  const p = String(projectPath || '').trim();
+  return encodeURIComponent(`${sid}|${p}`);
+}
+
+/**
+ * Persist metadata for a SharePoint-backed project folder.
+ * Used to show phase/structure indicators in the UI.
+ *
+ * Collection: foretag/{companyId}/sharepoint_project_metadata/{docId}
+ */
+export async function saveSharePointProjectMetadata(companyIdOverride, meta) {
+  const companyId = await resolveCompanyId(companyIdOverride, meta);
+  if (!companyId) throw new Error('Company ID is required');
+  const siteId = String(meta?.siteId || '').trim();
+  const projectPath = String(meta?.projectPath || '').trim();
+  if (!siteId || !projectPath) throw new Error('siteId and projectPath are required');
+
+  const docId = encodeSharePointProjectMetaId(siteId, projectPath);
+  const ref = doc(db, 'foretag', companyId, 'sharepoint_project_metadata', docId);
+
+  const payload = {
+    siteId,
+    projectPath,
+    projectNumber: meta?.projectNumber != null ? String(meta.projectNumber) : null,
+    projectName: meta?.projectName != null ? String(meta.projectName) : null,
+    phaseKey: meta?.phaseKey != null ? String(meta.phaseKey) : null,
+    structureType: meta?.structureType != null ? String(meta.structureType) : null,
+    status: meta?.status != null ? String(meta.status) : null,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return { id: docId, ...payload };
+}
+
+/**
+ * Patch (partial update) for a SharePoint-backed project metadata doc.
+ * Only fields explicitly provided are written (others are left untouched).
+ */
+export async function patchSharePointProjectMetadata(companyIdOverride, meta) {
+  const companyId = await resolveCompanyId(companyIdOverride, meta);
+  if (!companyId) throw new Error('Company ID is required');
+  const siteId = String(meta?.siteId || '').trim();
+  const projectPath = String(meta?.projectPath || '').trim();
+  if (!siteId || !projectPath) throw new Error('siteId and projectPath are required');
+
+  const docId = encodeSharePointProjectMetaId(siteId, projectPath);
+  const ref = doc(db, 'foretag', companyId, 'sharepoint_project_metadata', docId);
+
+  const payload = {
+    siteId,
+    projectPath,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  if ('projectNumber' in meta) {
+    payload.projectNumber = meta?.projectNumber != null ? String(meta.projectNumber) : null;
+  }
+  if ('projectName' in meta) {
+    payload.projectName = meta?.projectName != null ? String(meta.projectName) : null;
+  }
+  if ('phaseKey' in meta) {
+    payload.phaseKey = meta?.phaseKey != null ? String(meta.phaseKey) : null;
+  }
+  if ('structureType' in meta) {
+    payload.structureType = meta?.structureType != null ? String(meta.structureType) : null;
+  }
+  if ('status' in meta) {
+    payload.status = meta?.status != null ? String(meta.status) : null;
+  }
+
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return { id: docId, ...payload };
+}
+
+/**
+ * Fetch all saved SharePoint project metadata for a company.
+ * Returns a map keyed by `${siteId}|${projectPath}`.
+ */
+export async function fetchSharePointProjectMetadataMap(companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const colRef = collection(db, 'foretag', companyId, 'sharepoint_project_metadata');
+  const snap = await getDocs(colRef);
+  const out = new Map();
+
+  snap.forEach((docSnap) => {
+    try {
+      const d = docSnap.data() || {};
+      const sid = String(d.siteId || '').trim();
+      const p = String(d.projectPath || '').trim();
+      if (!sid || !p) return;
+      out.set(`${sid}|${p}`, { id: docSnap.id, ...d });
+    } catch (_e) {}
+  });
+
+  return out;
+}
+
+// ============================================================================
+// PROJECTS (Firestore source of truth)
+// ============================================================================
+
+/**
+ * Upsert a project document in Firestore.
+ * Collection: foretag/{companyId}/projects/{projectId}
+ */
+export async function upsertCompanyProject(companyIdOverride, projectId, data) {
+  const companyId = await resolveCompanyId(companyIdOverride, data || { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const pid = String(projectId || data?.id || data?.projectId || data?.projectNumber || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+
+  const rawStatus = String(data?.status != null ? data.status : '').trim().toLowerCase();
+  // Locked model: lifecycle status is only 'active' | 'archived'.
+  // Anything else is coerced to 'active' for backwards compatibility.
+  const lifecycleStatus = rawStatus === 'archived' ? 'archived' : 'active';
+
+  const payload = {
+    id: pid,
+    projectId: pid,
+    projectNumber: data?.projectNumber != null ? String(data.projectNumber) : pid,
+    projectName: data?.projectName != null ? String(data.projectName) : null,
+    fullName: data?.fullName != null ? String(data.fullName) : null,
+    // Lifecycle status (source of truth)
+    status: lifecycleStatus,
+    phase: data?.phase != null ? String(data.phase) : null,
+
+    // Required SharePoint linkage
+    sharePointSiteId: data?.sharePointSiteId != null ? String(data.sharePointSiteId) : null,
+    sharePointSiteUrl: data?.sharePointSiteUrl != null ? String(data.sharePointSiteUrl) : null,
+    rootFolderPath: data?.rootFolderPath != null ? String(data.rootFolderPath) : null,
+    siteRole: data?.siteRole != null ? String(data.siteRole) : 'projects',
+
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  // If doc doesn't exist yet, set createdAt/createdBy.
+  // We do this best-effort with merge semantics.
+  await setDoc(
+    ref,
+    sanitizeForFirestore({
+      ...payload,
+      createdAt: data?.createdAt || serverTimestamp(),
+      createdBy: data?.createdBy || auth.currentUser?.uid || null,
+    }),
+    { merge: true }
+  );
+
+  return { id: pid, ...payload };
+}
+
+/**
+ * Fetch a single project doc.
+ * Collection: foretag/{companyId}/projects/{projectId}
+ */
+export async function fetchCompanyProject(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const d = snap.data() || {};
+  return { id: snap.id, ...d };
+}
+
+/**
+ * Archive a project (soft delete).
+ * - Updates Firestore project doc: status='archived', archivedAt, archivedBy
+ * - Moves SharePoint folder from DK Site (role=projects) to DK Bas (role=system) under:
+ *   /Arkiv/Projekt/{projektnamn}
+ */
+export async function archiveCompanyProject(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Project not found');
+  const project = snap.data() || {};
+
+  const curStatus = String(project?.status || '').trim().toLowerCase();
+  if (curStatus === 'archived') {
+    return { ok: true, alreadyArchived: true };
+  }
+
+  const sourceSiteId = String(project?.sharePointSiteId || '').trim();
+  const sourcePath = String(project?.rootFolderPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const projectName = String(project?.fullName || project?.projectName || pid).trim() || pid;
+
+  // Update Firestore first so left panel hides it immediately and self-heal won’t recreate it.
+  await updateDoc(ref, {
+    status: 'archived',
+    archivedAt: serverTimestamp(),
+    archivedBy: auth.currentUser?.uid || null,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  });
+
+  // Move SharePoint folder to DK Bas archive.
+  if (!sourceSiteId || !sourcePath) {
+    console.warn('[archiveCompanyProject] Missing SharePoint linkage, archived in Firestore only', {
+      projectId: pid,
+      sourceSiteId,
+      sourcePath,
+    });
+    return { ok: true, archivedFirestoreOnly: true };
+  }
+
+  const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+  if (!systemSiteId) {
+    console.warn('[archiveCompanyProject] No system site configured; archived in Firestore only', { projectId: pid });
+    return { ok: true, archivedFirestoreOnly: true };
+  }
+
+  const archiveBasePath = 'Arkiv/Projekt';
+
+  try {
+    const { ensureFolderPath } = await import('../services/azure/fileService');
+    await ensureFolderPath(archiveBasePath, companyId, systemSiteId, { siteRole: 'system' });
+
+    const { moveDriveItemAcrossSitesByPath } = await import('../services/azure/hierarchyService');
+    await moveDriveItemAcrossSitesByPath({
+      sourceSiteId,
+      sourcePath,
+      destSiteId: systemSiteId,
+      destParentPath: archiveBasePath,
+      destName: projectName,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    console.warn('[archiveCompanyProject] SharePoint move failed; project remains archived in Firestore', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/**
+ * Realtime subscription to company projects.
+ * Returns unsubscribe function.
+ */
+export function subscribeCompanyProjects(companyId, { siteRole = 'projects' } = {}, onNext, onError) {
+  const cid = String(companyId || '').trim();
+  if (!cid) {
+    try { onNext?.([]); } catch (_e) {}
+    return () => {};
+  }
+
+  const role = String(siteRole || '').trim().toLowerCase();
+  const colRef = collection(db, 'foretag', cid, 'projects');
+
+  // Keep subscription simple and robust: avoid composite indexes by filtering client-side.
+  const q = query(colRef, orderBy('projectNumber', 'asc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const out = [];
+      snap.forEach((docSnap) => {
+        try {
+          const d = docSnap.data() || {};
+          if (role && String(d.siteRole || '').trim().toLowerCase() !== role) return;
+          out.push({ id: docSnap.id, ...d });
+        } catch (_e) {}
+      });
+      out.sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      try { onNext?.(out); } catch (_e) {}
+    },
+    (err) => {
+      try { onError?.(err); } catch (_e) {}
+    }
+  );
+}
+
+/**
+ * Save SharePoint navigation configuration for a company
+ * @param {string} companyIdOverride - Optional explicit company ID
+ * @param {Object} config - Navigation configuration
+ * @returns {Promise<void>}
+ */
+export async function saveSharePointNavigationConfig(companyIdOverride, config) {
+  const companyId = await resolveCompanyId(companyIdOverride, config || null);
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const configRef = doc(db, 'foretag', companyId, 'sharepoint_navigation', 'config');
+    await setDoc(configRef, {
+      ...config,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    }, { merge: true });
+    
+    console.log(`[saveSharePointNavigationConfig] ✅ Saved navigation config for ${companyId}`);
+  } catch (error) {
+    console.error('[saveSharePointNavigationConfig] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get list of SharePoint sites available to the current user
+ * Uses Microsoft Graph API to fetch sites the user has access to
+ * @returns {Promise<Array>} Array of site objects { id, name, webUrl, displayName }
+ */
+export async function getAvailableSharePointSites() {
+  try {
+    // Dynamic import to avoid circular dependency
+    const { getAccessToken } = await import('../services/azure/authService');
+    const accessToken = await getAccessToken();
+    
+    if (!accessToken) {
+      throw new Error('Failed to get access token. Please authenticate first.');
+    }
+
+    const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+    
+    // Fetch sites the user follows or has access to
+    // Using /me/followedSites and /sites/search to get all accessible sites
+    const [followedResponse, searchResponse] = await Promise.allSettled([
+      fetch(`${GRAPH_API_BASE}/me/followedSites`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }),
+      fetch(`${GRAPH_API_BASE}/sites?search=*`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }),
+    ]);
+
+    const siteMap = new Map();
+
+    // Process followed sites
+    if (followedResponse.status === 'fulfilled' && followedResponse.value.ok) {
+      const followedData = await followedResponse.value.json();
+      if (followedData.value && Array.isArray(followedData.value)) {
+        followedData.value.forEach(site => {
+          if (site.id && !siteMap.has(site.id)) {
+            siteMap.set(site.id, {
+              id: site.id,
+              name: site.displayName || site.name || 'Unnamed Site',
+              webUrl: site.webUrl || '',
+              displayName: site.displayName || site.name || 'Unnamed Site',
+            });
+          }
+        });
+      }
+    }
+
+    // Process search results
+    if (searchResponse.status === 'fulfilled' && searchResponse.value.ok) {
+      const searchData = await searchResponse.value.json();
+      if (searchData.value && Array.isArray(searchData.value)) {
+        searchData.value.forEach(site => {
+          if (site.id && !siteMap.has(site.id)) {
+            siteMap.set(site.id, {
+              id: site.id,
+              name: site.displayName || site.name || 'Unnamed Site',
+              webUrl: site.webUrl || '',
+              displayName: site.displayName || site.name || 'Unnamed Site',
+            });
+          }
+        });
+      }
+    }
+
+    return Array.from(siteMap.values());
+  } catch (error) {
+    console.error('[getAvailableSharePointSites] Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch SharePoint site metadata for a company.
+ * Stored in Firestore so Digitalkontroll can decide visibility independently from SharePoint.
+ * Collection: foretag/{company}/sharepoint_sites/{siteId}
+ * @returns {Promise<Array>} Array of meta objects
+ */
+export async function fetchCompanySharePointSiteMetas(companyId) {
+  const cid = String(companyId || '').trim();
+  if (!cid) return [];
+  try {
+    const colRef = collection(db, 'foretag', cid, 'sharepoint_sites');
+    const snap = await getDocs(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      try {
+        const d = docSnap.data() || {};
+        out.push({ id: docSnap.id, ...d });
+      } catch (_e) {}
+    });
+    return out;
+  } catch (error) {
+    console.warn('[fetchCompanySharePointSiteMetas] Error:', error);
+    return [];
+  }
+}
+
+function normalizeSharePointSiteRole(role) {
+  const r = String(role || '').trim().toLowerCase();
+  if (!r) return null;
+  if (r === 'projects' || r === 'project') return 'projects';
+  if (r === 'project-root' || r === 'project_root' || r === 'projectroot') return 'projects';
+  if (r === 'system' || r === 'system-site' || r === 'system_site') return 'system';
+  if (r === 'system-base' || r === 'system_base' || r === 'systembase') return 'system';
+  return r;
+}
+
+/**
+ * Resolve a company's SharePoint site id by role using Digitalkontroll metadata.
+ * - role="projects" => DK Site (project-only)
+ * - role="system"   => DK Bas (system-only)
+ *
+ * Best-effort: can trigger server-side sync to seed/backfill metadata.
+ */
+export async function getCompanySharePointSiteIdByRole(companyId, role, { syncIfMissing = true } = {}) {
+  const cid = String(companyId || '').trim();
+  const targetRole = normalizeSharePointSiteRole(role) || String(role || '').trim().toLowerCase();
+  if (!cid || !targetRole) return null;
+
+  const pick = (metas) => {
+    const m = (metas || []).find((x) => x && normalizeSharePointSiteRole(x.role) === targetRole);
+    const id = m ? String(m.siteId || m.id || '').trim() : '';
+    return id || null;
+  };
+
+  let metas = await fetchCompanySharePointSiteMetas(cid);
+  let siteId = pick(metas);
+  if (siteId) return siteId;
+
+  if (syncIfMissing) {
+    try { await syncSharePointSiteVisibilityRemote({ companyId: cid }); } catch (_e) {}
+    metas = await fetchCompanySharePointSiteMetas(cid);
+    siteId = pick(metas);
+    if (siteId) return siteId;
+  }
+
+  return null;
+}
+
+/**
+ * Get visible SharePoint site IDs for a company.
+ * Visibility is controlled by Firestore metadata (visibleInLeftPanel).
+ */
+export async function getCompanyVisibleSharePointSiteIds(companyId) {
+  const metas = await fetchCompanySharePointSiteMetas(companyId);
+  return (metas || [])
+    .filter((m) => m && m.visibleInLeftPanel === true && normalizeSharePointSiteRole(m.role) === 'projects')
+    .map((m) => String(m.siteId || m.id || '').trim())
+    .filter(Boolean);
+}
+
+/**
+ * Upsert (create/update) SharePoint site metadata for a company.
+ * Doc id is the siteId.
+ */
+export async function upsertCompanySharePointSiteMeta(companyId, meta) {
+  const cid = String(companyId || '').trim();
+  const siteId = String(meta?.siteId || '').trim();
+  if (!cid || !siteId) throw new Error('companyId and meta.siteId are required');
+
+  const role = normalizeSharePointSiteRole(meta?.role) || 'system';
+  const visibleInLeftPanel = role === 'projects' && meta?.visibleInLeftPanel === true;
+
+  const payload = {
+    siteId,
+    siteUrl: meta?.siteUrl ? String(meta.siteUrl) : (meta?.webUrl ? String(meta.webUrl) : null),
+    siteName: meta?.siteName ? String(meta.siteName) : (meta?.name ? String(meta.name) : null),
+    role,
+    visibleInLeftPanel,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  const ref = doc(db, 'foretag', cid, 'sharepoint_sites', siteId);
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return true;
+}
+
+/**
+ * Server-side sync/migration: ensures sharepoint_sites metadata exists and is correct.
+ * Uses Cloud Functions admin privileges to read system config and write metadata.
+ */
+export async function syncSharePointSiteVisibilityRemote({ companyId }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const cid = String(companyId || '').trim();
+  if (!cid) throw new Error('companyId is required');
+  const fn = httpsCallable(functionsClient, 'syncSharePointSiteVisibility');
+  const res = await fn({ companyId: cid });
+  return res && res.data ? res.data : res;
+}
+
+/**
+ * Get all phase SharePoint configurations for a company
+ * @param {string} companyId - Company ID
+ * @returns {Promise<Object>} Map of phaseKey -> config
+ */
+export async function getAllPhaseSharePointConfigs(companyId) {
+  if (!companyId) {
+    throw new Error('Company ID is required');
+  }
+
+  try {
+    const phasesRef = collection(db, 'foretag', companyId, 'sharepoint_phases');
+    const phasesSnap = await getDocs(phasesRef);
+    
+    const configs = {};
+    phasesSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data.enabled) {
+        configs[docSnap.id] = {
+          phaseKey: docSnap.id,
+          siteId: data.siteId,
+          webUrl: data.webUrl || null,
+          siteName: data.siteName || null,
+          enabled: true,
+          updatedAt: data.updatedAt,
+        };
+      }
+    });
+    
+    return configs;
+  } catch (error) {
+    console.error('[getAllPhaseSharePointConfigs] Error:', error);
+    return {};
+  }
+}

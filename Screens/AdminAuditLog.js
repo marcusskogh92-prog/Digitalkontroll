@@ -3,7 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 import { ImageBackground, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { auth, fetchAdminAuditEvents } from '../components/firebase';
-import { CompanyHeaderLogo, DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
@@ -17,25 +16,7 @@ export default function AdminAuditLog({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [filterCompanyId, setFilterCompanyId] = useState(null);
 
-  useEffect(() => {
-    // Align header with ManageCompany
-    try {
-      navigation.setOptions({
-        headerTitle: () => null,
-        headerLeft: () => (
-          <View style={{ paddingLeft: 0, height: '100%', justifyContent: 'center' }}>
-            <DigitalKontrollHeaderLogo />
-          </View>
-        ),
-        headerRight: () => (
-          <View style={{ paddingRight: 0, height: '100%', justifyContent: 'center' }}>
-            <CompanyHeaderLogo />
-          </View>
-        ),
-        headerBackTitle: '',
-      });
-    } catch (_e) {}
-  }, []);
+  // Header is handled globally in App.js (web breadcrumb + logos).
 
   // Only superadmin / MS Byggsystem-admin should see this screen (same gating as ManageCompany)
   useEffect(() => {
@@ -85,11 +66,27 @@ export default function AdminAuditLog({ navigation }) {
       } catch (_e) {}
     };
 
+    const handleRefresh = () => {
+      (async () => {
+        try {
+          setLoading(true);
+          const items = await fetchAdminAuditEvents({ companyId: filterCompanyId || null, limitCount: 100 }).catch(() => []);
+          setEvents(Array.isArray(items) ? items : []);
+        } catch (_e) {
+          setEvents([]);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    };
+
     window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
     return () => {
       try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
-  }, [navigation]);
+  }, [navigation, filterCompanyId]);
 
   // Fetch latest events (global or filtered by companyId)
   useEffect(() => {
@@ -139,7 +136,7 @@ export default function AdminAuditLog({ navigation }) {
     const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
+      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0, pointerEvents: 'none' }} />
         <MainLayout
           onSelectProject={handleSelectCompany}
@@ -148,7 +145,19 @@ export default function AdminAuditLog({ navigation }) {
           sidebarCompaniesMode={true}
           sidebarShowMembers={allowedTools}
           topBar={
-            <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
+            <View
+              style={{
+                height: 96,
+                paddingLeft: 24,
+                paddingRight: 24,
+                backgroundColor: 'rgba(25, 118, 210, 0.2)',
+                justifyContent: 'center',
+                borderBottomWidth: 1,
+                borderColor: 'rgba(25, 118, 210, 0.3)',
+                borderLeftWidth: 4,
+                borderLeftColor: '#1976D2',
+              }}
+            >
               <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
                   <View style={{ marginRight: 10 }}>
@@ -183,15 +192,17 @@ export default function AdminAuditLog({ navigation }) {
         >
           <View style={dashboardContainerStyle}>
             <View style={[dashboardCardStyle, { marginBottom: 16 }] }>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
-                  <Ionicons name="chevron-back" size={20} color="#222" />
-                </TouchableOpacity>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: '#1565C0', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                    <Ionicons name="list" size={14} color="#fff" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <TouchableOpacity onPress={() => { try { navigation.goBack(); } catch(_e){} }} style={{ padding: 8, marginRight: 8 }} accessibilityLabel="Tillbaka">
+                    <Ionicons name="chevron-back" size={20} color="#222" />
+                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
+                    <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: '#1565C0', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                      <Ionicons name="list" size={14} color="#fff" />
+                    </View>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }} numberOfLines={1} ellipsizeMode="tail">Adminlogg</Text>
                   </View>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }}>Adminlogg</Text>
                 </View>
               </View>
 
@@ -218,11 +229,11 @@ export default function AdminAuditLog({ navigation }) {
                 ) : null}
               </View>
 
-              <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, maxHeight: 440, overflow: 'hidden', backgroundColor: '#fafafa' }}>
+              <View style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 8, backgroundColor: '#fafafa' }}>
                 {loading ? (
                   <Text style={{ fontSize: 13, color: '#666' }}>Laddar logg...</Text>
                 ) : (Array.isArray(events) && events.length > 0 ? (
-                  <ScrollView style={{ maxHeight: 420 }}>
+                  <View>
                     {events.map((ev) => {
                       const ts = ev?.ts && ev.ts.toDate ? ev.ts.toDate() : null;
                       const tsText = ts ? ts.toLocaleString('sv-SE') : '';
@@ -258,7 +269,7 @@ export default function AdminAuditLog({ navigation }) {
                         </View>
                       );
                     })}
-                  </ScrollView>
+                  </View>
                 ) : (
                   <Text style={{ fontSize: 13, color: '#666' }}>Inga loggposter hittades än.</Text>
                 ))}
