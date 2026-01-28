@@ -8,6 +8,18 @@ import { getAccessToken } from './authService';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
+const encodeGraphPath = (path) => {
+  const clean = String(path || '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .trim();
+  if (!clean) return '';
+  return clean
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+};
+
 const isFolderLikeDriveItem = (item) => {
   if (!item) return false;
   // Normal folders
@@ -866,6 +878,268 @@ export async function deleteItem(companyId, itemPath) {
     console.error('[hierarchyService] Error deleting item:', error);
     throw error;
   }
+}
+
+/**
+ * Get a drive item by path within a specific site.
+ * @param {string} siteId
+ * @param {string} itemPath - Path relative to drive root, e.g. "Projects/2026"
+ */
+export async function getDriveItemByPath(siteId, itemPath = '') {
+  if (!siteId) throw new Error('Site ID is required');
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const clean = String(itemPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const endpoint = clean
+    ? `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encodeGraphPath(clean)}`
+    : `${GRAPH_API_BASE}/sites/${siteId}/drive/root`;
+
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get drive item: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+  return await res.json();
+}
+
+export async function renameDriveItemById(siteId, itemId, newName) {
+  if (!siteId) throw new Error('Site ID is required');
+  if (!itemId) throw new Error('Item ID is required');
+  const name = String(newName || '').trim();
+  if (!name) throw new Error('New name is required');
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
+  const res = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to rename item: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+  return await res.json();
+}
+
+export async function deleteDriveItemById(siteId, itemId) {
+  if (!siteId) throw new Error('Site ID is required');
+  if (!itemId) throw new Error('Item ID is required');
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
+  const res = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok && res.status !== 404) {
+    const errorText = await res.text();
+    throw new Error(`Failed to delete item: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+  return true;
+}
+
+export async function moveDriveItemById(siteId, itemId, newParentItemId) {
+  if (!siteId) throw new Error('Site ID is required');
+  if (!itemId) throw new Error('Item ID is required');
+  if (newParentItemId === undefined || newParentItemId === null) {
+    throw new Error('New parent item ID is required');
+  }
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
+  const res = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({ parentReference: { id: newParentItemId } }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to move item: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+  return await res.json();
+}
+
+export async function renameDriveItemByPath(siteId, itemPath, newName) {
+  const item = await getDriveItemByPath(siteId, itemPath);
+  return await renameDriveItemById(siteId, item?.id, newName);
+}
+
+export async function deleteDriveItemByPath(siteId, itemPath) {
+  const item = await getDriveItemByPath(siteId, itemPath);
+  return await deleteDriveItemById(siteId, item?.id);
+}
+
+export async function moveDriveItemByPath(siteId, itemPath, newParentPath) {
+  const item = await getDriveItemByPath(siteId, itemPath);
+  const parentClean = String(newParentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const parentItem = await getDriveItemByPath(siteId, parentClean);
+  return await moveDriveItemById(siteId, item?.id, parentItem?.id);
+}
+
+async function getSiteDriveId(siteId) {
+  if (!siteId) throw new Error('Site ID is required');
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive`;
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to get site drive: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+  const data = await res.json();
+  const driveId = data?.id ? String(data.id).trim() : '';
+  if (!driveId) throw new Error('Drive ID missing from site drive response');
+  return driveId;
+}
+
+async function copyDriveItemByIdToDriveFolder({ sourceSiteId, sourceItemId, destDriveId, destParentItemId, destName, conflictBehavior = 'rename' }) {
+  if (!sourceSiteId) throw new Error('sourceSiteId is required');
+  if (!sourceItemId) throw new Error('sourceItemId is required');
+  if (!destDriveId) throw new Error('destDriveId is required');
+  if (!destParentItemId) throw new Error('destParentItemId is required');
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+
+  const endpoint = `${GRAPH_API_BASE}/sites/${sourceSiteId}/drive/items/${sourceItemId}/copy`;
+  const payload = {
+    parentReference: {
+      driveId: String(destDriveId),
+      id: String(destParentItemId),
+    },
+    '@microsoft.graph.conflictBehavior': String(conflictBehavior || 'rename'),
+  };
+  const name = String(destName || '').trim();
+  if (name) payload.name = name;
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!(res.status === 202 || res.ok)) {
+    const errorText = await res.text();
+    throw new Error(`Failed to start copy: ${res.status} ${res.statusText} - ${errorText}`);
+  }
+
+  // Copy is async. Graph returns a monitor URL in Location.
+  const monitorUrl = res.headers?.get?.('Location') || res.headers?.get?.('location') || null;
+  if (!monitorUrl) {
+    // Some environments do not expose headers reliably; fail loudly so we can adjust.
+    throw new Error('Copy started but no monitor URL (Location header) was returned');
+  }
+
+  // Poll monitor URL until complete or timeout.
+  const maxAttempts = 24;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const poll = await fetch(monitorUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (poll.status === 202) {
+      const retryAfterRaw = poll.headers?.get?.('Retry-After') || poll.headers?.get?.('retry-after') || null;
+      const retryAfter = retryAfterRaw ? Number(retryAfterRaw) : NaN;
+      const delayMs = Number.isFinite(retryAfter) ? Math.max(1, retryAfter) * 1000 : 1500;
+      await new Promise((r) => setTimeout(r, delayMs));
+      continue;
+    }
+
+    if (poll.ok) {
+      // Done. Response body may be empty.
+      try {
+        return await poll.json();
+      } catch (_e) {
+        return { ok: true };
+      }
+    }
+
+    const errorText = await poll.text();
+    throw new Error(`Copy monitor failed: ${poll.status} ${poll.statusText} - ${errorText}`);
+  }
+
+  throw new Error('Copy operation did not complete in time');
+}
+
+/**
+ * Move a folder/file across SharePoint sites by path.
+ * Graph doesn't support a true move across drives; we implement copy + delete.
+ */
+export async function moveDriveItemAcrossSitesByPath({ sourceSiteId, sourcePath, destSiteId, destParentPath, destName }) {
+  const srcSite = String(sourceSiteId || '').trim();
+  const dstSite = String(destSiteId || '').trim();
+  const srcPath = String(sourcePath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const dstParentPath = String(destParentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (!srcSite) throw new Error('sourceSiteId is required');
+  if (!dstSite) throw new Error('destSiteId is required');
+  if (!srcPath) throw new Error('sourcePath is required');
+  if (!dstParentPath) throw new Error('destParentPath is required');
+
+  const srcItem = await getDriveItemByPath(srcSite, srcPath);
+  const srcItemId = String(srcItem?.id || '').trim();
+  if (!srcItemId) throw new Error('Source item id missing');
+
+  const destDriveId = await getSiteDriveId(dstSite);
+  const destParent = await getDriveItemByPath(dstSite, dstParentPath);
+  const destParentId = String(destParent?.id || '').trim();
+  if (!destParentId) throw new Error('Destination folder id missing');
+
+  await copyDriveItemByIdToDriveFolder({
+    sourceSiteId: srcSite,
+    sourceItemId: srcItemId,
+    destDriveId,
+    destParentItemId: destParentId,
+    destName: String(destName || '').trim() || null,
+    conflictBehavior: 'rename',
+  });
+
+  await deleteDriveItemById(srcSite, srcItemId);
+  return true;
 }
 
 /**

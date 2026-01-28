@@ -1,4 +1,4 @@
-import { Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import { Dashboard } from './Dashboard';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
@@ -51,6 +51,7 @@ export default function NativeMainPane({
   routeCompanyId,
   auth,
   setNewProjectModal,
+  onOpenCreateProjectModal,
 }) {
   return (
     <ScrollView
@@ -170,20 +171,25 @@ export default function NativeMainPane({
             companyId={companyId || routeCompanyId}
             currentUserId={auth?.currentUser?.uid || null}
             onCreateProject={() => {
+              // Preferred flow: SharePoint-based CreateProjectModal.
+              if (typeof onOpenCreateProjectModal === 'function') {
+                onOpenCreateProjectModal();
+                return;
+              }
+
+              // Legacy fallback (kept for safety if modal isn't wired in some screen).
               const firstSubFolder = hierarchy.find(
                 (main) => main.children && main.children.length > 0,
               )?.children?.[0];
-              if (firstSubFolder) {
+              if (firstSubFolder && typeof setNewProjectModal === 'function') {
                 setNewProjectModal({
                   visible: true,
                   parentSubId: firstSubFolder.id,
                 });
-              } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                // If no subfolder exists, show message
-                alert(
-                  'Skapa först en undermapp i sidopanelen för att kunna skapa projekt.',
-                );
+                return;
               }
+              // No manual-prep requirement anymore; if we can't open the new modal,
+              // we intentionally do nothing instead of blocking with an instruction.
             }}
           />
         </View>

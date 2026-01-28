@@ -221,12 +221,34 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
     }
 
+    // Projects (company-scoped)
+    // Firestore is the source of truth for which projects exist and how they map to SharePoint.
+    // Collection: foretag/{company}/projects/{projectId}
+    match /foretag/{company}/projects/{projectId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
     // SharePoint navigation configuration per company
     // Used by adminvyn "SharePoint Navigation" och av vänsterpanelen på startsidan.
     // Medlemmar i företaget får hantera sin egen navigation, och globala admins
     // (superadmin / MS Byggsystem-admin) får hantera alla företags navigation.
     match /foretag/{company}/sharepoint_navigation/{docId} {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // SharePoint site metadata per company (visibility/role)
+    // Digitalkontroll owns which sites are visible in the left panel.
+    // Collection: foretag/{company}/sharepoint_sites/{siteId}
+    match /foretag/{company}/sharepoint_sites/{siteId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      // Writes should be system-controlled (cloud functions / global admins).
+      allow create, update, delete: if isGlobalAdmin();
+    }
+
+    // SharePoint system configuration per company (base/workspace sites)
+    // This must be hidden from company admins/users.
+    match /foretag/{company}/sharepoint_system/{docId} {
+      allow read, write: if isGlobalAdmin();
     }
 
     // SharePoint project metadata (company-scoped)

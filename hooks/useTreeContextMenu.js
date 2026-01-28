@@ -87,11 +87,13 @@ export function useTreeContextMenu({
       if (!rootEl) return;
       if (!rootEl.contains(ev.target)) return;
 
-      ev.preventDefault();
-      ev.stopPropagation();
-
+      // Only intercept right-clicks for rows that explicitly participate in the legacy tree menu.
+      // Otherwise, let the browser/default handlers or other UI menus (e.g. SharePointLeftPanel) handle it.
       const rowEl = ev.target?.closest?.('[data-dk-type]');
       if (!rowEl) return;
+
+      ev.preventDefault();
+      ev.stopPropagation();
 
       const dkType = rowEl.getAttribute('data-dk-type');
       const mainId = rowEl.getAttribute('data-dk-mainid');

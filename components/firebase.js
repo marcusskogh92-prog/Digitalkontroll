@@ -39,50 +39,7 @@ if (Platform.OS === 'web') {
 }
 export { auth };
 export const db = getFirestore(app);
-// Functions client
-let _functionsClient = null;
-try {
-  _functionsClient = getFunctions(app);
-} catch (_e) {
-  _functionsClient = null;
-}
-export const functionsClient = _functionsClient;
-
-// Emulator connection disabled - using production Firebase
-// If running in a browser on localhost, connect the Functions client to the emulator
-/*
-try {
-  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    try {
-      if (functionsClient && typeof connectFunctionsEmulator === 'function') {
-        // default emulator port used by firebase emulators: 5001
-        connectFunctionsEmulator(functionsClient, 'localhost', 5001);
-        console.log('[firebase] connected functions client to emulator at localhost:5001');
-      }
-    } catch (e) { console.warn('[firebase] could not connect functions emulator', e); }
-  }
-} catch(e) {}
-
-// Also connect Firestore and Auth clients to local emulators when running on localhost
-try {
-  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    try {
-      if (typeof connectFirestoreEmulator === 'function' && db) {
-        // Firestore emulator in this project configured to 8085
-        connectFirestoreEmulator(db, 'localhost', 8085);
-        console.log('[firebase] connected firestore client to emulator at localhost:8085');
-      }
-    } catch (e) { console.warn('[firebase] could not connect firestore emulator', e); }
-    try {
-      if (typeof connectAuthEmulator === 'function' && auth) {
-        // Auth emulator default port 9099
-        try { connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true }); } catch(_e) { connectAuthEmulator(auth, 'http://localhost:9099'); }
-        console.log('[firebase] connected auth client to emulator at http://localhost:9099');
-      }
-    } catch (e) { console.warn('[firebase] could not connect auth emulator', e); }
-  }
-} catch(e) {}
-*/
+export const functionsClient = getFunctions(app);
 
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
@@ -130,20 +87,23 @@ export async function uploadUserAvatar({ companyId, uid, file }) {
   const azurePath = `01-Company/${companyId}/Users/${uid}/${fileName}`;
   
   try {
-    // Admin files (logos, avatars) should always go to Digitalkontroll site (system), not company-specific sites
-    // Ensure system folder structure exists first
+    // IMPORTANT GUARD:
+    // DK Site (role=projects) must remain a pure project site.
+    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
+    const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+
+    // Ensure system folder structure exists (best-effort; may require auth)
     const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
-    await ensureSystemFolderStructure();
-    
-    // Pass null for companyId to force use of global config (Digitalkontroll site)
-    // But still use companyId in the path for organization
+    await ensureSystemFolderStructure(systemSiteId || null);
+
     const url = await uploadFileToAzure({
       file,
       path: azurePath,
-      companyId: null, // Don't use company-specific site for admin files
-      siteId: null, // Use global config (Digitalkontroll site)
+      companyId, // keep company context
+      siteId: systemSiteId || null, // DK Bas (system)
+      siteRole: 'system',
     });
-    console.log('[uploadUserAvatar] ✅ Uploaded to Azure (Digitalkontroll site):', url);
+    console.log('[uploadUserAvatar] ✅ Uploaded to Azure (DK Bas/system site):', url);
     return url;
   } catch (error) {
     // Fallback to Firebase Storage (for backwards compatibility)
@@ -172,11 +132,15 @@ export async function uploadCompanyLogo({ companyId, file }) {
   const azurePath = `01-Company/${safeCompanyId}/Logos/${fileName}`;
   
   try {
-    // Admin files (logos, avatars) should always go to Digitalkontroll site (system), not company-specific sites
+    // IMPORTANT GUARD:
+    // DK Site (role=projects) must remain a pure project site.
+    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
+    const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+
     // Try to ensure system folder structure exists first (but don't fail if auth is not available)
     try {
       const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
-      await ensureSystemFolderStructure();
+      await ensureSystemFolderStructure(systemSiteId || null);
     } catch (folderError) {
       // Folder structure creation failed (likely auth issue) - this is OK, uploadFile will create folders as needed
       if (folderError?.message && !folderError.message.includes('Popup window was blocked')) {
@@ -184,15 +148,14 @@ export async function uploadCompanyLogo({ companyId, file }) {
       }
     }
     
-    // Pass null for companyId to force use of global config (Digitalkontroll site)
-    // But still use companyId in the path for organization
     const url = await uploadFileToAzure({
       file,
       path: azurePath,
-      companyId: null, // Don't use company-specific site for admin files
-      siteId: null, // Use global config (Digitalkontroll site)
+      companyId, // keep company context
+      siteId: systemSiteId || null, // DK Bas (system)
+      siteRole: 'system',
     });
-    console.log('[uploadCompanyLogo] ✅ Uploaded to Azure (Digitalkontroll site):', url);
+    console.log('[uploadCompanyLogo] ✅ Uploaded to Azure (DK Bas/system site):', url);
     return url;
   } catch (error) {
     // Check if error is related to authentication/popup blocking
@@ -757,6 +720,9 @@ export async function getCompanySharePointSiteId(companyId) {
   if (!companyId) return null;
   try {
     const profile = await fetchCompanyProfile(companyId);
+    const primary = profile?.primarySharePointSite;
+    const primaryId = primary && typeof primary === 'object' ? String(primary.siteId || '').trim() : '';
+    if (primaryId) return primaryId;
     return profile?.sharePointSiteId || null;
   } catch (error) {
     console.warn('[getCompanySharePointSiteId] Error fetching site ID:', error);
@@ -777,10 +743,21 @@ export async function saveCompanySharePointSiteId(companyId, siteId, webUrl = nu
   }
   try {
     const ref = doc(db, 'foretag', companyId, 'profil', 'public');
-    const updateData = { sharePointSiteId: siteId };
-    if (webUrl) {
-      updateData.sharePointWebUrl = webUrl;
-    }
+    const updateData = {
+      // Legacy fields (kept for backwards compatibility)
+      sharePointSiteId: siteId,
+      sharePointWebUrl: webUrl || null,
+
+      // New canonical linkage object
+      primarySharePointSite: {
+        siteId,
+        siteUrl: webUrl || null,
+        linkedAt: serverTimestamp(),
+        linkedBy: auth.currentUser?.uid || null,
+      },
+
+      updatedAt: serverTimestamp(),
+    };
     await updateDoc(ref, updateData);
     console.log(`[saveCompanySharePointSiteId] ✅ Saved SharePoint Site ID for company: ${companyId}`);
   } catch (error) {
@@ -2769,6 +2746,189 @@ export async function fetchSharePointProjectMetadataMap(companyIdOverride) {
   return out;
 }
 
+// ============================================================================
+// PROJECTS (Firestore source of truth)
+// ============================================================================
+
+/**
+ * Upsert a project document in Firestore.
+ * Collection: foretag/{companyId}/projects/{projectId}
+ */
+export async function upsertCompanyProject(companyIdOverride, projectId, data) {
+  const companyId = await resolveCompanyId(companyIdOverride, data || { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const pid = String(projectId || data?.id || data?.projectId || data?.projectNumber || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+
+  const rawStatus = String(data?.status != null ? data.status : '').trim().toLowerCase();
+  // Locked model: lifecycle status is only 'active' | 'archived'.
+  // Anything else is coerced to 'active' for backwards compatibility.
+  const lifecycleStatus = rawStatus === 'archived' ? 'archived' : 'active';
+
+  const payload = {
+    id: pid,
+    projectId: pid,
+    projectNumber: data?.projectNumber != null ? String(data.projectNumber) : pid,
+    projectName: data?.projectName != null ? String(data.projectName) : null,
+    fullName: data?.fullName != null ? String(data.fullName) : null,
+    // Lifecycle status (source of truth)
+    status: lifecycleStatus,
+    phase: data?.phase != null ? String(data.phase) : null,
+
+    // Required SharePoint linkage
+    sharePointSiteId: data?.sharePointSiteId != null ? String(data.sharePointSiteId) : null,
+    sharePointSiteUrl: data?.sharePointSiteUrl != null ? String(data.sharePointSiteUrl) : null,
+    rootFolderPath: data?.rootFolderPath != null ? String(data.rootFolderPath) : null,
+    siteRole: data?.siteRole != null ? String(data.siteRole) : 'projects',
+
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  // If doc doesn't exist yet, set createdAt/createdBy.
+  // We do this best-effort with merge semantics.
+  await setDoc(
+    ref,
+    sanitizeForFirestore({
+      ...payload,
+      createdAt: data?.createdAt || serverTimestamp(),
+      createdBy: data?.createdBy || auth.currentUser?.uid || null,
+    }),
+    { merge: true }
+  );
+
+  return { id: pid, ...payload };
+}
+
+/**
+ * Fetch a single project doc.
+ * Collection: foretag/{companyId}/projects/{projectId}
+ */
+export async function fetchCompanyProject(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const d = snap.data() || {};
+  return { id: snap.id, ...d };
+}
+
+/**
+ * Archive a project (soft delete).
+ * - Updates Firestore project doc: status='archived', archivedAt, archivedBy
+ * - Moves SharePoint folder from DK Site (role=projects) to DK Bas (role=system) under:
+ *   /Arkiv/Projekt/{projektnamn}
+ */
+export async function archiveCompanyProject(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Project not found');
+  const project = snap.data() || {};
+
+  const curStatus = String(project?.status || '').trim().toLowerCase();
+  if (curStatus === 'archived') {
+    return { ok: true, alreadyArchived: true };
+  }
+
+  const sourceSiteId = String(project?.sharePointSiteId || '').trim();
+  const sourcePath = String(project?.rootFolderPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const projectName = String(project?.fullName || project?.projectName || pid).trim() || pid;
+
+  // Update Firestore first so left panel hides it immediately and self-heal won’t recreate it.
+  await updateDoc(ref, {
+    status: 'archived',
+    archivedAt: serverTimestamp(),
+    archivedBy: auth.currentUser?.uid || null,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  });
+
+  // Move SharePoint folder to DK Bas archive.
+  if (!sourceSiteId || !sourcePath) {
+    console.warn('[archiveCompanyProject] Missing SharePoint linkage, archived in Firestore only', {
+      projectId: pid,
+      sourceSiteId,
+      sourcePath,
+    });
+    return { ok: true, archivedFirestoreOnly: true };
+  }
+
+  const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+  if (!systemSiteId) {
+    console.warn('[archiveCompanyProject] No system site configured; archived in Firestore only', { projectId: pid });
+    return { ok: true, archivedFirestoreOnly: true };
+  }
+
+  const archiveBasePath = 'Arkiv/Projekt';
+
+  try {
+    const { ensureFolderPath } = await import('../services/azure/fileService');
+    await ensureFolderPath(archiveBasePath, companyId, systemSiteId, { siteRole: 'system' });
+
+    const { moveDriveItemAcrossSitesByPath } = await import('../services/azure/hierarchyService');
+    await moveDriveItemAcrossSitesByPath({
+      sourceSiteId,
+      sourcePath,
+      destSiteId: systemSiteId,
+      destParentPath: archiveBasePath,
+      destName: projectName,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    console.warn('[archiveCompanyProject] SharePoint move failed; project remains archived in Firestore', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+/**
+ * Realtime subscription to company projects.
+ * Returns unsubscribe function.
+ */
+export function subscribeCompanyProjects(companyId, { siteRole = 'projects' } = {}, onNext, onError) {
+  const cid = String(companyId || '').trim();
+  if (!cid) {
+    try { onNext?.([]); } catch (_e) {}
+    return () => {};
+  }
+
+  const role = String(siteRole || '').trim().toLowerCase();
+  const colRef = collection(db, 'foretag', cid, 'projects');
+
+  // Keep subscription simple and robust: avoid composite indexes by filtering client-side.
+  const q = query(colRef, orderBy('projectNumber', 'asc'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const out = [];
+      snap.forEach((docSnap) => {
+        try {
+          const d = docSnap.data() || {};
+          if (role && String(d.siteRole || '').trim().toLowerCase() !== role) return;
+          out.push({ id: docSnap.id, ...d });
+        } catch (_e) {}
+      });
+      out.sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
+      try { onNext?.(out); } catch (_e) {}
+    },
+    (err) => {
+      try { onError?.(err); } catch (_e) {}
+    }
+  );
+}
+
 /**
  * Save SharePoint navigation configuration for a company
  * @param {string} companyIdOverride - Optional explicit company ID
@@ -2871,6 +3031,126 @@ export async function getAvailableSharePointSites() {
     console.error('[getAvailableSharePointSites] Error:', error);
     throw error;
   }
+}
+
+/**
+ * Fetch SharePoint site metadata for a company.
+ * Stored in Firestore so Digitalkontroll can decide visibility independently from SharePoint.
+ * Collection: foretag/{company}/sharepoint_sites/{siteId}
+ * @returns {Promise<Array>} Array of meta objects
+ */
+export async function fetchCompanySharePointSiteMetas(companyId) {
+  const cid = String(companyId || '').trim();
+  if (!cid) return [];
+  try {
+    const colRef = collection(db, 'foretag', cid, 'sharepoint_sites');
+    const snap = await getDocs(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      try {
+        const d = docSnap.data() || {};
+        out.push({ id: docSnap.id, ...d });
+      } catch (_e) {}
+    });
+    return out;
+  } catch (error) {
+    console.warn('[fetchCompanySharePointSiteMetas] Error:', error);
+    return [];
+  }
+}
+
+function normalizeSharePointSiteRole(role) {
+  const r = String(role || '').trim().toLowerCase();
+  if (!r) return null;
+  if (r === 'projects' || r === 'project') return 'projects';
+  if (r === 'project-root' || r === 'project_root' || r === 'projectroot') return 'projects';
+  if (r === 'system' || r === 'system-site' || r === 'system_site') return 'system';
+  if (r === 'system-base' || r === 'system_base' || r === 'systembase') return 'system';
+  return r;
+}
+
+/**
+ * Resolve a company's SharePoint site id by role using Digitalkontroll metadata.
+ * - role="projects" => DK Site (project-only)
+ * - role="system"   => DK Bas (system-only)
+ *
+ * Best-effort: can trigger server-side sync to seed/backfill metadata.
+ */
+export async function getCompanySharePointSiteIdByRole(companyId, role, { syncIfMissing = true } = {}) {
+  const cid = String(companyId || '').trim();
+  const targetRole = normalizeSharePointSiteRole(role) || String(role || '').trim().toLowerCase();
+  if (!cid || !targetRole) return null;
+
+  const pick = (metas) => {
+    const m = (metas || []).find((x) => x && normalizeSharePointSiteRole(x.role) === targetRole);
+    const id = m ? String(m.siteId || m.id || '').trim() : '';
+    return id || null;
+  };
+
+  let metas = await fetchCompanySharePointSiteMetas(cid);
+  let siteId = pick(metas);
+  if (siteId) return siteId;
+
+  if (syncIfMissing) {
+    try { await syncSharePointSiteVisibilityRemote({ companyId: cid }); } catch (_e) {}
+    metas = await fetchCompanySharePointSiteMetas(cid);
+    siteId = pick(metas);
+    if (siteId) return siteId;
+  }
+
+  return null;
+}
+
+/**
+ * Get visible SharePoint site IDs for a company.
+ * Visibility is controlled by Firestore metadata (visibleInLeftPanel).
+ */
+export async function getCompanyVisibleSharePointSiteIds(companyId) {
+  const metas = await fetchCompanySharePointSiteMetas(companyId);
+  return (metas || [])
+    .filter((m) => m && m.visibleInLeftPanel === true && normalizeSharePointSiteRole(m.role) === 'projects')
+    .map((m) => String(m.siteId || m.id || '').trim())
+    .filter(Boolean);
+}
+
+/**
+ * Upsert (create/update) SharePoint site metadata for a company.
+ * Doc id is the siteId.
+ */
+export async function upsertCompanySharePointSiteMeta(companyId, meta) {
+  const cid = String(companyId || '').trim();
+  const siteId = String(meta?.siteId || '').trim();
+  if (!cid || !siteId) throw new Error('companyId and meta.siteId are required');
+
+  const role = normalizeSharePointSiteRole(meta?.role) || 'system';
+  const visibleInLeftPanel = role === 'projects' && meta?.visibleInLeftPanel === true;
+
+  const payload = {
+    siteId,
+    siteUrl: meta?.siteUrl ? String(meta.siteUrl) : (meta?.webUrl ? String(meta.webUrl) : null),
+    siteName: meta?.siteName ? String(meta.siteName) : (meta?.name ? String(meta.name) : null),
+    role,
+    visibleInLeftPanel,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  const ref = doc(db, 'foretag', cid, 'sharepoint_sites', siteId);
+  await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
+  return true;
+}
+
+/**
+ * Server-side sync/migration: ensures sharepoint_sites metadata exists and is correct.
+ * Uses Cloud Functions admin privileges to read system config and write metadata.
+ */
+export async function syncSharePointSiteVisibilityRemote({ companyId }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const cid = String(companyId || '').trim();
+  if (!cid) throw new Error('companyId is required');
+  const fn = httpsCallable(functionsClient, 'syncSharePointSiteVisibility');
+  const res = await fn({ companyId: cid });
+  return res && res.data ? res.data : res;
 }
 
 /**

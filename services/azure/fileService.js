@@ -8,6 +8,52 @@ import { getAccessToken } from './authService';
 import { getAzureConfig } from './config';
 // Note: getCompanySharePointSiteId is imported dynamically to avoid circular dependency
 
+// Guard rails: DK Site (role=projects) must never contain system folders.
+// System folders (company/admin structure) belong in DK Bas (role=system) only.
+const SYSTEM_ROOT_FOLDERS = new Set(
+  [
+    'company',
+    'projects',
+    '01-company',
+    '02-projects',
+    '03-system',
+    '04-shared',
+    // common variants
+    '01_company',
+    '02_projects',
+    '03_system',
+    '04_shared',
+  ].map((s) => String(s).toLowerCase())
+);
+
+function normalizeRootFolderName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/_+/g, '_');
+}
+
+function assertProjectSitePathAllowed(path, siteRole) {
+  const role = String(siteRole || '').trim().toLowerCase();
+  if (role !== 'projects' && role !== 'project') return;
+
+  const parts = String(path || '')
+    .split('/')
+    .map((p) => String(p || '').trim())
+    .filter(Boolean);
+  if (parts.length === 0) return;
+
+  const root = normalizeRootFolderName(parts[0]);
+  if (SYSTEM_ROOT_FOLDERS.has(root)) {
+    // Intentionally hard-fail so we catch regressions early.
+    // DK Site must remain a pure project site.
+    throw new Error(
+      `Blocked creating system folder "${parts[0]}" on project site (DK Site). System folders must live in DK Bas.`
+    );
+  }
+}
+
 /**
  * Upload file to SharePoint via Microsoft Graph API
  * @param {Object} options - Upload options
@@ -18,7 +64,7 @@ import { getAzureConfig } from './config';
  * @param {string} [options.phaseKey] - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad') - if provided, uses phase-specific SharePoint site
  * @returns {Promise<string>} File URL (webUrl from SharePoint)
  */
-export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null }) {
+export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null, siteRole = null }) {
   if (!file) throw new Error('File is required');
   if (!path) throw new Error('Path is required');
   
@@ -33,11 +79,11 @@ export async function uploadFile({ file, path, companyId, siteId = null, phaseKe
   // Get SharePoint site ID
   // Priority: 1) Provided siteId, 2) Phase-specific siteId (if phaseKey provided), 3) Company-specific siteId from Firestore, 4) Global config
   let sharePointSiteId = siteId;
-  if (!sharePointSiteId && companyId && options.phaseKey) {
+  if (!sharePointSiteId && companyId && phaseKey) {
     try {
       // Dynamic import to avoid circular dependency
       const { getSharePointSiteForPhase } = await import('../../components/firebase');
-      const phaseSiteConfig = await getSharePointSiteForPhase(companyId, options.phaseKey);
+      const phaseSiteConfig = await getSharePointSiteForPhase(companyId, phaseKey);
       sharePointSiteId = phaseSiteConfig?.siteId || null;
     } catch (error) {
       console.warn('[uploadFile] Could not fetch phase-specific SharePoint Site ID:', error);
@@ -70,7 +116,7 @@ export async function uploadFile({ file, path, companyId, siteId = null, phaseKe
     try {
       // Remove leading slash for ensureFolderPath
       const folderPathWithoutSlash = folderPath.replace(/^\/+/, '');
-      await ensureFolderPath(folderPathWithoutSlash, companyId, sharePointSiteId);
+      await ensureFolderPath(folderPathWithoutSlash, companyId, sharePointSiteId, { siteRole });
     } catch (error) {
       console.warn('[uploadFile] Warning: Could not ensure folder path before upload:', error);
       // Continue with upload anyway - SharePoint might create folders automatically or folder might already exist
@@ -537,10 +583,18 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
  * @param {string} [siteId] - SharePoint Site ID (optional)
  * @returns {Promise<void>}
  */
-export async function ensureFolderPath(path, companyId = null, siteId = null) {
+export async function ensureFolderPath(path, companyId = null, siteId = null, options = null) {
   if (!path) {
     console.warn('[ensureFolderPath] Empty path provided');
     return; // Empty path, nothing to create
+  }
+
+  // Guard: never create system folders on project sites.
+  try {
+    assertProjectSitePathAllowed(path, options?.siteRole);
+  } catch (e) {
+    // Surface error to caller (we do NOT want silent creation).
+    throw e;
   }
   
   const pathParts = path.split('/').filter(p => p); // Remove empty strings
@@ -616,7 +670,7 @@ export async function ensureSystemFolderStructure(siteId = null) {
     
     for (const folder of folders) {
       try {
-        await ensureFolderPath(folder, null, siteId);
+        await ensureFolderPath(folder, null, siteId, { siteRole: 'system' });
       } catch (error) {
         // Don't log every warning - only if it's not an auth/popup error
         if (error?.message && !error.message.includes('Popup window was blocked')) {
@@ -662,23 +716,28 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
   
   const phaseFolderName = phaseFolderNames[phaseKey] || 'Kalkylskede';
 
+  // IMPORTANT GUARD:
+  // DK Site is a pure project site. Do not create or assume a Projects/ root here.
+  // If you need system folders (Company/Projects/01-Company/02-Projects/etc), use DK Bas (system site).
   // Bygg bas-sökväg där projektet ska hamna:
   // - Om mainFolder/subFolder angivits använder vi dem som grund (t.ex. "Anbud" eller "Anbud/2026").
-  // - Annars används "Projects" som fallback-bas.
+  // - Annars lägger vi projektet direkt i sitens rot.
   let basePath;
   if (mainFolder && subFolder) {
     basePath = `${mainFolder}/${subFolder}`;
   } else if (mainFolder) {
     basePath = mainFolder;
   } else {
-    basePath = 'Projects';
+    basePath = '';
   }
 
-  // Slutlig sökväg: {bas}/{Fas}/{projectId}-{projectName}
-  const projectPath = `${basePath}/${phaseFolderName}/${projectId}-${projectName}`;
+  // Slutlig sökväg: {bas}/{projectId}-{projectName} (direkt under rot eller vald bas)
+  const safeBase = String(basePath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const projectFolder = `${projectId}-${projectName}`;
+  const projectPath = safeBase ? `${safeBase}/${projectFolder}` : projectFolder;
   
   // Create project folder (this will create all parent folders too)
-  await ensureFolderPath(projectPath, companyId, siteId);
+  await ensureFolderPath(projectPath, companyId, siteId, { siteRole: 'projects' });
   
   // For kalkylskede, create subfolders matching navigation structure
   if (phaseKey === 'kalkylskede') {
@@ -695,7 +754,7 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
       
       for (const sectionFolder of sectionFolders) {
         try {
-          await ensureFolderPath(sectionFolder, companyId, siteId);
+          await ensureFolderPath(sectionFolder, companyId, siteId, { siteRole: 'projects' });
         } catch (error) {
           console.warn(`[ensureProjectStructure] Warning creating section folder ${sectionFolder}:`, error);
         }
@@ -707,7 +766,7 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
       for (const subfolder of standardSubfolders) {
         const subfolderPath = `${projectPath}/${subfolder}`;
         try {
-          await ensureFolderPath(subfolderPath, companyId, siteId);
+          await ensureFolderPath(subfolderPath, companyId, siteId, { siteRole: 'projects' });
         } catch (subfolderError) {
           console.warn(`[ensureProjectStructure] Warning creating subfolder ${subfolderPath}:`, subfolderError);
         }
@@ -719,7 +778,7 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
     for (const subfolder of standardSubfolders) {
       const subfolderPath = `${projectPath}/${subfolder}`;
       try {
-        await ensureFolderPath(subfolderPath, companyId, siteId);
+        await ensureFolderPath(subfolderPath, companyId, siteId, { siteRole: 'projects' });
       } catch (error) {
         console.warn(`[ensureProjectStructure] Warning creating subfolder ${subfolderPath}:`, error);
       }

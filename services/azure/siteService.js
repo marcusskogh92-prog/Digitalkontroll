@@ -152,9 +152,18 @@ export async function getSiteByUrl(siteUrl, hostname = null) {
  * @param {string} companyId - Company ID (for path organization)
  * @returns {Promise<void>}
  */
-export async function ensureCompanySiteStructure(siteId, companyId) {
+export async function ensureCompanySiteStructure(siteId, companyId, options = null) {
   if (!siteId || !companyId) {
     throw new Error('Site ID and Company ID are required');
+  }
+
+  // IMPORTANT GUARD:
+  // This function creates system folders (Company/Projects). Those MUST live in DK Bas (system site).
+  // DK Site must remain project-only and must never contain Company/Projects.
+  // If you need project folders, create them directly in the DK Site root instead.
+  const role = String(options?.siteRole || '').trim().toLowerCase();
+  if (role !== 'system') {
+    throw new Error('ensureCompanySiteStructure is system-only (DK Bas). Pass { siteRole: "system" } explicitly.');
   }
 
   try {
@@ -220,7 +229,7 @@ export async function createCompanySiteWithStructure(companyId, companyName) {
   const site = await createCompanySite(companyId, companyName);
   
   // Create standard structure
-  await ensureCompanySiteStructure(site.siteId, companyId);
+  await ensureCompanySiteStructure(site.siteId, companyId, { siteRole: 'system' });
   
   return site;
 }

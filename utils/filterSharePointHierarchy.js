@@ -3,53 +3,8 @@
  * Shows all enabled sites with their folders
  */
 
-import { getAvailableSharePointSites, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
+import { getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
 import { getDriveItems } from '../services/azure/hierarchyService';
-
-// Bygg ett fullständigt träd av undermappar för en viss sökväg på en specifik site.
-// Detta används för att säkerställa att när en rotmapp (t.ex. "Anbud") är aktiverad
-// i SharePoint Navigation så syns alla dess undermappar i vänsterpanelen – utan begränsning,
-// men med ett rimligt djupskydd för att undvika oändliga loopar.
-async function buildFolderTreeRecursive(siteId, folderPath, depth = 0, maxDepth = 8) {
-  if (!siteId || !folderPath) return [];
-  if (depth >= maxDepth) return [];
-
-  try {
-    const items = await getDriveItems(siteId, folderPath);
-    const folders = (items || []).filter(item => item && item.folder);
-
-    const children = await Promise.all(
-      folders.map(async (item) => {
-        const childName = String(item.name || '').trim();
-        if (!childName) {
-          return null;
-        }
-
-        const childPath = `${folderPath.replace(/\/+$/, '')}/${childName}`
-          .replace(/^\/+/, '')
-          .replace(/\/+/g, '/');
-
-        const grandChildren = await buildFolderTreeRecursive(siteId, childPath, depth + 1, maxDepth);
-
-        return {
-          id: item.id || childPath,
-          name: childName,
-          type: 'folder',
-          path: childPath,
-          siteId,
-          webUrl: item.webUrl,
-          children: grandChildren,
-          lastModified: item.lastModifiedDateTime,
-        };
-      })
-    );
-
-    return children.filter(Boolean);
-  } catch (error) {
-    console.error('[filterSharePointHierarchy] Error building folder tree for path', folderPath, 'on site', siteId, error);
-    return [];
-  }
-}
 
 /**
  * Build hierarchy from all enabled SharePoint sites
@@ -65,17 +20,28 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
   }
 
   try {
-    // Load config if not provided
+    // Load folder/path config from SharePoint Navigation (optional)
     let config = navConfig;
     if (!config) {
       config = await getSharePointNavigationConfig(companyId);
     }
 
-    const enabledSites = config?.enabledSites || [];
+    // Enabled sites are controlled by Firestore metadata (sharepoint_sites)
+    // so visibility does not require SharePoint Navigation.
+    let enabledSites = [];
+    try {
+      enabledSites = await getCompanyVisibleSharePointSiteIds(companyId);
+    } catch (_e) {
+      enabledSites = [];
+    }
+
+    // IMPORTANT: No legacy enabledSites fallback here.
+    // We only show sites explicitly marked as projects via Firestore metadata.
+
     const siteConfigs = config?.siteConfigs || {};
 
-    // If no sites are enabled, return empty (admin must configure)
-    if (enabledSites.length === 0) {
+    // If no sites are enabled, return empty
+    if (!Array.isArray(enabledSites) || enabledSites.length === 0) {
       return [];
     }
 
@@ -95,6 +61,27 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
         }
       });
     }
+
+    // Self-heal: never show DK Bas (system/base site) even if legacy config accidentally enables it.
+    // We only exclude when we are reasonably confident (to avoid hiding unrelated sites).
+    const isProbablyBaseSite = (siteId) => {
+      if (!siteId) return false;
+      const site = sitesMap[siteId];
+      const name = String(site?.name || site?.displayName || '').toLowerCase();
+      const url = String(site?.webUrl || site?.siteUrl || '').toLowerCase();
+
+      // Strong signals: both "dk" and "bas" in name, or url contains "dk-bas"/"dkbas".
+      if (name && name.includes('dk') && name.includes('bas')) return true;
+      if (url.includes('dk-bas') || url.includes('dkbas')) return true;
+
+      // Additional hint: explicit site config name containing "dk bas".
+      const cfgName = String(siteConfigs?.[siteId]?.siteName || '').toLowerCase();
+      if (cfgName.includes('dk bas')) return true;
+
+      return false;
+    };
+
+    enabledSites = (enabledSites || []).filter((siteId) => !isProbablyBaseSite(siteId));
 
     // Build hierarchy with sites as root items
     const siteHierarchies = [];
@@ -118,9 +105,8 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
 
         // If adminen har markerat specifika projekt-aktiverade platser för siten,
         // visa bara dessa mappar i vänsterpanelen.
-        const enabledPathsRaw = Array.isArray(siteConfig.projectEnabledPaths)
-          ? siteConfig.projectEnabledPaths
-          : [];
+        const hasExplicitEnabledPathsArray = Array.isArray(siteConfig.projectEnabledPaths);
+        const enabledPathsRaw = hasExplicitEnabledPathsArray ? siteConfig.projectEnabledPaths : [];
         const enabledPaths = enabledPathsRaw
           .map((p) => String(p || '').trim())
           .filter((p) => p.length > 0);
@@ -181,6 +167,11 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
               return !!name && name === folderName;
             });
 
+            const matchedFolder = (parentFolders || []).find((item) => {
+              const name = String(item?.name || '').trim();
+              return !!name && name === folderName;
+            });
+
             if (!existsInSharePoint) {
               // Mappen finns inte längre i SharePoint -> hoppa över den här sökvägen
               // och markera den för städning från konfigurationen.
@@ -191,30 +182,30 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
               continue;
             }
 
-            // Bygg träd under den aktiverade sökvägen (alla undermappar)
-            const children = await buildFolderTreeRecursive(siteId, normalized);
+            // NOTE: We intentionally do NOT pre-build a deep folder tree here.
+            // The left panel lazy-loads children on expand, which avoids any depth limitation.
+            const children = [];
 
             siteFolders.push({
               id: (rootFolder && segments.length === 1 ? rootFolder.id : undefined) || `${siteId}-${normalized}`,
+              driveItemId: (rootFolder && segments.length === 1 ? rootFolder.id : undefined) || matchedFolder?.id || null,
               name: lastSegment,
               type: 'folder',
               path: normalized,
               siteId,
               webUrl: segments.length === 1 && rootFolder ? rootFolder.webUrl : undefined,
               children,
+              childrenLoaded: false,
               lastModified: segments.length === 1 && rootFolder ? rootFolder.lastModifiedDateTime : undefined,
             });
 
             addedPaths.add(normalized);
           }
-        } else if (hasExplicitSiteConfig) {
-          // Det finns en explicit konfiguration för siten men inga valda mappar:
-          // tolkas som att inga mappar ska visas i leftpanelen.
-          siteFolders = [];
         } else {
           // Ingen specifik konfiguration för siten – visa alla rotmappar (utan barn)
           siteFolders = rootFolders.map(folder => ({
             id: folder.id || folder.name,
+            driveItemId: folder.id || null,
             name: folder.name || '',
             type: 'folder',
             path: folder.name || '',

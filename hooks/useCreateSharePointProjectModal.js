@@ -14,17 +14,18 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform } from 'react-native';
 
-import { getSharePointNavigationConfig, saveSharePointProjectMetadata } from '../components/firebase';
+import { fetchCompanyProject, fetchCompanySharePointSiteMetas, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [availableSites, setAvailableSites] = useState([]);
 
-  // Hämta SharePoint-ytor för företaget baserat på adminens navigation:
-  // - Använder samma konfiguration som vänsterpanelen (sharepoint_navigation/config)
-  // - Bygger sitelistan direkt från konfigurerade siter (navConfig.sites)
+  // Hämta SharePoint-ytor för företaget baserat på Digitalkontrolls metadata:
+  // - Endast role === "projects" får användas för projekt
+  // - Best-effort: trigga server-side sync så legacy bolag får metadata utan manuella steg
   useEffect(() => {
     let cancelled = false;
 
@@ -35,34 +36,33 @@ export function useCreateSharePointProjectModal({ companyId }) {
       }
 
       try {
-        const navConfig = await getSharePointNavigationConfig(companyId);
+        try {
+          await syncSharePointSiteVisibilityRemote({ companyId });
+        } catch (_e) {}
 
-          if (cancelled) return;
+        const metas = await fetchCompanySharePointSiteMetas(companyId);
+        if (cancelled) return;
 
-          const enabledSites = Array.isArray(navConfig?.enabledSites)
-            ? navConfig.enabledSites
-            : [];
+        const normalizeRole = (role) => {
+          const r = String(role || '').trim().toLowerCase();
+          if (!r) return null;
+          if (r === 'projects' || r === 'project' || r === 'project-root' || r === 'project_root' || r === 'projectroot') return 'projects';
+          if (r === 'system' || r === 'system-base' || r === 'system_base' || r === 'systembase') return 'system';
+          return r;
+        };
 
-          const sitesFromConfig = Array.isArray(navConfig?.sites)
-            ? navConfig.sites
-            : [];
+        const sites = (metas || [])
+          .filter((m) => m && m.visibleInLeftPanel === true && normalizeRole(m.role) === 'projects')
+          .map((m) => ({
+            id: String(m.siteId || m.id || '').trim(),
+            name: String(m.siteName || m.siteUrl || m.webUrl || 'SharePoint-site'),
+            type: 'meta',
+            webUrl: m.siteUrl || m.webUrl || null,
+          }))
+          .filter((s) => !!s.id);
 
-          const enabledSet = new Set(enabledSites.map((id) => String(id || '').trim()).filter(Boolean));
-
-          const sites = sitesFromConfig
-            .filter((site) => {
-              const sid = String(site?.siteId || site?.id || '').trim();
-              return !!sid && enabledSet.has(sid);
-            })
-            .map((site) => ({
-              id: String(site.siteId || site.id).trim(),
-              name: site.siteName || site.displayName || site.name || site.webUrl || 'SharePoint-site',
-              type: 'navigation',
-              webUrl: site.webUrl || null,
-            }));
-
-          // Om inget är aktiverat ännu – visa ingen lista (admin måste konfigurera i SharePoint Navigation)
-          setAvailableSites(sites);
+        sites.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { sensitivity: 'base' }));
+        setAvailableSites(sites);
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('[useCreateSharePointProjectModal] Error loading sites:', error);
@@ -113,6 +113,23 @@ export function useCreateSharePointProjectModal({ companyId }) {
 
     setIsCreating(true);
     try {
+      // Statuskontroll: om projektet redan är arkiverat får det inte återskapas via UI.
+      try {
+        const existing = await fetchCompanyProject(companyId, String(projectNumber));
+        const existingStatus = String(existing?.status || '').trim().toLowerCase();
+        if (existing && existingStatus === 'archived') {
+          const text = 'Detta projekt är arkiverat. Återställning kan endast göras av superadmin.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            try { window.alert(text); } catch (_e) {}
+          } else {
+            try { Alert.alert('Projekt arkiverat', text); } catch (_e) {}
+          }
+          return;
+        }
+      } catch (_e) {
+        // Non-fatal: if we can't check, continue with creation.
+      }
+
       // eslint-disable-next-line no-console
       console.log('[useCreateSharePointProjectModal] Starting project creation with payload:', {
         projectNumber,
@@ -142,9 +159,31 @@ export function useCreateSharePointProjectModal({ companyId }) {
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] Company ID: "${companyId}"`);
       
-      await ensureFolderPath(projectPath, companyId, siteId);
+      await ensureFolderPath(projectPath, companyId, siteId, { siteRole: 'projects' });
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] ✅ Project folder created: ${projectPath}`);
+
+      // Firestore is source of truth for project list.
+      // Persist a strong Firestore ↔ SharePoint linkage on the project doc.
+      try {
+        const selectedSite = (availableSites || []).find((s) => String(s?.id || '').trim() === String(siteId || '').trim()) || null;
+        const siteUrl = selectedSite?.webUrl || selectedSite?.siteUrl || selectedSite?.url || null;
+
+        await upsertCompanyProject(companyId, String(projectNumber), {
+          projectNumber: String(projectNumber),
+          projectName: String(projectName),
+          fullName: projectFolderName,
+          status: 'active',
+          sharePointSiteId: String(siteId),
+          sharePointSiteUrl: siteUrl ? String(siteUrl) : null,
+          rootFolderPath: String(projectPath),
+          siteRole: 'projects',
+        });
+      } catch (projErr) {
+        // Non-fatal: SharePoint folder was created, but project won't appear in left panel until Firestore write succeeds.
+        // eslint-disable-next-line no-console
+        console.warn('[useCreateSharePointProjectModal] Warning saving Firestore project doc:', projErr?.message || projErr);
+      }
 
       // Persist metadata for phase/structure so UI can show the correct indicator
       try {
@@ -221,14 +260,14 @@ export function useCreateSharePointProjectModal({ companyId }) {
             const sectionPath = `${projectPath}/${sectionFolderName}`;
 
             try {
-              await ensureFolderPath(sectionPath, companyId, siteId);
+              await ensureFolderPath(sectionPath, companyId, siteId, { siteRole: 'projects' });
 
               if (section.items && Array.isArray(section.items)) {
                 const enabledItems = section.items.filter((item) => item && item.enabled !== false);
                 const itemPromises = enabledItems.map(async (item) => {
                   const itemPath = `${sectionPath}/${item.name}`;
                   try {
-                    await ensureFolderPath(itemPath, companyId, siteId);
+                    await ensureFolderPath(itemPath, companyId, siteId, { siteRole: 'projects' });
                   } catch (itemError) {
                     // eslint-disable-next-line no-console
                     console.error(`[useCreateSharePointProjectModal] Error creating item folder ${itemPath}:`, itemError?.message || itemError);
@@ -254,7 +293,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
           for (const subfolder of standardSubfolders) {
             const subfolderPath = `${projectPath}/${subfolder}`;
             try {
-              await ensureFolderPath(subfolderPath, companyId, siteId);
+              await ensureFolderPath(subfolderPath, companyId, siteId, { siteRole: 'projects' });
             } catch (subfolderError) {
               // eslint-disable-next-line no-console
               console.warn(`[useCreateSharePointProjectModal] Warning creating subfolder ${subfolderPath}:`, subfolderError);

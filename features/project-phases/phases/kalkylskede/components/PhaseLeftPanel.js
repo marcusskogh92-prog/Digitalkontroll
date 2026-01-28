@@ -179,7 +179,7 @@ export default function PhaseLeftPanel({
               const name = String(it?.name || '').trim();
               if (!name) return Promise.resolve();
               const p = normalizePath(`${base}/${name}`);
-              return ensureFolderPath(p, companyId);
+              return ensureFolderPath(p, companyId, null, { siteRole: 'projects' });
             })
           );
 

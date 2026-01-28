@@ -92,6 +92,19 @@ export default function CreateProjectModal({
               });
 
             setLocationFolders(folders);
+
+            // If site root is empty, still allow creating projects by selecting root.
+            if ((folders || []).length === 0 && activeSite) {
+              setSelectedProjectRoot((prev) => {
+                if (prev && String(prev.siteId) === String(activeSite.id)) return prev;
+                return {
+                  siteId: activeSite.id,
+                  siteName: getSiteDisplayName(activeSite),
+                  folderPath: '',
+                  folderName: 'Root',
+                };
+              });
+            }
             return;
           } catch (e) {
             console.error('[CreateProjectModal] Error filtering hierarchy by config, falling back to raw root folders:', e);
@@ -112,6 +125,19 @@ export default function CreateProjectModal({
               });
 
             setLocationFolders(folders);
+
+            // If site root is empty, still allow creating projects by selecting root.
+            if ((folders || []).length === 0 && activeSite) {
+              setSelectedProjectRoot((prev) => {
+                if (prev && String(prev.siteId) === String(activeSite.id)) return prev;
+                return {
+                  siteId: activeSite.id,
+                  siteName: getSiteDisplayName(activeSite),
+                  folderPath: '',
+                  folderName: 'Root',
+                };
+              });
+            }
             return;
           }
         }
@@ -816,9 +842,29 @@ export default function CreateProjectModal({
                       {loadingLocationFolders ? (
                         <Text style={styles.helperText}>Laddar mappar...</Text>
                       ) : locationFolders.length === 0 ? (
-                        <Text style={styles.helperText}>Inga mappar hittades</Text>
+                        <>
+                          {!currentPath && (
+                            <TouchableOpacity
+                              onPress={() => handleSelectLocation(activeSite, '', 'Root')}
+                              style={styles.folderRow}
+                            >
+                              <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+                              <Text style={styles.folderName}>Rot (skapa projekt direkt i siten)</Text>
+                            </TouchableOpacity>
+                          )}
+                          <Text style={styles.helperText}>Inga mappar hittades</Text>
+                        </>
                       ) : (
                         <>
+                          {!currentPath && (
+                            <TouchableOpacity
+                              onPress={() => handleSelectLocation(activeSite, '', 'Root')}
+                              style={styles.folderRow}
+                            >
+                              <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+                              <Text style={styles.folderName}>Rot (skapa projekt direkt i siten)</Text>
+                            </TouchableOpacity>
+                          )}
                           {locationFolders.map((folder) => (
                             <TouchableOpacity
                               key={folder.path}

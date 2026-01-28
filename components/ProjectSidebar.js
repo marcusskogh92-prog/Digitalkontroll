@@ -1320,40 +1320,12 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
           return;
         }
         
-        // After company is created, show instructions for manual SharePoint site creation
-        const sanitizedId = id
-          .replace(/[^a-zA-Z0-9]/g, '')
-          .replace(/\s+/g, '')
-          .substring(0, 50);
-        const sanitizedIdLower = sanitizedId.toLowerCase();
-        const siteName = name || id;
-        
-        const instructions = `✅ Företag skapat!\n\n` +
-          `SharePoint Site ska skapas manuellt:\n\n` +
-          `1. Gå till SharePoint Admin Center:\n` +
-          `   https://admin.microsoft.com/sharepoint\n\n` +
-          `2. Klicka på "+ Skapa" och fyll i:\n\n` +
-          `   📝 NAMN PÅ WEBBPLATS:\n` +
-          `   "${siteName}"\n\n` +
-          `   📝 BESKRIVNING (valfritt):\n` +
-          `   "SharePoint site for ${siteName} - DigitalKontroll"\n\n` +
-          `   📝 GRUPPENS E-POSTADRESS:\n` +
-          `   "${sanitizedId}"\n\n` +
-          `   📝 WEBBPLATSADRESS (bara delen efter /sites/):\n` +
-          `   "${sanitizedIdLower}"\n` +
-          `   (SharePoint lägger till https://msbyggsystem.sharepoint.com/sites/ automatiskt)\n\n` +
-          `   📝 GRUPPÄGARE:\n` +
-          `   marcus@msbyggsystem.se (lägg till först)\n` +
-          `   Sedan lägger du till kundens e-post\n\n` +
-          `3. När site är skapad, kom tillbaka och klicka på "Skapa SharePoint Site" i företagsinställningarna för att länka den.`;
-        
-        try {
-          if (typeof window !== 'undefined') {
-            window.alert(instructions);
-          }
-        } catch (_e) {}
-        
-        console.log('[ProjectSidebar] Company created. SharePoint site instructions shown.');
+        // After company is created, instruct admin to link an existing SharePoint site.
+        const msg = `✅ Företag skapat!\n\n` +
+          `Nästa steg: koppla en redan existerande SharePoint-site.\n\n` +
+          `Gå till Admin → Företag → välj företaget → "Koppla SharePoint Site".`;
+        try { if (typeof window !== 'undefined') window.alert(msg); } catch (_e) {}
+        console.log('[ProjectSidebar] Company created. Link SharePoint site via ManageCompany.');
       } catch (e) {
         console.error('[debug] provisionCompanyRemote threw', e);
         const rawCode = e && e.code ? String(e.code) : '';

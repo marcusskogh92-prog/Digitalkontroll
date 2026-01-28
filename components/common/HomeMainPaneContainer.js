@@ -216,6 +216,7 @@ export function HomeMainPaneContainer(props) {
           routeCompanyId={routeCompanyId}
           auth={auth}
           setNewProjectModal={setNewProjectModal}
+          onOpenCreateProjectModal={onOpenCreateProjectModal}
         />
       )}
     </View>

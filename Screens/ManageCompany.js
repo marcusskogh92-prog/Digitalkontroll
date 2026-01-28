@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getAllPhaseSharePointConfigs, getCompanySharePointSiteId, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, uploadCompanyLogo } from '../components/firebase';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanies, fetchCompanyMembers, fetchCompanyProfile, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
 import HeaderAdminMenu from '../components/HeaderAdminMenu';
 import HeaderDisplayName from '../components/HeaderDisplayName';
 import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
@@ -43,6 +43,10 @@ export default function ManageCompany({ navigation, route }) {
   const [sharePointSiteId, setSharePointSiteId] = useState('');
   const [sharePointSiteCreating, setSharePointSiteCreating] = useState(false);
   const [sharePointSyncError, setSharePointSyncError] = useState(false);
+  const [sharePointSitePickerVisible, setSharePointSitePickerVisible] = useState(false);
+  const [availableSharePointSites, setAvailableSharePointSites] = useState([]);
+  const [sharePointSiteSearch, setSharePointSiteSearch] = useState('');
+  const [sharePointSitesShowAll, setSharePointSitesShowAll] = useState(false);
   const [phaseSharePointConfigs, setPhaseSharePointConfigs] = useState({});
   const [phaseConfigModalVisible, setPhaseConfigModalVisible] = useState(false);
   const [selectedPhaseForConfig, setSelectedPhaseForConfig] = useState(null);
@@ -57,6 +61,28 @@ export default function ManageCompany({ navigation, route }) {
   const [editCompanyId, setEditCompanyId] = useState('');
   const [editUserLimit, setEditUserLimit] = useState(10);
   const editFileInputRef = useRef(null);
+
+  const siteSearch = String(sharePointSiteSearch || '').trim().toLowerCase();
+  const allSites = Array.isArray(availableSharePointSites) ? availableSharePointSites : [];
+  const recommendedSites = allSites.filter((s) => {
+    const name = String(s?.displayName || s?.name || '').toLowerCase();
+    const url = String(s?.webUrl || '').toLowerCase();
+    return name.includes('dk') || name.includes('digitalkontroll') || url.includes('dk') || url.includes('digitalkontroll');
+  });
+  const baseSiteList = sharePointSitesShowAll ? allSites : (recommendedSites.length > 0 ? recommendedSites : allSites);
+  const filteredSharePointSites = baseSiteList
+    .filter((s) => {
+      if (!siteSearch) return true;
+      const name = String(s?.displayName || s?.name || '').toLowerCase();
+      const url = String(s?.webUrl || '').toLowerCase();
+      const id = String(s?.id || '').toLowerCase();
+      return name.includes(siteSearch) || url.includes(siteSearch) || id.includes(siteSearch);
+    })
+    .sort((a, b) => {
+      const an = String(a?.displayName || a?.name || '').toLowerCase();
+      const bn = String(b?.displayName || b?.name || '').toLowerCase();
+      return an.localeCompare(bn, undefined, { sensitivity: 'base' });
+    });
 
   // Keep selected companyId in local storage so global tools (e.g. kontaktregister i dropdown)
   // resolve the correct company.
@@ -1133,7 +1159,7 @@ export default function ManageCompany({ navigation, route }) {
                       }
                       title="SharePoint Site"
                       text={sharePointSiteId ? (sharePointSyncError ? "SharePoint site är kopplad men synkar inte korrekt." : "SharePoint site är kopplad och synkar.") : "Koppla en SharePoint-site till företaget."}
-                      button={sharePointSiteId ? "Stäng av synkning" : "Skapa SharePoint Site"}
+                      button={sharePointSiteId ? "Stäng av synkning" : "Koppla SharePoint Site"}
                       color="blue"
                       disabled={sharePointSiteCreating}
                       onPress={async () => {
@@ -1159,8 +1185,18 @@ export default function ManageCompany({ navigation, route }) {
                             await updateDoc(ref, { 
                               sharePointSiteId: null,
                               sharePointWebUrl: null,
+                              primarySharePointSite: null,
                               updatedAt: (await import('firebase/firestore')).serverTimestamp()
                             });
+
+                            // Also hide the site in left panel metadata so it doesn't keep showing up.
+                            try {
+                              await upsertCompanySharePointSiteMeta(compId, {
+                                siteId: sharePointSiteId,
+                                visibleInLeftPanel: false,
+                                role: 'projects',
+                              });
+                            } catch (_e) {}
                             
                             setSharePointSiteId('');
                             
@@ -1174,99 +1210,34 @@ export default function ManageCompany({ navigation, route }) {
                           }
                           return;
                         }
-                        
-                        // If not connected, create/link site (existing logic)
+
+                        // If not connected: fetch existing sites and let admin pick one to link
                         const compId = String(companyId).trim();
-                        const compName = String(companyName || companyId || '').trim();
-                        
-                        const conf = (typeof window !== 'undefined')
-                          ? window.confirm(`Skapa SharePoint site för "${compName}" (${compId})?\n\nDetta kommer att skapa en ny SharePoint site automatiskt.`)
-                          : true;
-                        if (!conf) return;
 
                         setSharePointSiteCreating(true);
-                        const endBusy = beginBusy('Skapar SharePoint site…');
+                        const endBusy = beginBusy('Laddar SharePoint-siter…');
 
                         try {
-                          const { getStoredAccessToken } = await import('../services/azure/authService');
+                          const { getStoredAccessToken, getAccessToken } = await import('../services/azure/authService');
                           const existingToken = await getStoredAccessToken();
-                          
                           if (!existingToken) {
                             try { if (typeof window !== 'undefined') window.alert('Du behöver autentisera med Microsoft/Azure först. Systemet kommer att omdirigera dig till inloggning...'); } catch (_e) {}
-                            const { getAccessToken } = await import('../services/azure/authService');
                             await getAccessToken();
                           }
 
-                          // Bygg ett stabilt URL-segment för SharePoint-siten.
-                          // Exempel: companyId "MS Byggsystem" -> "dk-msbyggsystem".
-                          const rawSlug = compId
-                            .toLowerCase()
-                            .replace(/[^a-z0-9]+/g, '-')
-                            .replace(/^-+/, '')
-                            .replace(/-+$/, '')
-                            .substring(0, 40); // lämna lite marginal för prefix
-
-                          const baseSlug = rawSlug && rawSlug.startsWith('dk-') ? rawSlug : `dk-${rawSlug || compId.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
-                          const sanitizedId = baseSlug.substring(0, 50);
-
-                          // Lokal del som kan användas som förslag till gruppens e-postadress
-                          const emailLocalPart = baseSlug.replace(/[^a-z0-9]/g, '');
-                          
-                          const { getSiteByUrl } = await import('../services/azure/siteService');
-                          const { getAzureConfig } = await import('../services/azure/config');
-                          const config = getAzureConfig();
-                          const hostname = new URL(config.sharePointSiteUrl).hostname;
-                          
-                          console.log('[ManageCompany] Looking for existing SharePoint site:', sanitizedId);
-                          const existingSite = await getSiteByUrl(sanitizedId, hostname);
-                          
-                          if (existingSite && existingSite.siteId) {
-                            console.log('[ManageCompany] ✅ Found existing SharePoint site:', existingSite.webUrl);
-                            
-                            await saveCompanySharePointSiteId(compId, existingSite.siteId, existingSite.webUrl);
-                            setSharePointSiteId(existingSite.siteId);
-                            setSharePointSyncError(false); // Reset error status when sync is activated
-                            
-                            try {
-                              const { ensureCompanySiteStructure } = await import('../services/azure/siteService');
-                              await ensureCompanySiteStructure(existingSite.siteId, compId);
-                              console.log('[ManageCompany] ✅ Company folder structure created');
-                            } catch (structureError) {
-                              console.warn('[ManageCompany] ⚠️ Could not create company folder structure:', structureError);
-                            }
-                            
-                            try {
-                              const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
-                              await ensureSystemFolderStructure();
-                              console.log('[ManageCompany] ✅ System folder structure ensured');
-                            } catch (systemStructureError) {
-                              console.warn('[ManageCompany] ⚠️ Could not ensure system folder structure:', systemStructureError);
-                            }
-                            
-                            try { if (typeof window !== 'undefined') window.alert(`SharePoint site länkad! URL: ${existingSite.webUrl}\n\nMappstruktur skapad.`); } catch (_e) {}
-                          } else {
-                            const manualMessage = `SharePoint site hittades inte för "${compName}".\n\n` +
-                              `Skapa site manuellt:\n` +
-                              `1. Gå till SharePoint Admin Center:\n` +
-                              `   https://admin.microsoft.com/sharepoint\n\n` +
-                              `2. Klicka "+ Skapa" och fyll i:\n\n` +
-                              `   📝 NAMN: "DK - ${compName}"\n` +
-                              `   📝 GRUPPENS E-POSTADRESS: "${emailLocalPart}" (t.ex. ${emailLocalPart}@dindomän.se)\n` +
-                              `   📝 WEBBPLATSADRESS: "${sanitizedId}"\n` +
-                              `   📝 GRUPPÄGARE: marcus@msbyggsystem.se\n\n` +
-                              `3. När site är skapad, kom tillbaka och klicka på "Skapa SharePoint Site" igen för att länka den.`;
-                            
-                            try { if (typeof window !== 'undefined') window.alert(manualMessage); } catch (_e) {}
-                          }
+                          const sites = await getAvailableSharePointSites();
+                          setAvailableSharePointSites(Array.isArray(sites) ? sites : []);
+                          setSharePointSiteSearch('');
+                          setSharePointSitesShowAll(false);
+                          setSharePointSitePickerVisible(true);
                         } catch (e) {
-                          console.error('[ManageCompany] ⚠️ Failed to create SharePoint site:', e);
+                          console.error('[ManageCompany] ⚠️ Failed to load SharePoint sites:', e);
                           const errorMsg = e?.message || String(e);
-                          const isAuthError = errorMsg.includes('access token') || errorMsg.includes('authenticate') || errorMsg.includes('Redirecting');
-                          
+                          const isAuthError = String(errorMsg).includes('access token') || String(errorMsg).includes('authenticate') || String(errorMsg).includes('Redirecting');
                           if (isAuthError) {
                             try { if (typeof window !== 'undefined') window.alert('Autentisering krävs. Du kommer att omdirigeras till Microsoft-inloggning...'); } catch (_e) {}
                           } else {
-                            try { if (typeof window !== 'undefined') window.alert(`Kunde inte skapa SharePoint site: ${errorMsg}`); } catch (_e) {}
+                            try { if (typeof window !== 'undefined') window.alert(`Kunde inte hämta SharePoint-siter: ${errorMsg}`); } catch (_e) {}
                           }
                         } finally {
                           setSharePointSiteCreating(false);
@@ -1848,6 +1819,148 @@ export default function ManageCompany({ navigation, route }) {
                     {busyCount > 0 ? 'Sparar...' : 'Spara ändringar'}
                   </Text>
                 </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* SharePoint Site Picker Modal (link existing site) */}
+        <Modal
+          visible={sharePointSitePickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSharePointSitePickerVisible(false)}
+        >
+          <Pressable
+            style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.45)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+            onPress={() => setSharePointSitePickerVisible(false)}
+          >
+            <Pressable
+              style={{ backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '90%' }}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: '#eee', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: '#222' }}>Koppla SharePoint Site</Text>
+                  <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                    Välj en redan existerande SharePoint-site att koppla som primär site.
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setSharePointSitePickerVisible(false)} style={{ padding: 6 }}>
+                  <Ionicons name="close" size={22} color="#666" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ padding: 20, paddingTop: 14 }}>
+                <View style={{ flexDirection: Platform.OS === 'web' ? 'row' : 'column', gap: 10, alignItems: Platform.OS === 'web' ? 'center' : 'stretch' }}>
+                  <TextInput
+                    value={sharePointSiteSearch}
+                    onChangeText={setSharePointSiteSearch}
+                    placeholder="Sök (t.ex. DK, Bas, msbyggsystem)"
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14 }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setSharePointSitesShowAll((v) => !v)}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#ddd', backgroundColor: sharePointSitesShowAll ? '#f0f7ff' : '#fff' }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#222' }}>{sharePointSitesShowAll ? 'Visar alla' : 'Visa alla'}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ marginTop: 12, marginBottom: 10 }}>
+                  <Text style={{ fontSize: 12, color: '#666' }}>
+                    {filteredSharePointSites.length} site(s) visade{sharePointSitesShowAll ? '' : ' (filtrerade)'}.
+                  </Text>
+                </View>
+
+                <ScrollView style={{ maxHeight: 420 }}>
+                  {filteredSharePointSites.length === 0 ? (
+                    <View style={{ padding: 16, borderWidth: 1, borderColor: '#eee', borderRadius: 12, backgroundColor: '#fafafa' }}>
+                      <Text style={{ fontSize: 13, color: '#666' }}>Inga siter hittades. Prova att slå på "Visa alla" eller ändra sökningen.</Text>
+                    </View>
+                  ) : (
+                    filteredSharePointSites.map((site) => {
+                      const siteName = String(site?.displayName || site?.name || 'SharePoint-site');
+                      const siteUrl = String(site?.webUrl || '');
+                      const siteId = String(site?.id || '');
+                      const isLinked = sharePointSiteId && siteId && sharePointSiteId === siteId;
+                      return (
+                        <Pressable
+                          key={siteId || siteUrl || siteName}
+                          onPress={async () => {
+                            if (!companyId) return;
+                            if (!siteId) return;
+
+                            const compId = String(companyId).trim();
+                            const compName = String(companyName || companyId || '').trim();
+
+                            const conf = (typeof window !== 'undefined')
+                              ? window.confirm(`Koppla "${siteName}" till "${compName}"?\n\nDetta skapar ingen ny site, utan sparar bara kopplingen i systemet.`)
+                              : true;
+                            if (!conf) return;
+
+                            const endBusy = beginBusy('Kopplar SharePoint-site…');
+                            try {
+                              await saveCompanySharePointSiteId(compId, siteId, siteUrl || null);
+
+                              // Digitalkontroll-owned metadata: controls left-panel visibility.
+                              try {
+                                await upsertCompanySharePointSiteMeta(compId, {
+                                  siteId,
+                                  siteUrl: siteUrl || null,
+                                  siteName,
+                                  role: 'projects',
+                                  visibleInLeftPanel: true,
+                                });
+                              } catch (_e) {}
+
+                              setSharePointSiteId(siteId);
+                              setSharePointSyncError(false);
+                              setSharePointSitePickerVisible(false);
+
+                              // IMPORTANT GUARD:
+                              // DK Site (role=projects) must remain a pure project site.
+                              // Never create system folders (Company/Projects/01-Company/02-Projects/...) in DK Site.
+                              // System folders belong in DK Bas (role=system) only.
+                              try {
+                                const systemSiteId = await getCompanySharePointSiteIdByRole(compId, 'system', { syncIfMissing: true });
+                                const { ensureSystemFolderStructure } = await import('../services/azure/fileService');
+                                await ensureSystemFolderStructure(systemSiteId || null);
+                              } catch (_e) {}
+
+                              try { if (typeof window !== 'undefined') window.alert(`SharePoint-site kopplad!\n\n${siteUrl ? `URL: ${siteUrl}` : ''}`); } catch (_e) {}
+                            } catch (e) {
+                              console.error('[ManageCompany] ⚠️ Failed to link SharePoint site:', e);
+                              const errorMsg = e?.message || String(e);
+                              try { if (typeof window !== 'undefined') window.alert(`Kunde inte koppla SharePoint-site: ${errorMsg}`); } catch (_e) {}
+                            } finally {
+                              endBusy();
+                            }
+                          }}
+                          style={{ padding: 14, borderWidth: 1, borderColor: isLinked ? '#1976D2' : '#eee', borderRadius: 12, marginBottom: 10, backgroundColor: isLinked ? '#f0f7ff' : '#fff' }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#222' }} numberOfLines={1}>{siteName}</Text>
+                              {siteUrl ? <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }} numberOfLines={1}>{siteUrl}</Text> : null}
+                              {siteId ? <Text style={{ fontSize: 11, color: '#999', marginTop: 4 }} numberOfLines={1}>{siteId}</Text> : null}
+                            </View>
+                            <Ionicons name={isLinked ? 'checkmark-circle' : 'link'} size={20} color={isLinked ? '#1976D2' : '#666'} />
+                          </View>
+                        </Pressable>
+                      );
+                    })
+                  )}
+                </ScrollView>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#eee' }}>
+                  <TouchableOpacity
+                    onPress={() => setSharePointSitePickerVisible(false)}
+                    style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#eee' }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>Stäng</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </Pressable>
           </Pressable>
