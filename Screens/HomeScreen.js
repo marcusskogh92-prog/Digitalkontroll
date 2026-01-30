@@ -1515,10 +1515,12 @@ export default function HomeScreen({ navigation, route }) {
               }}
               onOpenPhaseItem={(sectionId, itemId) => {
                 try {
-                  if (sectionId) setPhaseActiveSection(sectionId);
-                  if (itemId) setPhaseActiveItem(itemId);
+                  setPhaseActiveSection(sectionId || null);
+                  setPhaseActiveItem(itemId || null);
                 } catch (_e) {}
               }}
+              phaseActiveSection={phaseActiveSection}
+              phaseActiveItem={phaseActiveItem}
             />
 
             <HomeMainPaneContainer

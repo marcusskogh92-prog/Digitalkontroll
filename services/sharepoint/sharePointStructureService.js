@@ -6,11 +6,20 @@
  * No local duplication - always fetches on-demand
  */
 
-import { getAccessToken } from '../azure/authService';
-import { getAzureConfig } from '../azure/config';
 import { getSharePointSiteForPhase } from '../../components/firebase';
+import { getAccessToken } from '../azure/authService';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+
+function encodeGraphPathSegments(path) {
+  const raw = String(path || '');
+  if (!raw) return '';
+  // Keep '/' separators; encode each segment so spaces/special chars are safe in URLs.
+  return raw
+    .split('/')
+    .map((seg) => (seg === '' ? '' : encodeURIComponent(seg)))
+    .join('/');
+}
 
 /**
  * Get SharePoint folder structure for a specific path
@@ -33,7 +42,8 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
     ? '/' 
     : '/' + folderPath.replace(/^\/+|\/+$/g, '');
 
-  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:${normalizedPath}:/children`;
+  const encodedPath = encodeGraphPathSegments(normalizedPath);
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:${encodedPath}:/children`;
 
   try {
     const response = await fetch(endpoint, {

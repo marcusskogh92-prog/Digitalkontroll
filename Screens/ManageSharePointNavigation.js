@@ -9,13 +9,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, ImageBackground, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { HomeHeader } from '../components/common/HomeHeader';
 import SharePointSiteIcon from '../components/common/SharePointSiteIcon';
 import { auth, getAvailableSharePointSites, getCompanySharePointSiteId, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
-import HeaderAdminMenu from '../components/HeaderAdminMenu';
-import HeaderDisplayName from '../components/HeaderDisplayName';
-import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
+import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { getDriveItems } from '../services/azure/hierarchyService';
 
 export default function ManageSharePointNavigation({ navigation, route }) {
@@ -47,6 +46,22 @@ export default function ManageSharePointNavigation({ navigation, route }) {
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState({}); // siteId -> { [path]: boolean }
+
+  const [supportMenuOpen, setSupportMenuOpen] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const searchSpinAnim = useRef(new Animated.Value(0)).current;
+  const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
+
+  const noopAsync = async () => {};
+
+  const showSimpleAlert = (title, message) => {
+    try {
+      const t = String(title || '').trim() || 'Info';
+      const m = String(message || '').trim();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(m ? `${t}\n\n${m}` : t);
+      else Alert.alert(t, m || '');
+    } catch (_e) {}
+  };
 
   // Load company ID from storage/route (fallback if route param missing)
   useEffect(() => {
@@ -677,33 +692,33 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       adminShowCompanySelector={true}
       sidebarSelectedCompanyId={companyId}
       topBar={
-        <View
-          style={{
-            height: 96,
-            paddingLeft: 24,
-            paddingRight: 24,
-            backgroundColor: 'rgba(25, 118, 210, 0.2)',
-            justifyContent: 'center',
-            borderBottomWidth: 1,
-            borderColor: 'rgba(25, 118, 210, 0.3)',
-            borderLeftWidth: 4,
-            borderLeftColor: '#1976D2',
-          }}
-        >
-          <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
-              <View style={{ marginRight: 10 }}>
-                {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
-              </View>
-              <View style={{ marginRight: 10 }}>
-                <HeaderAdminMenu />
-              </View>
-            </View>
-            <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-              <View />
-            </View>
-          </View>
-        </View>
+        <HomeHeader
+          headerHeight={headerHeight}
+          setHeaderHeight={setHeaderHeight}
+          navigation={navigation}
+          route={route}
+          auth={auth}
+          selectedProject={null}
+          isSuperAdmin={false}
+          allowedTools={false}
+          showHeaderUserMenu={showHeaderUserMenu}
+          canShowSupportToolsInHeader={false}
+          supportMenuOpen={supportMenuOpen}
+          setSupportMenuOpen={setSupportMenuOpen}
+          companyId={companyId}
+          routeCompanyId={route?.params?.companyId || ''}
+          showAdminButton={false}
+          adminActionRunning={false}
+          localFallbackExists={false}
+          handleMakeDemoAdmin={noopAsync}
+          refreshLocalFallbackFlag={noopAsync}
+          dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+          showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+          saveControlToFirestore={noopAsync}
+          saveDraftToFirestore={noopAsync}
+          searchSpinAnim={searchSpinAnim}
+          sharePointStatus={sharePointStatus}
+        />
       }
     >
       <View style={{ width: '100%', maxWidth: 1200, margin: '0 auto', padding: 24 }}>
@@ -867,22 +882,6 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     </MainLayout>
   </View>
   );
-
-  if (Platform.OS === 'web') {
-    const RootContainer = ImageBackground;
-    const rootProps = {
-      source: require('../assets/images/inlogg.webb.png'),
-      resizeMode: 'cover',
-      imageStyle: { width: '100%', height: '100%' },
-    };
-
-    return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0, pointerEvents: 'none' }} />
-        <View style={{ flex: 1, zIndex: 1 }}>{content}</View>
-      </RootContainer>
-    );
-  }
 
   return content;
 }

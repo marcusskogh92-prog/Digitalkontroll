@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-import { fetchCompanyProject, fetchCompanySharePointSiteMetas, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../components/firebase';
+import { fetchCompanyProject, fetchCompanySharePointSiteMetas, formatSharePointProjectFolderName, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
@@ -140,10 +140,11 @@ export function useCreateSharePointProjectModal({ companyId }) {
         parentFolderPath,
       });
       
-      const { ensureFolderPath } = await import('../services/azure/fileService');
-      
-      // Create project folder name: "{projectNumber} {projectName}"
-      const projectFolderName = `${String(projectNumber)} ${String(projectName)}`;
+      const { ensureFolderPath, ensureKalkylskedeProjectFolderStructure } = await import('../services/azure/fileService');
+
+      // Create project folder name: "{projektnummer} – {projektnamn}"
+      const projectFolderName = formatSharePointProjectFolderName(projectNumber, projectName);
+      if (!projectFolderName) throw new Error('Ogiltigt projektnamn');
       
       // Build project path: parentFolderPath/projectFolderName
       const basePath = parentFolderPath.replace(/^\/+/, '').replace(/\/+$/, '');
@@ -206,8 +207,8 @@ export function useCreateSharePointProjectModal({ companyId }) {
         console.warn('[useCreateSharePointProjectModal] Warning saving project metadata:', metaError?.message || metaError);
       }
 
-      // Apply system structure inside the project folder if structureType is 'system'
-      // This must complete before closing modal to ensure structure is created
+      // Apply system structure inside the project folder.
+      // This must complete before closing modal to ensure structure is created.
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] ===== STRUCTURE CHECK =====`);
       // eslint-disable-next-line no-console
@@ -221,7 +222,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] Will create structure: ${structureType === 'system' && systemPhase ? 'YES' : 'NO'}`);
       
-      if (structureType === 'system' && systemPhase) {
+      if ((structureType === 'system' && systemPhase) || systemPhase === 'kalkyl' || systemPhase === 'kalkylskede') {
         // eslint-disable-next-line no-console
         console.log(`[useCreateSharePointProjectModal] ===== ENTERING STRUCTURE CREATION BLOCK =====`);
         // Map structure values to phase keys (handle both 'kalkyl' and 'kalkylskede')
@@ -245,6 +246,17 @@ export function useCreateSharePointProjectModal({ companyId }) {
           console.log(`[useCreateSharePointProjectModal] ===== STARTING STRUCTURE CREATION =====`);
           // eslint-disable-next-line no-console
           console.log(`[useCreateSharePointProjectModal] phaseKey: "${phaseKey}", projectPath: "${projectPath}"`);
+
+          // Locked structure for Kalkylskede: always ensure the full fixed structure.
+          if (phaseKey === 'kalkylskede') {
+            await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId);
+            // eslint-disable-next-line no-console
+            console.log(`[useCreateSharePointProjectModal] ✅ Ensured locked kalkylskede structure`);
+            // eslint-disable-next-line no-console
+            console.log(`[useCreateSharePointProjectModal] ===== STRUCTURE CREATION COMPLETE =====`);
+            setVisible(false);
+            return;
+          }
 
           const { getDefaultNavigation } = await import('../features/project-phases/constants');
           const navigation = getDefaultNavigation(phaseKey);

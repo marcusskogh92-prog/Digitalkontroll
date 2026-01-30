@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Modal, Platform, Pressable, Text, View } from 'react-native';
-import { Calendar } from 'react-native-calendars';
+import { Calendar, LocaleConfig } from 'react-native-calendars';
 
 const SWEDISH_MONTHS = [
   'januari',
@@ -17,6 +17,53 @@ const SWEDISH_MONTHS = [
   'november',
   'december',
 ];
+
+const SWEDISH_MONTHS_SHORT = [
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'maj',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'okt',
+  'nov',
+  'dec',
+];
+
+const SWEDISH_DAY_NAMES = [
+  'söndag',
+  'måndag',
+  'tisdag',
+  'onsdag',
+  'torsdag',
+  'fredag',
+  'lördag',
+];
+
+const SWEDISH_DAY_NAMES_SHORT = [
+  'sön',
+  'mån',
+  'tis',
+  'ons',
+  'tor',
+  'fre',
+  'lör',
+];
+
+// Global calendar locale (shared across the entire app).
+try {
+  LocaleConfig.locales.sv = {
+    monthNames: SWEDISH_MONTHS,
+    monthNamesShort: SWEDISH_MONTHS_SHORT,
+    dayNames: SWEDISH_DAY_NAMES,
+    dayNamesShort: SWEDISH_DAY_NAMES_SHORT,
+    today: 'Idag',
+  };
+  LocaleConfig.defaultLocale = 'sv';
+} catch (_e) {}
 
 const MODAL_MAX_WIDTH = 520;
 // Fixed calendar height to avoid modal resizing between months (5 vs 6 weeks).
@@ -52,6 +99,7 @@ function monthLabel(date) {
 }
 
 const SYSTEM_BLUE = '#1976D2';
+const FW_MED = '500';
 
 export default function IsoDatePickerModal({ visible, title = 'Välj datum', value, onSelect, onClose }) {
   const todayIso = React.useMemo(() => toIsoDate(new Date()), []);
@@ -101,7 +149,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
           },
           text: {
             color: '#0F172A',
-            fontWeight: '800',
+            fontWeight: FW_MED,
           },
         },
       };
@@ -122,7 +170,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
           text: {
             ...(prev.customStyles?.text || {}),
             color: '#0F172A',
-            fontWeight: '800',
+            fontWeight: FW_MED,
           },
         },
       };
@@ -144,7 +192,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
             text: {
               ...(prev.customStyles?.text || {}),
               color: '#0F172A',
-              fontWeight: '800',
+              fontWeight: FW_MED,
             },
           },
         };
@@ -164,9 +212,12 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
     close();
   }, [selectedMany, onSelect, close]);
 
+  // Important: avoid mounting Calendar when closed (web can crash otherwise).
+  if (!visible) return null;
+
   return (
     <Modal
-      visible={!!visible}
+      visible
       transparent
       animationType="fade"
       onRequestClose={close}
@@ -198,7 +249,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                 <Ionicons name="calendar-outline" size={18} color="#64748B" />
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#0F172A' }} numberOfLines={1}>
+                <Text style={{ fontSize: 14, fontWeight: FW_MED, color: '#0F172A' }} numberOfLines={1}>
                   {title}
                 </Text>
               </View>
@@ -240,7 +291,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
                 </Pressable>
               </View>
 
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155' }}>{monthLabel(monthCursor)}</Text>
+              <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#334155' }}>{monthLabel(monthCursor)}</Text>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Pressable
@@ -307,9 +358,9 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
                   dayTextColor: '#0F172A',
                   textDisabledColor: '#CBD5E1',
                   monthTextColor: '#0F172A',
-                  textDayFontWeight: '500',
-                  textMonthFontWeight: '700',
-                  textDayHeaderFontWeight: '600',
+                  textDayFontWeight: FW_MED,
+                  textMonthFontWeight: FW_MED,
+                  textDayHeaderFontWeight: FW_MED,
                   textDayFontSize: 13,
                   textMonthFontSize: 14,
                   textDayHeaderFontSize: 11,
@@ -319,6 +370,8 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
                 hideArrows
                 renderHeader={() => null}
                 enableSwipeMonths
+                firstDay={1}
+                showWeekNumbers
               />
             </View>
           </View>
@@ -341,7 +394,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
                     backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
                   })}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Avbryt</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: '#475569' }}>Avbryt</Text>
                 </Pressable>
 
                 <Pressable
@@ -360,7 +413,7 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
                     };
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '800', color: selectedMany.length === 0 ? '#94A3B8' : '#0F172A' }}>Klar</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: selectedMany.length === 0 ? '#94A3B8' : '#0F172A' }}>Klar</Text>
                 </Pressable>
               </View>
             </View>

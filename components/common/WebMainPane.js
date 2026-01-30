@@ -135,7 +135,10 @@ export default function WebMainPane(props) {
             phaseActiveSection,
             phaseActiveItem,
             onPhaseSectionChange: setPhaseActiveSection,
-            onPhaseItemChange: setPhaseActiveItem,
+            onPhaseItemChange: (sectionId, itemId) => {
+              setPhaseActiveSection(sectionId);
+              setPhaseActiveItem(itemId);
+            },
           },
         }}
         navigation={navigation}

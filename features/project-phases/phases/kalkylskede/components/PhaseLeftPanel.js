@@ -7,9 +7,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { auth } from '../../../../../components/firebase';
+import { LEFT_NAV } from '../../../../../constants/leftNavTheme';
 import { ensureFolderPath } from '../../../../../services/azure/fileService';
 import { loadFolderChildren } from '../../../../../services/azure/hierarchyService';
 import { getAppVersion } from '../../../../../utils/appVersion';
+import { stripNumberPrefixForDisplay } from '../../../../../utils/labelUtils';
 import { addItem, addSection, removeItem, removeSection } from '../services/navigationService';
 
 const appVersion = getAppVersion();
@@ -26,9 +28,11 @@ export default function PhaseLeftPanel({
   loadNavigation,
   saveNavigation
 }) {
+  const isWeb = Platform.OS === 'web';
   const [canEdit, setCanEdit] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedNestedItems, setExpandedNestedItems] = useState({});
+  const [hoveredKey, setHoveredKey] = useState(null);
   const [showAddSectionModal, setShowAddSectionModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
@@ -244,26 +248,32 @@ export default function PhaseLeftPanel({
     const marginLeft = 12 + level * 14;
     const isExpanded = Boolean(node?.expanded);
     const hasChildren = Array.isArray(node?.children) && node.children.length > 0;
+    const rowKey = `sp:${node?.path || node?.id || String(level)}`;
+    const isHovered = isWeb && hoveredKey === rowKey;
+    const iconColor = isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted;
+    const textColor = isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault;
 
     return (
       <View key={node.path || node.id} style={{ marginLeft, marginTop: 2 }}>
         <TouchableOpacity
-          style={styles.spRow}
+          style={[styles.spRow, isHovered ? styles.rowHover : null]}
           onPress={() => handleToggleSharePointFolder(node.path, node.sectionId || null)}
+          onMouseEnter={isWeb ? () => setHoveredKey(rowKey) : undefined}
+          onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
         >
           <Ionicons
             name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
             size={14}
-            color="#444"
+            color={iconColor}
             style={{ marginRight: 6 }}
           />
           <Ionicons
             name="folder-outline"
             size={16}
-            color="#666"
+            color={iconColor}
             style={{ marginRight: 8 }}
           />
-          <Text style={styles.spName} numberOfLines={1}>{node.name}</Text>
+          <Text style={[styles.spName, isHovered ? { color: textColor } : null]} numberOfLines={1}>{node.name}</Text>
           {Boolean(node.loading) && (
             <Text style={styles.spMeta}>Laddar…</Text>
           )}
@@ -292,7 +302,7 @@ export default function PhaseLeftPanel({
 
   // Check permissions - allow all company members to edit navigation
   useEffect(() => {
-    if (Platform.OS !== 'web' || !companyId) {
+    if (!isWeb || !companyId) {
       setCanEdit(false);
       return;
     }
@@ -495,7 +505,7 @@ export default function PhaseLeftPanel({
 
         {/* Content wrapper - takes flex: 1 */}
         <View style={styles.contentWrapper}>
-        {Platform.OS === 'web' ? (
+        {isWeb ? (
           <View style={styles.scrollViewContainer}>
             <View style={styles.scrollViewContent}>
         {hasSharePointContext && sharePointTree.length > 0 ? (
@@ -512,12 +522,24 @@ export default function PhaseLeftPanel({
           // Only show as active if section is expanded AND matches activeSection
           const isActive = isExpanded && activeSection === section.id;
           const hasItems = section.items && section.items.length > 0;
+          const sectionHoverKey = `sec:${section.id}`;
+          const isHovered = isWeb && hoveredKey === sectionHoverKey;
+          const sectionIconColor = isActive
+            ? LEFT_NAV.accent
+            : (isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted);
+          const sectionTextColor = isActive
+            ? LEFT_NAV.accent
+            : (isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault);
 
           return (
             <View key={section.id} style={styles.sectionContainer}>
               {/* Section header */}
               <TouchableOpacity
-                style={[styles.sectionHeader, isActive && styles.sectionHeaderActive]}
+                style={[
+                  styles.sectionHeader,
+                  isHovered && !isActive ? styles.rowHover : null,
+                  isActive && styles.sectionHeaderActive,
+                ]}
                 onPress={() => {
                   const willBeExpanded = !expandedSections[section.id];
                   // Always allow toggling, even if no items
@@ -542,22 +564,24 @@ export default function PhaseLeftPanel({
                     }
                   }
                 }}
+                onMouseEnter={isWeb ? () => setHoveredKey(sectionHoverKey) : undefined}
+                onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
               >
                 {/* Always show chevron for all sections */}
                 <Ionicons
                   name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
                   size={14}
-                  color="#666"
+                  color={sectionIconColor}
                   style={styles.chevron}
                 />
                 <Ionicons
                   name={section.icon || 'folder-outline'}
                   size={16}
-                  color={isActive ? '#1976D2' : '#666'}
+                  color={sectionIconColor}
                   style={styles.sectionIcon}
                 />
-                <Text style={[styles.sectionName, isActive && styles.sectionNameActive]}>
-                  {section.name}
+                <Text style={[styles.sectionName, isActive && styles.sectionNameActive, !isActive && isHovered ? { color: sectionTextColor } : null]}>
+                  {stripNumberPrefixForDisplay(section.name)}
                 </Text>
                 {canEdit && (
                   <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
@@ -571,7 +595,7 @@ export default function PhaseLeftPanel({
                       }}
                       style={{ padding: 4 }}
                     >
-                      <Ionicons name="add-circle-outline" size={18} color="#1976D2" />
+                      <Ionicons name="add-circle-outline" size={18} color={LEFT_NAV.accent} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={(e) => {
@@ -597,12 +621,21 @@ export default function PhaseLeftPanel({
                     const isItemActive = hasNestedItems 
                       ? (isNestedExpanded && activeSection === section.id && activeItem === item.id)
                       : (activeSection === section.id && activeItem === item.id);
+                    const itemHoverKey = `item:${section.id}:${item.id}`;
+                    const isItemHovered = isWeb && hoveredKey === itemHoverKey;
+                    const itemTextColor = isItemActive
+                      ? LEFT_NAV.accent
+                      : (isItemHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault);
 
                     return (
                       <View key={item.id}>
                         {/* Item */}
                         <TouchableOpacity
-                          style={[styles.item, isItemActive && styles.itemActive]}
+                          style={[
+                            styles.item,
+                            isItemHovered && !isItemActive ? styles.rowHover : null,
+                            isItemActive && styles.itemActive,
+                          ]}
                           onPress={() => {
                             if (hasNestedItems) {
                               const willBeExpanded = !expandedNestedItems[nestedKey];
@@ -638,9 +671,11 @@ export default function PhaseLeftPanel({
                               }
                             }
                           }}
+                          onMouseEnter={isWeb ? () => setHoveredKey(itemHoverKey) : undefined}
+                          onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
                         >
-                          <Text style={[styles.itemText, isItemActive && styles.itemTextActive]}>
-                            • {item.name}
+                          <Text style={[styles.itemText, isItemActive && styles.itemTextActive, !isItemActive && isItemHovered ? { color: itemTextColor } : null]}>
+                            • {stripNumberPrefixForDisplay(item.name)}
                           </Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             {canEdit && (
@@ -656,7 +691,7 @@ export default function PhaseLeftPanel({
                                     }}
                                     style={{ padding: 2 }}
                                   >
-                                    <Ionicons name="add-circle-outline" size={16} color="#1976D2" />
+                                    <Ionicons name="add-circle-outline" size={16} color={LEFT_NAV.accent} />
                                   </TouchableOpacity>
                                 )}
                                 <TouchableOpacity
@@ -674,7 +709,7 @@ export default function PhaseLeftPanel({
                               <Ionicons
                                 name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
                                 size={14}
-                                color="#999"
+                                color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
                               />
                             )}
                           </View>
@@ -687,24 +722,36 @@ export default function PhaseLeftPanel({
                               const isSubItemActive =
                                 activeSection === section.id &&
                                 activeItem === `${item.id}.${subItem.id}`;
+                              const subHoverKey = `sub:${section.id}:${item.id}:${subItem.id}`;
+                              const isSubHovered = isWeb && hoveredKey === subHoverKey;
+                              const subTextColor = isSubItemActive
+                                ? LEFT_NAV.accent
+                                : (isSubHovered ? LEFT_NAV.hoverText : LEFT_NAV.textMuted);
 
                               return (
                                 <TouchableOpacity
                                   key={subItem.id}
-                                  style={[styles.nestedItem, isSubItemActive && styles.nestedItemActive]}
+                                  style={[
+                                    styles.nestedItem,
+                                    isSubHovered && !isSubItemActive ? styles.rowHover : null,
+                                    isSubItemActive && styles.nestedItemActive,
+                                  ]}
                                   onPress={() => {
                                     if (onSelectItem) {
                                       onSelectItem(section.id, `${item.id}.${subItem.id}`);
                                     }
                                   }}
+                                  onMouseEnter={isWeb ? () => setHoveredKey(subHoverKey) : undefined}
+                                  onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
                                 >
                                   <Text
                                     style={[
                                       styles.nestedItemText,
-                                      isSubItemActive && styles.nestedItemTextActive
+                                      isSubItemActive && styles.nestedItemTextActive,
+                                      !isSubItemActive && isSubHovered ? { color: subTextColor } : null,
                                     ]}
                                   >
-                                    – {subItem.name}
+                                    – {stripNumberPrefixForDisplay(subItem.name)}
                                   </Text>
                                   {canEdit && (
                                     <TouchableOpacity
@@ -811,7 +858,7 @@ export default function PhaseLeftPanel({
                     style={styles.sectionIcon}
                   />
                   <Text style={[styles.sectionName, isActive && styles.sectionNameActive]}>
-                    {section.name}
+                    {stripNumberPrefixForDisplay(section.name)}
                   </Text>
                   {canEdit && (
                     <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
@@ -875,7 +922,7 @@ export default function PhaseLeftPanel({
                             }}
                           >
                             <Text style={[styles.itemText, isItemActive && styles.itemTextActive]}>
-                              • {item.name}
+                              • {stripNumberPrefixForDisplay(item.name)}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                               {canEdit && (
@@ -928,7 +975,7 @@ export default function PhaseLeftPanel({
                                     }}
                                   >
                                     <Text style={[styles.nestedItemText, isSubItemActive && styles.nestedItemTextActive]}>
-                                      – {subItem.name}
+                                      – {stripNumberPrefixForDisplay(subItem.name)}
                                     </Text>
                                     {canEdit && (
                                       <TouchableOpacity
@@ -973,7 +1020,7 @@ export default function PhaseLeftPanel({
                 setShowAddSectionModal(true);
               }}
             >
-              <Ionicons name="add-circle-outline" size={18} color="#1976D2" />
+              <Ionicons name="add-circle-outline" size={18} color={LEFT_NAV.accent} />
               <Text style={styles.addSectionButtonText}>Lägg till sektion</Text>
             </TouchableOpacity>
           )}
@@ -983,10 +1030,10 @@ export default function PhaseLeftPanel({
         {/* Status Box at bottom - fixed position */}
         <View style={styles.statusBox}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={{ fontSize: 11, color: '#2E7D32', fontWeight: '600' }}>
+            <Text style={{ fontSize: 12, color: '#2E7D32', fontWeight: '600' }}>
               Synk: synced
             </Text>
-            <Text style={{ fontSize: 11, color: '#666' }}>
+            <Text style={{ fontSize: 12, color: LEFT_NAV.textMuted }}>
               Version: {appVersion}
             </Text>
           </View>
@@ -1074,6 +1121,9 @@ export default function PhaseLeftPanel({
 }
 
 const styles = StyleSheet.create({
+  rowHover: {
+    backgroundColor: LEFT_NAV.hoverBg,
+  },
   container: {
     flex: 1,
     flexDirection: 'column',
@@ -1139,16 +1189,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
     borderRadius: 6,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   spName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#222',
+    color: LEFT_NAV.textDefault,
     flex: 1,
   },
   spMeta: {
     fontSize: 12,
-    color: '#666',
+    color: LEFT_NAV.textMuted,
     marginLeft: 8,
   },
   spEmpty: {
@@ -1186,12 +1237,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 16,
-    backgroundColor: 'transparent'
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   sectionHeaderActive: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: LEFT_NAV.activeBg,
     borderLeftWidth: 4,
-    borderLeftColor: '#1976D2'
+    borderLeftColor: LEFT_NAV.activeBorder,
   },
   chevron: {
     marginRight: 8
@@ -1200,13 +1252,13 @@ const styles = StyleSheet.create({
     marginRight: 8
   },
   sectionName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#222',
+    color: LEFT_NAV.textDefault,
     flex: 1
   },
   sectionNameActive: {
-    color: '#1976D2'
+    color: LEFT_NAV.accent,
   },
   itemsContainer: {
     backgroundColor: '#fafafa',
@@ -1218,20 +1270,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 4,
     paddingHorizontal: 16,
-    paddingLeft: 24
+    paddingLeft: 24,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   itemActive: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: LEFT_NAV.activeBg,
     borderLeftWidth: 3,
-    borderLeftColor: '#1976D2'
+    borderLeftColor: LEFT_NAV.activeBorder,
   },
   itemText: {
-    fontSize: 12,
-    color: '#444',
+    fontSize: 14,
+    color: LEFT_NAV.textDefault,
     flex: 1
   },
   itemTextActive: {
-    color: '#1976D2',
+    color: LEFT_NAV.accent,
     fontWeight: '600'
   },
   nestedItemsContainer: {
@@ -1241,19 +1294,20 @@ const styles = StyleSheet.create({
   nestedItem: {
     paddingVertical: 4,
     paddingHorizontal: 16,
-    paddingLeft: 32
+    paddingLeft: 32,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   nestedItemActive: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: LEFT_NAV.activeBg,
     borderLeftWidth: 3,
-    borderLeftColor: '#1976D2'
+    borderLeftColor: LEFT_NAV.activeBorder,
   },
   nestedItemText: {
-    fontSize: 11,
-    color: '#666'
+    fontSize: 14,
+    color: LEFT_NAV.textMuted,
   },
   nestedItemTextActive: {
-    color: '#1976D2',
+    color: LEFT_NAV.accent,
     fontWeight: '600'
   },
   emptyText: {
@@ -1268,7 +1322,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   emptySectionText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#999',
     fontStyle: 'italic'
   },
@@ -1282,8 +1336,8 @@ const styles = StyleSheet.create({
     gap: 8
   },
   addSectionButtonText: {
-    fontSize: 12,
-    color: '#1976D2',
+    fontSize: 14,
+    color: LEFT_NAV.accent,
     fontWeight: '600'
   },
   modalOverlay: {

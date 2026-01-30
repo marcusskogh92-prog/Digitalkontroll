@@ -3,11 +3,11 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { updateItemCompletion } from '../../../../services/kalkylskedeService';
+import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 
-export default function ProjektstatusView({ projectId, companyId, project }) {
+export default function ProjektstatusView({ projectId, companyId, project, hidePageHeader = false }) {
   const [status, setStatus] = useState(project?.status || 'ongoing');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -26,11 +26,7 @@ export default function ProjektstatusView({ projectId, companyId, project }) {
       // Update in Firestore (you'll need to implement this)
       // await updateProjectStatus(companyId, projectId, newStatus);
 
-      // Update completion status
-      await updateItemCompletion(companyId, projectId, 'oversikt', 'projektstatus', {
-        completed: newStatus === 'completed',
-        progress: newStatus === 'completed' ? 100 : newStatus === 'ongoing' ? 50 : 0
-      });
+      // Digitalkontroll no longer uses completion/progress percentages.
     } catch (error) {
       console.error('[ProjektstatusView] Error updating status:', error);
     } finally {
@@ -44,10 +40,12 @@ export default function ProjektstatusView({ projectId, companyId, project }) {
     <ScrollView style={styles.container}>
       <View style={styles.contentWrapper}>
         <View style={styles.mainContent}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Projektstatus</Text>
-            <Text style={styles.subtitle}>Hantera projektets status och översikt</Text>
-          </View>
+          {!hidePageHeader ? (
+            <View style={styles.header}>
+              <Text style={PROJECT_TYPOGRAPHY.viewTitle}>Projektstatus</Text>
+              <Text style={PROJECT_TYPOGRAPHY.viewSubtitle}>Hantera projektets status och översikt</Text>
+            </View>
+          ) : null}
 
           <View style={styles.content}>
             <Text style={styles.label}>Nuvarande status:</Text>

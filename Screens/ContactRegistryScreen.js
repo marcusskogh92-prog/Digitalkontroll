@@ -1,12 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { HomeHeader } from '../components/common/HomeHeader';
 import ContextMenu from '../components/ContextMenu';
-import HeaderAdminMenu from '../components/HeaderAdminMenu';
-import HeaderDisplayName from '../components/HeaderDisplayName';
-import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
-import MainLayout from '../components/MainLayout';
 import {
     auth,
     createCompanyContact,
@@ -16,6 +13,8 @@ import {
     fetchCompanyProfile,
     updateCompanyContact,
 } from '../components/firebase';
+import MainLayout from '../components/MainLayout';
+import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
 function formatSwedishMobilePhone(input) {
   const raw = String(input || '');
@@ -65,6 +64,20 @@ export default function ContactRegistryScreen({ navigation, route }) {
   const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [supportMenuOpen, setSupportMenuOpen] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const searchSpinAnim = useRef(new Animated.Value(0)).current;
+  const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
+
+  const noopAsync = async () => {};
+
+  const showSimpleAlert = (title, message) => {
+    try {
+      const t = String(title || '').trim() || 'Info';
+      const m = String(message || '').trim();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(m ? `${t}\n\n${m}` : t);
+      else Alert.alert(t, m || '');
+    } catch (_e) {}
+  };
 
   // Always start with allCompaniesMode disabled - require explicit company selection
   const [allCompaniesMode, setAllCompaniesMode] = useState(false);
@@ -680,13 +693,6 @@ export default function ContactRegistryScreen({ navigation, route }) {
     elevation: 4,
   };
 
-  const RootContainer = ImageBackground;
-  const rootProps = {
-    source: require('../assets/images/inlogg.webb.png'),
-    resizeMode: 'cover',
-    imageStyle: { width: '100%', height: '100%' },
-  };
-
   const hasSelectedCompany = !!String(companyId || '').trim();
 
   // Keyboard event handler for Enter to save (web only) - for modal
@@ -1032,75 +1038,55 @@ export default function ContactRegistryScreen({ navigation, route }) {
   );
 
   return (
-    <RootContainer {...rootProps} style={{ flex: 1 }}>
-      <MainLayout
-        adminMode={true}
-        adminCurrentScreen="contact_registry"
-        adminOnSelectCompany={(payload) => {
-          try {
-            const cid = String(payload?.companyId || payload?.id || '').trim();
-            if (!cid) return;
-            if (!canSeeAllCompanies) {
-              // locked admins can't switch company
-              return;
-            }
-            setCompanyId(cid);
-            setAllCompaniesMode(false); // Always use single company mode when selecting
-            clearForm();
-          } catch (_e) {}
-        }}
-        adminShowCompanySelector={canSeeAllCompanies}
-        sidebarSelectedCompanyId={companyId}
-        topBar={
-          <View
-            style={{
-              height: 96,
-              paddingLeft: 24,
-              paddingRight: 24,
-              backgroundColor: 'rgba(25, 118, 210, 0.2)',
-              justifyContent: 'center',
-              borderBottomWidth: 1,
-              borderColor: 'rgba(25, 118, 210, 0.3)',
-              borderLeftWidth: 4,
-              borderLeftColor: '#1976D2',
-            }}
-          >
-            <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
-                <View style={{ marginRight: 10 }}>
-                  {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
-                </View>
-                <View style={{ marginRight: 10 }}>
-                  <HeaderAdminMenu />
-                </View>
-                {allowedTools ? (
-                  <TouchableOpacity
-                    style={{ 
-                      backgroundColor: supportMenuOpen ? '#1976D2' : '#F1F5F9', 
-                      borderRadius: 10, 
-                      paddingVertical: 8, 
-                      paddingHorizontal: 14, 
-                      alignSelf: 'flex-start',
-                      borderWidth: 1,
-                      borderColor: supportMenuOpen ? '#1976D2' : '#E2E8F0',
-                      ...(Platform.OS === 'web' ? {
-                        transition: 'all 0.2s',
-                        cursor: 'pointer',
-                      } : {}),
-                    }}
-                    onPress={() => setSupportMenuOpen((s) => !s)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{ color: supportMenuOpen ? '#fff' : '#475569', fontWeight: '700', fontSize: 13 }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-              <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }} />
-            </View>
-          </View>
-        }
-        rightPanel={null}
-      >
+    <MainLayout
+      adminMode={true}
+      adminCurrentScreen="contact_registry"
+      adminOnSelectCompany={(payload) => {
+        try {
+          const cid = String(payload?.companyId || payload?.id || '').trim();
+          if (!cid) return;
+          if (!canSeeAllCompanies) {
+            // locked admins can't switch company
+            return;
+          }
+          setCompanyId(cid);
+          setAllCompaniesMode(false); // Always use single company mode when selecting
+          clearForm();
+        } catch (_e) {}
+      }}
+      adminShowCompanySelector={canSeeAllCompanies}
+      sidebarSelectedCompanyId={companyId}
+      topBar={
+        <HomeHeader
+          headerHeight={headerHeight}
+          setHeaderHeight={setHeaderHeight}
+          navigation={navigation}
+          route={route}
+          auth={auth}
+          selectedProject={null}
+          isSuperAdmin={false}
+          allowedTools={allowedTools}
+          showHeaderUserMenu={showHeaderUserMenu}
+          canShowSupportToolsInHeader={allowedTools}
+          supportMenuOpen={supportMenuOpen}
+          setSupportMenuOpen={setSupportMenuOpen}
+          companyId={companyId}
+          routeCompanyId={route?.params?.companyId || ''}
+          showAdminButton={false}
+          adminActionRunning={false}
+          localFallbackExists={false}
+          handleMakeDemoAdmin={noopAsync}
+          refreshLocalFallbackFlag={noopAsync}
+          dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+          showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+          saveControlToFirestore={noopAsync}
+          saveDraftToFirestore={noopAsync}
+          searchSpinAnim={searchSpinAnim}
+          sharePointStatus={sharePointStatus}
+        />
+      }
+      rightPanel={null}
+    >
         <View style={dashboardContainerStyle}>
           <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 1200, maxWidth: '100%' }]}>
             {!hasSelectedCompany ? (
@@ -1711,8 +1697,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
             </View>
           </View>
         </View>
-      </MainLayout>
       {ContactModalComponent}
-    </RootContainer>
+    </MainLayout>
   );
 }

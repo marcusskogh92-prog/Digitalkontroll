@@ -1,6 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 // Cross-platform safe context menu.
 // Designed primarily for web usage (right-click) but won't break native.
@@ -21,7 +21,8 @@ export default function ContextMenu({ visible, x, y, items = [], onSelect, onClo
 
       const padding = 12;
       const menuWidth = 190;
-      const rowHeight = 40;
+      const hasAnySubtitle = Array.isArray(items) && items.some((it) => !!String(it?.subtitle || '').trim());
+      const rowHeight = hasAnySubtitle ? 52 : 40;
       const chrome = 12;
       const menuHeight = Math.max(1, Array.isArray(items) ? items.length : 0) * rowHeight + chrome;
 
@@ -161,14 +162,20 @@ export default function ContextMenu({ visible, x, y, items = [], onSelect, onClo
                         : <Text style={{ fontSize: 18 }}>{String(item.icon)}</Text>)
                   ) : null}
                 </View>
-                <Text style={{ 
-                  fontSize: 14, 
-                  color: textColor,
-                  fontWeight: isSelected ? '600' : '400',
-                  flex: 1,
-                }}>
-                  {item.label}
-                </Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{
+                    fontSize: 14,
+                    color: textColor,
+                    fontWeight: isSelected ? '600' : '400',
+                  }} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                  {String(item?.subtitle || '').trim() ? (
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={1}>
+                      {String(item.subtitle)}
+                    </Text>
+                  ) : null}
+                </View>
                 {isSelected && (
                   <View style={{ marginLeft: 8 }}>
                     <Ionicons name="checkmark" size={16} color={item.phaseColor || '#1976D2'} />

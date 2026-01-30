@@ -26,6 +26,16 @@ const SYSTEM_ROOT_FOLDERS = new Set(
   ].map((s) => String(s).toLowerCase())
 );
 
+function encodeGraphPathSegments(path) {
+  const raw = String(path || '');
+  if (!raw) return '';
+  // Keep '/' separators intact; encode each segment so spaces/special chars are safe in URLs.
+  return raw
+    .split('/')
+    .map((seg) => (seg === '' ? '' : encodeURIComponent(seg)))
+    .join('/');
+}
+
 function normalizeRootFolderName(name) {
   return String(name || '')
     .trim()
@@ -54,6 +64,34 @@ function assertProjectSitePathAllowed(path, siteRole) {
   }
 }
 
+function parseGraphErrorText(errorText) {
+  const raw = String(errorText || '').trim();
+  if (!raw) return { code: null, message: null, raw: '' };
+  try {
+    const parsed = JSON.parse(raw);
+    const code = parsed?.error?.code || null;
+    const message = parsed?.error?.message || null;
+    return { code: code ? String(code) : null, message: message ? String(message) : null, raw };
+  } catch (_e) {
+    return { code: null, message: null, raw };
+  }
+}
+
+function makeGraphHttpError(prefix, response, errorText) {
+  const details = parseGraphErrorText(errorText);
+  const status = Number(response?.status || 0) || 0;
+  const statusText = String(response?.statusText || '').trim();
+  const code = details.code;
+  const msg = details.message;
+  const err = new Error(
+    `${prefix}: ${status} ${statusText}${code ? ` (${code})` : ''}${msg ? ` - ${msg}` : details.raw ? ` - ${details.raw}` : ''}`
+  );
+  err.status = status;
+  if (code) err.code = code;
+  err.graph = details;
+  return err;
+}
+
 /**
  * Upload file to SharePoint via Microsoft Graph API
  * @param {Object} options - Upload options
@@ -64,7 +102,7 @@ function assertProjectSitePathAllowed(path, siteRole) {
  * @param {string} [options.phaseKey] - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad') - if provided, uses phase-specific SharePoint site
  * @returns {Promise<string>} File URL (webUrl from SharePoint)
  */
-export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null, siteRole = null }) {
+export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null, siteRole = null, strictEnsure = false }) {
   if (!file) throw new Error('File is required');
   if (!path) throw new Error('Path is required');
   
@@ -116,10 +154,14 @@ export async function uploadFile({ file, path, companyId, siteId = null, phaseKe
     try {
       // Remove leading slash for ensureFolderPath
       const folderPathWithoutSlash = folderPath.replace(/^\/+/, '');
-      await ensureFolderPath(folderPathWithoutSlash, companyId, sharePointSiteId, { siteRole });
+      await ensureFolderPath(folderPathWithoutSlash, companyId, sharePointSiteId, { siteRole, strict: !!strictEnsure });
     } catch (error) {
+      if (strictEnsure) {
+        const msg = String(error?.message || error || 'Unknown error');
+        throw new Error(`SharePoint folder ensure failed before upload: ${msg}`);
+      }
       console.warn('[uploadFile] Warning: Could not ensure folder path before upload:', error);
-      // Continue with upload anyway - SharePoint might create folders automatically or folder might already exist
+      // Continue with upload anyway in non-strict mode
     }
   }
   
@@ -148,14 +190,15 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
   // If siteId is provided, use it directly
   // Otherwise, we need to find the site using the site URL
   let endpoint;
+  const encodedPath = encodeGraphPathSegments(path);
   
   if (siteId) {
-    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${path}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     // Extract site path from URL (e.g., /sites/DigitalKontroll)
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${path}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${encodedPath}:`;
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
@@ -189,7 +232,7 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
   
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`File upload failed: ${response.status} ${response.statusText} - ${errorText}`);
+    throw makeGraphHttpError('File upload failed', response, errorText);
   }
   
   const result = await response.json();
@@ -208,13 +251,14 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
 async function uploadFileResumable(accessToken, siteId, path, file, config) {
   // Create upload session
   let endpoint;
+  const encodedPath = encodeGraphPathSegments(path);
   
   if (siteId) {
-    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${path}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${path}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${encodedPath}:`;
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
@@ -236,7 +280,7 @@ async function uploadFileResumable(accessToken, siteId, path, file, config) {
   
   if (!sessionResponse.ok) {
     const errorText = await sessionResponse.text();
-    throw new Error(`Failed to create upload session: ${sessionResponse.status} ${sessionResponse.statusText} - ${errorText}`);
+    throw makeGraphHttpError('Failed to create upload session', sessionResponse, errorText);
   }
   
   const session = await sessionResponse.json();
@@ -266,7 +310,7 @@ async function uploadFileResumable(accessToken, siteId, path, file, config) {
     
     if (!chunkResponse.ok) {
       const errorText = await chunkResponse.text();
-      throw new Error(`Chunk upload failed: ${chunkResponse.status} ${chunkResponse.statusText} - ${errorText}`);
+      throw makeGraphHttpError('Chunk upload failed', chunkResponse, errorText);
     }
     
     // If this is the last chunk, the response will contain the file metadata
@@ -299,14 +343,15 @@ export async function getFileUrl(path, companyId = null, siteId = null) {
   }
   
   const normalizedPath = '/' + path.replace(/^\/+/, '').replace(/\/+/g, '/');
+  const encodedPath = encodeGraphPathSegments(normalizedPath);
   
   let endpoint;
   if (siteId) {
-    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${normalizedPath}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${normalizedPath}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${encodedPath}:`;
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
@@ -351,10 +396,11 @@ export async function listFolders(basePath = '', siteId) {
   const normalizedBase = basePath
     ? '/' + basePath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/^\/+/, '')
     : '';
+  const encodedBase = normalizedBase ? encodeGraphPathSegments(normalizedBase) : '';
 
   let endpoint;
-  if (normalizedBase) {
-    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${normalizedBase}:/children`;
+  if (encodedBase) {
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedBase}:/children`;
   } else {
     endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root/children`;
   }
@@ -385,6 +431,150 @@ export async function listFolders(basePath = '', siteId) {
     }));
 }
 
+function normalizeDriveRelativePath(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\/+/g, '/');
+}
+
+function extractRelativePathFromParentReference(parentReferencePath) {
+  // Example: "/drive/root:/Some/Folder"
+  const raw = String(parentReferencePath || '').trim();
+  const marker = ':/';
+  const idx = raw.indexOf(marker);
+  if (idx === -1) return '';
+  const rel = raw.slice(idx + marker.length);
+  return normalizeDriveRelativePath(rel);
+}
+
+/**
+ * Get a drive item by path.
+ * Returns null if not found (404).
+ */
+export async function getDriveItemByPath(path, siteId) {
+  if (!siteId) throw new Error('siteId is required');
+  const rel = normalizeDriveRelativePath(path);
+  if (!rel) throw new Error('path is required');
+
+  const config = getAzureConfig();
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
+
+  const encoded = encodeGraphPathSegments('/' + rel);
+  const endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encoded}:`;
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to get drive item: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+  return await response.json();
+}
+
+/**
+ * Search drive for items matching a query.
+ * Uses Microsoft Graph search on the site's default document library.
+ */
+export async function searchDriveItems(siteId, query) {
+  if (!siteId) throw new Error('siteId is required');
+  const q = String(query || '').trim();
+  if (!q) return [];
+
+  const config = getAzureConfig();
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
+
+  // Graph search endpoint. Returns both files and folders.
+  const encodedQ = encodeURIComponent(q);
+  const endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root/search(q='${encodedQ}')?$select=id,name,webUrl,folder,parentReference`;
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to search drive: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const items = Array.isArray(data?.value) ? data.value : [];
+  return items.map((it) => {
+    const parentRel = extractRelativePathFromParentReference(it?.parentReference?.path);
+    const fullPath = normalizeDriveRelativePath(parentRel ? `${parentRel}/${it?.name}` : it?.name);
+    return {
+      id: it?.id || null,
+      name: it?.name || null,
+      webUrl: it?.webUrl || null,
+      isFolder: !!it?.folder,
+      path: fullPath || null,
+    };
+  });
+}
+
+function scoreProjectFolderCandidate({ name, projectNumber, projectName }) {
+  const n = String(name || '').toLowerCase();
+  const pn = String(projectNumber || '').trim().toLowerCase();
+  const pnm = String(projectName || '').trim().toLowerCase();
+  let score = 0;
+  if (pn && n === pn) score += 80;
+  if (pn && n.startsWith(pn)) score += 60;
+  if (pn && n.includes(pn)) score += 40;
+  if (pnm && n.includes(pnm)) score += 35;
+  if (n.includes(' – ') || n.includes(' - ')) score += 10;
+  return score;
+}
+
+/**
+ * Resolve an existing project root folder path in a SharePoint site.
+ * - Does NOT create anything.
+ * - Returns a relative drive path (no leading '/').
+ */
+export async function resolveProjectRootFolderPath({ siteId, projectNumber, projectName, fullName } = {}) {
+  const sid = String(siteId || '').trim();
+  if (!sid) throw new Error('siteId is required');
+
+  const pn = String(projectNumber || '').trim();
+  const pnm = String(projectName || '').trim();
+  const fn = String(fullName || '').trim();
+
+  const candidates = [fn, `${pn} – ${pnm}`, `${pn} - ${pnm}`, pn]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+
+  // 1) Try exact folder name matches first.
+  for (const cand of candidates) {
+    const results = await searchDriveItems(sid, cand);
+    const exact = results.find((r) => r?.isFolder && String(r?.name || '').trim().toLowerCase() === cand.toLowerCase());
+    if (exact?.path) {
+      const item = await getDriveItemByPath(exact.path, sid);
+      if (item?.folder) return normalizeDriveRelativePath(exact.path);
+    }
+  }
+
+  // 2) Search by projectNumber and pick best-scoring folder.
+  if (pn) {
+    const results = (await searchDriveItems(sid, pn)).filter((r) => r?.isFolder && r?.path);
+    const scored = results
+      .map((r) => ({ r, score: scoreProjectFolderCandidate({ name: r?.name, projectNumber: pn, projectName: pnm }) }))
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+    const best = scored.find((x) => (x.score || 0) >= 40)?.r || scored[0]?.r || null;
+    if (best?.path) {
+      const item = await getDriveItemByPath(best.path, sid);
+      if (item?.folder) return normalizeDriveRelativePath(best.path);
+    }
+  }
+
+  throw new Error('Kunde inte hitta projektmappen i SharePoint.');
+}
+
 /**
  * Delete file from SharePoint
  * @param {string} path - File path in SharePoint
@@ -403,14 +593,15 @@ export async function deleteFile(path, companyId = null, siteId = null) {
   }
   
   const normalizedPath = '/' + path.replace(/^\/+/, '').replace(/\/+/g, '/');
+  const encodedPath = encodeGraphPathSegments(normalizedPath);
   
   let endpoint;
   if (siteId) {
-    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${normalizedPath}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
     const sitePath = url.pathname;
-    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${normalizedPath}:`;
+    endpoint = `${config.graphApiEndpoint}/sites/${url.hostname}:${sitePath}/drive/root:${encodedPath}:`;
   } else {
     throw new Error('SharePoint Site ID or URL required');
   }
@@ -515,12 +706,11 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
     // Construct check endpoint - construct full path in one go to avoid double colons
     // For root: root:/folderName:
     // For parent: root:/parentPath/folderName:
-    let checkEndpoint;
-    if (parentPath && parentPath.length > 0) {
-      checkEndpoint = `${baseEndpoint}:/${parentPath}/${folderName}:`;
-    } else {
-      checkEndpoint = `${baseEndpoint}:/${folderName}:`;
-    }
+    const fullPath = parentPath && parentPath.length > 0
+      ? `${parentPath}/${folderName}`
+      : folderName;
+    const encodedFullPath = encodeGraphPathSegments(fullPath);
+    const checkEndpoint = `${baseEndpoint}:/${encodedFullPath}:`;
     const checkResponse = await fetch(checkEndpoint, {
       method: 'GET',
       headers: {
@@ -541,7 +731,8 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
   // For parent: root:/parentPath:/children
   let createEndpoint;
   if (parentPath && parentPath.length > 0) {
-    createEndpoint = `${baseEndpoint}:/${parentPath}:/children`;
+    const encodedParent = encodeGraphPathSegments(parentPath);
+    createEndpoint = `${baseEndpoint}:/${encodedParent}:/children`;
   } else {
     createEndpoint = `${baseEndpoint}/children`;
   }
@@ -603,8 +794,10 @@ export async function ensureFolderPath(path, companyId = null, siteId = null, op
     return; // No folders to create
   }
   
+  const strict = !!options?.strict;
+
   // eslint-disable-next-line no-console
-  console.log(`[ensureFolderPath] Creating folder path: ${path} (parts: ${pathParts.length}, siteId: ${siteId})`);
+  console.log(`[ensureFolderPath] Creating folder path: ${path} (parts: ${pathParts.length}, siteId: ${siteId}, strict: ${strict})`);
   
   // Build path incrementally: "A", "A/B", "A/B/C"
   let currentPath = '';
@@ -618,11 +811,12 @@ export async function ensureFolderPath(path, companyId = null, siteId = null, op
       // eslint-disable-next-line no-console
       console.log(`[ensureFolderPath] ✅ Created folder: ${currentPath} (id: ${folderId})`);
     } catch (error) {
-      // If folder creation fails, log but continue (parent might not exist yet)
-      // ensureFolder will handle checking if folder exists
       // eslint-disable-next-line no-console
-      console.error(`[ensureFolderPath] ❌ Error creating folder ${currentPath}:`, error.message || error);
-      // Continue anyway, ensureFolder checks if folder exists before creating
+      console.error(`[ensureFolderPath] ❌ Error creating folder ${currentPath}:`, error);
+      if (strict) {
+        const msg = String(error?.message || error || 'Unknown error');
+        throw new Error(`SharePoint folder ensure failed at "${currentPath}": ${msg}`);
+      }
     }
   }
   
@@ -786,4 +980,96 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
   }
   
   console.log(`[ensureProjectStructure] ✅ Project structure created: ${projectPath}`);
+}
+
+/**
+ * Ensure locked Kalkylskede folder structure exists inside a project root folder.
+ * Creates both section folders and their fixed subfolders.
+ *
+ * @param {string} projectRootPath - Root folder path for the project (relative in the site's drive)
+ * @param {string} companyId - Company ID
+ * @param {string} siteId - SharePoint site ID (DK Site / role=projects)
+ */
+export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, companyId, siteId) {
+  const root = String(projectRootPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (!root) throw new Error('projectRootPath is required');
+  if (!companyId) throw new Error('companyId is required');
+  if (!siteId) throw new Error('siteId is required');
+
+  const { getKalkylskedeLockedRelativeFolderPaths } = await import('../../components/firebase');
+  const relPaths = getKalkylskedeLockedRelativeFolderPaths();
+
+  // Ensure section folders first, then nested item folders.
+  // (The list already contains both; we keep ordering stable by sorting by depth.)
+  const ordered = Array.isArray(relPaths)
+    ? [...relPaths]
+        .map((p) => String(p || '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.split('/').length - b.split('/').length)
+    : [];
+
+  for (const rel of ordered) {
+    const fullPath = `${root}/${rel}`
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .replace(/\/+/g, '/');
+    await ensureFolderPath(fullPath, companyId, siteId, { siteRole: 'projects' });
+  }
+}
+
+async function assertNotLockedKalkylskedePath({ projectRootPath, itemPath, action }) {
+  const { isLockedKalkylskedeSharePointFolderPath } = await import('../../components/firebase');
+  const locked = isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemPath });
+  if (locked) {
+    const what = action ? String(action) : 'Åtgärden';
+    throw new Error(`${what} är inte tillåten: denna systemmapp är låst.`);
+  }
+}
+
+/**
+ * Guarded rename by driveItem id.
+ * Caller must pass the projectRootPath so we can enforce lock rules.
+ */
+export async function renameDriveItemByIdGuarded({ siteId, itemId, newName, projectRootPath, itemPath }) {
+  if (!siteId) throw new Error('siteId is required');
+  if (!itemId) throw new Error('itemId is required');
+  if (!newName) throw new Error('newName is required');
+
+  if (projectRootPath && itemPath) {
+    await assertNotLockedKalkylskedePath({ projectRootPath, itemPath, action: 'Byte av namn' });
+  }
+
+  const { renameDriveItemById } = await import('./hierarchyService');
+  return await renameDriveItemById(siteId, itemId, newName);
+}
+
+/**
+ * Guarded delete by driveItem id.
+ */
+export async function deleteDriveItemByIdGuarded({ siteId, itemId, projectRootPath, itemPath }) {
+  if (!siteId) throw new Error('siteId is required');
+  if (!itemId) throw new Error('itemId is required');
+
+  if (projectRootPath && itemPath) {
+    await assertNotLockedKalkylskedePath({ projectRootPath, itemPath, action: 'Radering' });
+  }
+
+  const { deleteDriveItemById } = await import('./hierarchyService');
+  return await deleteDriveItemById(siteId, itemId);
+}
+
+/**
+ * Guarded move by driveItem id.
+ */
+export async function moveDriveItemByIdGuarded({ siteId, itemId, newParentItemId, projectRootPath, itemPath }) {
+  if (!siteId) throw new Error('siteId is required');
+  if (!itemId) throw new Error('itemId is required');
+  if (!newParentItemId) throw new Error('newParentItemId is required');
+
+  if (projectRootPath && itemPath) {
+    await assertNotLockedKalkylskedePath({ projectRootPath, itemPath, action: 'Flytt' });
+  }
+
+  const { moveDriveItemById } = await import('./hierarchyService');
+  return await moveDriveItemById(siteId, itemId, newParentItemId);
 }

@@ -2639,6 +2639,153 @@ export async function getSharePointNavigationConfig(companyIdOverride) {
 }
 
 // ============================================================================
+// SHAREPOINT PROJECT STRUCTURE (KALKYLSKEDE, LOCKED)
+// ============================================================================
+
+// Locked folder model for Kalkylskede projects.
+// These folders are created automatically and must not be renamed/moved/deleted.
+// Users may still create additional folders *inside* them.
+const KALKYLSKEDE_LOCKED_STRUCTURE = [
+  {
+    name: '01 - Översikt',
+    items: [
+      '01 - Projektinformation',
+      '02 - Organisation och roller',
+      '03 - Tidsplan och viktiga datum',
+      '04 - FrågaSvar',
+    ],
+  },
+  {
+    name: '02 - Förfrågningsunderlag',
+    items: [
+      '01 - Administrativa föreskrifter (AF)',
+      '02 - Tekniska beskrivningar',
+      '03 - Ritningar',
+      '04 - Kompletteringar och ändringar',
+      '05 - Referenshandlingar',
+      '06 - AI-analys och sammanställning',
+    ],
+  },
+  {
+    name: '03 - Kalkyl',
+    items: [
+      '01 - Kalkylritningar',
+      '02 - Kalkylanteckningar',
+      '03 - Nettokalkyl',
+      '04 - Offertkalkyl',
+      '05 - Omkostnadskalkyl',
+      '06 - Slutsida',
+    ],
+  },
+  {
+    name: '04 - UE och offerter',
+    items: ['01 - Förfrågningar', '02 - Inkomna offerter', '03 - Jämförelser', '04 - Vald UE'],
+  },
+  {
+    name: '05 - Konstruktion och beräkningar',
+    items: [
+      '01 - Konstruktionsritningar',
+      '02 - Statik och hållfasthet',
+      '03 - Brandskydd',
+      '04 - Tillgänglighet',
+      '05 - Akustik',
+      '06 - Energiberäkningar',
+      '07 - Geoteknik',
+      '08 - Teknisk samordning',
+    ],
+  },
+  {
+    name: '06 - Myndigheter',
+    items: [
+      '01 - Bygglov',
+      '02 - Tekniskt samråd',
+      '03 - Startbesked',
+      '04 - Kompletteringar',
+      '05 - Slutbesked',
+      '06 - Kommunikation',
+    ],
+  },
+  {
+    name: '07 - Risk och möjligheter',
+    items: [
+      '01 - Identifierade risker',
+      '02 - Möjligheter',
+      '03 - Konsekvens och sannolikhet',
+      '04 - Åtgärdsplan',
+      '05 - AI-riskanalys',
+    ],
+  },
+  {
+    name: '08 - Bilder',
+    items: ['01 - Platsbesök', '02 - Befintliga förhållanden', '03 - Referensbilder', '04 - Skador och avvikelser', '05 - Övrigt'],
+  },
+  {
+    name: '09 - Möten',
+    items: ['01 - Startmöte', '02 - Kalkylmöten', '03 - UE-genomgång', '04 - Beslutsmöten', '05 - Protokoll'],
+  },
+  {
+    name: '10 - Anbud',
+    items: ['01 - Anbudsdokument', '02 - Bilagor', '03 - Kalkylsammanfattning', '04 - Inlämnat anbud', '05 - Utfall och feedback'],
+  },
+];
+
+export function getKalkylskedeLockedRelativeFolderPaths() {
+  const out = [];
+  for (const section of KALKYLSKEDE_LOCKED_STRUCTURE) {
+    if (!section?.name) continue;
+    out.push(String(section.name));
+    const items = Array.isArray(section.items) ? section.items : [];
+    for (const itemName of items) {
+      if (!itemName) continue;
+      out.push(`${String(section.name)}/${String(itemName)}`);
+    }
+  }
+  return out;
+}
+
+export function normalizeSharePointPath(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\/+/g, '/');
+}
+
+export function sanitizeSharePointFolderName(name) {
+  // SharePoint folder names cannot contain: " # % & * : < > ? / \ { | } ~
+  // We keep it conservative and just remove the most common illegal characters.
+  return String(name || '')
+    .replace(/[\\\/\:\*\?\"\<\>\|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function formatSharePointProjectFolderName(projectNumber, projectName) {
+  const num = sanitizeSharePointFolderName(String(projectNumber || '').trim());
+  const name = sanitizeSharePointFolderName(String(projectName || '').trim());
+  const left = num || '';
+  const right = name || '';
+  if (left && right) return `${left} – ${right}`;
+  return left || right || '';
+}
+
+export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemPath }) {
+  const root = normalizeSharePointPath(projectRootPath);
+  const path = normalizeSharePointPath(itemPath);
+  if (!root || !path) return false;
+
+  // Lock the project root folder itself.
+  if (path === root) return true;
+
+  if (!path.startsWith(`${root}/`)) return false;
+  const rel = path.slice(root.length + 1); // remove root + '/'
+  if (!rel) return true;
+
+  const lockedRel = getKalkylskedeLockedRelativeFolderPaths();
+  return lockedRel.includes(rel);
+}
+
+// ============================================================================
 // SHAREPOINT PROJECT METADATA (phase/structure)
 // ============================================================================
 
@@ -2782,6 +2929,11 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
     sharePointSiteId: data?.sharePointSiteId != null ? String(data.sharePointSiteId) : null,
     sharePointSiteUrl: data?.sharePointSiteUrl != null ? String(data.sharePointSiteUrl) : null,
     rootFolderPath: data?.rootFolderPath != null ? String(data.rootFolderPath) : null,
+    // Alias / future-proof name (kept in sync with rootFolderPath when provided)
+    sharePointRootPath:
+      data?.sharePointRootPath != null
+        ? String(data.sharePointRootPath)
+        : (data?.rootFolderPath != null ? String(data.rootFolderPath) : null),
     siteRole: data?.siteRole != null ? String(data.siteRole) : 'projects',
 
     updatedAt: serverTimestamp(),
@@ -2800,6 +2952,29 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
     { merge: true }
   );
 
+  return { id: pid, ...payload };
+}
+
+/**
+ * Patch a project document without overwriting unrelated fields.
+ * Collection: foretag/{companyId}/projects/{projectId}
+ */
+export async function patchCompanyProject(companyIdOverride, projectId, patch) {
+  const companyId = await resolveCompanyId(companyIdOverride, patch || { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const ref = doc(db, 'foretag', companyId, 'projects', pid);
+
+  const payload = {
+    ...(patch && typeof patch === 'object' ? patch : {}),
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser?.uid || null,
+  };
+
+  await updateDoc(ref, sanitizeForFirestore(payload));
   return { id: pid, ...payload };
 }
 
@@ -3066,7 +3241,13 @@ function normalizeSharePointSiteRole(role) {
   if (r === 'project-root' || r === 'project_root' || r === 'projectroot') return 'projects';
   if (r === 'system' || r === 'system-site' || r === 'system_site') return 'system';
   if (r === 'system-base' || r === 'system_base' || r === 'systembase') return 'system';
+  if (r === 'custom' || r === 'extra') return 'custom';
   return r;
+}
+
+function canBeVisibleInLeftPanelByRole(role) {
+  const r = normalizeSharePointSiteRole(role);
+  return r === 'projects' || r === 'custom';
 }
 
 /**
@@ -3108,7 +3289,7 @@ export async function getCompanySharePointSiteIdByRole(companyId, role, { syncIf
 export async function getCompanyVisibleSharePointSiteIds(companyId) {
   const metas = await fetchCompanySharePointSiteMetas(companyId);
   return (metas || [])
-    .filter((m) => m && m.visibleInLeftPanel === true && normalizeSharePointSiteRole(m.role) === 'projects')
+    .filter((m) => m && m.visibleInLeftPanel === true && canBeVisibleInLeftPanelByRole(m.role))
     .map((m) => String(m.siteId || m.id || '').trim())
     .filter(Boolean);
 }
@@ -3123,7 +3304,7 @@ export async function upsertCompanySharePointSiteMeta(companyId, meta) {
   if (!cid || !siteId) throw new Error('companyId and meta.siteId are required');
 
   const role = normalizeSharePointSiteRole(meta?.role) || 'system';
-  const visibleInLeftPanel = role === 'projects' && meta?.visibleInLeftPanel === true;
+  const visibleInLeftPanel = canBeVisibleInLeftPanelByRole(role) && meta?.visibleInLeftPanel === true;
 
   const payload = {
     siteId,

@@ -2,16 +2,19 @@
  * Risker View - Risks component
  */
 
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-export default function RiskerView({ projectId, companyId, project }) {
+import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
+
+export default function RiskerView({ projectId, companyId, project, hidePageHeader = false }) {
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Risker</Text>
-        <Text style={styles.subtitle}>Identifiera och hantera projektrisker</Text>
-      </View>
+      {!hidePageHeader ? (
+        <View style={styles.header}>
+          <Text style={PROJECT_TYPOGRAPHY.viewTitle}>Risker</Text>
+          <Text style={PROJECT_TYPOGRAPHY.viewSubtitle}>Identifiera och hantera projektrisker</Text>
+        </View>
+      ) : null}
 
       <View style={styles.content}>
         <Text style={styles.placeholderText}>
@@ -29,16 +32,6 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 24
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 8
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666'
   },
   content: {
     flex: 1,

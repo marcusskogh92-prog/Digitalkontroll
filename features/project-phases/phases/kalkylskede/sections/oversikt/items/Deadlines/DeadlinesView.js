@@ -2,16 +2,19 @@
  * Deadlines View - Deadlines component
  */
 
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-export default function DeadlinesView({ projectId, companyId, project }) {
+import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
+
+export default function DeadlinesView({ projectId, companyId, project, hidePageHeader = false }) {
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Deadlines</Text>
-        <Text style={styles.subtitle}>Hantera projektets deadlines och tidsplan</Text>
-      </View>
+      {!hidePageHeader ? (
+        <View style={styles.header}>
+          <Text style={PROJECT_TYPOGRAPHY.viewTitle}>Deadlines</Text>
+          <Text style={PROJECT_TYPOGRAPHY.viewSubtitle}>Hantera projektets deadlines och tidsplan</Text>
+        </View>
+      ) : null}
 
       <View style={styles.content}>
         <Text style={styles.placeholderText}>
@@ -29,16 +32,6 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 24
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 8
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666'
   },
   content: {
     flex: 1,

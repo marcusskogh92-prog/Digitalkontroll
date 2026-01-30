@@ -207,6 +207,13 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Project phase data subcollections (company-scoped, project-specific)
+    // Needed for storing richer phase-specific data under a phase doc, e.g.:
+    // foretag/{company}/projects/{projectId}/phaseData/kalkylskede/fragaSvar/{docId}
+    match /foretag/{company}/projects/{projectId}/phaseData/{phaseKey}/{document=**} {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Project organisation (company-scoped, project-specific)
     // Used by "Organisation och roller" (Översikt) for custom groups and members.
     // Collection: foretag/{company}/project_organisation/{projectId}

@@ -1,0 +1,327 @@
+/**
+ * Fråga & Svar (Status/Beslut) Service - kalkylskede
+ *
+ * Storage:
+ * foretag/{companyId}/projects/{projectId}/phaseData/kalkylskede/fragaSvar/{docId}
+ */
+
+import {
+    collection,
+    doc,
+    onSnapshot,
+    orderBy,
+    query,
+    runTransaction,
+    serverTimestamp,
+    updateDoc
+} from 'firebase/firestore';
+
+import { auth, db } from '../../../../../components/firebase';
+
+import { enqueueFsExcelSync } from './fragaSvarExcelSyncQueue';
+
+function isLikelyFirestoreFieldValue(value) {
+  if (!value || typeof value !== 'object') return false;
+
+  // Firestore v9 sentinels are FieldValue instances.
+  const ctorName = value?.constructor?.name;
+  if (ctorName === 'FieldValue') return true;
+
+  // Some builds expose an internal method name.
+  const methodName = value?._methodName;
+  if (typeof methodName === 'string' && methodName) return true;
+
+  // Some environments wrap with a delegate.
+  const delegateCtor = value?._delegate?.constructor?.name;
+  if (delegateCtor === 'FieldValue') return true;
+
+  return false;
+}
+
+function assertNoFirestoreFieldValueInsideArrays(root, label = 'data') {
+  const visit = (value, path, inArray) => {
+    if (inArray && isLikelyFirestoreFieldValue(value)) {
+      throw new Error(`Ogiltig Firestore-data: FieldValue (t.ex. serverTimestamp) får inte ligga i arrayer (${label}.${path}).`);
+    }
+
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i += 1) {
+        visit(value[i], `${path}[${i}]`, true);
+      }
+      return;
+    }
+
+    if (!value || typeof value !== 'object') return;
+
+    for (const [k, v] of Object.entries(value)) {
+      visit(v, path ? `${path}.${k}` : k, inArray);
+    }
+  };
+
+  visit(root, '', false);
+}
+
+function requireIds(companyId, projectId) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) throw new Error('companyId and projectId are required');
+  return { cid, pid };
+}
+
+export function getFragaSvarCollectionRef(companyId, projectId) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const phaseDocRef = doc(db, 'foretag', cid, 'projects', pid, 'phaseData', 'kalkylskede');
+  return collection(phaseDocRef, 'fragaSvar');
+}
+
+function getFragaSvarMetaRef(companyId, projectId) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  // Store counters under the phase doc (single doc) to keep per-project sequence atomic.
+  return doc(db, 'foretag', cid, 'projects', pid, 'phaseData', 'kalkylskede');
+}
+
+function deriveTitle(value, maxLen = 80) {
+  const s = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.length <= maxLen) return s;
+  return `${s.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
+}
+
+export function listenFragaSvarItems(companyId, projectId, onItems, onError, options) {
+  const colRef = getFragaSvarCollectionRef(companyId, projectId);
+  const q = query(colRef, orderBy('createdAt', 'asc'));
+  const includeDeleted = options && typeof options === 'object' ? !!options.includeDeleted : false;
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = [];
+      snap.forEach((d) => items.push({ id: d.id, ...(d.data() || {}) }));
+      const visible = includeDeleted
+        ? items
+        : items.filter((it) => it?.deleted !== true);
+      if (typeof onItems === 'function') onItems(visible);
+    },
+    (err) => {
+      if (typeof onError === 'function') onError(err);
+    },
+  );
+}
+
+export async function createFragaSvarItem(companyId, projectId, data) {
+  const colRef = getFragaSvarCollectionRef(companyId, projectId);
+  const metaRef = getFragaSvarMetaRef(companyId, projectId);
+
+  const user = auth?.currentUser || null;
+  const createdByUid = user?.uid || null;
+  const createdByName = String(user?.displayName || user?.email || '').trim() || null;
+
+  const rawQuestion = String(data?.question || '').trim();
+  const rawTitle = String(data?.title || '').trim();
+  const title = rawTitle || deriveTitle(rawQuestion);
+
+  const rawAnswer = String((data?.answer ?? data?.comment) || '').trim();
+
+  // Firestore rule: serverTimestamp() is not supported inside arrays.
+  // Keep per-answer history timestamps as serializable primitives.
+  const localAnswerAt = rawAnswer ? Date.now() : null;
+
+  const created = await runTransaction(db, async (tx) => {
+    const metaSnap = await tx.get(metaRef);
+    const meta = metaSnap.exists() ? (metaSnap.data() || {}) : {};
+    const next = Number(meta?.fragaSvarNextFsSeq || 1) || 1;
+
+    // Pre-create doc id so we can return it deterministically.
+    const docRef = doc(colRef);
+    const fsSeq = next;
+    const fsNumber = `FS${String(fsSeq).padStart(2, '0')}`;
+
+    const answers = rawAnswer
+      ? [{
+        text: rawAnswer,
+        answeredAt: localAnswerAt,
+        answeredByUid: createdByUid || null,
+        answeredByName: createdByName || null,
+      }]
+      : [];
+
+    const payload = {
+      // FS numbering
+      fsSeq,
+      fsNumber,
+
+      // Human-friendly fields
+      title: String(title || '').trim(),
+      bd: String(data?.bd || '').trim(),
+      needsAnswerBy: String(data?.needsAnswerBy || '').trim(),
+      discipline: String(data?.discipline || '').trim(),
+      stalledTill: String(data?.stalledTill || '').trim(),
+
+      // Responsibility (optional)
+      responsibles: Array.isArray(data?.responsibles) ? data.responsibles : [],
+      responsible: (data?.responsible && typeof data.responsible === 'object') ? data.responsible : null,
+
+      // Main content
+      question: rawQuestion,
+      status: String(data?.status || 'Obesvarad').trim(),
+
+      // Answer (legacy latest answer fields) + answer history
+      answer: rawAnswer,
+      comment: rawAnswer,
+      answers,
+
+      answeredAt: rawAnswer ? serverTimestamp() : null,
+      answeredByUid: rawAnswer ? (createdByUid || null) : null,
+      answeredByName: rawAnswer ? (createdByName || null) : null,
+
+      // SharePoint binding (will be filled by UI after folder creation)
+      sharePointFolderPath: String(data?.sharePointFolderPath || '').trim() || null,
+      sharePointFolderName: String(data?.sharePointFolderName || '').trim() || null,
+
+      attachments: Array.isArray(data?.attachments) ? data.attachments : [],
+
+      createdAt: serverTimestamp(),
+      createdByUid,
+      createdByName,
+      updatedAt: serverTimestamp(),
+      updatedByUid: createdByUid,
+      updatedByName: createdByName,
+    };
+
+    // Defensive: never allow Firestore sentinels inside arrays (answers/attachments/etc).
+    assertNoFirestoreFieldValueInsideArrays(payload, 'createFragaSvarItem.payload');
+
+    tx.set(docRef, payload);
+
+    // Bump counter atomically
+    if (metaSnap.exists()) {
+      tx.update(metaRef, {
+        fragaSvarNextFsSeq: fsSeq + 1,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      tx.set(metaRef, {
+        fragaSvarNextFsSeq: fsSeq + 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
+
+    return { id: docRef.id, ...payload };
+  });
+
+  // Non-blocking: Digitalkontroll is source of truth; Excel is a report.
+  // Queue rebuild-based sync (handles SharePoint/Excel file locks with retry).
+  try {
+    enqueueFsExcelSync(companyId, projectId, { reason: 'create' });
+  } catch (_e) {}
+  return created;
+}
+
+export async function updateFragaSvarItem(companyId, projectId, id, patch) {
+  const colRef = getFragaSvarCollectionRef(companyId, projectId);
+  const ref = doc(colRef, String(id || '').trim());
+
+  const user = auth?.currentUser || null;
+
+  const next = {
+    ...patch,
+    updatedAt: serverTimestamp(),
+    updatedByUid: user?.uid || null,
+    updatedByName: String(user?.displayName || user?.email || '').trim() || null,
+  };
+
+  // If answer is updated and non-empty, audit who answered + when.
+  // We treat `comment` as a legacy alias for answer.
+  const answerCandidate = (patch && (patch.answer !== undefined || patch.comment !== undefined))
+    ? String((patch.answer ?? patch.comment) || '').trim()
+    : null;
+  if (answerCandidate !== null) {
+    next.answer = answerCandidate;
+    next.comment = answerCandidate;
+    if (answerCandidate) {
+      next.answeredAt = serverTimestamp();
+      next.answeredByUid = user?.uid || null;
+      next.answeredByName = String(user?.displayName || user?.email || '').trim() || null;
+    } else {
+      next.answeredAt = null;
+      next.answeredByUid = null;
+      next.answeredByName = null;
+    }
+  }
+
+  // Answers must be handled as objects (not arrayUnion) while still using serverTimestamp.
+  // Use a transaction so we can read existing history and append deterministically.
+  if (answerCandidate) {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.exists() ? (snap.data() || {}) : {};
+      const existing = Array.isArray(data?.answers) ? data.answers : [];
+      const last = existing.length > 0 ? existing[existing.length - 1] : null;
+      const lastText = (last && typeof last === 'object') ? String(last?.text || '').trim() : '';
+
+      // Firestore rule: serverTimestamp() is not supported inside arrays.
+      const localAnsweredAt = Date.now();
+
+      const shouldAppend = String(answerCandidate || '').trim() && String(answerCandidate || '').trim() !== lastText;
+      const answers = shouldAppend
+        ? [...existing, {
+          text: answerCandidate,
+          answeredAt: localAnsweredAt,
+          answeredByUid: user?.uid || null,
+          answeredByName: String(user?.displayName || user?.email || '').trim() || null,
+        }]
+        : existing;
+
+      const updatePayload = {
+        ...next,
+        answers,
+      };
+      // Defensive: never allow Firestore sentinels inside arrays (answers/attachments/etc).
+      assertNoFirestoreFieldValueInsideArrays(updatePayload, 'updateFragaSvarItem.txUpdate');
+      tx.update(ref, updatePayload);
+    });
+
+    try {
+      enqueueFsExcelSync(companyId, projectId, { reason: 'update' });
+    } catch (_e) {}
+    return;
+  }
+
+  // Defensive: never allow Firestore sentinels inside arrays (answers/attachments/etc).
+  assertNoFirestoreFieldValueInsideArrays(next, 'updateFragaSvarItem.updateDoc');
+  await updateDoc(ref, next);
+
+  try {
+    enqueueFsExcelSync(companyId, projectId, { reason: 'update' });
+  } catch (_e) {}
+}
+
+export async function deleteFragaSvarItem(companyId, projectId, id, deletedBy) {
+  const colRef = getFragaSvarCollectionRef(companyId, projectId);
+  const ref = doc(colRef, String(id || '').trim());
+
+  const user = auth?.currentUser || null;
+  const deletedByUserId = (deletedBy && typeof deletedBy === 'object')
+    ? (deletedBy.userId || null)
+    : (user?.uid || null);
+  const deletedByName = (deletedBy && typeof deletedBy === 'object')
+    ? (String(deletedBy.displayName || '').trim() || null)
+    : (String(user?.displayName || user?.email || '').trim() || null);
+
+  await updateDoc(ref, {
+    deleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: {
+      userId: deletedByUserId,
+      displayName: deletedByName,
+    },
+    updatedAt: serverTimestamp(),
+    updatedByUid: deletedByUserId,
+    updatedByName: deletedByName,
+  });
+
+  try {
+    enqueueFsExcelSync(companyId, projectId, { reason: 'delete' });
+  } catch (_e) {}
+}

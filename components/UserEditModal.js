@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const AVATAR_PRESETS = [
   { key: 'blue_female', label: 'Kvinna (blå)', icon: 'woman', bg: '#1976D2' },
@@ -20,7 +20,7 @@ const pickRandomAvatarPresetKey = () => {
   }
 };
 
-export default function UserEditModal({ visible, member, companyId, onClose, onSave, saving, isNew, errorMessage }) {
+export default function UserEditModal({ visible, member, companyId, onClose, onSave, saving, isNew, errorMessage, onDelete, canDelete = true }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -30,6 +30,8 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   const [avatarPreset, setAvatarPreset] = useState('blue_female');
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('');
+  const [disabled, setDisabled] = useState(false);
+  const avatarUploadInputRef = useRef(null);
 
   const normalizeName = (value) => {
     if (!value) return '';
@@ -82,6 +84,7 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
     if (isSuperMember && isMsBygg) setRole('superadmin');
     else setRole(adminGuess ? 'admin' : 'user');
     setPassword('');
+    setDisabled(!!(member?.disabled === true || String(member?.status || '').toLowerCase() === 'disabled'));
     try {
       const preset = String(member?.avatarPreset || '').trim();
       const match = AVATAR_PRESETS.some(p => p.key === preset);
@@ -114,6 +117,8 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   }, [visible, avatarFile]);
 
   if (!visible) return null;
+
+  const emailReadOnly = !isNew && String(member?.email || '').trim().length > 0;
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', left: 0, top: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
@@ -148,42 +153,50 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
             value={email}
             onChange={e => setEmail(e.target.value)}
             aria-required={isNew}
-            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${emailMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
+            readOnly={emailReadOnly}
+            style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${emailMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box', background: emailReadOnly ? '#F8FAFC' : '#fff' }}
           />
           {emailMissing && rawEmail.length > 0 ? (
             <div style={{ color: '#e53935', fontSize: 12, marginTop: 4 }}>
               Ogiltig e-postadress. Använd formatet namn@foretag.se
             </div>
           ) : null}
+          {!isNew && emailReadOnly ? (
+            <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+              E-post kan inte ändras för befintlig användare.
+            </div>
+          ) : null}
         </div>
 
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Lösenord{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder={isNew ? 'Välj lösenord' : 'Fyll i för att byta lösenord'}
-              aria-required={isNew}
-              style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${passwordMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(prev => !prev)}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}
-            >
-              {showPassword ? 'Dölj' : 'Visa'}
-            </button>
-            <button
-              type="button"
-              onClick={generateTempPassword}
-              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976D2', background: '#E3F2FD', cursor: 'pointer', color: '#1976D2', fontSize: 12, whiteSpace: 'nowrap' }}
-            >
-              Generera
-            </button>
+        {isNew ? (
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Lösenord{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder={isNew ? 'Välj lösenord' : 'Fyll i för att byta lösenord'}
+                aria-required={isNew}
+                style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${passwordMissing ? '#e53935' : '#ddd'}`, boxSizing: 'border-box' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(prev => !prev)}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' }}
+              >
+                {showPassword ? 'Dölj' : 'Visa'}
+              </button>
+              <button
+                type="button"
+                onClick={generateTempPassword}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976D2', background: '#E3F2FD', cursor: 'pointer', color: '#1976D2', fontSize: 12, whiteSpace: 'nowrap' }}
+              >
+                Generera
+              </button>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Behörighet{isNew && <span style={{ color: '#e53935', marginLeft: 6 }}>*</span>}</label>
@@ -200,7 +213,19 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
         </div>
 
         <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Profilbild</label>
+          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Status</label>
+          <select
+            value={disabled ? 'inactive' : 'active'}
+            onChange={(e) => setDisabled(e.target.value === 'inactive')}
+            style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #ddd', boxSizing: 'border-box', fontSize: 16, lineHeight: '20px', fontFamily: 'Inter_400Regular, Inter, Arial, sans-serif', color: '#222', background: '#fff' }}
+          >
+            <option value="active">Aktiv</option>
+            <option value="inactive">Inaktiv</option>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>Profilbild – Välj en ikon eller ladda upp egen bild</label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, alignItems: 'center' }}>
             {AVATAR_PRESETS.map(p => {
               const selected = avatarPreset === p.key;
@@ -208,7 +233,10 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
                 <button
                   key={p.key}
                   type="button"
-                  onClick={() => setAvatarPreset(p.key)}
+                  onClick={() => {
+                    setAvatarPreset(p.key);
+                    setAvatarFile(null);
+                  }}
                   title={p.label}
                   aria-label={p.label}
                   style={{
@@ -228,49 +256,70 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
                 </button>
               );
             })}
+
+            {/* Upload own image */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  try { avatarUploadInputRef.current?.click?.(); } catch (_e) {}
+                }}
+                title={avatarFile || avatarPreviewUrl ? 'Egen bild vald' : 'Ladda upp egen bild'}
+                aria-label="Ladda upp egen bild"
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 999,
+                  border: (avatarFile || avatarPreviewUrl) ? '2px solid #1976D2' : '1px dashed #CBD5E1',
+                  background: '#F8FAFC',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: (avatarFile || avatarPreviewUrl) ? '0 0 0 3px rgba(25,118,210,0.15)' : 'none',
+                }}
+              >
+                <Ionicons name="image-outline" size={18} color={avatarFile || avatarPreviewUrl ? '#1976D2' : '#64748b'} />
+              </button>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, lineHeight: '12px' }}>Ladda upp bild</div>
+            </div>
           </div>
 
-          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {avatarPreviewUrl ? (
+          <input
+            ref={avatarUploadInputRef}
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              try {
+                const f = e?.target?.files && e.target.files[0] ? e.target.files[0] : null;
+                setAvatarFile(f);
+                if (f) setAvatarPreset('');
+              } catch (_e) {
+                setAvatarFile(null);
+              } finally {
+                try { if (e?.target) e.target.value = ''; } catch (_e2) {}
+              }
+            }}
+            style={{ display: 'none' }}
+          />
+
+          {avatarPreviewUrl ? (
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 44, height: 44, borderRadius: 999, overflow: 'hidden', border: '1px solid #ddd' }} title="Vald bild">
                   <img src={avatarPreviewUrl} alt="Vald bild" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
-              ) : (
-                <div style={{ width: 44, height: 44, borderRadius: 999, overflow: 'hidden', border: '1px solid #ddd', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Ingen bild vald">
-                  <Ionicons name="image" size={18} color="#777" />
-                </div>
-              )}
-              <div style={{ fontSize: 12, color: '#666', lineHeight: '16px' }}>
-                Välj en ikon eller ladda upp bild (valfritt).
+                <div style={{ fontSize: 12, color: '#64748b' }}>Egen bild vald</div>
               </div>
+              <button
+                type="button"
+                onClick={() => setAvatarFile(null)}
+                style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#475569' }}
+              >
+                Ta bort bild
+              </button>
             </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  try {
-                    const f = e?.target?.files && e.target.files[0] ? e.target.files[0] : null;
-                    setAvatarFile(f);
-                  } catch (_e) {
-                    setAvatarFile(null);
-                  }
-                }}
-                style={{ fontSize: 13 }}
-              />
-              {avatarFile ? (
-                <button
-                  type="button"
-                  onClick={() => setAvatarFile(null)}
-                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontSize: 12 }}
-                >
-                  Ta bort bild
-                </button>
-              ) : null}
-            </div>
-          </div>
+          ) : null}
         </div>
 
         {errorMessage ? (
@@ -279,25 +328,46 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <button
-            disabled={saving || !requiredFilledForCreate()}
-            onClick={async () => {
-              if (typeof onSave === 'function') {
-                await onSave({ firstName, lastName, email, role, password, avatarPreset, avatarFile });
-              }
-            }}
-            style={{
-              backgroundColor: '#1976D2',
-              color: '#fff',
-              padding: '8px 10px',
-              borderRadius: 6,
-              border: 'none',
-              opacity: (saving || !requiredFilledForCreate()) ? 0.5 : 1,
-              cursor: (saving || !requiredFilledForCreate()) ? 'not-allowed' : 'pointer'
-            }}
-          >{saving ? 'Sparar...' : 'Spara'}</button>
-          <button disabled={saving} onClick={() => onClose && onClose()} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>Avbryt</button>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+          {!isNew && typeof onDelete === 'function' ? (
+            <button
+              type="button"
+              disabled={saving || !canDelete}
+              onClick={() => onDelete(member)}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                border: '1px solid #FECACA',
+                background: '#FFEBEE',
+                color: '#C62828',
+                fontWeight: 800,
+                cursor: (saving || !canDelete) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Ta bort användare
+            </button>
+          ) : <div />}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              disabled={saving || !requiredFilledForCreate()}
+              onClick={async () => {
+                if (typeof onSave === 'function') {
+                  await onSave({ firstName, lastName, email, role, password, disabled, avatarPreset, avatarFile });
+                }
+              }}
+              style={{
+                backgroundColor: '#1976D2',
+                color: '#fff',
+                padding: '8px 10px',
+                borderRadius: 6,
+                border: 'none',
+                opacity: (saving || !requiredFilledForCreate()) ? 0.5 : 1,
+                cursor: (saving || !requiredFilledForCreate()) ? 'not-allowed' : 'pointer'
+              }}
+            >{saving ? 'Sparar...' : 'Spara'}</button>
+            <button disabled={saving} onClick={() => onClose && onClose()} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fff' }}>Avbryt</button>
+          </div>
         </div>
       </div>
     </div>

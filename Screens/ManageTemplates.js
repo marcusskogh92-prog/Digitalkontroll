@@ -1,13 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, ImageBackground, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from '../components/ContextMenu';
 import { auth, createCompanyMall, DEFAULT_CONTROL_TYPES, deleteCompanyMall, fetchCompanyControlTypes, fetchCompanyMallar, updateCompanyMall } from '../components/firebase';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
-import HeaderDisplayName from '../components/HeaderDisplayName';
-import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
+import { HomeHeader } from '../components/common/HomeHeader';
 import MainLayout from '../components/MainLayout';
+import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
 export default function ManageTemplates({ route, navigation }) {
   const DESCRIPTION_MAX_LENGTH = 50;
@@ -98,7 +98,21 @@ export default function ManageTemplates({ route, navigation }) {
   const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [supportMenuOpen, setSupportMenuOpen] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const searchSpinAnim = useRef(new Animated.Value(0)).current;
+  const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const noopAsync = async () => {};
+
+  const showSimpleAlert = (title, message) => {
+    try {
+      const t = String(title || '').trim() || 'Info';
+      const m = String(message || '').trim();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(m ? `${t}\n\n${m}` : t);
+      else Alert.alert(t, m || '');
+    } catch (_e) {}
+  };
 
   // Ladda kontrolltyper per företag (standard + ev. företags-specifika)
   useEffect(() => {
@@ -666,21 +680,12 @@ export default function ManageTemplates({ route, navigation }) {
     const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
     const dashboardCardStyle = { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 12, backgroundColor: '#fff' };
 
-    const RootContainer = ImageBackground;
-    const rootProps = {
-      source: require('../assets/images/inlogg.webb.png'),
-      resizeMode: 'cover',
-      imageStyle: { width: '100%', height: '100%' },
-    };
-
     const hasSelectedCompany = !!String(companyId || '').trim();
     const sidebarRestrictId = canSeeAllCompanies ? null : companyId;
     const isMultiCompanyAdmin = !!canSeeAllCompanies;
 
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%', minHeight: '100vh' }}>
-        <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
-        <MainLayout
+      <MainLayout
           onSelectProject={(payload) => {
             try {
               if (payload?.createNew) return;
@@ -776,37 +781,33 @@ export default function ManageTemplates({ route, navigation }) {
           sidebarTemplatesMode={true}
           sidebarTemplatesVersion={templatesVersion}
           topBar={
-            <View style={{ height: 96, paddingLeft: 24, paddingRight: 24, backgroundColor: '#fff', justifyContent: 'center' }}>
-              <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
-                  <View style={{ marginRight: 10 }}>
-                    {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
-                  </View>
-                  {allowedTools ? (
-                    <TouchableOpacity
-                      style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
-                      onPress={() => setSupportMenuOpen(s => !s)}
-                    >
-                      <Text style={{ color: '#222', fontWeight: '700' }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                  <TouchableOpacity
-                    style={{ backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#222', paddingVertical: 6, paddingHorizontal: 12, alignItems: 'center', minWidth: 72 }}
-                    onPress={async () => {
-                      setLoggingOut(true);
-                      try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
-                      await auth.signOut();
-                      setLoggingOut(false);
-                      navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
-                    }}
-                  >
-                    <Text style={{ color: '#222', fontWeight: '700', fontSize: 13 }}>{loggingOut ? 'Loggar ut…' : 'Logga ut'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
+            <HomeHeader
+              headerHeight={headerHeight}
+              setHeaderHeight={setHeaderHeight}
+              navigation={navigation}
+              route={route}
+              auth={auth}
+              selectedProject={null}
+              isSuperAdmin={false}
+              allowedTools={allowedTools}
+              showHeaderUserMenu={showHeaderUserMenu}
+              canShowSupportToolsInHeader={allowedTools}
+              supportMenuOpen={supportMenuOpen}
+              setSupportMenuOpen={setSupportMenuOpen}
+              companyId={companyId}
+              routeCompanyId={route?.params?.companyId || ''}
+              showAdminButton={false}
+              adminActionRunning={false}
+              localFallbackExists={false}
+              handleMakeDemoAdmin={noopAsync}
+              refreshLocalFallbackFlag={noopAsync}
+              dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+              showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+              saveControlToFirestore={noopAsync}
+              saveDraftToFirestore={noopAsync}
+              searchSpinAnim={searchSpinAnim}
+              sharePointStatus={sharePointStatus}
+            />
           }
         >
           <View style={dashboardContainerStyle}>
@@ -1868,7 +1869,7 @@ export default function ManageTemplates({ route, navigation }) {
             </View>
           </View>
         )}
-      </RootContainer>
+      </MainLayout>
     );
   }
 

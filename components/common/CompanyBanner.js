@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, resolveCompanyLogoUrl } from '../firebase';
 
@@ -15,14 +15,16 @@ const InfoItem = ({ label, value }) => (
   </View>
 );
 
-export default function CompanyBanner({ companyId, onEdit }) {
+export default function CompanyBanner({ companyId, onEdit, onEditName, onChangeLogo, refreshKey = 0, usageLine = '', primaryAction = null }) {
   const [companyName, setCompanyName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [userLimit, setUserLimit] = useState(null);
   const [companyMemberCount, setCompanyMemberCount] = useState(null);
+  const [activeMemberCount, setActiveMemberCount] = useState(null);
   const [createdAt, setCreatedAt] = useState(null);
   const [lastActive, setLastActive] = useState(null);
   const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -33,6 +35,7 @@ export default function CompanyBanner({ companyId, onEdit }) {
           setLogoUrl('');
           setUserLimit(null);
           setCompanyMemberCount(null);
+          setActiveMemberCount(null);
           setCreatedAt(null);
           setLastActive(null);
           setLoading(false);
@@ -69,10 +72,14 @@ export default function CompanyBanner({ companyId, onEdit }) {
         try {
           const members = await fetchCompanyMembers(companyId);
           if (mounted) {
-            setCompanyMemberCount(Array.isArray(members) ? members.length : 0);
+            const arr = Array.isArray(members) ? members : [];
+            setCompanyMemberCount(arr.length);
+            const active = arr.filter((m) => !(m?.disabled === true || String(m?.status || '').toLowerCase() === 'disabled')).length;
+            setActiveMemberCount(active);
           }
         } catch (_e) {
           if (mounted) setCompanyMemberCount(null);
+          if (mounted) setActiveMemberCount(null);
         }
 
         // Get last active from audit log
@@ -102,7 +109,7 @@ export default function CompanyBanner({ companyId, onEdit }) {
       }
     })();
     return () => { mounted = false; };
-  }, [companyId]);
+  }, [companyId, refreshKey]);
 
   if (!companyId || loading) {
     return null;
@@ -123,7 +130,7 @@ export default function CompanyBanner({ companyId, onEdit }) {
       }}>
         <div style={{ display: 'flex', flexDirection: 'row', gap: 24, alignItems: 'center' }}>
           {/* Logo Section */}
-          <div style={{ flex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 200 }}>
+          <div style={{ flex: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minWidth: 200, gap: 10 }}>
             {logoUrl ? (
               <img 
                 src={logoUrl} 
@@ -135,37 +142,108 @@ export default function CompanyBanner({ companyId, onEdit }) {
                 <Ionicons name="business" size={48} color="#ccc" />
               </div>
             )}
+
+            {onChangeLogo ? (
+              <>
+                <button
+                  onClick={() => {
+                    try { fileInputRef.current?.click?.(); } catch (_e) {}
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderRadius: 10,
+                    border: '1px solid #ddd',
+                    backgroundColor: '#fff',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: '#222',
+                  }}
+                  aria-label="Byt bild"
+                >
+                  <Ionicons name="image-outline" size={16} color="#222" />
+                  Byt bild
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    try {
+                      const file = e?.target?.files?.[0];
+                      if (!file) return;
+                      await onChangeLogo(file);
+                    } finally {
+                      try { if (e?.target) e.target.value = ''; } catch (_e) {}
+                    }
+                  }}
+                />
+              </>
+            ) : null}
           </div>
 
           {/* Info Section */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-              <h2 style={{ fontSize: 24, fontWeight: 600, color: '#222', margin: 0, flex: 1, minWidth: 200 }}>
-                {companyName || companyId}
-              </h2>
-              {onEdit && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 200 }}>
+                <h2 style={{ fontSize: 24, fontWeight: 600, color: '#222', margin: 0 }}>
+                  {companyName || companyId}
+                </h2>
+                {onEditName ? (
+                  <button
+                    onClick={onEditName}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      border: '1px solid #ddd',
+                      backgroundColor: '#fff',
+                      cursor: 'pointer',
+                    }}
+                    aria-label="Ändra företagsnamn"
+                    title="Ändra företagsnamn"
+                  >
+                    <Ionicons name="create-outline" size={16} color="#222" />
+                  </button>
+                ) : null}
+              </div>
+
+              {primaryAction && primaryAction.onPress ? (
                 <button
-                  onClick={onEdit}
+                  onClick={primaryAction.onPress}
                   style={{
-                    display: 'flex',
-                    flexDirection: 'row',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 4,
-                    padding: '6px 12px',
-                    borderRadius: 8,
-                    border: '1px solid #ddd',
+                    gap: 8,
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    border: '1px solid #D7DBE2',
                     backgroundColor: '#fff',
                     cursor: 'pointer',
                     fontSize: 13,
-                    fontWeight: 600,
-                    color: '#222',
+                    fontWeight: 800,
+                    color: '#1976D2',
+                    whiteSpace: 'nowrap',
                   }}
+                  aria-label={primaryAction.label || 'Åtgärd'}
+                  title={primaryAction.label || 'Åtgärd'}
                 >
-                  Ändra
-                  <Ionicons name="chevron-down" size={14} color="#666" />
+                  <Ionicons name={primaryAction.iconName || 'sparkles'} size={16} color="#1976D2" />
+                  {primaryAction.label || 'Åtgärd'}
                 </button>
-              )}
+              ) : null}
             </div>
+
+            {usageLine ? (
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#111' }}>{usageLine}</div>
+            ) : null}
 
             <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
               <div style={{ minWidth: 120 }}>
@@ -175,7 +253,9 @@ export default function CompanyBanner({ companyId, onEdit }) {
               <div style={{ minWidth: 120 }}>
                 <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>Användare</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: '#222' }}>
-                  {typeof companyMemberCount === 'number' ? `${companyMemberCount} st` : '—'}
+                  {typeof companyMemberCount === 'number'
+                    ? `${(typeof activeMemberCount === 'number' ? activeMemberCount : companyMemberCount)} st`
+                    : '—'}
                 </div>
               </div>
               <div style={{ minWidth: 120 }}>

@@ -8,7 +8,6 @@ import { onProjectUpdated } from '../../../../components/projectBus';
 import PhaseLeftPanel from './components/PhaseLeftPanel';
 import PhaseTopNavigator from './components/PhaseTopNavigator';
 import { useKalkylskedeNavigation } from './hooks/useKalkylskedeNavigation';
-import { useKalkylskedeProgress } from './hooks/useKalkylskedeProgress';
 
 // Import sections
 import AnbudSection from './sections/anbud/AnbudSection';
@@ -32,11 +31,6 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
   // This ensures we use the latest project ID if it changed
   const effectiveProjectId = project?.id || projectId;
   const { navigation, isLoading: navLoading, loadNavigation, saveNavigation } = useKalkylskedeNavigation(companyId, effectiveProjectId);
-  const { sectionProgress, overallProgress, refreshProgress } = useKalkylskedeProgress(
-    companyId,
-    effectiveProjectId,
-    navigation
-  );
 
   const [activeSection, setActiveSection] = useState(null);
   const [activeItem, setActiveItem] = useState(null);
@@ -143,22 +137,17 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
         project={project}
         activeItem={activeItem}
         navigation={navigation.sections.find(s => s.id === activeSection)}
-        onProgressUpdate={refreshProgress}
       />
     );
   };
-
-  const projectName = project?.name || project?.id || 'Projekt';
 
   return (
     <View style={styles.container}>
       {/* Top Navigator */}
       <PhaseTopNavigator
         navigation={navigation}
-        sectionProgress={sectionProgress}
         activeSection={activeSection}
         onSelectSection={handleSelectSection}
-        projectName={projectName}
       />
 
       {/* Main Content Area */}

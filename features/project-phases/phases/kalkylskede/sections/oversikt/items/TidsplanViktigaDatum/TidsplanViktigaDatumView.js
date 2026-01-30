@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import CompactMonthCalendar from '../../../../../../../../components/common/CompactMonthCalendar';
 import IsoDatePickerModal from '../../../../../../../../components/common/Modals/IsoDatePickerModal';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
+import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import { fetchCompanyContacts } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
@@ -20,13 +21,17 @@ const COLORS = {
   green: '#16A34A',
   border: '#E6E8EC',
   borderStrong: '#D1D5DB',
-  text: '#0F172A',
+  text: '#111',
   textMuted: '#475569',
-  textSubtle: '#64748B',
+  textSubtle: '#64748b',
   bgMuted: '#F8FAFC',
   rowHover: 'rgba(25, 118, 210, 0.08)',
   danger: '#DC2626',
 };
+
+// Golden rule (local to this view): never exceed 500 weight.
+const FW_REG = '400';
+const FW_MED = '500';
 
 const CONTENT_MAX_WIDTH = 960;
 
@@ -210,10 +215,10 @@ function OccurrenceEditModal({
           <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <View style={{ minWidth: 0, flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '900', color: '#0F172A' }} numberOfLines={1}>
+                <Text style={{ fontSize: 14, fontWeight: FW_MED, color: COLORS.text }} numberOfLines={1}>
                   {label}
                 </Text>
-                <Text style={{ fontSize: 12, color: '#64748B', marginTop: 2 }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
                   {iso}
                 </Text>
               </View>
@@ -233,7 +238,7 @@ function OccurrenceEditModal({
 
           <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
             <View style={{ gap: 6 }}>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B' }}>Titel</Text>
+              <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Titel</Text>
               <TextInput
                 value={title}
                 onChangeText={onChangeTitle}
@@ -255,7 +260,7 @@ function OccurrenceEditModal({
 
             <View style={{ gap: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748B' }}>Deltagare</Text>
+                <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Deltagare</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!canCopyFromFirst ? null : (
                     <Pressable
@@ -273,7 +278,7 @@ function OccurrenceEditModal({
                       })}
                     >
                       <Ionicons name="copy-outline" size={15} color="#64748B" />
-                      <Text style={{ fontSize: 12, fontWeight: '900', color: '#64748B' }}>
+                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>
                         {String(copyFromFirstLabel || 'Kopiera från tillfälle 1')}
                       </Text>
                     </Pressable>
@@ -294,7 +299,7 @@ function OccurrenceEditModal({
                     })}
                   >
                     <Ionicons name="people-outline" size={15} color="#64748B" />
-                    <Text style={{ fontSize: 12, fontWeight: '900', color: '#64748B' }}>Redigera ({Array.isArray(participants) ? participants.length : 0})</Text>
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Redigera ({Array.isArray(participants) ? participants.length : 0})</Text>
                   </Pressable>
                 </View>
               </View>
@@ -308,7 +313,7 @@ function OccurrenceEditModal({
                   <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
                     {(Array.isArray(participants) ? participants : []).map((p) => (
                       <View key={p.id} style={{ paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#0F172A' }} numberOfLines={1}>
+                        <Text style={{ fontSize: 13, fontWeight: FW_REG, color: COLORS.text }} numberOfLines={1}>
                           {participantLabel(p)}
                         </Text>
                         <Text style={{ fontSize: 11, color: '#64748B' }} numberOfLines={1}>
@@ -334,7 +339,7 @@ function OccurrenceEditModal({
                 backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
               })}
             >
-              <Text style={{ fontSize: 12, fontWeight: '800', color: '#475569' }}>Klar</Text>
+              <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }}>Klar</Text>
             </Pressable>
           </View>
         </Pressable>
@@ -612,7 +617,7 @@ function DateModal({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                   <Ionicons name="calendar-outline" size={18} color={COLORS.textSubtle} />
                   <View style={{ minWidth: 0, flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: COLORS.text }} numberOfLines={1}>
+                    <Text style={{ fontSize: 14, fontWeight: FW_MED, color: COLORS.text }} numberOfLines={1}>
                       {initial?.id ? 'Redigera datum' : 'Nytt datum'}
                     </Text>
                     <Text style={{ fontSize: 12, color: COLORS.textSubtle }} numberOfLines={1}>
@@ -637,7 +642,7 @@ function DateModal({
             <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
               <View style={{ gap: 8 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.textSubtle }}>{isSeries ? 'Datum (flera)' : 'Datum'}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>{isSeries ? 'Datum (flera)' : 'Datum'}</Text>
                   <Pressable
                     onPress={() => setDatePickerOpen(true)}
                     style={({ hovered, pressed }) => ({
@@ -653,17 +658,17 @@ function DateModal({
                     })}
                   >
                     <Ionicons name="calendar-outline" size={15} color={COLORS.textSubtle} />
-                    <Text style={{ fontSize: 12, fontWeight: '900', color: COLORS.textSubtle }}>Välj</Text>
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Välj</Text>
                   </Pressable>
                 </View>
 
                 {!isSeries ? (
                   <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 10, backgroundColor: '#fff' }}>
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: COLORS.text }}>{String(date || '').trim() || '—'}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: FW_REG, color: COLORS.text }}>{String(date || '').trim() || '—'}</Text>
                   </View>
                 ) : (
                   <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 10, backgroundColor: '#fff' }}>
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: COLORS.text }}>
+                    <Text style={{ fontSize: 13, fontWeight: FW_REG, color: COLORS.text }}>
                       {selectedDates.length === 0 ? '—' : selectedDates.join(', ')}
                     </Text>
                   </View>
@@ -679,7 +684,7 @@ function DateModal({
               {!isSeries ? null : (
                 <View style={{ gap: 10 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.textSubtle }}>Tillfällen</Text>
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Tillfällen</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                       <Text style={{ fontSize: 12, color: COLORS.textSubtle }}>Startnr</Text>
                       <TextInput
@@ -735,10 +740,10 @@ function DateModal({
                       >
                         <View style={{ minWidth: 0, flex: 1 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '900', color: COLORS.textMuted }} numberOfLines={1}>
+                            <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>
                               {label}
                             </Text>
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: COLORS.textSubtle }} numberOfLines={1}>
+                            <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
                               {iso}
                             </Text>
                           </View>
@@ -769,7 +774,7 @@ function DateModal({
                             })}
                           >
                             <Ionicons name="create-outline" size={15} color={COLORS.textSubtle} />
-                            <Text style={{ fontSize: 12, fontWeight: '900', color: COLORS.textSubtle }}>Redigera</Text>
+                            <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Redigera</Text>
                           </Pressable>
                         </View>
                       </Pressable>
@@ -780,17 +785,17 @@ function DateModal({
 
               <View style={{ gap: 6 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.textSubtle }}>Typ</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Typ</Text>
                   {!typeLocked ? null : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Ionicons name="lock-closed-outline" size={12} color={COLORS.textSubtle} />
-                      <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: '700' }}>Låst</Text>
+                      <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: FW_MED }}>Låst</Text>
                     </View>
                   )}
                 </View>
                 {typeLocked ? (
                   <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 10, backgroundColor: '#F8FAFC' }}>
-                    <Text style={{ fontSize: 13, fontWeight: '800', color: COLORS.text }}>{String(type || '').trim() || '—'}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: FW_REG, color: COLORS.text }}>{String(type || '').trim() || '—'}</Text>
                   </View>
                 ) : (
                   <TextInput
@@ -814,7 +819,7 @@ function DateModal({
               </View>
 
               <View style={{ gap: 6 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.textSubtle }}>Beskrivning (valfritt)</Text>
+                <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Beskrivning (valfritt)</Text>
                 <TextInput
                   value={description}
                   onChangeText={setDescription}
@@ -841,7 +846,7 @@ function DateModal({
               {isSeries ? null : (
                 <View style={{ gap: 8 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: COLORS.textSubtle }}>Deltagare (valfritt)</Text>
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Deltagare (valfritt)</Text>
                     <Pressable
                       onPress={() => {
                         setParticipantsTargetIso(null);
@@ -863,7 +868,7 @@ function DateModal({
                       })}
                     >
                       <Ionicons name="people-outline" size={15} color={COLORS.textSubtle} />
-                      <Text style={{ fontSize: 12, fontWeight: '900', color: COLORS.textSubtle }}>
+                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>
                         Redigera ({normalizedParticipants.length})
                       </Text>
                     </Pressable>
@@ -878,7 +883,7 @@ function DateModal({
                       <ScrollView style={{ maxHeight: 140 }}>
                         {normalizedParticipants.map((p) => (
                           <View key={p.id} style={{ paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-                            <Text style={{ fontSize: 13, fontWeight: '800', color: COLORS.text }} numberOfLines={1}>
+                            <Text style={{ fontSize: 13, fontWeight: FW_REG, color: COLORS.text }} numberOfLines={1}>
                               {participantLabel(p)}
                             </Text>
                             <Text style={{ fontSize: 11, color: COLORS.textSubtle }} numberOfLines={1}>
@@ -921,7 +926,7 @@ function DateModal({
                     {({ hovered, pressed }) => (
                       <>
                         <Ionicons name="trash-outline" size={16} color={hovered || pressed ? COLORS.danger : COLORS.textSubtle} />
-                        <Text style={{ fontSize: 12, fontWeight: '800', color: hovered || pressed ? COLORS.danger : COLORS.textSubtle }}>Ta bort</Text>
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: hovered || pressed ? COLORS.danger : COLORS.textSubtle }}>Ta bort</Text>
                       </>
                     )}
                   </Pressable>
@@ -940,7 +945,7 @@ function DateModal({
                     backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
                   })}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#475569' }}>Avbryt</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
                 </Pressable>
 
                 <Pressable
@@ -996,7 +1001,7 @@ function DateModal({
                     };
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff' }}>Spara</Text>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: '#fff' }}>Spara</Text>
                 </Pressable>
               </View>
             </View>
@@ -1097,7 +1102,7 @@ function DateModal({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                   <Ionicons name="people-outline" size={18} color={COLORS.textSubtle} />
                   <View style={{ minWidth: 0, flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: COLORS.text }} numberOfLines={1}>
+                    <Text style={{ fontSize: 14, fontWeight: FW_MED, color: COLORS.text }} numberOfLines={1}>
                       Deltagare
                     </Text>
                     <Text style={{ fontSize: 12, color: COLORS.textSubtle }} numberOfLines={1}>
@@ -1498,7 +1503,7 @@ function DateModal({
                               backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
                             })}
                           >
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#475569' }}>Avbryt</Text>
+                            <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
                           </Pressable>
                         )}
 
@@ -1538,7 +1543,7 @@ function DateModal({
                             backgroundColor: hovered || pressed ? COLORS.blueHover : COLORS.blue,
                           })}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff' }}>{externalEditingId ? 'Spara' : 'Lägg till'}</Text>
+                          <Text style={{ fontSize: 12, fontWeight: FW_MED, color: '#fff' }}>{externalEditingId ? 'Spara' : 'Lägg till'}</Text>
                         </Pressable>
                       </View>
                     </View>
@@ -1553,7 +1558,7 @@ function DateModal({
   );
 }
 
-export default function TidsplanViktigaDatumView({ projectId, companyId, project }) {
+export default function TidsplanViktigaDatumView({ projectId, companyId, project, hidePageHeader = false }) {
   const todayIso = React.useMemo(() => toIsoDate(new Date()), []);
 
   const [items, setItems] = React.useState(() => []);
@@ -1884,6 +1889,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
   }, [modalState?.initial?.id, closeModal]);
 
   const projectLabel = React.useMemo(() => {
+    if (hidePageHeader) return '';
     const num = String(project?.projectNumber || project?.number || project?.id || '').trim();
     const rawName = String(project?.projectName || project?.name || '').trim();
     if (!num && !rawName) return '';
@@ -1910,29 +1916,31 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       contentContainerStyle={{ paddingVertical: 18, paddingHorizontal: 18, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
     >
       <View style={{ width: '100%', maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'flex-start' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-          <Ionicons name="calendar-outline" size={22} color={COLORS.blue} style={{ marginRight: 10 }} />
-          <View style={{ minWidth: 0, flex: 1 }}>
-            <Text style={{ fontSize: 22, fontWeight: '900', color: COLORS.text }} numberOfLines={1}>
-              Tidsplan
-            </Text>
-            <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
-              Viktiga datum för projektet
-            </Text>
-            {projectLabel ? (
-              <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
-                {projectLabel}
+        {!hidePageHeader ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <Ionicons name="calendar-outline" size={22} color={COLORS.blue} style={{ marginRight: 10 }} />
+            <View style={{ minWidth: 0, flex: 1 }}>
+              <Text style={[PROJECT_TYPOGRAPHY.viewTitle, { color: COLORS.text, fontWeight: FW_MED }]} numberOfLines={1}>
+                Tidsplan och viktiga datum
               </Text>
-            ) : null}
+              <Text style={{ fontSize: 13, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
+                Viktiga datum för projektet
+              </Text>
+              {projectLabel ? (
+                <Text style={{ fontSize: 13, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
+                  {projectLabel}
+                </Text>
+              ) : null}
+            </View>
           </View>
-        </View>
+        ) : null}
 
-        <Text style={{ fontSize: 14, color: COLORS.textMuted, marginBottom: 14 }}>
+        <Text style={[PROJECT_TYPOGRAPHY.introText, { color: COLORS.textMuted, marginBottom: 14 }]}>
           Lägg in viktiga datum för projektet. Datum sorteras automatiskt och får status baserat på dagens datum.
         </Text>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-          <Text style={{ fontSize: 13, fontWeight: '900', color: COLORS.text }}>Datumlista</Text>
+          <Text style={[PROJECT_TYPOGRAPHY.sectionHeading, { color: COLORS.text, fontWeight: FW_MED }]}>Datumlista</Text>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {QUICK_TYPES.map((qt) => (
@@ -1952,7 +1960,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                 })}
               >
                 <Ionicons name={qt.icon} size={15} color={COLORS.textSubtle} />
-                <Text style={{ fontSize: 12, fontWeight: '800', color: COLORS.textSubtle }}>{qt.key}</Text>
+                <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>{qt.key}</Text>
               </Pressable>
             ))}
 
@@ -1969,18 +1977,18 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
               })}
             >
               <Ionicons name="add-outline" size={16} color="#fff" />
-              <Text style={{ fontSize: 12, fontWeight: '900', color: '#fff' }}>Lägg till datum</Text>
+              <Text style={{ fontSize: 12, fontWeight: FW_MED, color: '#fff' }}>Lägg till datum</Text>
             </Pressable>
           </View>
         </View>
 
         <View style={{ borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, overflow: 'hidden' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7', backgroundColor: '#fff' }}>
-            <Text style={{ width: 110, fontSize: 11, fontWeight: '700', color: COLORS.textSubtle }}>Datum</Text>
-            <Text style={{ flexGrow: 0, flexShrink: 1, flexBasis: 360, minWidth: 0, maxWidth: 380, fontSize: 11, fontWeight: '700', color: COLORS.textSubtle }}>Titel</Text>
-            <Text style={{ width: 120, fontSize: 11, fontWeight: '700', color: COLORS.textSubtle, textAlign: 'left' }}>Typ</Text>
-            <Text style={{ width: 86, fontSize: 11, fontWeight: '700', color: COLORS.textSubtle, textAlign: 'left' }}>Deltagare</Text>
-            <Text style={{ width: 92, fontSize: 11, fontWeight: '700', color: COLORS.textSubtle, textAlign: 'left' }}>Status</Text>
+            <Text style={{ width: 110, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Datum</Text>
+            <Text style={{ flexGrow: 0, flexShrink: 1, flexBasis: 360, minWidth: 0, maxWidth: 380, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Titel</Text>
+            <Text style={{ width: 120, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Typ</Text>
+            <Text style={{ width: 86, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Deltagare</Text>
+            <Text style={{ width: 92, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Status</Text>
             <View style={{ width: 30 }} />
           </View>
 
@@ -2028,15 +2036,15 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                       : (isSelected ? 'rgba(25, 118, 210, 0.10)' : (hovered || pressed ? COLORS.rowHover : '#fff')),
                   })}
                 >
-                  <Text style={{ width: 110, fontSize: 13, color: COLORS.text, fontWeight: '800' }}>
+                  <Text style={{ width: 110, fontSize: 13, color: COLORS.text, fontWeight: FW_REG }}>
                     {iso || '—'}
                   </Text>
 
-                  <Text style={{ flexGrow: 0, flexShrink: 1, flexBasis: 360, minWidth: 0, maxWidth: 380, fontSize: 13, color: COLORS.text, fontWeight: '900' }} numberOfLines={1}>
+                  <Text style={{ flexGrow: 0, flexShrink: 1, flexBasis: 360, minWidth: 0, maxWidth: 380, fontSize: 13, color: COLORS.text, fontWeight: FW_REG }} numberOfLines={1}>
                     {String(it?.title || '—')}
                   </Text>
 
-                  <Text style={{ width: 120, fontSize: 12, color: COLORS.textMuted }} numberOfLines={1}>
+                  <Text style={{ width: 120, fontSize: 13, color: COLORS.textMuted }} numberOfLines={1}>
                     {String(it?.type || '—')}
                   </Text>
 
@@ -2044,7 +2052,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                     {participantCount > 0 ? (
                       <>
                         <Ionicons name="people-outline" size={14} color={COLORS.textSubtle} />
-                        <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '800' }}>{participantCount}</Text>
+                        <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: FW_MED }}>{participantCount}</Text>
                       </>
                     ) : (
                       <Text style={{ fontSize: 11, color: COLORS.textSubtle }}>—</Text>
@@ -2056,7 +2064,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                       <Text style={{ fontSize: 11, color: COLORS.textSubtle }}>—</Text>
                     ) : (
                       <View style={{ paddingVertical: 3, paddingHorizontal: 6, borderRadius: 999, backgroundColor: badge.bg, borderWidth: 1, borderColor: badge.border }}>
-                        <Text style={{ fontSize: 11, fontWeight: '800', color: badge.text }}>{statusLabel(status)}</Text>
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: badge.text }}>{statusLabel(status)}</Text>
                       </View>
                     )}
                   </View>
@@ -2098,6 +2106,19 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
           }}
           colors={COLORS}
           maxWidth={980}
+          typography={{
+            headerTitleStyle: { fontWeight: FW_MED },
+            navTextStyle: { fontWeight: FW_MED },
+            navTodayTextStyle: { fontWeight: FW_MED },
+            monthLabelStyle: { fontWeight: FW_MED },
+            weekdayLabelStyle: { fontWeight: FW_MED },
+            dayNumberStyle: { fontWeight: FW_MED, color: COLORS.text },
+            plusTextStyle: { fontWeight: FW_MED },
+            eventTitleStyle: { fontSize: 13, fontWeight: FW_REG, color: COLORS.text },
+            eventTypeStyle: { fontSize: 12, fontWeight: FW_REG, color: COLORS.textSubtle },
+            moreTextStyle: { fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle },
+          }}
+          options={{ todayDayNumberUsesAccentText: false, neutralEventText: true }}
         />
       </View>
 

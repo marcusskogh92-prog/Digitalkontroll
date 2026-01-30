@@ -1,18 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, ImageBackground, KeyboardAvoidingView, Platform, SectionList, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Alert, Animated, FlatList, ImageBackground, KeyboardAvoidingView, Platform, SectionList, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { HomeHeader } from '../components/common/HomeHeader';
 import { adminFetchCompanyMembers, auth, createUserRemote, deleteUserRemote, fetchCompanyMembers, fetchCompanyProfile, requestSubscriptionUpgradeRemote, updateUserRemote, uploadUserAvatar } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
-import HeaderAdminMenu from '../components/HeaderAdminMenu';
-import HeaderDisplayName from '../components/HeaderDisplayName';
-import HeaderUserMenuConditional from '../components/HeaderUserMenuConditional';
 import MainLayout from '../components/MainLayout';
 import UserEditModal from '../components/UserEditModal';
+import UsersTable from '../components/UsersTable';
+import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
-export default function ManageUsers({ route, navigation }) {
+function ManageUsersLegacy({ route, navigation }) {
   const { height: windowHeight } = useWindowDimensions();
   const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const searchSpinAnim = useRef(new Animated.Value(0)).current;
+  const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
   const [members, setMembers] = useState([]);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -641,27 +644,30 @@ export default function ManageUsers({ route, navigation }) {
       return out;
     };
 
-    const RootContainer = ImageBackground;
-    const rootProps = {
-      source: require('../assets/images/inlogg.webb.png'),
-      resizeMode: 'cover',
-      imageStyle: { width: '100%', height: '100%' },
-    };
-
     const hasSelectedCompany = !!String(companyId || '').trim();
 
     // Superadmin / MS Byggsystem-admin (canSeeAllCompanies === true) ska kunna se alla
     // företag i listan. Vanliga företags-admins ser bara sitt eget företag.
     const sidebarRestrictId = canSeeAllCompanies ? null : (String(lockedCompanyId || '').trim() || companyId);
 
+    const showSimpleAlert = (title, message) => {
+      try {
+        const t = String(title || '').trim() || 'Info';
+        const m = String(message || '').trim();
+        if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(m ? `${t}\n\n${m}` : t);
+        else Alert.alert(t, m || '');
+      } catch (_e) {}
+    };
+
+    const noopAsync = async () => {};
+
     return (
-      <RootContainer {...rootProps} style={{ flex: 1, width: '100%' }}>
-        <View style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.35)', zIndex: 0 }} />
+      <>
         {globalBusy && (
           <View
             pointerEvents="auto"
             style={{
-              position: 'absolute',
+              position: 'fixed',
               top: 0,
               left: 0,
               right: 0,
@@ -690,6 +696,7 @@ export default function ManageUsers({ route, navigation }) {
             </View>
           </View>
         )}
+
         <MainLayout
           adminMode={true}
           adminCurrentScreen="manage_users"
@@ -727,39 +734,33 @@ export default function ManageUsers({ route, navigation }) {
           sidebarSelectedCompanyId={companyId}
           sidebarAllowCompanyManagementActions={false}
           topBar={
-            <View
-              style={{
-                height: 96,
-                paddingLeft: 24,
-                paddingRight: 24,
-                backgroundColor: 'rgba(25, 118, 210, 0.2)',
-                justifyContent: 'center',
-                borderBottomWidth: 1,
-                borderColor: 'rgba(25, 118, 210, 0.3)',
-                borderLeftWidth: 4,
-                borderLeftColor: '#1976D2',
-              }}
-            >
-              <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
-                  <View style={{ marginRight: 10 }}>
-                    {showHeaderUserMenu ? <HeaderUserMenuConditional /> : <HeaderDisplayName />}
-                  </View>
-                  <View style={{ marginRight: 10 }}>
-                    <HeaderAdminMenu />
-                  </View>
-                  {allowedTools ? (
-                    <TouchableOpacity
-                      style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
-                      onPress={() => setSupportMenuOpen(s => !s)}
-                    >
-                      <Text style={{ color: '#222', fontWeight: '700' }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                <View style={{ alignItems: 'center', justifyContent: 'center', marginRight: 8 }} />
-              </View>
-            </View>
+            <HomeHeader
+              headerHeight={headerHeight}
+              setHeaderHeight={setHeaderHeight}
+              navigation={navigation}
+              route={route}
+              auth={auth}
+              selectedProject={null}
+              isSuperAdmin={false}
+              allowedTools={allowedTools}
+              showHeaderUserMenu={showHeaderUserMenu}
+              canShowSupportToolsInHeader={allowedTools}
+              supportMenuOpen={supportMenuOpen}
+              setSupportMenuOpen={setSupportMenuOpen}
+              companyId={companyId}
+              routeCompanyId={route?.params?.companyId || ''}
+              showAdminButton={false}
+              adminActionRunning={false}
+              localFallbackExists={false}
+              handleMakeDemoAdmin={noopAsync}
+              refreshLocalFallbackFlag={noopAsync}
+              dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+              showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+              saveControlToFirestore={noopAsync}
+              saveDraftToFirestore={noopAsync}
+              searchSpinAnim={searchSpinAnim}
+              sharePointStatus={sharePointStatus}
+            />
           }
         >
           <View style={dashboardContainerStyle}>
@@ -2095,7 +2096,7 @@ export default function ManageUsers({ route, navigation }) {
             }}
           />
         </MainLayout>
-      </RootContainer>
+      </>
     );
   }
 
@@ -2122,5 +2123,486 @@ export default function ManageUsers({ route, navigation }) {
         </View>
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+export default function ManageUsers({ route, navigation }) {
+  const [companyId, setCompanyId] = useState(() => route?.params?.companyId || '');
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const searchSpinAnim = useRef(new Animated.Value(0)).current;
+  const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
+
+  const [members, setMembers] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  const [memberSearch, setMemberSearch] = useState('');
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalIsNew, setModalIsNew] = useState(false);
+  const [modalMember, setModalMember] = useState(null);
+  const [modalSaving, setModalSaving] = useState(false);
+  const [modalError, setModalError] = useState('');
+
+  const [upgradeSending, setUpgradeSending] = useState(false);
+
+  const [allowedTools, setAllowedTools] = useState(false);
+  const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
+  const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
+  const [supportMenuOpen, setSupportMenuOpen] = useState(false);
+  const [lockedCompanyId, setLockedCompanyId] = useState('');
+  const [currentClaims, setCurrentClaims] = useState({ admin: false, superadmin: false, role: '' });
+
+  const isWeb = Platform.OS === 'web';
+  const currentUid = String(auth?.currentUser?.uid || '').trim();
+  const currentEmail = String(auth?.currentUser?.email || '').toLowerCase();
+
+  const isEmailSuperadmin = currentEmail === 'marcus@msbyggsystem.se'
+    || currentEmail === 'marcus.skogh@msbyggsystem.se'
+    || currentEmail === 'marcus.skogh@msbyggsystem.com'
+    || currentEmail === 'marcus.skogh@msbyggsystem';
+
+  const isSuperAdmin = !!(currentClaims?.superadmin || currentClaims?.role === 'superadmin' || isEmailSuperadmin);
+  const isCompanyAdmin = !!(currentClaims?.admin || currentClaims?.role === 'admin' || isSuperAdmin);
+
+  // Keep selected companyId in storage so global tools resolve correctly.
+  useEffect(() => {
+    (async () => {
+      try {
+        const cid = String(companyId || '').trim();
+        if (!cid) return;
+        try { await AsyncStorage.setItem('dk_companyId', cid); } catch (_e) {}
+        if (Platform.OS === 'web') {
+          try { window?.localStorage?.setItem?.('dk_companyId', cid); } catch (_e) {}
+        }
+      } catch (_e) {}
+    })();
+  }, [companyId]);
+
+  // Permission gating (same intent as before)
+  useEffect(() => {
+    if (!isWeb) return undefined;
+    let mounted = true;
+    (async () => {
+      try {
+        const tokenRes = await auth.currentUser?.getIdTokenResult(false).catch(() => null);
+        const claims = tokenRes?.claims || {};
+        const companyFromClaims = String(claims?.companyId || '').trim();
+        const isAdminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
+        const isSuperClaim = !!(claims && (claims.superadmin === true || claims.role === 'superadmin'));
+        const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+        const cid = companyFromClaims || stored || '';
+
+        const canSeeAll = isSuperClaim || isEmailSuperadmin || (cid === 'MS Byggsystem' && isAdminClaim);
+        const allowHeader = isEmailSuperadmin || isSuperClaim || isAdminClaim;
+
+        if (!mounted) return;
+        setCurrentClaims({ admin: isAdminClaim, superadmin: isSuperClaim, role: String(claims?.role || (isSuperClaim ? 'superadmin' : (isAdminClaim ? 'admin' : ''))) });
+        setAllowedTools(!!allowHeader);
+        setCanSeeAllCompanies(!!canSeeAll);
+        setShowHeaderUserMenu(!!allowHeader);
+        setLockedCompanyId(canSeeAll ? '' : cid);
+        if (!canSeeAll && cid && (!companyId || String(companyId).trim() !== cid)) {
+          setCompanyId(cid);
+        }
+      } catch (_e) {
+        if (!mounted) return;
+        setAllowedTools(false);
+        setCanSeeAllCompanies(false);
+        setShowHeaderUserMenu(false);
+        setLockedCompanyId('');
+      }
+    })();
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const companyName = String(profile?.companyName || profile?.name || companyId || '').trim();
+
+  const userLimitNumber = useMemo(() => {
+    let n = null;
+    if (profile && profile.userLimit !== undefined && profile.userLimit !== null && profile.userLimit !== '') {
+      try {
+        const raw = String(profile.userLimit).trim();
+        const m = raw.match(/-?\d+/);
+        if (m && m[0]) {
+          const parsed = parseInt(m[0], 10);
+          if (!Number.isNaN(parsed) && Number.isFinite(parsed)) n = parsed;
+        }
+      } catch (_e) {}
+    }
+    if (n === null && String(companyId || '').trim() === 'MS Byggsystem') return 10;
+    return n;
+  }, [profile, companyId]);
+
+  const activeCount = useMemo(() => {
+    const arr = Array.isArray(members) ? members : [];
+    return arr.filter((m) => !(m?.disabled === true || String(m?.status || '').toLowerCase() === 'disabled')).length;
+  }, [members]);
+
+  const usageLine = useMemo(() => {
+    if (!companyId) return '';
+    if (typeof userLimitNumber === 'number') return `Användare: ${activeCount} / ${userLimitNumber}`;
+    return `Användare: ${activeCount}`;
+  }, [companyId, activeCount, userLimitNumber]);
+
+  const canEditUser = (member) => {
+    if (!member) return false;
+    if (!isCompanyAdmin) return false;
+    const targetRole = String(member?.role || '').trim();
+    if (!isSuperAdmin && targetRole === 'superadmin') return false;
+    return true;
+  };
+
+  const canDeleteUser = (member) => {
+    if (!member) return false;
+    if (!isCompanyAdmin) return false;
+    const uid = String(member?.uid || member?.id || '').trim();
+    const targetRole = String(member?.role || '').trim();
+    if (uid && currentUid && uid === currentUid) return false;
+    if (!isSuperAdmin && targetRole === 'superadmin') return false;
+    try {
+      const emailLower = String(member?.email || '').trim().toLowerCase();
+      if (emailLower === 'marcus@msbyggsystem.se') return false;
+    } catch (_e) {}
+    return true;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!companyId) {
+        setProfile(null);
+        setMembers([]);
+        setError('');
+        return;
+      }
+      setLoading(true);
+      setError('');
+      try {
+        const prof = await fetchCompanyProfile(companyId).catch(() => null);
+        if (!cancelled) setProfile(prof || null);
+
+        let mems = [];
+        let loaded = false;
+        if (canSeeAllCompanies) {
+          try {
+            const r = await adminFetchCompanyMembers(companyId);
+            const arr = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
+            if (Array.isArray(arr)) {
+              mems = arr;
+              loaded = true;
+            }
+          } catch (_e) {
+            loaded = false;
+          }
+        }
+        if (!loaded) {
+          mems = await fetchCompanyMembers(companyId).catch(() => []);
+        }
+        if (!cancelled) setMembers(Array.isArray(mems) ? mems : []);
+      } catch (e) {
+        if (!cancelled) setError(String(e?.message || e || 'Kunde inte ladda användare.'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, reloadNonce, canSeeAllCompanies]);
+
+  useEffect(() => {
+    if (!isWeb || typeof window === 'undefined') return undefined;
+    const handler = () => {
+      try { navigation.reset({ index: 0, routes: [{ name: 'Home' }] }); } catch (_e) {}
+    };
+    const handleRefresh = () => {
+      try { setReloadNonce((n) => n + 1); } catch (_e) {}
+    };
+    window.addEventListener('dkGoHome', handler);
+    window.addEventListener('dkRefresh', handleRefresh);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handler); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
+    };
+  }, [navigation, isWeb]);
+
+  const handleRefresh = () => setReloadNonce((n) => n + 1);
+
+  const openAddModal = () => {
+    setModalError('');
+    setModalIsNew(true);
+    setModalMember(null);
+    setModalOpen(true);
+  };
+
+  const openEditModal = (member) => {
+    setModalError('');
+    setModalIsNew(false);
+    setModalMember(member || null);
+    setModalOpen(true);
+  };
+
+  const handleToggleDisabled = async (member) => {
+    if (!member) return;
+    if (!canEditUser(member)) return;
+    const uid = String(member?.uid || member?.id || '').trim();
+    if (!uid) return;
+    if (uid && currentUid && uid === currentUid) {
+      Alert.alert('Inte tillåtet', 'Du kan inte inaktivera ditt eget konto.');
+      return;
+    }
+    const currentlyDisabled = !!(member.disabled === true || String(member.status || '').toLowerCase() === 'disabled');
+    const targetDisabled = !currentlyDisabled;
+    try {
+      await updateUserRemote({ companyId, uid, disabled: targetDisabled });
+      setMembers((prev) => (Array.isArray(prev) ? prev.map((m) => {
+        const mmuid = String(m?.uid || m?.id || '').trim();
+        if (mmuid !== uid) return m;
+        return { ...m, disabled: targetDisabled };
+      }) : prev));
+    } catch (e) {
+      Alert.alert('Fel', String(e?.message || e));
+    }
+  };
+
+  const handleDelete = async (member) => {
+    if (!member) return;
+    if (!canDeleteUser(member)) {
+      Alert.alert('Inte tillåtet', 'Du kan inte ta bort denna användare.');
+      return;
+    }
+
+    const uid = String(member?.uid || member?.id || '').trim();
+    if (!uid) return;
+
+    const label = String(member?.displayName || member?.email || 'användaren');
+
+    const conf = (typeof window !== 'undefined')
+      ? window.confirm(`Ta bort ${label}?\n\nDetta drar tillbaka åtkomst (soft delete).`)
+      : true;
+    if (!conf) return;
+
+    try {
+      await deleteUserRemote({ companyId, uid });
+      setReloadNonce((n) => n + 1);
+    } catch (e) {
+      Alert.alert('Fel', String(e?.message || e));
+    }
+  };
+
+  const handleUpgrade = async () => {
+    if (upgradeSending) return;
+    const conf = (typeof window !== 'undefined')
+      ? window.confirm('Vill du utöka ditt abonnemang? Klickar du Ja så tar vi kontakt med dig.')
+      : true;
+    if (!conf) return;
+
+    setUpgradeSending(true);
+    try {
+      await requestSubscriptionUpgradeRemote({ companyId });
+      try { if (typeof window !== 'undefined') window.alert('Tack! Vi kontaktar dig snarast.'); } catch (_e) {}
+    } catch (e) {
+      Alert.alert('Fel', String(e?.message || e));
+    } finally {
+      setUpgradeSending(false);
+    }
+  };
+
+  if (!isWeb) {
+    return (
+      <View style={{ flex: 1, padding: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: '700' }}>Användare</Text>
+        <Text style={{ marginTop: 8, color: '#555' }}>Användare är just nu optimerat för webbläget.</Text>
+      </View>
+    );
+  }
+
+  if (!isCompanyAdmin) {
+    return (
+      <MainLayout adminMode={true} adminCurrentScreen="manage_users" sidebarSelectedCompanyId={companyId} adminShowCompanySelector={false}>
+        <View style={{ padding: 24, borderRadius: 16, borderWidth: 1, borderColor: '#E6E8EC', backgroundColor: '#fff' }}>
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#111' }}>Ingen åtkomst</Text>
+          <Text style={{ marginTop: 8, color: '#64748b' }}>Du behöver vara Företagsadmin eller Superadmin för att se Användare.</Text>
+        </View>
+      </MainLayout>
+    );
+  }
+
+  const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
+  const dashboardCardStyle = {
+    borderWidth: 1,
+    borderColor: '#E6E8EC',
+    borderRadius: 18,
+    padding: 20,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+  };
+
+  return (
+    <>
+      <MainLayout
+        adminMode={true}
+        adminCurrentScreen="manage_users"
+        adminOnSelectCompany={(payload) => {
+          try {
+            const cid = String(payload?.companyId || payload?.id || '').trim();
+            if (!cid) return;
+            if (!canSeeAllCompanies) return;
+            setCompanyId(cid);
+            setMemberSearch('');
+          } catch (_e) {}
+        }}
+        adminShowCompanySelector={canSeeAllCompanies}
+        sidebarSelectedCompanyId={companyId}
+        sidebarCompaniesMode={true}
+        sidebarShowMembers={false}
+        sidebarHideCompanyActions={true}
+        sidebarAutoExpandMembers={true}
+        sidebarAllowCompanyManagementActions={false}
+        adminCompanyBannerUsageLine={usageLine}
+        adminCompanyBannerPrimaryAction={{ label: upgradeSending ? 'Skickar…' : 'Uppgradera abonnemang', iconName: 'sparkles', onPress: handleUpgrade }}
+        topBar={
+          <HomeHeader
+            headerHeight={headerHeight}
+            setHeaderHeight={setHeaderHeight}
+            navigation={navigation}
+            route={route}
+            auth={auth}
+            selectedProject={null}
+            isSuperAdmin={false}
+            allowedTools={allowedTools}
+            showHeaderUserMenu={showHeaderUserMenu}
+            canShowSupportToolsInHeader={allowedTools}
+            supportMenuOpen={supportMenuOpen}
+            setSupportMenuOpen={setSupportMenuOpen}
+            companyId={companyId}
+            routeCompanyId={route?.params?.companyId || ''}
+            showAdminButton={false}
+            adminActionRunning={false}
+            localFallbackExists={false}
+            handleMakeDemoAdmin={async () => {}}
+            refreshLocalFallbackFlag={async () => {}}
+            dumpLocalRemoteControls={async () => Alert.alert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+            showLastFsError={async () => Alert.alert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+            saveControlToFirestore={async () => {}}
+            saveDraftToFirestore={async () => {}}
+            searchSpinAnim={searchSpinAnim}
+            sharePointStatus={sharePointStatus}
+          />
+        }
+        rightPanel={null}
+      >
+        <View style={dashboardContainerStyle}>
+          <View style={dashboardCardStyle}>
+            <UsersTable
+              companyName={companyName}
+              hasSelectedCompany={!!String(companyId || '').trim()}
+              users={members}
+              loading={loading}
+              error={error}
+              search={memberSearch}
+              setSearch={setMemberSearch}
+              onRefresh={handleRefresh}
+              onAdd={openAddModal}
+              onEdit={openEditModal}
+              onToggleDisabled={handleToggleDisabled}
+              onDelete={handleDelete}
+              canEditUser={canEditUser}
+              canDeleteUser={canDeleteUser}
+            />
+          </View>
+        </View>
+
+        <UserEditModal
+          visible={modalOpen}
+          member={modalMember}
+          companyId={companyId}
+          isNew={modalIsNew}
+          saving={modalSaving}
+          errorMessage={modalError}
+          canDelete={!modalIsNew && canDeleteUser(modalMember)}
+          onDelete={() => {
+            setModalOpen(false);
+            handleDelete(modalMember);
+          }}
+          onClose={() => {
+            if (modalSaving) return;
+            setModalOpen(false);
+            setModalError('');
+          }}
+          onSave={async (payload) => {
+            if (!companyId) return;
+            setModalSaving(true);
+            setModalError('');
+            try {
+              const firstName = String(payload?.firstName || '').trim();
+              const lastName = String(payload?.lastName || '').trim();
+              const displayName = String(`${firstName} ${lastName}`.trim());
+              const email = String(payload?.email || '').trim().toLowerCase();
+              const role = String(payload?.role || 'user').trim() || 'user';
+              const disabled = !!payload?.disabled;
+              const avatarPreset = String(payload?.avatarPreset || '').trim();
+              const avatarFile = payload?.avatarFile || null;
+              const password = String(payload?.password || '');
+
+              if (!modalIsNew) {
+                const uid = String(modalMember?.uid || modalMember?.id || '').trim();
+                if (!uid) throw new Error('Saknar uid för användaren');
+                if (!canEditUser(modalMember)) throw new Error('Inte tillåtet');
+
+                const patch = { displayName, role, disabled };
+
+                if (avatarFile) {
+                  const photoURL = await uploadUserAvatar({ companyId, uid, file: avatarFile });
+                  patch.photoURL = photoURL || '';
+                  patch.avatarPreset = '';
+                } else if (avatarPreset) {
+                  patch.avatarPreset = avatarPreset;
+                  patch.photoURL = '';
+                }
+
+                await updateUserRemote({ companyId, uid, ...patch });
+              } else {
+                const res = await createUserRemote({
+                  companyId,
+                  email,
+                  displayName,
+                  role,
+                  password,
+                  firstName,
+                  lastName,
+                  avatarPreset: avatarPreset || undefined,
+                });
+
+                const createdUid = String(res?.uid || res?.data?.uid || '').trim();
+                const tempPw = String(res?.tempPassword || res?.data?.tempPassword || '').trim();
+
+                if (createdUid && avatarFile) {
+                  const photoURL = await uploadUserAvatar({ companyId, uid: createdUid, file: avatarFile });
+                  await updateUserRemote({ companyId, uid: createdUid, photoURL: photoURL || '', avatarPreset: '' });
+                }
+
+                if (tempPw) {
+                  try { if (typeof window !== 'undefined') window.alert(`Användare skapad. Lösenord: ${tempPw}`); } catch (_e) {}
+                }
+              }
+
+              setModalOpen(false);
+              setReloadNonce((n) => n + 1);
+            } catch (e) {
+              setModalError(String(e?.message || e));
+            } finally {
+              setModalSaving(false);
+            }
+          }}
+        />
+      </MainLayout>
+    </>
   );
 }

@@ -183,6 +183,28 @@ export const DEFAULT_EFTERMARKNAD_NAVIGATION = {
   ]
 };
 
+function cloneNavigationWithPhase(source, phaseKey) {
+  const src = source || {};
+  const sections = Array.isArray(src.sections) ? src.sections : [];
+  return {
+    ...src,
+    phase: phaseKey,
+    sections: sections.map((section) => {
+      const items = Array.isArray(section?.items) ? section.items : [];
+      return {
+        ...section,
+        items: items.map((item) => {
+          const nestedItems = Array.isArray(item?.items) ? item.items : null;
+          return {
+            ...item,
+            ...(nestedItems ? { items: nestedItems.map((sub) => ({ ...sub })) } : null),
+          };
+        }),
+      };
+    }),
+  };
+}
+
 /**
  * Get default navigation for a phase
  */
@@ -191,11 +213,14 @@ export function getDefaultNavigation(phaseKey) {
     case 'kalkylskede':
       return DEFAULT_KALKYLSKEDE_NAVIGATION;
     case 'produktion':
-      return DEFAULT_PRODUKTION_NAVIGATION;
+      // Until production has its own navigation, reuse kalkyl structure so leftpanel behaves the same.
+      return cloneNavigationWithPhase(DEFAULT_KALKYLSKEDE_NAVIGATION, 'produktion');
     case 'avslut':
-      return DEFAULT_AVSLUT_NAVIGATION;
+      // Until avslut has its own navigation, reuse kalkyl structure so leftpanel behaves the same.
+      return cloneNavigationWithPhase(DEFAULT_KALKYLSKEDE_NAVIGATION, 'avslut');
     case 'eftermarknad':
-      return DEFAULT_EFTERMARKNAD_NAVIGATION;
+      // Until eftermarknad has its own navigation, reuse kalkyl structure so leftpanel behaves the same.
+      return cloneNavigationWithPhase(DEFAULT_KALKYLSKEDE_NAVIGATION, 'eftermarknad');
     default:
       return DEFAULT_KALKYLSKEDE_NAVIGATION; // Fallback
   }

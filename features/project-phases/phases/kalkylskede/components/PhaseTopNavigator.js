@@ -1,18 +1,16 @@
 /**
- * Phase Top Navigator - Top navigation bar with progress indicators
+ * Phase Top Navigator - Top navigation bar for section navigation
+ * Note: Digitalkontroll no longer shows or uses progress/percent completion.
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import ProgressIndicator from './ProgressIndicator';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { stripNumberPrefixForDisplay } from '../../../../../utils/labelUtils';
 
 export default function PhaseTopNavigator({
   navigation,
-  sectionProgress,
   activeSection,
-  onSelectSection,
-  projectName
+  onSelectSection
 }) {
   if (!navigation || !navigation.sections) {
     return null;
@@ -26,17 +24,7 @@ export default function PhaseTopNavigator({
         contentContainerStyle={styles.scrollContent}
       >
         {navigation.sections.map(section => {
-          const progress = sectionProgress[section.id] || { progress: 0 };
           const isActive = activeSection === section.id;
-          const progressValue = progress.progress || 0;
-
-          // Determine color based on progress
-          let progressColor = '#1976D2'; // Blue (default)
-          if (progressValue === 100) {
-            progressColor = '#4CAF50'; // Green (complete)
-          } else if (progressValue >= 50) {
-            progressColor = '#FF9800'; // Orange (in progress)
-          }
 
           return (
             <TouchableOpacity
@@ -48,19 +36,6 @@ export default function PhaseTopNavigator({
                 }
               }}
             >
-              {/* Progress bar background */}
-              <View style={styles.progressBarContainer}>
-                <View
-                  style={[
-                    styles.progressBarFill,
-                    {
-                      width: `${progressValue}%`,
-                      backgroundColor: progressColor
-                    }
-                  ]}
-                />
-              </View>
-
               {/* Content */}
               <View style={styles.buttonContent}>
                 <Ionicons
@@ -70,9 +45,8 @@ export default function PhaseTopNavigator({
                   style={styles.icon}
                 />
                 <Text style={[styles.buttonText, isActive && styles.buttonTextActive]}>
-                  {section.name}
+                  {stripNumberPrefixForDisplay(section.name)}
                 </Text>
-                <Text style={styles.progressText}>{progressValue}%</Text>
               </View>
             </TouchableOpacity>
           );
@@ -87,62 +61,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e6e6e6',
-    paddingVertical: 8
+    paddingVertical: 6
   },
   scrollContent: {
-    paddingHorizontal: 8,
-    gap: 8
+    paddingHorizontal: 10,
+    gap: 6
   },
   navButton: {
     position: 'relative',
-    minWidth: 140,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#f5f5f5',
+    minWidth: 118,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    overflow: 'hidden'
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+    ...(typeof Platform !== 'undefined' && Platform.OS === 'web' ? { cursor: 'pointer' } : {})
   },
   navButtonActive: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#EAF4FF',
     borderColor: '#1976D2',
     borderWidth: 2
-  },
-  progressBarContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 4,
-    backgroundColor: '#e0e0e0'
-  },
-  progressBarFill: {
-    height: '100%',
-    transition: 'width 0.3s ease'
   },
   buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8
+    gap: 6
   },
   icon: {
-    marginRight: 4
+    marginRight: 2
   },
   buttonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#444',
+    color: '#4b5563',
     flex: 1
   },
   buttonTextActive: {
-    color: '#1976D2'
-  },
-  progressText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#666',
-    minWidth: 35,
-    textAlign: 'right'
+    color: '#1976D2',
+    fontWeight: '700'
   }
 });

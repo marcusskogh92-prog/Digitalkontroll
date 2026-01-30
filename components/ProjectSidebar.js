@@ -4,6 +4,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
+import { LEFT_NAV } from '../constants/leftNavTheme';
 import { checkSharePointConnection, createSharePointFolder, deleteItem, getSharePointHierarchy, loadFolderChildren } from '../services/azure/hierarchyService';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ContextMenu from './ContextMenu';
@@ -51,6 +52,7 @@ function RecursiveFolderItem({
   isProject = false,
   onSelectProject = null,
 }) {
+  const [isHovered, setIsHovered] = useState(false);
   const folderSpin = spinSubs[folder.id] || 0;
   const folderAngle = expandedSubs[folder.id] ? (folderSpin * 360 + 90) : (folderSpin * 360);
   const fontSize = Math.max(12, 15 - level); // Slightly smaller font for deeper levels
@@ -91,6 +93,14 @@ function RecursiveFolderItem({
       <div 
         style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} 
         onClick={handleClick}
+        onMouseEnter={() => {
+          if (Platform.OS !== 'web') return;
+          setIsHovered(true);
+        }}
+        onMouseLeave={() => {
+          if (Platform.OS !== 'web') return;
+          setIsHovered(false);
+        }}
         onContextMenu={(e) => {
           if (Platform.OS !== 'web') return;
           try { e.preventDefault(); } catch(_e) {}
@@ -102,7 +112,7 @@ function RecursiveFolderItem({
         {!folderIsProject && (
           <span
             style={{
-              color: '#222',
+              color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
               fontSize: fontSize + 1,
               fontWeight: 500,
               marginRight: 6,
@@ -130,7 +140,7 @@ function RecursiveFolderItem({
         <span style={{ 
           fontWeight: expandedSubs[folder.id] ? 600 : (folderIsProject ? 600 : 400), 
           fontSize: fontSize,
-          color: folderIsProject ? '#1976D2' : '#222',
+          color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
         }}>{folder.name}</span>
       </div>
       {!folderIsProject && expandedSubs[folder.id] && (

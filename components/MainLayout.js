@@ -3,7 +3,37 @@ import AdminSidebar from './common/AdminSidebar';
 import CompanyBanner from './common/CompanyBanner';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './common/layoutConstants';
 
-const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle, sidebarSearchPlaceholder, sidebarCompaniesMode, sidebarShowMembers = false, topBar = null, sidebarRestrictCompanyId = null, sidebarHideCompanyActions = false, sidebarAutoExpandMembers = false, sidebarSearchMembersOnly = false, sidebarAllowCompanyManagementActions = true, sidebarIconName = null, sidebarIconColor = null, sidebarControlTypesMode = false, sidebarSelectedCompanyId = null, sidebarOnAddMainFolder = null, adminMode = false, adminCurrentScreen = null, adminOnSelectCompany = null, adminShowCompanySelector = true, adminCompanyBannerOnEdit = null, adminHideCompanyBanner = false }) => {
+const MainLayout = ({
+  children,
+  onSelectProject,
+  rightPanel = null,
+  sidebarTitle,
+  sidebarSearchPlaceholder,
+  sidebarCompaniesMode,
+  sidebarShowMembers = false,
+  topBar = null,
+  sidebarRestrictCompanyId = null,
+  sidebarHideCompanyActions = false,
+  sidebarAutoExpandMembers = false,
+  sidebarSearchMembersOnly = false,
+  sidebarAllowCompanyManagementActions = true,
+  sidebarIconName = null,
+  sidebarIconColor = null,
+  sidebarControlTypesMode = false,
+  sidebarSelectedCompanyId = null,
+  sidebarOnAddMainFolder = null,
+  adminMode = false,
+  adminCurrentScreen = null,
+  adminOnSelectCompany = null,
+  adminShowCompanySelector = true,
+  adminCompanyBannerOnEdit = null,
+  adminCompanyBannerOnEditName = null,
+  adminCompanyBannerOnChangeLogo = null,
+  adminCompanyBannerRefreshKey = 0,
+  adminCompanyBannerUsageLine = '',
+  adminCompanyBannerPrimaryAction = null,
+  adminHideCompanyBanner = false,
+}) => {
   const showCompanyBanner = adminMode && sidebarSelectedCompanyId && !adminHideCompanyBanner;
 
   let backgroundImageUrl = null;
@@ -18,8 +48,10 @@ const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle
   return (
 	<div
       style={{
+        // Web: React Navigation renders a fixed header (see App.js headerStyle height: 96).
+        // Use a fixed layout *below* that header so the middle pane can scroll reliably.
         position: 'fixed',
-        top: 0,
+        top: 96,
         left: 0,
         right: 0,
         bottom: 0,
@@ -79,6 +111,11 @@ const MainLayout = ({ children, onSelectProject, rightPanel = null, sidebarTitle
               <CompanyBanner 
                 companyId={sidebarSelectedCompanyId} 
                 onEdit={adminCompanyBannerOnEdit}
+                onEditName={adminCompanyBannerOnEditName}
+                onChangeLogo={adminCompanyBannerOnChangeLogo}
+                refreshKey={adminCompanyBannerRefreshKey}
+                usageLine={adminCompanyBannerUsageLine}
+                primaryAction={adminCompanyBannerPrimaryAction}
               />
             )}
             {children}

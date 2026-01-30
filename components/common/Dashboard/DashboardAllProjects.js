@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { fetchUserProfile, subscribeCompanyActivity } from '../../../components/firebase';
 import { getPhaseConfig } from '../../../features/projects/constants';
+import DashboardBanner from './DashboardBanner';
 
 const DashboardAllProjects = ({
   hierarchy = [],
@@ -360,50 +361,27 @@ const DashboardAllProjects = ({
 
       {/* Contextual guidance text */}
       {allProjects.length === 0 ? (
-        <View style={{ 
-          marginBottom: 16,
-          padding: 16,
-          backgroundColor: '#F8F9FA',
-          borderRadius: 8,
-          borderLeftWidth: 3,
-          borderLeftColor: '#1976D2',
-        }}>
-          <Text style={{ fontSize: 14, color: '#495057', fontWeight: '500', marginBottom: 4 }}>
-            Du har inte blivit tilldelad något projekt än
-          </Text>
-          <Text style={{ fontSize: 13, color: '#6C757D' }}>
-            Projekt skapas i SharePoint och tilldelas i systemet. Kontakta din administratör för att bli tilldelad ett projekt.
-          </Text>
-        </View>
+        <DashboardBanner
+          padding={16}
+          accentColor="#1976D2"
+          title="Du har inte blivit tilldelad något projekt än"
+          message="Projekt skapas i SharePoint och tilldelas i systemet. Kontakta din administratör för att bli tilldelad ett projekt."
+        />
       ) : allProjects.length === 1 && projectSummary ? (
-        <View style={{ 
-          marginBottom: 16,
-          padding: 12,
-          backgroundColor: '#F8F9FA',
-          borderRadius: 8,
-          borderLeftWidth: 3,
-          borderLeftColor: '#43A047',
-        }}>
+        <DashboardBanner padding={12} accentColor="#43A047" title={null} message={null}>
           <Text style={{ fontSize: 13, color: '#495057' }}>
             <Text style={{ fontWeight: '600' }}>1 aktivt projekt</Text>
-            {projectSummary.lastUpdatedText && (
+            {projectSummary.lastUpdatedText ? (
               <Text> · Senast uppdaterat {projectSummary.lastUpdatedText}</Text>
-            )}
+            ) : null}
           </Text>
-        </View>
+        </DashboardBanner>
       ) : (
-        <View style={{ 
-          marginBottom: 16,
-          padding: 12,
-          backgroundColor: '#F8F9FA',
-          borderRadius: 8,
-          borderLeftWidth: 3,
-          borderLeftColor: '#1976D2',
-        }}>
+        <DashboardBanner padding={12} accentColor="#1976D2" title={null} message={null}>
           <Text style={{ fontSize: 13, color: '#495057' }}>
             Välj ett projekt i listan för att fortsätta
           </Text>
-        </View>
+        </DashboardBanner>
       )}
       
       {allProjects.length === 0 ? (

@@ -5,9 +5,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import ProjectPageHeader from '../../../components/common/ProjectPageHeader';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
+import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
 import { usePhaseNavigation } from './hooks/usePhaseNavigation';
-import { usePhaseProgress } from './hooks/usePhaseProgress';
 import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
 import PhaseTopNavigator from './kalkylskede/components/PhaseTopNavigator';
 
@@ -30,12 +31,8 @@ const SECTION_COMPONENTS = {
 
 export default function PhaseLayout({ companyId, projectId, project, phaseKey, hideLeftPanel = false, externalActiveSection = null, externalActiveItem = null, onExternalSectionChange = null, onExternalItemChange = null, onPhaseChange = null, reactNavigation = null }) {
   const { navigation, isLoading: navLoading } = usePhaseNavigation(companyId, projectId, phaseKey);
-  const { sectionProgress, overallProgress, refreshProgress } = usePhaseProgress(
-    companyId,
-    projectId,
-    phaseKey,
-    navigation
-  );
+
+  const formatNavLabel = (value) => stripNumberPrefixForDisplay(value);
 
   // Use external state if provided (from HomeScreen), otherwise use internal state
   const [internalActiveSection, setInternalActiveSection] = useState(null);
@@ -52,9 +49,9 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     }
   };
   
-  const setActiveItem = (itemId) => {
+  const setActiveItem = (sectionId, itemId) => {
     if (onExternalItemChange) {
-      onExternalItemChange(activeSection, itemId);
+      onExternalItemChange(sectionId, itemId);
     } else {
       setInternalActiveItem(itemId);
     }
@@ -68,7 +65,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       const firstSection = navigation.sections[0];
       setActiveSection(firstSection.id);
       // Don't auto-select first item - show section summary instead
-      setActiveItem(null);
+      setActiveItem(firstSection.id, null);
     }
   }, [navigation, activeSection]);
 
@@ -88,13 +85,21 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const handleSelectSection = (sectionId) => {
     setActiveSection(sectionId);
     // Don't auto-select first item - show section summary instead
-    setActiveItem(null);
+    setActiveItem(sectionId, null);
   };
 
   const handleSelectItem = (sectionId, itemId) => {
     setActiveSection(sectionId);
-    setActiveItem(itemId);
+    setActiveItem(sectionId, itemId);
   };
+
+  const activeSectionConfig = navigation?.sections?.find(s => s.id === activeSection) || null;
+  const activeItemConfig = activeSectionConfig && activeItem
+    ? (activeSectionConfig.items || []).find(i => i.id === activeItem) || null
+    : null;
+
+  const headerSectionLabel = activeSectionConfig ? formatNavLabel(activeSectionConfig.name) : '';
+  const headerItemLabel = activeItemConfig ? formatNavLabel(activeItemConfig.name) : '';
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -130,7 +135,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         project={project}
         activeItem={activeItem}
         navigation={navigation.sections.find(s => s.id === activeSection)}
-        onProgressUpdate={refreshProgress}
+        hidePageHeader
       />
     );
   };
@@ -612,10 +617,8 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       {/* Top Navigator */}
       <PhaseTopNavigator
         navigation={navigation}
-        sectionProgress={sectionProgress}
         activeSection={activeSection}
         onSelectSection={handleSelectSection}
-        projectName={projectName}
       />
 
       {/* Main Content Area - Full width layout */}
@@ -635,7 +638,14 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         )}
 
         {/* Right Content - Takes remaining space */}
-        <View style={styles.contentArea}>{renderContent()}</View>
+        <View style={styles.contentArea}>
+          <ProjectPageHeader
+            project={project}
+            sectionLabel={headerSectionLabel}
+            itemLabel={headerItemLabel}
+          />
+          <View style={styles.contentBody}>{renderContent()}</View>
+        </View>
       </View>
 
       {/* Loading overlay - initial load */}
@@ -773,6 +783,12 @@ const styles = StyleSheet.create({
   contentArea: {
     flex: 1,
     backgroundColor: '#fff',
+    padding: 0,
+    minHeight: 0,
+    minWidth: 0,
+  },
+  contentBody: {
+    flex: 1,
     padding: 24,
     minHeight: 0,
     minWidth: 0,

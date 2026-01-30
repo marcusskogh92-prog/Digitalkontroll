@@ -130,12 +130,14 @@ export function useProjectOrganisation({ companyId, projectId }) {
   const addGroup = useCallback(
     async ({ title } = {}) => {
       const t = String(title || '').trim() || 'Ny grupp';
+      const newId = uuidv4();
       const current = latestRef.current;
       const next = {
         ...current,
-        groups: [...(current.groups || []), { id: uuidv4(), title: t, members: [] }],
+        groups: [...(current.groups || []), { id: newId, title: t, members: [] }],
       };
       await save(next);
+      return { ok: true, id: newId };
     },
     [save]
   );
@@ -216,7 +218,7 @@ export function useProjectOrganisation({ companyId, projectId }) {
       };
 
       await save(next);
-      return { ok: true };
+      return { ok: true, groupId: gid, member: nextMember };
     },
     [save]
   );

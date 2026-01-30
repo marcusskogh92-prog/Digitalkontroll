@@ -3,9 +3,12 @@
  * Shows sections like Overview, Kalkyl, UE & Offerter, Documents, etc.
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Platform, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
+import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+import { LEFT_NAV } from '../../constants/leftNavTheme';
+import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 
 const NAVIGATION_SECTIONS = [
   { id: 'overview', name: 'Översikt', icon: 'list-outline', order: 1 },
@@ -20,7 +23,10 @@ export default function ProjectInternalNavigation({
   onSelectSection,
   project,
 }) {
-  if (Platform.OS === 'web') {
+  const isWeb = Platform.OS === 'web';
+  const [hoveredId, setHoveredId] = useState(null);
+
+  if (isWeb) {
     return (
       <View style={styles.container}>
         <ScrollView
@@ -30,28 +36,39 @@ export default function ProjectInternalNavigation({
         >
           {NAVIGATION_SECTIONS.map(section => {
             const isActive = activeSection === section.id;
+            const isHovered = hoveredId === section.id;
+            const textColor = isActive
+              ? LEFT_NAV.accent
+              : (isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault);
+            const iconColor = isActive
+              ? LEFT_NAV.accent
+              : (isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault);
             return (
               <div
                 key={section.id}
                 onClick={() => onSelectSection?.(section.id)}
+                onMouseEnter={isWeb ? () => setHoveredId(section.id) : undefined}
+                onMouseLeave={isWeb ? () => setHoveredId(null) : undefined}
                 style={{
-                  ...styles.navButton,
-                  ...(isActive ? styles.navButtonActive : {}),
+                  ...styles.navButtonWeb,
+                  ...(isActive ? styles.navButtonWebActive : {}),
+                  ...(isHovered && !isActive ? styles.navButtonWebHover : {}),
                   cursor: 'pointer',
                 }}
               >
                 <Ionicons
                   name={section.icon}
                   size={18}
-                  color={isActive ? '#1976D2' : '#666'}
+                  color={iconColor}
                   style={{ marginRight: 6 }}
                 />
                 <span style={{
                   fontSize: 14,
                   fontWeight: isActive ? '600' : '400',
-                  color: isActive ? '#1976D2' : '#444',
+                  color: textColor,
+                  fontFamily: LEFT_NAV.webFontFamily,
                 }}>
-                  {section.name}
+                    {stripNumberPrefixForDisplay(section.name)}
                 </span>
               </div>
             );
@@ -82,14 +99,14 @@ export default function ProjectInternalNavigation({
               <Ionicons
                 name={section.icon}
                 size={18}
-                color={isActive ? '#1976D2' : '#666'}
+                color={isActive ? LEFT_NAV.accent : LEFT_NAV.iconDefault}
                 style={{ marginRight: 6 }}
               />
-              <Text style={[
+                <Text style={[
                 styles.navButtonText,
                 isActive && styles.navButtonTextActive,
               ]}>
-                {section.name}
+                  {stripNumberPrefixForDisplay(section.name)}
               </Text>
             </TouchableOpacity>
           );
@@ -116,23 +133,48 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: 'transparent',
     minWidth: 120,
   },
   navButtonActive: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#1976D2',
-    borderWidth: 2,
+    backgroundColor: LEFT_NAV.activeBg,
+    borderColor: LEFT_NAV.activeBorder,
   },
   navButtonText: {
     fontSize: 14,
     fontWeight: '400',
-    color: '#444',
+    color: LEFT_NAV.textDefault,
   },
   navButtonTextActive: {
     fontWeight: '600',
-    color: '#1976D2',
+    color: LEFT_NAV.accent,
+  },
+
+  // Web-only uses inline styles; keep separate objects for spreading.
+  navButtonWeb: {
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 10,
+    paddingLeft: 12,
+    paddingRight: 12,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    userSelect: 'none',
+    transition: 'background 0.15s, border 0.15s',
+  },
+  navButtonWebHover: {
+    backgroundColor: LEFT_NAV.hoverBg,
+    borderColor: LEFT_NAV.accent,
+  },
+  navButtonWebActive: {
+    backgroundColor: LEFT_NAV.activeBg,
+    borderColor: LEFT_NAV.activeBorder,
   },
 });

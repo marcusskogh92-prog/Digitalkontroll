@@ -259,10 +259,10 @@ function isValidIsoDateYmd(value) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: '#fff' },
+  container: { flex: 1, padding: 18, backgroundColor: '#fff' },
   subtitle: { fontSize: 18, fontWeight: '600', marginBottom: 8 },
   noControls: { fontSize: 16, fontStyle: 'italic', marginBottom: 12 },
-  groupContainer: { marginBottom: 18, backgroundColor: '#f7f7f7', borderRadius: 10, padding: 8 },
+  groupContainer: { marginBottom: 18, backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e0e0e0' },
   groupHeader: { flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', paddingVertical: 8, paddingHorizontal: 4 },
   groupTitle: { fontSize: 16, fontWeight: '700', marginLeft: 6, color: '#263238', flexShrink: 1 },
   groupBadge: { backgroundColor: '#1976D2', borderRadius: 12, paddingHorizontal: 8, marginLeft: 8 },
@@ -1610,7 +1610,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   return (
     <ScrollView
       ref={scrollRef}
-      style={styles.container}
+      style={[styles.container, Platform.OS === 'web' ? { backgroundColor: '#F7FAFC' } : null]}
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
     >
@@ -1660,7 +1660,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
         )}
       </View>
       {/* Project Header - Show project name and number prominently */}
-      <View style={{ marginBottom: 16, padding: 16, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
+      <View style={{ marginBottom: 16, padding: 16, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
           <View style={{
             width: 16,
@@ -1705,11 +1705,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       {/* Overview Section - Show project info */}
       {activeSection === 'overview' && (
         <View style={{ padding: 16 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
+          <Text style={{ fontSize: 20, fontWeight: '700', marginBottom: 16, color: '#222' }}>
             Projektinformation
           </Text>
           {/* Projektinfo med logga, status, projektnummer, projektnamn (expanderbar) */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18, padding: 12, backgroundColor: '#f7f7f7', borderRadius: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 18, padding: 12, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0' }}>
             {companyLogoUri ? (
               <View style={{ marginRight: 16 }}>
                 <Image source={{ uri: companyLogoUri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee' }} resizeMode="contain" />

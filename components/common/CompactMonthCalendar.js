@@ -112,8 +112,36 @@ function eventStyleForStatus(status, colors) {
  * - onPressDay: (iso, dayItems) => void (optional)
  * - colors: shared COLORS object
  * - maxWidth: number (default 980)
+ *
+ * Optional visual overrides (backwards compatible):
+ * - typography: object with optional Text style overrides
+ *   - headerTitleStyle
+ *   - navTextStyle
+ *   - navTodayTextStyle
+ *   - monthLabelStyle
+ *   - weekdayLabelStyle
+ *   - dayNumberStyle
+ *   - plusTextStyle
+ *   - eventTitleStyle
+ *   - eventTypeStyle
+ *   - moreTextStyle
+ *   - viewModeTextStyle
+ * - options: object
+ *   - todayDayNumberUsesAccentText (default true)
+ *   - neutralEventText (default false)
  */
-export default function CompactMonthCalendar({ items, todayIso, onPressItem, selectedIso, flashIso, onPressDay, colors, maxWidth = 980 }) {
+export default function CompactMonthCalendar({
+  items,
+  todayIso,
+  onPressItem,
+  selectedIso,
+  flashIso,
+  onPressDay,
+  colors,
+  maxWidth = 980,
+  typography,
+  options,
+}) {
   const byDate = React.useMemo(() => {
     const safeItems = Array.isArray(items) ? items : [];
     const out = {};
@@ -175,6 +203,9 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
 
   const cellMinHeight = Platform.OS === 'web' ? 80 : 76;
 
+  const todayDayNumberUsesAccentText = options?.todayDayNumberUsesAccentText !== false;
+  const neutralEventText = options?.neutralEventText === true;
+
   const selectedIsoSafe = isValidIsoDate(selectedIso) ? String(selectedIso) : '';
   const flashIsoSafe = isValidIsoDate(flashIso) ? String(flashIso) : '';
   const focusedWeekStart = React.useMemo(() => {
@@ -189,7 +220,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
   return (
     <View style={{ marginTop: 14, width: '100%', maxWidth: maxWidth, alignSelf: 'flex-start' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-        <Text style={{ fontSize: 13, fontWeight: '900', color: (colors?.text || '#0F172A') }}>Kalender</Text>
+        <Text style={[{ fontSize: 13, fontWeight: '900', color: (colors?.text || '#0F172A') }, typography?.headerTitleStyle]}>Kalender</Text>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Pressable
@@ -207,7 +238,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
             })}
           >
             <Ionicons name="chevron-back" size={16} color={colors?.textSubtle || '#64748B'} />
-            <Text style={{ fontSize: 12, fontWeight: '800', color: colors?.textSubtle || '#64748B' }}>Föregående</Text>
+            <Text style={[{ fontSize: 12, fontWeight: '800', color: colors?.textSubtle || '#64748B' }, typography?.navTextStyle]}>Föregående</Text>
           </Pressable>
 
           <Pressable
@@ -221,7 +252,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
               backgroundColor: hovered || pressed ? '#F1F5F9' : '#fff',
             })}
           >
-            <Text style={{ fontSize: 12, fontWeight: '900', color: colors?.textSubtle || '#64748B' }}>Idag</Text>
+            <Text style={[{ fontSize: 12, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.navTodayTextStyle, typography?.navTextStyle]}>Idag</Text>
           </Pressable>
 
           <Pressable
@@ -238,7 +269,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
               gap: 6,
             })}
           >
-            <Text style={{ fontSize: 12, fontWeight: '800', color: colors?.textSubtle || '#64748B' }}>Nästa</Text>
+            <Text style={[{ fontSize: 12, fontWeight: '800', color: colors?.textSubtle || '#64748B' }, typography?.navTextStyle]}>Nästa</Text>
             <Ionicons name="chevron-forward" size={16} color={colors?.textSubtle || '#64748B'} />
           </Pressable>
         </View>
@@ -253,8 +284,8 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
         }}
       >
         <View style={{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#EEF2F7', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: 13, fontWeight: '900', color: colors?.text || '#0F172A' }}>{label}</Text>
-          <Text style={{ fontSize: 12, color: colors?.textSubtle || '#64748B' }}>Månadsvy</Text>
+          <Text style={[{ fontSize: 13, fontWeight: '900', color: colors?.text || '#0F172A' }, typography?.monthLabelStyle]}>{label}</Text>
+          <Text style={[{ fontSize: 12, color: colors?.textSubtle || '#64748B' }, typography?.viewModeTextStyle]}>Månadsvy</Text>
         </View>
 
         {/* Weekday header */}
@@ -270,7 +301,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
         >
           {weekDayLabels.map((w) => (
             <View key={w} style={{ width: '14.2857%' }}>
-              <Text style={{ fontSize: 11, fontWeight: '900', color: colors?.textSubtle || '#64748B' }}>{w}</Text>
+              <Text style={[{ fontSize: 11, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.weekdayLabelStyle]}>{w}</Text>
             </View>
           ))}
         </View>
@@ -304,7 +335,9 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
 
             const dayTextColor = !cell.inMonth
               ? '#94A3B8'
-              : (isToday ? (colors?.blue || '#2563EB') : (colors?.text || '#0F172A'));
+              : (isToday
+                ? (todayDayNumberUsesAccentText ? (colors?.blue || '#2563EB') : (colors?.text || '#0F172A'))
+                : (colors?.text || '#0F172A'));
 
             return (
               <View
@@ -342,11 +375,14 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 4 }}>
                     <Text
-                      style={{
-                        fontSize: 10,
-                        fontWeight: '900',
-                        color: dayTextColor,
-                      }}
+                      style={[
+                        {
+                          fontSize: 10,
+                          fontWeight: '900',
+                          color: dayTextColor,
+                        },
+                        typography?.dayNumberStyle,
+                      ]}
                     >
                       {dayNum}
                     </Text>
@@ -360,7 +396,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
                           />
                         ))}
                         {list.length > 3 ? (
-                          <Text style={{ fontSize: 9, fontWeight: '900', color: colors?.textSubtle || '#64748B' }}>+</Text>
+                          <Text style={[{ fontSize: 9, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.plusTextStyle]}>+</Text>
                         ) : null}
                       </View>
                     ) : null}
@@ -370,6 +406,8 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
                     {visible.map((it) => {
                       const s = statusForIso(iso, todayIso);
                       const st = eventStyleForStatus(s, colors);
+                      const eventTitleColor = neutralEventText ? (colors?.text || '#0F172A') : st.text;
+                      const eventTypeColor = neutralEventText ? (colors?.textSubtle || '#64748B') : st.type;
                       const title = String(it?.title || '—');
                       const type = String(it?.type || '').trim();
                       return (
@@ -389,11 +427,11 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
                             marginBottom: 3,
                           })}
                         >
-                          <Text style={{ fontSize: 9, fontWeight: '900', color: st.text }} numberOfLines={1}>
+                          <Text style={[{ fontSize: 9, fontWeight: '900', color: eventTitleColor }, typography?.eventTitleStyle]} numberOfLines={1}>
                             {title}
                           </Text>
                           {!type ? null : (
-                            <Text style={{ fontSize: 8, fontWeight: '800', color: st.type }} numberOfLines={1}>
+                            <Text style={[{ fontSize: 8, fontWeight: '800', color: eventTypeColor }, typography?.eventTypeStyle]} numberOfLines={1}>
                               {type}
                             </Text>
                           )}
@@ -402,7 +440,7 @@ export default function CompactMonthCalendar({ items, todayIso, onPressItem, sel
                     })}
 
                     {more > 0 ? (
-                      <Text style={{ fontSize: 10, fontWeight: '900', color: colors?.textSubtle || '#64748B' }} numberOfLines={1}>
+                      <Text style={[{ fontSize: 10, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.moreTextStyle]} numberOfLines={1}>
                         +{more} till
                       </Text>
                     ) : null}

@@ -52,6 +52,9 @@ export default function ProjectTree({
   compact = false,
   hideFolderIcons = false,
   staticRootHeader = false,
+  activePhaseSection = null,
+  activeOverviewPrefix = null,
+  activePhaseSectionPrefix = null,
 }) {
   const {
     hierarchy: hierarchyWithFunctions,
@@ -343,11 +346,26 @@ export default function ProjectTree({
 
                         const isOverviewPage = isOverviewPageNode(folderNode, parentNode);
 
+                        const isPhaseSectionFolder =
+                          parentNode?.type === 'project' &&
+                          Boolean(getTwoDigitPrefix(folderNode?.name));
+
+                        const isActivePhaseSectionFolder =
+                          isPhaseSectionFolder &&
+                          Boolean(activePhaseSectionPrefix) &&
+                          getTwoDigitPrefix(folderNode?.name) === String(activePhaseSectionPrefix);
+
+                        const isActiveOverviewPage =
+                          isOverviewPage &&
+                          String(activePhaseSection || '') === 'oversikt' &&
+                          Boolean(activeOverviewPrefix) &&
+                          getTwoDigitPrefix(folderNode?.name) === String(activeOverviewPrefix);
+
                         const subSpinAnim = subChevronSpinAnim[folderNode.id];
                         const isSubExpanded = folderNode.expanded || false;
 
                         const handlePressFolder =
-                          isOverviewPage && typeof onPressFolder === 'function'
+                          (isOverviewPage || isPhaseSectionFolder) && typeof onPressFolder === 'function'
                             ? () => {
                                 onPressFolder(folderNode, { parent: parentNode });
                               }
@@ -362,6 +380,7 @@ export default function ProjectTree({
                               compact={compact}
                               hideFolderIcon={hideFolderIcons}
                               reserveChevronSpace={isOverviewPage}
+                              isActive={isActiveOverviewPage || isActivePhaseSectionFolder}
                               onPress={handlePressFolder}
                               onToggle={
                                 isOverviewPage

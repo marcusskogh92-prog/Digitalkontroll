@@ -31,7 +31,7 @@ const ITEM_COMPONENTS = {
   risker: RiskerView
 };
 
-export default function OversiktSection({ projectId, companyId, project, activeItem, navigation }) {
+export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, hidePageHeader = false }) {
   // If no activeItem is selected, show summary view
   if (!activeItem) {
     return (
@@ -61,6 +61,7 @@ export default function OversiktSection({ projectId, companyId, project, activeI
         projectId={projectId}
         companyId={companyId}
         project={project}
+        hidePageHeader={hidePageHeader}
       />
     </View>
   );

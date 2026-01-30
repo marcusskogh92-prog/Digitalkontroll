@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { auth, fetchCompanies } from '../firebase';
 
 export default function AdminSidebar({ 
@@ -23,6 +24,9 @@ export default function AdminSidebar({
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
+  const [companiesExpanded, setCompaniesExpanded] = useState(true);
+  const [adminExpanded, setAdminExpanded] = useState(true);
+  const [hoveredKey, setHoveredKey] = useState(null);
 
   // Load admin status
   useEffect(() => {
@@ -106,9 +110,24 @@ export default function AdminSidebar({
       { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#0f172a', screen: 'ContactRegistry' },
       { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#43A047', screen: 'Suppliers' },
       { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#FB8C00', screen: 'Customers' },
-      { key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: 'folder-outline', color: '#7B1FA2', screen: 'ManageSharePointNavigation' },
+      { key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageSharePointNavigation' },
     );
   }
+
+  const normalizeCompanyLabel = (company) => String(company?.name || company?.id || '').trim();
+  const isMsByggsystem = (company) => {
+    const label = normalizeCompanyLabel(company);
+    return label === 'MS Byggsystem' || String(company?.id || '').trim() === 'MS Byggsystem';
+  };
+
+  const getSortedCompanies = () => {
+    const list = Array.isArray(companies) ? [...companies] : [];
+    const pinned = list.filter(isMsByggsystem);
+    const rest = list.filter(c => !isMsByggsystem(c));
+    rest.sort((a, b) => normalizeCompanyLabel(a).localeCompare(normalizeCompanyLabel(b), 'sv'));
+    // If there are multiple MS Byggsystem entries for some reason, keep their relative order.
+    return [...pinned, ...rest];
+  };
 
   const handleMenuClick = async (item) => {
     try {
@@ -198,6 +217,8 @@ export default function AdminSidebar({
               setSpinHome(n => n + 1);
               handleGoHome();
             }}
+            onMouseEnter={() => setHoveredKey('top|home')}
+            onMouseLeave={() => setHoveredKey(null)}
             style={{ 
               padding: 6, 
               borderRadius: 8, 
@@ -210,7 +231,7 @@ export default function AdminSidebar({
             <Ionicons
               name="home-outline"
               size={18}
-              color="#1976D2"
+              color={hoveredKey === 'top|home' ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
               style={{
                 transform: `rotate(${spinHome * 360}deg)`,
                 transition: 'transform 0.4s ease'
@@ -223,6 +244,8 @@ export default function AdminSidebar({
               setSpinRefresh(n => n + 1);
               handleHardRefresh();
             }}
+            onMouseEnter={() => setHoveredKey('top|refresh')}
+            onMouseLeave={() => setHoveredKey(null)}
             style={{ 
               padding: 6, 
               borderRadius: 8, 
@@ -235,7 +258,7 @@ export default function AdminSidebar({
             <Ionicons
               name="refresh"
               size={18}
-              color="#1976D2"
+              color={hoveredKey === 'top|refresh' ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
               style={{
                 transform: `rotate(${spinRefresh * 360}deg)`,
                 transition: 'transform 0.4s ease'
@@ -248,120 +271,175 @@ export default function AdminSidebar({
           {/* Company Selector for Superadmin - Show first */}
           {isSuperadmin && showCompanySelector && (
             <div style={{ padding: 12, borderBottom: '1px solid #e0e0e0', marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: '600', color: '#666', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Företag
+              <div
+                onClick={() => {
+                  // Accordion only needed for superadmin
+                  setCompaniesExpanded(v => !v);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  padding: '4px 2px',
+                  marginBottom: 8,
+                }}
+                role="button"
+                aria-label="Växla Företag"
+              >
+                <div style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                  Företag
+                </div>
+                <Ionicons name={companiesExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
               </div>
-              {loadingCompanies ? (
-                <div style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
-                  Laddar företag...
-                </div>
-              ) : companies.length === 0 ? (
-                <div style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
-                  Inga företag
-                </div>
-              ) : (
-                companies.map(company => {
-                  const isSelected = selectedCompanyId && String(company.id || '').trim() === String(selectedCompanyId || '').trim();
-                  return (
-                    <div
-                      key={company.id}
-                      onClick={() => handleCompanySelect(company)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '8px 12px',
-                        marginBottom: 4,
-                        borderRadius: 6,
-                        backgroundColor: isSelected ? '#DBEAFE' : 'transparent',
-                        cursor: 'pointer',
-                        borderLeft: isSelected ? '3px solid #1D4ED8' : '3px solid transparent',
-                        transition: 'background-color 0.15s',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = '#EFF6FF';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-                      }}
-                    >
-                      <Ionicons 
-                        name="business" 
-                        size={16} 
-                        color={isSelected ? '#1D4ED8' : '#666'} 
-                        style={{ marginRight: 8 }}
-                      />
-                      <span style={{ 
-                        fontSize: 13, 
-                        fontWeight: isSelected ? '600' : '400',
-                        color: isSelected ? '#1D4ED8' : '#222',
-                      }}>
-                        {company.name || company.id}
-                      </span>
+
+              {companiesExpanded && (
+                <>
+                  {loadingCompanies ? (
+                    <div style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
+                      Laddar företag...
                     </div>
-                  );
-                })
-              )}
-              
-              {/* Add New Company Button */}
-              {isSuperadmin && (
-                <div
-                  onClick={() => {
-                    // Navigate to ManageCompany screen with createNew param
-                    navigation.navigate('ManageCompany', { createNew: true });
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '10px 12px',
-                    marginTop: 8,
-                    borderRadius: 8,
-                    backgroundColor: '#1976D2',
-                    cursor: 'pointer',
-                    border: '1px solid #1565C0',
-                    transition: 'background-color 0.15s, box-shadow 0.15s, transform 0.05s',
-                    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.15)',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#1565C0';
-                    e.currentTarget.style.boxShadow = '0 2px 4px rgba(15, 23, 42, 0.2)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#1976D2';
-                    e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.15)';
-                  }}
-                  onMouseDown={(e) => {
-                    e.currentTarget.style.transform = 'translateY(1px)';
-                  }}
-                  onMouseUp={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                  }}
-                >
-                  <Ionicons 
-                    name="add" 
-                    size={16} 
-                    color="#fff" 
-                    style={{ marginRight: 6 }}
-                  />
-                  <span style={{ 
-                    fontSize: 13, 
-                    fontWeight: '600',
-                    color: '#fff',
-                  }}>
-                    Lägg till nytt företag
-                  </span>
-                </div>
+                  ) : companies.length === 0 ? (
+                    <div style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
+                      Inga företag
+                    </div>
+                  ) : (
+                    (() => {
+                      const sorted = getSortedCompanies();
+                      const pinned = sorted.find(isMsByggsystem);
+                      const rest = sorted.filter(c => !isMsByggsystem(c));
+
+                      const renderCompanyRow = (company) => {
+                        const isSelected = selectedCompanyId && String(company.id || '').trim() === String(selectedCompanyId || '').trim();
+                        const showStar = isMsByggsystem(company);
+                        const hoverKey = `company|${String(company.id || '')}`;
+                        const isHovered = hoveredKey === hoverKey;
+                        return (
+                          <div
+                            key={company.id}
+                            onClick={() => handleCompanySelect(company)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              marginBottom: 4,
+                              borderRadius: 6,
+                              backgroundColor: isSelected ? LEFT_NAV.activeBg : isHovered ? LEFT_NAV.hoverBg : 'transparent',
+                              cursor: 'pointer',
+                              borderLeft: isSelected ? `3px solid ${LEFT_NAV.activeBorder}` : '3px solid transparent',
+                              transition: 'background-color 0.15s',
+                            }}
+                            onMouseEnter={() => setHoveredKey(hoverKey)}
+                            onMouseLeave={() => setHoveredKey(null)}
+                          >
+                            <Ionicons
+                              name="business"
+                              size={16}
+                              color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                              style={{ marginRight: 8 }}
+                            />
+                            <span
+                              style={{
+                                fontSize: 13,
+                                fontWeight: isSelected ? '600' : '400',
+                                color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
+                              }}
+                            >
+                              {company.name || company.id}
+                            </span>
+                            {showStar && (
+                              <Ionicons
+                                name="star"
+                                size={14}
+                                color={isSelected ? LEFT_NAV.activeBorder : '#F59E0B'}
+                                style={{ marginLeft: 8 }}
+                              />
+                            )}
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <>
+                          {pinned ? renderCompanyRow(pinned) : null}
+
+                          {/* Add company as a row under MS Byggsystem */}
+                          <div
+                            onClick={() => {
+                              navigation.navigate('ManageCompany', { createNew: true });
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              marginTop: 2,
+                              marginBottom: 12,
+                              borderRadius: 6,
+                              backgroundColor: '#fff',
+                              cursor: 'pointer',
+                              border: '1px dashed #CBD5E1',
+                              transition: 'background-color 0.15s',
+                            }}
+                            onMouseEnter={(e) => {
+                              setHoveredKey('company|add');
+                              try { e.currentTarget.style.backgroundColor = '#fff'; } catch (_e) {}
+                            }}
+                            onMouseLeave={(e) => {
+                              setHoveredKey(null);
+                              try { e.currentTarget.style.backgroundColor = '#fff'; } catch (_e) {}
+                            }}
+                            role="button"
+                            aria-label="Lägg till företag"
+                          >
+                            <Ionicons name="add-circle-outline" size={16} color={hoveredKey === 'company|add' ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted} style={{ marginRight: 8 }} />
+                            <span style={{ fontSize: 13, fontWeight: '400', color: hoveredKey === 'company|add' ? LEFT_NAV.hoverText : LEFT_NAV.textMuted }}>
+                              Lägg till företag
+                            </span>
+                          </div>
+
+                          {rest.map(renderCompanyRow)}
+                        </>
+                      );
+                    })()
+                  )}
+                </>
               )}
             </div>
           )}
 
           {/* Admin Menu Items - Show after company selector */}
           <div style={{ padding: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: '600', color: '#666', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Admin
+            <div
+              onClick={() => {
+                if (isSuperadmin) setAdminExpanded(v => !v);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                cursor: isSuperadmin ? 'pointer' : 'default',
+                userSelect: 'none',
+                padding: '4px 2px',
+                marginBottom: 8,
+              }}
+              role={isSuperadmin ? 'button' : undefined}
+              aria-label="Växla Admin"
+            >
+              <div style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Admin
+              </div>
+              {isSuperadmin ? (
+                <Ionicons name={adminExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+              ) : null}
             </div>
-            {adminMenuItems.map(item => {
+
+            {(adminExpanded || !isSuperadmin) && adminMenuItems.map(item => {
               const isActive = currentScreen === item.key;
+              const hoverKey = `admin|${item.key}`;
+              const isHovered = hoveredKey === hoverKey;
               return (
                 <div
                   key={item.key}
@@ -372,28 +450,24 @@ export default function AdminSidebar({
                     padding: '10px 12px',
                     marginBottom: 4,
                     borderRadius: 6,
-                    backgroundColor: isActive ? '#e3f2fd' : 'transparent',
+                    backgroundColor: isActive ? LEFT_NAV.activeBg : isHovered ? LEFT_NAV.hoverBg : 'transparent',
                     cursor: 'pointer',
-                    borderLeft: isActive ? `3px solid ${item.color}` : '3px solid transparent',
+                    borderLeft: isActive ? `3px solid ${LEFT_NAV.activeBorder}` : '3px solid transparent',
                     transition: 'background-color 0.15s',
                   }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = '#f0f0f0';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
+                  onMouseEnter={() => setHoveredKey(hoverKey)}
+                  onMouseLeave={() => setHoveredKey(null)}
                 >
-                  <Ionicons 
-                    name={item.icon} 
-                    size={18} 
-                    color={isActive ? item.color : '#666'} 
+                  <Ionicons
+                    name={item.icon}
+                    size={18}
+                    color={isActive ? LEFT_NAV.iconDefault : isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
                     style={{ marginRight: 10 }}
                   />
-                  <span style={{ 
-                    fontSize: 14, 
+                  <span style={{
+                    fontSize: 14,
                     fontWeight: isActive ? '600' : '400',
-                    color: isActive ? item.color : '#222',
+                    color: isActive ? LEFT_NAV.textDefault : isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
                   }}>
                     {item.label}
                   </span>
@@ -430,7 +504,7 @@ export default function AdminSidebar({
           <Ionicons
             name="home-outline"
             size={18}
-            color="#1976D2"
+            color={LEFT_NAV.iconMuted}
             style={{
               transform: [{ rotate: `${spinHome * 360}deg` }],
             }}
@@ -447,7 +521,7 @@ export default function AdminSidebar({
           <Ionicons
             name="refresh"
             size={18}
-            color="#1976D2"
+            color={LEFT_NAV.iconMuted}
             style={{
               transform: [{ rotate: `${spinRefresh * 360}deg` }],
             }}
@@ -459,96 +533,139 @@ export default function AdminSidebar({
         {/* Company Selector for Superadmin - Show first */}
         {isSuperadmin && showCompanySelector && (
           <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0', marginBottom: 8 }}>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#666', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Företag
-            </Text>
-            {loadingCompanies ? (
-              <Text style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
-                Laddar företag...
+            <TouchableOpacity
+              onPress={() => setCompaniesExpanded(v => !v)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingVertical: 4,
+                paddingHorizontal: 2,
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Företag
               </Text>
-            ) : companies.length === 0 ? (
-              <Text style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
-                Inga företag
-              </Text>
-            ) : (
-              companies.map(company => {
-                const isSelected = selectedCompanyId && String(company.id || '').trim() === String(selectedCompanyId || '').trim();
-                return (
-                  <TouchableOpacity
-                    key={company.id}
-                    onPress={() => handleCompanySelect(company)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        padding: 8,
-                        marginBottom: 4,
-                        borderRadius: 6,
-                        backgroundColor: isSelected ? '#DBEAFE' : 'transparent',
-                        borderLeftWidth: 3,
-                        borderLeftColor: isSelected ? '#1D4ED8' : 'transparent',
-                      }}
-                  >
-                    <Ionicons 
-                      name="business" 
-                        size={16} 
-                        color={isSelected ? '#1D4ED8' : '#666'} 
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text style={{ 
-                      fontSize: 13, 
-                        fontWeight: isSelected ? '600' : '400',
-                        color: isSelected ? '#1D4ED8' : '#222',
-                    }}>
-                      {company.name || company.id}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-            
-            {/* Add New Company Button */}
-            {isSuperadmin && (
-              <TouchableOpacity
-                onPress={() => {
-                  // Navigate to ManageCompany screen with createNew param
-                  navigation.navigate('ManageCompany', { createNew: true });
-                }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 10,
-                  marginTop: 8,
-                  borderRadius: 8,
-                  backgroundColor: '#1976D2',
-                  borderWidth: 1,
-                  borderColor: '#1565C0',
-                }}
-              >
-                <Ionicons 
-                  name="add" 
-                  size={16} 
-                  color="#fff" 
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={{ 
-                  fontSize: 13, 
-                  fontWeight: '600',
-                  color: '#fff',
-                }}>
-                  Lägg till nytt företag
-                </Text>
-              </TouchableOpacity>
+              <Ionicons name={companiesExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+            </TouchableOpacity>
+
+            {companiesExpanded && (
+              <>
+                {loadingCompanies ? (
+                  <Text style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
+                    Laddar företag...
+                  </Text>
+                ) : companies.length === 0 ? (
+                  <Text style={{ padding: 12, textAlign: 'center', color: '#888', fontSize: 13 }}>
+                    Inga företag
+                  </Text>
+                ) : (
+                  (() => {
+                    const sorted = getSortedCompanies();
+                    const pinned = sorted.find(isMsByggsystem);
+                    const rest = sorted.filter(c => !isMsByggsystem(c));
+
+                    const renderCompanyRow = (company) => {
+                      const isSelected = selectedCompanyId && String(company.id || '').trim() === String(selectedCompanyId || '').trim();
+                      const showStar = isMsByggsystem(company);
+                      return (
+                        <TouchableOpacity
+                          key={company.id}
+                          onPress={() => handleCompanySelect(company)}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            padding: 8,
+                            marginBottom: 4,
+                            borderRadius: 6,
+                            backgroundColor: isSelected ? LEFT_NAV.activeBg : 'transparent',
+                            borderLeftWidth: 3,
+                            borderLeftColor: isSelected ? LEFT_NAV.activeBorder : 'transparent',
+                          }}
+                        >
+                          <Ionicons
+                            name="business"
+                            size={16}
+                            color={LEFT_NAV.iconMuted}
+                            style={{ marginRight: 8 }}
+                          />
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: isSelected ? '600' : '400',
+                              color: LEFT_NAV.textDefault,
+                            }}
+                          >
+                            {company.name || company.id}
+                          </Text>
+                          {showStar && (
+                            <Ionicons name="star" size={14} color="#F59E0B" style={{ marginLeft: 8 }} />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    };
+
+                    return (
+                      <>
+                        {pinned ? renderCompanyRow(pinned) : null}
+
+                        <TouchableOpacity
+                          onPress={() => navigation.navigate('ManageCompany', { createNew: true })}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            padding: 8,
+                            marginTop: 2,
+                            marginBottom: 12,
+                            borderRadius: 6,
+                            backgroundColor: '#fff',
+                            borderWidth: 1,
+                            borderStyle: 'dashed',
+                            borderColor: '#CBD5E1',
+                          }}
+                        >
+                          <Ionicons name="add-circle-outline" size={16} color={LEFT_NAV.iconMuted} style={{ marginRight: 8 }} />
+                          <Text style={{ fontSize: 13, fontWeight: '400', color: LEFT_NAV.textMuted }}>
+                            Lägg till företag
+                          </Text>
+                        </TouchableOpacity>
+
+                        {rest.map(renderCompanyRow)}
+                      </>
+                    );
+                  })()
+                )}
+              </>
             )}
           </View>
         )}
 
         {/* Admin Menu Items - Show after company selector */}
         <View style={{ padding: 12 }}>
-          <Text style={{ fontSize: 12, fontWeight: '600', color: '#666', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Admin
-          </Text>
-          {adminMenuItems.map(item => {
+          <TouchableOpacity
+            onPress={() => {
+              if (isSuperadmin) setAdminExpanded(v => !v);
+            }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 4,
+              paddingHorizontal: 2,
+              marginBottom: 8,
+            }}
+            disabled={!isSuperadmin}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+              Admin
+            </Text>
+            {isSuperadmin ? (
+              <Ionicons name={adminExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+            ) : null}
+          </TouchableOpacity>
+
+          {(adminExpanded || !isSuperadmin) && adminMenuItems.map(item => {
             const isActive = currentScreen === item.key;
             return (
               <TouchableOpacity
@@ -560,21 +677,21 @@ export default function AdminSidebar({
                   padding: 10,
                   marginBottom: 4,
                   borderRadius: 6,
-                  backgroundColor: isActive ? '#e3f2fd' : 'transparent',
+                  backgroundColor: isActive ? LEFT_NAV.activeBg : 'transparent',
                   borderLeftWidth: 3,
-                  borderLeftColor: isActive ? item.color : 'transparent',
+                  borderLeftColor: isActive ? LEFT_NAV.activeBorder : 'transparent',
                 }}
               >
-                <Ionicons 
-                  name={item.icon} 
-                  size={18} 
-                  color={isActive ? item.color : '#666'} 
+                <Ionicons
+                  name={item.icon}
+                  size={18}
+                  color={LEFT_NAV.iconMuted}
                   style={{ marginRight: 10 }}
                 />
-                <Text style={{ 
-                  fontSize: 14, 
+                <Text style={{
+                  fontSize: 14,
                   fontWeight: isActive ? '600' : '400',
-                  color: isActive ? item.color : '#222',
+                  color: LEFT_NAV.textDefault,
                 }}>
                   {item.label}
                 </Text>

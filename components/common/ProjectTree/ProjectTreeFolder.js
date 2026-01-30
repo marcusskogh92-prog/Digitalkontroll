@@ -5,10 +5,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
 import { DEFAULT_FOLDER_COLOR, getFolderColor } from './folderColors';
 
 const PRIMARY_BLUE = '#1976D2';
 const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
+const ACTIVE_BG = 'rgba(25, 118, 210, 0.14)';
 
 export default function ProjectTreeFolder({
   folder,
@@ -26,10 +28,12 @@ export default function ProjectTreeFolder({
   hideFolderIcon = false,
   reserveChevronSpace = false,
   staticHeader = false,
+  isActive = false,
 }) {
   const canToggle = typeof onToggle === 'function' && !staticHeader;
   const canPress = canToggle || typeof onPress === 'function';
   const isMainFolder = level === 0;
+  const displayName = stripNumberPrefixForDisplay(folder?.name);
   const paddingLeft = isMainFolder ? 0 : 12 * Math.max(1, level);
   const fontSize = compact ? (isMainFolder ? 14 : 13) : (isMainFolder ? 16 : 15);
   const fontWeight = isMainFolder ? 'bold' : '600';
@@ -47,7 +51,7 @@ export default function ProjectTreeFolder({
   const renderFolderIcon = () => {
     if (hideFolderIcon) return null;
 
-    const iconColor = isHovered && canPress ? PRIMARY_BLUE : folderColor.color;
+    const iconColor = (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : folderColor.color;
 
     const iconElement = (
       <Ionicons
@@ -111,7 +115,7 @@ export default function ProjectTreeFolder({
         <Ionicons
           name={isExpanded ? 'chevron-down' : 'chevron-forward'}
           size={chevronSize}
-          color={isHovered && canPress ? PRIMARY_BLUE : '#666'}
+          color={(isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#666'}
         />
       </View>
     );
@@ -127,6 +131,9 @@ export default function ProjectTreeFolder({
   const handlePress = () => {
     if (canToggle) {
       handleToggle();
+      if (typeof onPress === 'function') {
+        onPress(folder);
+      }
       return;
     }
     if (typeof onPress === 'function') {
@@ -144,7 +151,7 @@ export default function ProjectTreeFolder({
       paddingVertical: compact ? 5 : 8,
       paddingHorizontal: 8,
       borderRadius: 8,
-      backgroundColor: canPress && isHovered ? HOVER_BG : 'transparent',
+      backgroundColor: isActive ? ACTIVE_BG : (canPress && isHovered ? HOVER_BG : 'transparent'),
       ...(Platform.OS === 'web' ? {
         cursor: canPress ? 'pointer' : 'default',
         transition: 'background-color 0.15s ease',
@@ -191,10 +198,10 @@ export default function ProjectTreeFolder({
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: isHovered && canPress ? PRIMARY_BLUE : '#222',
+                color: (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#222',
               }}
             >
-              {folder.name}
+              {displayName}
             </Text>
           </div>
           
@@ -233,7 +240,7 @@ export default function ProjectTreeFolder({
                 color: '#222',
               }}
             >
-              {folder.name}
+              {displayName}
             </Text>
           </TouchableOpacity>
         ) : (
@@ -249,7 +256,7 @@ export default function ProjectTreeFolder({
                 color: '#222',
               }}
             >
-              {folder.name}
+              {displayName}
             </Text>
           </View>
         )}
@@ -275,7 +282,7 @@ export default function ProjectTreeFolder({
     paddingVertical: compact ? 4 : 6,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: canPress && isHovered ? HOVER_BG : 'transparent',
+    backgroundColor: isActive ? ACTIVE_BG : (canPress && isHovered ? HOVER_BG : 'transparent'),
     ...(Platform.OS === 'web' ? {
       cursor: canPress ? 'pointer' : 'default',
       transition: 'background-color 0.15s ease',
@@ -323,10 +330,10 @@ export default function ProjectTreeFolder({
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: isHovered && canPress ? PRIMARY_BLUE : '#222',
+                color: (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#222',
               }}
             >
-              {folder.name}
+              {displayName}
             </Text>
           </div>
           
@@ -364,7 +371,7 @@ export default function ProjectTreeFolder({
             color: '#222',
           }}
         >
-          {folder.name}
+          {displayName}
         </Text>
         
         {isExpanded && showAddButton && onAddChild && (

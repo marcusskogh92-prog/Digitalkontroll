@@ -9,6 +9,7 @@ import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from 'r
 
 import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
+import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
 function confirmWebOrNative(message) {
@@ -33,7 +34,7 @@ function buildExistingMemberKeys(group) {
   return out;
 }
 
-export default function OrganisationRollerView({ projectId, companyId, project }) {
+export default function OrganisationRollerView({ projectId, companyId, project, hidePageHeader = false }) {
   const COLORS = {
     blue: '#1976D2',
     blueHover: '#155FB5',
@@ -68,7 +69,6 @@ export default function OrganisationRollerView({ projectId, companyId, project }
   const existingMemberKeys = useMemo(() => buildExistingMemberKeys(activeGroup), [activeGroup]);
 
   const hasContext = String(companyId || '').trim() && String(projectId || '').trim();
-  const projectLabel = `${String(project?.id || '').trim()} ${String(project?.name || '').trim()}`.trim();
 
   // Default: all groups open on first load.
   useEffect(() => {
@@ -105,21 +105,18 @@ export default function OrganisationRollerView({ projectId, companyId, project }
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ padding: 18, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-        <Ionicons name="people-outline" size={22} color={COLORS.neutral} style={{ marginRight: 10 }} />
-        <View style={{ minWidth: 0, flex: 1 }}>
-          <Text style={{ fontSize: 22, fontWeight: '900', color: COLORS.text }} numberOfLines={1}>
-            Organisation och roller
-          </Text>
-          {projectLabel ? (
-            <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginTop: 2 }} numberOfLines={1}>
-              {projectLabel}
+      {!hidePageHeader ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+          <Ionicons name="people-outline" size={22} color={COLORS.neutral} style={{ marginRight: 10 }} />
+          <View style={{ minWidth: 0, flex: 1 }}>
+            <Text style={[PROJECT_TYPOGRAPHY.viewTitle, { color: COLORS.text }]} numberOfLines={1}>
+              Organisation och roller
             </Text>
-          ) : null}
+          </View>
         </View>
-      </View>
+      ) : null}
 
-      <Text style={{ fontSize: 14, color: COLORS.textMuted, marginBottom: 14 }}>
+      <Text style={[PROJECT_TYPOGRAPHY.introText, { color: COLORS.textMuted, marginBottom: 14 }]}>
         Skapa egna grupper och lägg till personer från interna användare eller kontaktregistret. Roller är fria texter per projekt.
       </Text>
 
@@ -136,7 +133,7 @@ export default function OrganisationRollerView({ projectId, companyId, project }
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 10 }}>
-        <Text style={{ fontSize: 13, fontWeight: '900', color: COLORS.text }}>
+        <Text style={[PROJECT_TYPOGRAPHY.sectionHeading, { color: COLORS.text }]}>
           Grupper ({Array.isArray(groups) ? groups.length : 0})
         </Text>
         <Pressable
@@ -157,7 +154,7 @@ export default function OrganisationRollerView({ projectId, companyId, project }
           }}
         >
           <Ionicons name="add-outline" size={16} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>Lägg till grupp</Text>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Lägg till grupp</Text>
         </Pressable>
       </View>
 
