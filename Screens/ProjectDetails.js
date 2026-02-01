@@ -43,7 +43,8 @@ import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import ProjectDocumentsView from '../components/common/ProjectDocumentsView';
 import ProjectInternalNavigation from '../components/common/ProjectInternalNavigation';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
-import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchControlsForProject, fetchDraftControlsForProject } from '../components/firebase';
+import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchCompanyProject, fetchControlsForProject, fetchDraftControlsForProject, hasDuplicateProjectNumber, patchCompanyProject, updateSharePointProjectPropertiesFromFirestoreProject } from '../components/firebase';
+import { enqueueFsExcelSync } from '../features/project-phases/phases/kalkylskede/services/fragaSvarExcelSyncQueue';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
 // so web builds don't attempt to resolve native-only exports. Load dynamically
@@ -69,8 +70,21 @@ function normalizeControl(obj) {
 function normalizeProject(p) {
   if (!p || typeof p !== 'object') return p;
   const formatted = formatPersonName(p.ansvarig || '');
-  if (!formatted || formatted === p.ansvarig) return p;
-  return { ...p, ansvarig: formatted };
+
+  const safeText = (s) => String(s || '').trim();
+  const pn = safeText(p.projectNumber) || safeText(p.number) || safeText(p.id) || '';
+  const pnm = safeText(p.projectName) || safeText(p.name) || '';
+  const fullName = safeText(p.fullName) || (pn && pnm ? `${pn} - ${pnm}` : (pnm || pn || ''));
+
+  const next = {
+    ...p,
+    projectNumber: pn || null,
+    projectName: pnm || null,
+    fullName,
+  };
+
+  if (!formatted || formatted === p.ansvarig) return next;
+  return { ...next, ansvarig: formatted };
 }
 
 // Persist a draft object by merging with existing matching draft(s) in AsyncStorage
@@ -586,6 +600,42 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   
   // Local state for project that can be updated when project ID changes
   const [project, setProject] = useState(initialProject);
+
+  // Hydrate full project from Firestore on open (important dates live on the project doc).
+  useEffect(() => {
+    const cid = String(companyId || '').trim();
+    const pid = String(project?.id || '').trim();
+    if (!cid || !pid) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const full = await fetchCompanyProject(cid, pid);
+        if (cancelled) return;
+        if (!full || typeof full !== 'object') return;
+
+        const merged = normalizeProject({ ...(project || {}), ...full });
+        setProject(merged);
+
+        try {
+          emitProjectUpdated(merged);
+        } catch (_e) {}
+
+        try {
+          if (typeof navigation?.setParams === 'function') {
+            navigation.setParams({ project: merged });
+          }
+        } catch (_e) {}
+      } catch (e) {
+        console.warn('[ProjectDetails] Could not hydrate project from Firestore:', e?.message || e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Only re-hydrate when switching project.
+  }, [companyId, project?.id]);
   
   // Internal navigation state
   const [activeSection, setActiveSection] = useState('overview');
@@ -702,6 +752,12 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             hideLeftPanel={true}
             externalActiveSection={route?.params?.phaseActiveSection}
             externalActiveItem={route?.params?.phaseActiveItem}
+            externalActiveNode={route?.params?.phaseActiveNode}
+            afRelativePath={route?.params?.afRelativePath}
+            setAfRelativePath={route?.params?.setAfRelativePath}
+            afSelectedItemId={route?.params?.afSelectedItemId}
+            setAfSelectedItemId={route?.params?.setAfSelectedItemId}
+            bumpAfMirrorRefreshNonce={route?.params?.bumpAfMirrorRefreshNonce}
             onExternalSectionChange={route?.params?.onPhaseSectionChange}
             onExternalItemChange={route?.params?.onPhaseItemChange}
             onPhaseChange={handleProjectPhaseChange}
@@ -797,6 +853,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   const [editingInfo, setEditingInfo] = useState(false);
   const [editableProject, setEditableProject] = useState(() => normalizeProject(project));
   const [originalProjectId, setOriginalProjectId] = useState(project?.id || null);
+  const [savingProjectInfo, setSavingProjectInfo] = useState(false);
+  const [saveProjectInfoError, setSaveProjectInfoError] = useState(null);
   
   // States for participants (deltagare)
   const [editProjectParticipants, setEditProjectParticipants] = useState([]);
@@ -1672,10 +1730,10 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             borderColor: '#bbb',
           }} />
           <Text style={{ fontSize: 24, fontWeight: '700', color: '#222', marginRight: 12 }}>
-            {editableProject?.id || project?.id || project?.number || ''}
+            {editableProject?.projectNumber || project?.projectNumber || project?.number || project?.id || ''}
           </Text>
           <Text style={{ fontSize: 24, fontWeight: '700', color: '#222', flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
-            {editableProject?.name || project?.name || project?.fullName || 'Projekt'}
+            {editableProject?.projectName || project?.projectName || project?.name || project?.fullName || 'Projekt'}
           </Text>
         </View>
         {editableProject?.phase && (
@@ -1731,8 +1789,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   borderWidth: 2,
                   borderColor: '#bbb',
                 }} />
-                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.id}</Text>
-                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{editableProject?.name}</Text>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', marginRight: 8 }}>{editableProject?.projectNumber || editableProject?.number || editableProject?.id || ''}</Text>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#222', flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">{editableProject?.projectName || editableProject?.name || editableProject?.fullName || 'Projekt'}</Text>
                 <Animated.View style={{ marginLeft: 8, transform: [{ rotate: projectInfoRotate }] }}>
                   <Ionicons name={projectInfoExpanded ? 'chevron-down' : 'chevron-forward'} size={18} color="#222" />
                 </Animated.View>
@@ -1943,15 +2001,15 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                         <View style={{ marginBottom: 12 }}>
                           <Text style={labelStyle}>Projektnummer *</Text>
                           <TextInput
-                            value={editableProject?.id || ''}
-                            onChangeText={(v) => setEditableProject(p => ({ ...p, id: v }))}
+                            value={editableProject?.projectNumber || editableProject?.number || editableProject?.id || ''}
+                            onChangeText={(v) => setEditableProject(p => ({ ...p, projectNumber: v, number: v }))}
                             onFocus={() => setFocusedInput('projectNumber')}
                             onBlur={() => setFocusedInput(null)}
                             placeholder="Projektnummer..."
                             placeholderTextColor="#94A3B8"
                             style={{
                               ...inputStyleBase,
-                              ...requiredBorder(String(editableProject?.id || '').trim() !== '', focusedInput === 'projectNumber'),
+                              ...requiredBorder(String(editableProject?.projectNumber || editableProject?.number || editableProject?.id || '').trim() !== '', focusedInput === 'projectNumber'),
                             }}
                             autoCapitalize="none"
                           />
@@ -1960,19 +2018,25 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                         <View style={{ marginBottom: 12 }}>
                           <Text style={labelStyle}>Projektnamn *</Text>
                           <TextInput
-                            value={editableProject?.name || ''}
-                            onChangeText={(v) => setEditableProject(p => ({ ...p, name: v }))}
+                            value={editableProject?.projectName || editableProject?.name || ''}
+                            onChangeText={(v) => setEditableProject(p => ({ ...p, projectName: v, name: v }))}
                             onFocus={() => setFocusedInput('projectName')}
                             onBlur={() => setFocusedInput(null)}
                             placeholder="Projektnamn..."
                             placeholderTextColor="#94A3B8"
                             style={{
                               ...inputStyleBase,
-                              ...requiredBorder(String(editableProject?.name || '').trim() !== '', focusedInput === 'projectName'),
+                              ...requiredBorder(String(editableProject?.projectName || editableProject?.name || '').trim() !== '', focusedInput === 'projectName'),
                             }}
                             autoCapitalize="words"
                           />
                         </View>
+
+                        {saveProjectInfoError ? (
+                          <View style={{ marginTop: 6, marginBottom: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FCA5A5', padding: 10, borderRadius: 10 }}>
+                            <Text style={{ color: '#991B1B', fontSize: 12, fontWeight: '600' }}>{String(saveProjectInfoError)}</Text>
+                          </View>
+                        ) : null}
 
                         <View style={{ marginBottom: 12 }}>
                           <Text style={labelStyle}>Skapad</Text>
@@ -2781,26 +2845,120 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                           </TouchableOpacity>
 
                           <TouchableOpacity
-                            onPress={() => {
-                              const firstDueTrim = String(editableProject?.skyddsrondFirstDueDate || '').trim();
+                            onPress={async () => {
+                              const safeText = (s) => String(s || '').trim();
+                              const firstDueTrim = safeText(editableProject?.skyddsrondFirstDueDate);
                               const isEnabled = editableProject?.skyddsrondEnabled !== false;
                               const isFirstDueValid = (!isEnabled) || (firstDueTrim !== '' && isValidIsoDateYmd(firstDueTrim));
                               if (!isFirstDueValid) return;
 
-                              const sanitizedProject = {
-                                ...editableProject,
-                                skyddsrondFirstDueDate: isEnabled ? (firstDueTrim || null) : null,
-                                participants: (editProjectParticipants || []).map(p => ({ 
-                                  uid: p.uid || p.id, 
-                                  displayName: p.displayName || null, 
-                                  email: p.email || null 
-                                })),
-                              };
-                              if (typeof navigation?.setParams === 'function') {
-                                navigation.setParams({ project: sanitizedProject });
+                              const projectDocId = safeText(project?.id);
+                              if (!companyId || !projectDocId) return;
+
+                              const beforePn = safeText(project?.projectNumber) || safeText(project?.number) || safeText(projectDocId);
+                              const beforePnm = safeText(project?.projectName) || safeText(project?.name);
+                              const afterPn = safeText(editableProject?.projectNumber) || safeText(editableProject?.number) || beforePn;
+                              const afterPnm = safeText(editableProject?.projectName) || safeText(editableProject?.name) || beforePnm;
+                              const fullName = afterPn && afterPnm ? `${afterPn} - ${afterPnm}` : (afterPnm || afterPn || '');
+
+                              // KRITISK: Projektnummer måste vara unikt per företag.
+                              // Blockera innan vi skriver något till backend.
+                              const normalizePn = (v) => String(v || '').trim().toLowerCase();
+                              if (normalizePn(afterPn) !== normalizePn(beforePn)) {
+                                try {
+                                  const dup = await hasDuplicateProjectNumber(companyId, afterPn, projectDocId);
+                                  if (dup) {
+                                    setSaveProjectInfoError(`Det finns redan ett projekt med projektnummer ${afterPn}. Projektnummer måste vara unikt.`);
+                                    return;
+                                  }
+                                } catch (e) {
+                                  setSaveProjectInfoError('Kunde inte kontrollera om projektnumret är unikt. Försök igen.');
+                                  return;
+                                }
                               }
-                              emitProjectUpdated({ ...sanitizedProject, originalId: originalProjectId });
-                              setEditingInfo(false);
+
+                              const sanitizedParticipants = (editProjectParticipants || []).map((p) => ({
+                                uid: p.uid || p.id,
+                                displayName: p.displayName || null,
+                                email: p.email || null,
+                                role: p.role || null,
+                              }));
+
+                              // Normalize address: keep structured object and mirror old flat field.
+                              const street = safeText(editableProject?.address?.street) || safeText(editableProject?.adress);
+                              const postalCode = safeText(editableProject?.address?.postalCode);
+                              const city = safeText(editableProject?.address?.city);
+                              const address = (street || postalCode || city)
+                                ? { street: street || null, postalCode: postalCode || null, city: city || null }
+                                : null;
+
+                              const patch = {
+                                projectNumber: afterPn || null,
+                                projectName: afterPnm || null,
+                                number: afterPn || null,
+                                name: afterPnm || null,
+                                fullName,
+
+                                // Common project info fields edited in this modal.
+                                status: safeText(editableProject?.status) || null,
+                                phase: safeText(editableProject?.phase) || null,
+                                createdAt: editableProject?.createdAt || null,
+                                customer: safeText(editableProject?.customer) || safeText(editableProject?.client) || null,
+                                client: safeText(editableProject?.customer) || safeText(editableProject?.client) || null,
+                                clientContact: editableProject?.clientContact || null,
+                                address,
+                                adress: street || null,
+                                propertyDesignation: safeText(editableProject?.propertyDesignation) || safeText(editableProject?.fastighetsbeteckning) || null,
+                                fastighetsbeteckning: safeText(editableProject?.propertyDesignation) || safeText(editableProject?.fastighetsbeteckning) || null,
+                                participants: sanitizedParticipants,
+
+                                skyddsrondEnabled: editableProject?.skyddsrondEnabled !== false,
+                                skyddsrondIntervalWeeks: Number(editableProject?.skyddsrondIntervalWeeks || 2) || 2,
+                                skyddsrondFirstDueDate: (editableProject?.skyddsrondEnabled !== false)
+                                  ? (firstDueTrim || null)
+                                  : null,
+                              };
+
+                              setSavingProjectInfo(true);
+                              setSaveProjectInfoError(null);
+                              try {
+                                await patchCompanyProject(companyId, projectDocId, patch);
+                                const fresh = await fetchCompanyProject(companyId, projectDocId);
+                                const normalized = normalizeProject(fresh);
+
+                                // Update local + navigation + global bus.
+                                setProject(normalized);
+                                setEditableProject(normalized);
+                                if (typeof navigation?.setParams === 'function') {
+                                  navigation.setParams({ project: normalized });
+                                }
+                                emitProjectUpdated({ ...normalized, originalId: originalProjectId });
+
+                                // Best-effort: update SharePoint folder metadata so Word/Excel Quick Parts update automatically.
+                                if (beforePn !== afterPn || beforePnm !== afterPnm) {
+                                  try {
+                                    const mergedForSp = { ...(project || {}), ...(normalized || {}) };
+                                    void updateSharePointProjectPropertiesFromFirestoreProject(companyId, mergedForSp).catch((e) => {
+                                      console.warn('[ProjectDetails] Kunde inte uppdatera SharePoint projektsmetadata (ProjectNumber/ProjectName):', e?.message || e);
+                                    });
+                                  } catch (e) {
+                                    console.warn('[ProjectDetails] Kunde inte uppdatera SharePoint projektsmetadata (ProjectNumber/ProjectName):', e?.message || e);
+                                  }
+                                }
+
+                                // Best-effort: refresh FS-logg.xlsx headers/metadata.
+                                if (beforePn !== afterPn || beforePnm !== afterPnm) {
+                                  try {
+                                    enqueueFsExcelSync(companyId, projectDocId, { reason: 'project-metadata-updated' });
+                                  } catch (_e) {}
+                                }
+
+                                setEditingInfo(false);
+                              } catch (e) {
+                                setSaveProjectInfoError(e?.message || 'Kunde inte spara projektinformation.');
+                              } finally {
+                                setSavingProjectInfo(false);
+                              }
                             }}
                             style={{
                               backgroundColor: '#1976D2',
@@ -2809,14 +2967,16 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                               paddingHorizontal: 18,
                               minWidth: 110,
                               alignItems: 'center',
+                              opacity: savingProjectInfo ? 0.7 : 1,
                               ...(Platform.OS === 'web' ? {
                                 transition: 'background-color 0.2s, transform 0.1s',
                                 cursor: 'pointer',
                               } : {}),
                             }}
+                            disabled={savingProjectInfo}
                             activeOpacity={0.85}
                           >
-                            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>Spara</Text>
+                            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{savingProjectInfo ? 'Sparar…' : 'Spara'}</Text>
                           </TouchableOpacity>
                         </View>
 
@@ -2871,8 +3031,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                               <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Projektnummer</Text>
                               <TextInput
                                 style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
-                                value={editableProject?.id || ''}
-                                onChangeText={v => setEditableProject(p => ({ ...p, id: v }))}
+                                value={editableProject?.projectNumber || editableProject?.number || editableProject?.id || ''}
+                                onChangeText={v => setEditableProject(p => ({ ...p, projectNumber: v, number: v }))}
                                 placeholder="Ange projektnummer"
                                 placeholderTextColor="#bbb"
                                 autoCapitalize="none"
@@ -2883,8 +3043,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                               <Text style={{ fontSize: 15, color: '#888', marginBottom: 4 }}>Projektnamn</Text>
                               <TextInput
                                 style={{ borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, fontSize: 15, backgroundColor: '#fff' }}
-                                value={editableProject?.name || ''}
-                                onChangeText={v => setEditableProject(p => ({ ...p, name: v }))}
+                                value={editableProject?.projectName || editableProject?.name || ''}
+                                onChangeText={v => setEditableProject(p => ({ ...p, projectName: v, name: v }))}
                                 placeholder="Ange projektnamn"
                                 placeholderTextColor="#bbb"
                                 autoCapitalize="words"
@@ -3311,8 +3471,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   <View style={{ marginBottom: 12 }}>
                     <Text style={labelStyle}>Projektnummer</Text>
                     <TextInput
-                      value={editableProject?.id || ''}
-                      onChangeText={(v) => setEditableProject(p => ({ ...p, id: v }))}
+                      value={editableProject?.projectNumber || editableProject?.number || editableProject?.id || ''}
+                      onChangeText={(v) => setEditableProject(p => ({ ...p, projectNumber: v, number: v }))}
                       placeholder="Projektnummer..."
                       placeholderTextColor="#94A3B8"
                       style={inputStyleBase}
@@ -3323,8 +3483,8 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                   <View style={{ marginBottom: 12 }}>
                     <Text style={labelStyle}>Projektnamn</Text>
                     <TextInput
-                      value={editableProject?.name || ''}
-                      onChangeText={(v) => setEditableProject(p => ({ ...p, name: v }))}
+                      value={editableProject?.projectName || editableProject?.name || ''}
+                      onChangeText={(v) => setEditableProject(p => ({ ...p, projectName: v, name: v }))}
                       placeholder="Projektnamn..."
                       placeholderTextColor="#94A3B8"
                       style={inputStyleBase}

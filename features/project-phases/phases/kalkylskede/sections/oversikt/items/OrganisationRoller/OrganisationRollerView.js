@@ -10,6 +10,7 @@ import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from 'r
 import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
+import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
 function confirmWebOrNative(message) {
@@ -57,6 +58,8 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const { groups, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRole } =
     useProjectOrganisation({ companyId, projectId });
 
+  const [defaultGroupEnsured, setDefaultGroupEnsured] = useState(false);
+
   const [activeModalGroupId, setActiveModalGroupId] = useState(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => ({}));
   const [expandedInitialized, setExpandedInitialized] = useState(false);
@@ -69,6 +72,38 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const existingMemberKeys = useMemo(() => buildExistingMemberKeys(activeGroup), [activeGroup]);
 
   const hasContext = String(companyId || '').trim() && String(projectId || '').trim();
+
+  // Ensure a default internal main group exists if the project currently has no groups.
+  // This makes the group visible immediately when opening the view, even if project creation
+  // didn't get a chance to run the initializer.
+  useEffect(() => {
+    if (!hasContext) return;
+    if (defaultGroupEnsured) return;
+    if (loading) return;
+    if (error) return;
+    const list = Array.isArray(groups) ? groups : [];
+    if (list.length > 0) {
+      setDefaultGroupEnsured(true);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const profile = await fetchCompanyProfile(companyId);
+        const companyName = String(profile?.companyName || profile?.name || companyId).trim();
+        await ensureDefaultProjectOrganisationGroup(companyId, projectId, { companyName });
+      } catch (_e) {
+        // ignore: view will just remain empty and user can still add groups manually
+      } finally {
+        if (!cancelled) setDefaultGroupEnsured(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasContext, defaultGroupEnsured, loading, error, groups, companyId, projectId]);
 
   // Default: all groups open on first load.
   useEffect(() => {
@@ -104,7 +139,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   }, [groups, expandedInitialized]);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={{ padding: 18, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
+    <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={{ padding: 18, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
       {!hidePageHeader ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
           <Ionicons name="people-outline" size={22} color={COLORS.neutral} style={{ marginRight: 10 }} />
@@ -176,6 +211,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         const members = Array.isArray(group?.members) ? group.members : [];
         const participantCount = members.length;
         const isOpen = expandedGroupIds[gid] !== false; // default open
+        const isLockedGroup = group?.locked === true || group?.isInternalMainGroup === true || gid === 'internal-main';
 
         const toggleOpen = () => {
           if (String(editingGroupId || '') === gid) return;
@@ -250,6 +286,11 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                       ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
                     }}
                   />
+                  {isLockedGroup ? (
+                    <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#3730A3' }}>Intern huvudgrupp</Text>
+                    </View>
+                  ) : null}
                   <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: '600' }}>({participantCount})</Text>
                 </View>
               </Pressable>
@@ -282,11 +323,27 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
                   <Pressable
                     onPress={async () => {
+                      if (isLockedGroup) return;
                       const ok = await confirmWebOrNative('Ta bort gruppen? Detta tar även bort alla personer i gruppen.');
                       if (ok) removeGroup(gid);
                     }}
+                    disabled={isLockedGroup}
                     title={Platform.OS === 'web' ? 'Ta bort grupp' : undefined}
                     style={({ hovered, pressed }) => {
+                      if (isLockedGroup) {
+                        return {
+                          paddingVertical: 6,
+                          paddingHorizontal: 8,
+                          borderRadius: 10,
+                          backgroundColor: '#F8FAFC',
+                          borderWidth: 1,
+                          borderColor: COLORS.border,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          opacity: 0.55,
+                        };
+                      }
                       const hot = !!(hovered || pressed);
                       return {
                         paddingVertical: 6,
@@ -302,6 +359,14 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                     }}
                   >
                     {({ hovered, pressed }) => {
+                      if (isLockedGroup) {
+                        return (
+                          <>
+                            <Ionicons name="lock-closed-outline" size={15} color={COLORS.neutral} />
+                            <Text style={{ color: COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Låst</Text>
+                          </>
+                        );
+                      }
                       const hot = !!(hovered || pressed);
                       const c = hot ? COLORS.danger : COLORS.neutral;
                       return (

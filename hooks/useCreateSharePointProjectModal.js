@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-import { fetchCompanyProject, fetchCompanySharePointSiteMetas, formatSharePointProjectFolderName, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../components/firebase';
+import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile, fetchCompanyProject, fetchCompanySharePointSiteMetas, formatSharePointProjectFolderName, hasDuplicateProjectNumber, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, updateSharePointProjectPropertiesFromFirestoreProject, upsertCompanyProject } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
@@ -113,9 +113,11 @@ export function useCreateSharePointProjectModal({ companyId }) {
 
     setIsCreating(true);
     try {
+      const pnTrim = String(projectNumber || '').trim();
+
       // Statuskontroll: om projektet redan är arkiverat får det inte återskapas via UI.
       try {
-        const existing = await fetchCompanyProject(companyId, String(projectNumber));
+        const existing = await fetchCompanyProject(companyId, pnTrim);
         const existingStatus = String(existing?.status || '').trim().toLowerCase();
         if (existing && existingStatus === 'archived') {
           const text = 'Detta projekt är arkiverat. Återställning kan endast göras av superadmin.';
@@ -128,6 +130,29 @@ export function useCreateSharePointProjectModal({ companyId }) {
         }
       } catch (_e) {
         // Non-fatal: if we can't check, continue with creation.
+      }
+
+      // KRITISK: Projektnummer måste vara unikt per företag.
+      // Blockera innan vi skapar SharePoint-mappar eller skriver till Firestore.
+      try {
+        const dup = await hasDuplicateProjectNumber(companyId, pnTrim);
+        if (dup) {
+          const text = `Det finns redan ett projekt med projektnummer ${pnTrim}. Projektnummer måste vara unikt.`;
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            try { window.alert(text); } catch (_e) {}
+          } else {
+            try { Alert.alert('Fel', text); } catch (_e) {}
+          }
+          return;
+        }
+      } catch (e) {
+        const text = 'Kunde inte kontrollera om projektnumret är unikt. Försök igen.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          try { window.alert(text); } catch (_e) {}
+        } else {
+          try { Alert.alert('Fel', text); } catch (_e) {}
+        }
+        return;
       }
 
       // eslint-disable-next-line no-console
@@ -170,6 +195,17 @@ export function useCreateSharePointProjectModal({ companyId }) {
         const selectedSite = (availableSites || []).find((s) => String(s?.id || '').trim() === String(siteId || '').trim()) || null;
         const siteUrl = selectedSite?.webUrl || selectedSite?.siteUrl || selectedSite?.url || null;
 
+        const initialPhaseKey =
+          systemPhase === 'produktion'
+            ? 'produktion'
+            : systemPhase === 'avslut'
+            ? 'avslut'
+            : systemPhase === 'eftermarknad'
+            ? 'eftermarknad'
+            : (systemPhase === 'kalkyl' || systemPhase === 'kalkylskede')
+            ? 'kalkylskede'
+            : 'kalkylskede';
+
         await upsertCompanyProject(companyId, String(projectNumber), {
           projectNumber: String(projectNumber),
           projectName: String(projectName),
@@ -179,11 +215,26 @@ export function useCreateSharePointProjectModal({ companyId }) {
           sharePointSiteUrl: siteUrl ? String(siteUrl) : null,
           rootFolderPath: String(projectPath),
           siteRole: 'projects',
+
+          // Versioned default structure:
+          // v2 => Kalkyl late (between Möten and Anbud). Existing projects remain v1.
+          ...(initialPhaseKey === 'kalkylskede' ? { kalkylskedeStructureVersion: 'v2' } : null),
         });
       } catch (projErr) {
         // Non-fatal: SharePoint folder was created, but project won't appear in left panel until Firestore write succeeds.
         // eslint-disable-next-line no-console
         console.warn('[useCreateSharePointProjectModal] Warning saving Firestore project doc:', projErr?.message || projErr);
+      }
+
+      // Ensure project has a default internal main group under "Organisation och roller".
+      // Best-effort and non-blocking: project creation should not fail because this init fails.
+      try {
+        const profile = await fetchCompanyProfile(companyId);
+        const companyName = String(profile?.companyName || profile?.name || companyId).trim();
+        await ensureDefaultProjectOrganisationGroup(companyId, String(projectNumber), { companyName });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[useCreateSharePointProjectModal] Warning ensuring default organisation group:', e?.message || e);
       }
 
       // Persist metadata for phase/structure so UI can show the correct indicator
@@ -201,10 +252,26 @@ export function useCreateSharePointProjectModal({ companyId }) {
           phaseKey: phaseKeyForMeta,
           structureType: String(structureType || '').trim() || null,
           status: statusForMeta,
+          ...(phaseKeyForMeta === 'kalkylskede' ? { structureVersion: 'v2' } : null),
         });
       } catch (metaError) {
         // eslint-disable-next-line no-console
         console.warn('[useCreateSharePointProjectModal] Warning saving project metadata:', metaError?.message || metaError);
+      }
+
+      // Update SharePoint folder properties for Office Quick Parts / Document Properties.
+      // Best-effort and non-blocking: no files are rewritten.
+      try {
+        await updateSharePointProjectPropertiesFromFirestoreProject(companyId, {
+          sharePointSiteId: String(siteId),
+          rootFolderPath: String(projectPath),
+          projectNumber: String(projectNumber),
+          projectName: String(projectName),
+          fullName: projectFolderName,
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[useCreateSharePointProjectModal] Warning updating SharePoint project properties:', e?.message || e);
       }
 
       // Apply system structure inside the project folder.
@@ -249,7 +316,9 @@ export function useCreateSharePointProjectModal({ companyId }) {
 
           // Locked structure for Kalkylskede: always ensure the full fixed structure.
           if (phaseKey === 'kalkylskede') {
-            await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId);
+            // New structure (v2): Kalkyl is late (between Möten and Anbud).
+            // IMPORTANT: Do not change folder prefixes without mirroring UI ordering.
+            await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
             // eslint-disable-next-line no-console
             console.log(`[useCreateSharePointProjectModal] ✅ Ensured locked kalkylskede structure`);
             // eslint-disable-next-line no-console

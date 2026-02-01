@@ -4,7 +4,7 @@
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../../components/firebase';
-import { getDefaultNavigation } from '../../../constants';
+import { getDefaultNavigationForProject } from '../../../constants';
 
 const NAV_SCHEMA_VERSION = 2;
 
@@ -58,9 +58,9 @@ function mergeNavigationWithDefaults(defaultNav, storedNav) {
  * Returns custom navigation if exists, otherwise default
  * Now stores at company level, not per project
  */
-export async function getProjectPhaseNavigation(companyId, projectId, phaseKey) {
+export async function getProjectPhaseNavigation(companyId, projectId, phaseKey, project = null) {
   if (!companyId || !phaseKey) {
-    return getDefaultNavigation(phaseKey);
+    return getDefaultNavigationForProject(phaseKey, project);
   }
 
   try {
@@ -77,7 +77,7 @@ export async function getProjectPhaseNavigation(companyId, projectId, phaseKey) 
 
     if (docSnap.exists()) {
       const data = docSnap.data() || {};
-      const defaultNav = getDefaultNavigation(phaseKey);
+      const defaultNav = getDefaultNavigationForProject(phaseKey, project);
 
       // Always merge with defaults so legacy/partial docs don't hide section items
       // (e.g. Översikt showing "Tom mapp").
@@ -91,14 +91,14 @@ export async function getProjectPhaseNavigation(companyId, projectId, phaseKey) 
     }
 
     // Return default navigation
-    const defaultNav = getDefaultNavigation(phaseKey);
+    const defaultNav = getDefaultNavigationForProject(phaseKey, project);
     return {
       ...defaultNav,
       isDefault: true
     };
   } catch (error) {
     console.error('[navigationService] Error fetching navigation:', error);
-    return getDefaultNavigation(phaseKey);
+    return getDefaultNavigationForProject(phaseKey, project);
   }
 }
 

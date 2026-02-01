@@ -142,6 +142,23 @@ export default function CompactMonthCalendar({
   typography,
   options,
 }) {
+  const showTimeInEventCell = options?.showTimeInEventCell === true;
+
+  function isValidTimeHHMM(value) {
+    const s = String(value || '').trim();
+    if (!s) return false;
+    const m = s.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+    return !!m;
+  }
+
+  function formatTimeRangePlain(startTime, endTime) {
+    const st = String(startTime || '').trim();
+    const et = String(endTime || '').trim();
+    if (isValidTimeHHMM(st) && isValidTimeHHMM(et)) return `${st}–${et}`;
+    if (isValidTimeHHMM(st)) return st;
+    return '';
+  }
+
   const byDate = React.useMemo(() => {
     const safeItems = Array.isArray(items) ? items : [];
     const out = {};
@@ -329,9 +346,15 @@ export default function CompactMonthCalendar({
             const outMonthBg = '#F1F5F9';
             const inMonthBg = '#fff';
 
-            const todayBg = '#EFF6FF';
+            // Today should be immediately recognizable (stronger than hover/selection),
+            // but still calm and not competing with event markers.
+            const todayBg = 'rgba(25, 118, 210, 0.10)';
             const selectedBg = 'rgba(25, 118, 210, 0.12)';
             const flashBg = 'rgba(25, 118, 210, 0.18)';
+
+            const todayBorder = 'rgba(25, 118, 210, 0.55)';
+            const todayPillBg = 'rgba(25, 118, 210, 0.22)';
+            const todayPillBorder = 'rgba(25, 118, 210, 0.34)';
 
             const dayTextColor = !cell.inMonth
               ? '#94A3B8'
@@ -354,10 +377,10 @@ export default function CompactMonthCalendar({
                   }}
                   style={({ hovered, pressed }) => ({
                     minHeight: cellMinHeight,
-                    borderWidth: (isSelected || isToday) ? 2 : 1,
+                    borderWidth: isSelected ? 2 : (isToday ? 2 : 1),
                     borderColor: isSelected
                       ? (colors?.blue || '#2563EB')
-                      : (isToday ? (colors?.blue || '#2563EB') : baseBorder),
+                      : (isToday ? todayBorder : baseBorder),
                     backgroundColor: !cell.inMonth
                       ? outMonthBg
                       : (isFlashing ? flashBg : (isSelected ? selectedBg : (isToday ? todayBg : (inFocusedWeek ? '#F8FAFC' : inMonthBg)))),
@@ -367,7 +390,9 @@ export default function CompactMonthCalendar({
                       ? {
                         transitionProperty: 'background-color, border-color',
                         transitionDuration: '140ms',
-                        boxShadow: isFlashing ? '0 0 0 3px rgba(25, 118, 210, 0.10)' : 'none',
+                        boxShadow: isFlashing
+                          ? '0 0 0 3px rgba(25, 118, 210, 0.10)'
+                          : (isToday ? '0 0 0 2px rgba(25, 118, 210, 0.06)' : 'none'),
                       }
                       : {}),
                     opacity: pressed ? 0.98 : 1,
@@ -380,12 +405,38 @@ export default function CompactMonthCalendar({
                           fontSize: 10,
                           fontWeight: '900',
                           color: dayTextColor,
+                          ...(isToday
+                            ? {
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 999,
+                              backgroundColor: todayPillBg,
+                              borderWidth: 1,
+                              borderColor: todayPillBorder,
+                              overflow: 'hidden',
+                            }
+                            : {}),
                         },
                         typography?.dayNumberStyle,
                       ]}
                     >
                       {dayNum}
                     </Text>
+
+                    {isToday ? (
+                      <View
+                        style={{
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 999,
+                          backgroundColor: 'rgba(255,255,255,0.65)',
+                          borderWidth: 1,
+                          borderColor: todayPillBorder,
+                        }}
+                      >
+                        <Text style={{ fontSize: 9, fontWeight: '900', color: colors?.blue || '#2563EB' }}>Idag</Text>
+                      </View>
+                    ) : null}
 
                     {list.length > 0 ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
@@ -408,8 +459,26 @@ export default function CompactMonthCalendar({
                       const st = eventStyleForStatus(s, colors);
                       const eventTitleColor = neutralEventText ? (colors?.text || '#0F172A') : st.text;
                       const eventTypeColor = neutralEventText ? (colors?.textSubtle || '#64748B') : st.type;
-                      const title = String(it?.title || '—');
+                      const title = String(it?.title || it?.type || '—');
                       const type = String(it?.type || '').trim();
+                      const timeLabel = showTimeInEventCell
+                        ? formatTimeRangePlain(it?.startTime, it?.endTime)
+                        : '';
+
+                      const primaryText = (() => {
+                        if (timeLabel) return `${timeLabel} ${type || title}`.trim();
+                        return title;
+                      })();
+
+                      const secondaryText = (() => {
+                        if (timeLabel) {
+                          // If we already showed type, show title as secondary when it adds info.
+                          if (type && title && title.trim() !== type.trim()) return title;
+                          return '';
+                        }
+                        return type;
+                      })();
+
                       return (
                         <Pressable
                           key={String(it?.id || title)}
@@ -428,11 +497,11 @@ export default function CompactMonthCalendar({
                           })}
                         >
                           <Text style={[{ fontSize: 9, fontWeight: '900', color: eventTitleColor }, typography?.eventTitleStyle]} numberOfLines={1}>
-                            {title}
+                            {primaryText}
                           </Text>
-                          {!type ? null : (
+                          {!secondaryText ? null : (
                             <Text style={[{ fontSize: 8, fontWeight: '800', color: eventTypeColor }, typography?.eventTypeStyle]} numberOfLines={1}>
-                              {type}
+                              {secondaryText}
                             </Text>
                           )}
                         </Pressable>

@@ -11,8 +11,10 @@ export default function NativeMainPane({
   handleInlineLockChange,
   phaseActiveSection,
   phaseActiveItem,
+  phaseActiveNode,
   setPhaseActiveSection,
   setPhaseActiveItem,
+  setPhaseActiveNode,
   navigation,
   closeSelectedProject,
   projectControlsRefreshNonce,
@@ -52,6 +54,13 @@ export default function NativeMainPane({
   auth,
   setNewProjectModal,
   onOpenCreateProjectModal,
+
+  // AF-only explorer state (shared with left panel mirror)
+  afRelativePath,
+  setAfRelativePath,
+  afSelectedItemId,
+  setAfSelectedItemId,
+  bumpAfMirrorRefreshNonce,
 }) {
   return (
     <ScrollView
@@ -70,10 +79,22 @@ export default function NativeMainPane({
                 onInlineLockChange: handleInlineLockChange,
                 phaseActiveSection,
                 phaseActiveItem,
+                phaseActiveNode,
+                afRelativePath,
+                setAfRelativePath,
+                afSelectedItemId,
+                setAfSelectedItemId,
+                bumpAfMirrorRefreshNonce,
                 onPhaseSectionChange: setPhaseActiveSection,
-                onPhaseItemChange: (sectionId, itemId) => {
+                onPhaseItemChange: (sectionId, itemId, meta) => {
                   setPhaseActiveSection(sectionId);
                   setPhaseActiveItem(itemId);
+
+                  if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
+                    setPhaseActiveNode(meta.activeNode || null);
+                  } else if (!itemId) {
+                    setPhaseActiveNode(null);
+                  }
                 },
               },
             }}

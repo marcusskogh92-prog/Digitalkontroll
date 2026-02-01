@@ -84,8 +84,17 @@ export function HomeMainPaneContainer(props) {
     // Native-specifika props
     phaseActiveSection,
     phaseActiveItem,
+    phaseActiveNode,
     setPhaseActiveSection,
     setPhaseActiveItem,
+    setPhaseActiveNode,
+
+    // AF-only explorer state (shared with left panel mirror)
+    afRelativePath,
+    setAfRelativePath,
+    afSelectedItemId,
+    setAfSelectedItemId,
+    bumpAfMirrorRefreshNonce,
   } = props;
 
   const isWeb = Platform.OS === 'web';
@@ -163,9 +172,18 @@ export function HomeMainPaneContainer(props) {
           projectPhaseKey={projectPhaseKeySafe}
           phaseActiveSection={phaseActiveSection}
           phaseActiveItem={phaseActiveItem}
+          phaseActiveNode={phaseActiveNode}
           setPhaseActiveSection={setPhaseActiveSection}
           setPhaseActiveItem={setPhaseActiveItem}
+          setPhaseActiveNode={setPhaseActiveNode}
           onOpenCreateProjectModal={onOpenCreateProjectModal}
+
+          // AF-only explorer state (shared with left panel mirror)
+          afRelativePath={afRelativePath}
+          setAfRelativePath={setAfRelativePath}
+          afSelectedItemId={afSelectedItemId}
+          setAfSelectedItemId={setAfSelectedItemId}
+          bumpAfMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
         />
       ) : (
         <NativeMainPane
@@ -176,8 +194,10 @@ export function HomeMainPaneContainer(props) {
           handleInlineLockChange={handleInlineLockChange}
           phaseActiveSection={phaseActiveSection}
           phaseActiveItem={phaseActiveItem}
+          phaseActiveNode={phaseActiveNode}
           setPhaseActiveSection={setPhaseActiveSection}
           setPhaseActiveItem={setPhaseActiveItem}
+          setPhaseActiveNode={setPhaseActiveNode}
           navigation={navigation}
           closeSelectedProject={closeSelectedProject}
           projectControlsRefreshNonce={projectControlsRefreshNonce}
@@ -217,6 +237,13 @@ export function HomeMainPaneContainer(props) {
           auth={auth}
           setNewProjectModal={setNewProjectModal}
           onOpenCreateProjectModal={onOpenCreateProjectModal}
+
+          // AF-only explorer state (shared with left panel mirror)
+          afRelativePath={afRelativePath}
+          setAfRelativePath={setAfRelativePath}
+          afSelectedItemId={afSelectedItemId}
+          setAfSelectedItemId={setAfSelectedItemId}
+          bumpAfMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
         />
       )}
     </View>

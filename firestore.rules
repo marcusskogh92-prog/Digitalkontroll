@@ -28,6 +28,17 @@ service cloud.firestore {
         );
     }
 
+    function hasValidProjectNumberIndex(company, projectId) {
+      return request.resource.data.projectNumberIndexId is string
+        && request.resource.data.projectNumberIndexId.size() > 0
+        && existsAfter(/databases/$(database)/documents/foretag/$(company)/project_number_index/$(request.resource.data.projectNumberIndexId))
+        && getAfter(/databases/$(database)/documents/foretag/$(company)/project_number_index/$(request.resource.data.projectNumberIndexId)).data.projectId == projectId;
+    }
+
+    function projectNumberIndexUnchanged() {
+      return resource.data.projectNumberIndexId == request.resource.data.projectNumberIndexId;
+    }
+
     // Allow read for hierarchy; writes only when authenticated and token.companyId matches path
     match /foretag/{company}/hierarki/state {
       allow read: if true;
@@ -232,7 +243,43 @@ service cloud.firestore {
     // Firestore is the source of truth for which projects exist and how they map to SharePoint.
     // Collection: foretag/{company}/projects/{projectId}
     match /foretag/{company}/projects/{projectId} {
-      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      // If a write introduces/changes projectNumberIndexId, it must also create/update
+      // the matching index doc in the same request (transaction/batch).
+      allow create: if (isCompanyMember(company) || isGlobalAdmin())
+        && hasValidProjectNumberIndex(company, projectId);
+      allow update: if (isCompanyMember(company) || isGlobalAdmin())
+        && (projectNumberIndexUnchanged() || hasValidProjectNumberIndex(company, projectId));
+      allow delete: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Project number uniqueness index (company-scoped)
+    // Collection: foretag/{company}/project_number_index/{normalizedProjectNumber}
+    // Used to enforce that projectNumber is unique per company (trim + case-insensitive).
+    match /foretag/{company}/project_number_index/{indexId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+
+      function projectAfterPointsToIndex(pid) {
+        return pid is string
+          && pid.size() > 0
+          && existsAfter(/databases/$(database)/documents/foretag/$(company)/projects/$(pid))
+          && getAfter(/databases/$(database)/documents/foretag/$(company)/projects/$(pid)).data.projectNumberIndexId == indexId;
+      }
+
+      // Create/update allowed only as part of a project write that points to this index.
+      allow create: if (isCompanyMember(company) || isGlobalAdmin())
+        && projectAfterPointsToIndex(request.resource.data.projectId);
+
+      allow update: if (isCompanyMember(company) || isGlobalAdmin())
+        && resource.data.projectId == request.resource.data.projectId
+        && projectAfterPointsToIndex(request.resource.data.projectId);
+
+      // Delete allowed only as part of a project number change (project must point elsewhere after).
+      allow delete: if (isCompanyMember(company) || isGlobalAdmin())
+        && resource.data.projectId is string
+        && resource.data.projectId.size() > 0
+        && existsAfter(/databases/$(database)/documents/foretag/$(company)/projects/$(resource.data.projectId))
+        && getAfter(/databases/$(database)/documents/foretag/$(company)/projects/$(resource.data.projectId)).data.projectNumberIndexId != indexId;
     }
 
     // SharePoint navigation configuration per company

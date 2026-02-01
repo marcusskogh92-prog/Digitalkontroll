@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
@@ -368,6 +368,14 @@ export function SharePointLeftPanel({
   onOpenPhaseItem, // Optional callback to open a phase navigation item
   phaseActiveSection = null,
   phaseActiveItem = null,
+  phaseActiveNode = null,
+
+  // AF-only folder mirror state (shared with middle panel)
+  afRelativePath = '',
+  onAfRelativePathChange = null,
+  afSelectedItemId = null,
+  onAfSelectedItemIdChange = null,
+  afMirrorRefreshNonce = 0,
 }) {
   const isWeb = Platform.OS === 'web';
   const [filteredHierarchy, setFilteredHierarchy] = useState([]);
@@ -418,6 +426,30 @@ export function SharePointLeftPanel({
     const section = phaseNavigation?.sections?.find((s) => String(s?.id || '') === String(phaseActiveSection || ''));
     return getTwoDigitPrefix(section?.name);
   })();
+
+  const isAfActive = String(phaseActiveNode?.key || '') === 'AF';
+  const afMirrorRootPath = useMemo(() => {
+    if (!selectedProject) return '';
+    const basePath = String(
+      selectedProject?.rootFolderPath ||
+      selectedProject?.rootPath ||
+      selectedProject?.sharePointPath ||
+      selectedProject?.sharepointPath ||
+      selectedProject?.sharePointBasePath ||
+      selectedProject?.sharepointBasePath ||
+      selectedProject?.basePath ||
+      ''
+    )
+      .trim()
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .replace(/\/+/, '/');
+
+    const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
+    const AF_FOLDER = '01 - Administrativa föreskrifter (AF)';
+    if (!basePath) return '';
+    return `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}/${AF_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
+  }, [selectedProject]);
 
   const closeProjectContextMenu = () => setProjectContextMenu({ visible: false, x: 0, y: 0, target: null });
 
@@ -485,7 +517,11 @@ export function SharePointLeftPanel({
       const phase = String(p?.phase || '').trim().toLowerCase();
       if (phase !== 'kalkylskede' && phase !== 'kalkyl') return null;
 
-      const locked = isLockedKalkylskedeSharePointFolderPath({ projectRootPath: root, itemPath: path });
+      const locked = isLockedKalkylskedeSharePointFolderPath({
+        projectRootPath: root,
+        itemPath: path,
+        structureVersion: p?.kalkylskedeStructureVersion || null,
+      });
       if (!locked) return null;
       return { projectRootPath: root, itemPath: path };
     }
@@ -1298,6 +1334,23 @@ export function SharePointLeftPanel({
   const openPhaseNavigationFromFolder = (folderNode, ctx) => {
     if (typeof onOpenPhaseItem !== 'function') return;
 
+    const buildActiveNode = (sectionId, itemId, node) => {
+      const spPath = String(node?.path || node?.sharePointPath || '').trim();
+
+      // Stable keys used by view mappings.
+      const key =
+        String(sectionId || '') === 'forfragningsunderlag' && String(itemId || '') === 'administrativa-foreskrifter'
+          ? 'AF'
+          : null;
+
+      return {
+        id: itemId || sectionId || String(node?.id || '').trim() || null,
+        key,
+        type: itemId ? 'phase-item-folder' : 'phase-section-folder',
+        sharePointPath: spPath || null,
+      };
+    };
+
     // 1) Clicking a top-level section folder inside the project should open the section summary.
     // Parent is the project root header (type: 'project').
     if (ctx?.parent?.type === 'project') {
@@ -1309,9 +1362,34 @@ export function SharePointLeftPanel({
 
       const section = sectionByPrefix || null;
       if (section?.id) {
-        onOpenPhaseItem(section.id, null, { folderNode });
+        onOpenPhaseItem(section.id, null, {
+          folderNode,
+          activeNode: buildActiveNode(section.id, null, folderNode),
+        });
       }
       return;
+    }
+
+    // 1b) Clicking a section *item* folder (e.g. "01 - Administrativa föreskrifter (AF)") should open the matching item.
+    // Parent is a phase section folder under the project root.
+    if (ctx?.parent && ctx?.grandparent?.type === 'project') {
+      const sectionPrefix = getTwoDigitPrefix(ctx.parent?.name);
+      const itemPrefix = getTwoDigitPrefix(folderNode?.name);
+
+      if (sectionPrefix && itemPrefix) {
+        const sections = Array.isArray(phaseNavigation?.sections) ? phaseNavigation.sections : [];
+        const section = sections.find((s) => getTwoDigitPrefix(s?.name) === sectionPrefix) || null;
+        const items = Array.isArray(section?.items) ? section.items : [];
+        const item = items.find((i) => getTwoDigitPrefix(i?.name) === itemPrefix) || null;
+
+        if (section?.id && item?.id) {
+          onOpenPhaseItem(section.id, item.id, {
+            folderNode,
+            activeNode: buildActiveNode(section.id, item.id, folderNode),
+          });
+          return;
+        }
+      }
     }
 
     // 2) Clicking an overview "page" folder under "01 - Översikt" should open the matching overview item.
@@ -1327,7 +1405,10 @@ export function SharePointLeftPanel({
     const item = items.find((i) => String(i?.name || '').trim().startsWith(`${prefix} -`));
     if (!item?.id) return;
 
-    onOpenPhaseItem('oversikt', item.id, { folderNode });
+    onOpenPhaseItem('oversikt', item.id, {
+      folderNode,
+      activeNode: buildActiveNode('oversikt', item.id, folderNode),
+    });
   };
 
   useEffect(() => {
@@ -2188,47 +2269,60 @@ export function SharePointLeftPanel({
                 : [];
 
               return (
-                <ProjectTree
-                  hierarchy={projectHierarchy}
-                  selectedProject={selectedProject}
-                  selectedPhase={projectPhaseKey}
-                  compact={isWeb}
-                  hideFolderIcons
-                  staticRootHeader
-                  activePhaseSection={phaseActiveSection}
-                  activeOverviewPrefix={activeOverviewPrefix}
-                  activePhaseSectionPrefix={activePhaseSectionPrefix}
-                  onToggleSubFolder={handleToggleProjectFolder}
-                  onPressFolder={openPhaseNavigationFromFolder}
-                  onSelectProject={project => {
-                    if (isWeb) {
-                      // On web, keep navigation inline
-                      // The caller is responsible for updating selectedProject
-                      if (project && project.id) {
-                        // noop here; HomeScreen handles selection via requestProjectSwitch
+                <View style={{ flex: 1, minHeight: 0 }}>
+                  <ProjectTree
+                    hierarchy={projectHierarchy}
+                    selectedProject={selectedProject}
+                    selectedPhase={projectPhaseKey}
+                    compact={isWeb}
+                    hideFolderIcons
+                    staticRootHeader
+                    activePhaseSection={phaseActiveSection}
+                    activeOverviewPrefix={activeOverviewPrefix}
+                    activePhaseSectionPrefix={activePhaseSectionPrefix}
+                    afMirror={{
+                      enabled: isAfActive,
+                      companyId,
+                      project: selectedProject,
+                      rootPath: afMirrorRootPath,
+                      relativePath: afRelativePath,
+                      onRelativePathChange: onAfRelativePathChange,
+                      selectedItemId: afSelectedItemId,
+                      onSelectedItemIdChange: onAfSelectedItemIdChange,
+                      refreshNonce: afMirrorRefreshNonce,
+                    }}
+                    onToggleSubFolder={handleToggleProjectFolder}
+                    onPressFolder={openPhaseNavigationFromFolder}
+                    onSelectProject={project => {
+                      if (isWeb) {
+                        // On web, keep navigation inline
+                        // The caller is responsible for updating selectedProject
+                        if (project && project.id) {
+                          // noop here; HomeScreen handles selection via requestProjectSwitch
+                        }
+                      } else {
+                        navigation.navigate('ProjectDetails', {
+                          project: {
+                            id: project.id,
+                            name: project.name,
+                            ansvarig: project.ansvarig || '',
+                            adress: project.adress || '',
+                            fastighetsbeteckning: project.fastighetsbeteckning || '',
+                            client: project.client || '',
+                            status: project.status || 'ongoing',
+                            createdAt: project.createdAt || '',
+                            createdBy: project.createdBy || '',
+                          },
+                          companyId,
+                        });
                       }
-                    } else {
-                      navigation.navigate('ProjectDetails', {
-                        project: {
-                          id: project.id,
-                          name: project.name,
-                          ansvarig: project.ansvarig || '',
-                          adress: project.adress || '',
-                          fastighetsbeteckning: project.fastighetsbeteckning || '',
-                          client: project.client || '',
-                          status: project.status || 'ongoing',
-                          createdAt: project.createdAt || '',
-                          createdBy: project.createdBy || '',
-                        },
-                        companyId,
-                      });
-                    }
-                  }}
-                  onSelectFunction={handleSelectFunction}
-                  navigation={navigation}
-                  companyId={companyId}
-                  projectStatusFilter={projectStatusFilter}
-                />
+                    }}
+                    onSelectFunction={handleSelectFunction}
+                    navigation={navigation}
+                    companyId={companyId}
+                    projectStatusFilter={projectStatusFilter}
+                  />
+                </View>
               );
             }
 

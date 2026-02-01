@@ -413,6 +413,20 @@ export default function HomeScreen({ navigation, route }) {
   // Phase navigation state (for PhaseLeftPanel in leftpanel)
   const [phaseActiveSection, setPhaseActiveSection] = useState(null);
   const [phaseActiveItem, setPhaseActiveItem] = useState(null);
+  const [phaseActiveNode, setPhaseActiveNode] = useState(null);
+
+  // AF (Administrativa föreskrifter) explorer state (used to mirror folder contents in left panel).
+  const [afRelativePath, setAfRelativePath] = useState('');
+  const [afSelectedItemId, setAfSelectedItemId] = useState(null);
+  const [afMirrorRefreshNonce, setAfMirrorRefreshNonce] = useState(0);
+
+  React.useEffect(() => {
+    // Only keep explorer state while AF is the active node.
+    if (String(phaseActiveNode?.key || '') !== 'AF') {
+      setAfRelativePath('');
+      setAfSelectedItemId(null);
+    }
+  }, [phaseActiveNode?.key]);
   
   // Get project phase for phase navigation
   const projectPhase = selectedProject ? (() => {
@@ -433,7 +447,8 @@ export default function HomeScreen({ navigation, route }) {
   const { navigation: phaseNavigation, isLoading: phaseNavigationLoading } = usePhaseNavigation(
     companyId,
     selectedProject?.id || null,
-    projectPhaseKey
+    projectPhaseKey,
+    selectedProject || null
   );
   
   console.log('[HomeScreen] phaseNavigation hook result:', {
@@ -1307,12 +1322,28 @@ export default function HomeScreen({ navigation, route }) {
                         console.error('[HomeScreen] Error in onSelectProject callback:', error);
                       }
                     }}
-                    onOpenPhaseItem={(sectionId, itemId) => {
+                    onOpenPhaseItem={(sectionId, itemId, meta) => {
                       try {
-                        if (sectionId) setPhaseActiveSection(sectionId);
-                        if (itemId) setPhaseActiveItem(itemId);
+                        setPhaseActiveSection(sectionId || null);
+                        setPhaseActiveItem(itemId || null);
+                        if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
+                          setPhaseActiveNode(meta.activeNode || null);
+                        } else if (!itemId) {
+                          setPhaseActiveNode(null);
+                        }
                       } catch (_e) {}
                     }}
+
+                    phaseActiveSection={phaseActiveSection}
+                    phaseActiveItem={phaseActiveItem}
+                    phaseActiveNode={phaseActiveNode}
+
+                    // AF-only folder mirror state
+                    afRelativePath={afRelativePath}
+                    onAfRelativePathChange={setAfRelativePath}
+                    afSelectedItemId={afSelectedItemId}
+                    onAfSelectedItemIdChange={setAfSelectedItemId}
+                    afMirrorRefreshNonce={afMirrorRefreshNonce}
                   />
 
                   <HomeMainPaneContainer
@@ -1388,9 +1419,18 @@ export default function HomeScreen({ navigation, route }) {
                     projectPhaseKeySafe={projectPhaseKeySafe}
                     phaseActiveSection={phaseActiveSection}
                     phaseActiveItem={phaseActiveItem}
+                    phaseActiveNode={phaseActiveNode}
                     setPhaseActiveSection={setPhaseActiveSection}
                     setPhaseActiveItem={setPhaseActiveItem}
+                    setPhaseActiveNode={setPhaseActiveNode}
                     onOpenCreateProjectModal={openCreateProjectModal}
+
+                    // AF-only explorer state shared with left panel
+                    afRelativePath={afRelativePath}
+                    setAfRelativePath={setAfRelativePath}
+                    afSelectedItemId={afSelectedItemId}
+                    setAfSelectedItemId={setAfSelectedItemId}
+                    bumpAfMirrorRefreshNonce={() => setAfMirrorRefreshNonce((n) => n + 1)}
                   />
                 </View>
               </View>
@@ -1513,14 +1553,27 @@ export default function HomeScreen({ navigation, route }) {
                   console.error('[HomeScreen] Error in onSelectProject callback:', error);
                 }
               }}
-              onOpenPhaseItem={(sectionId, itemId) => {
+              onOpenPhaseItem={(sectionId, itemId, meta) => {
                 try {
                   setPhaseActiveSection(sectionId || null);
                   setPhaseActiveItem(itemId || null);
+                  if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
+                    setPhaseActiveNode(meta.activeNode || null);
+                  } else if (!itemId) {
+                    setPhaseActiveNode(null);
+                  }
                 } catch (_e) {}
               }}
               phaseActiveSection={phaseActiveSection}
               phaseActiveItem={phaseActiveItem}
+              phaseActiveNode={phaseActiveNode}
+
+              // AF-only folder mirror state
+              afRelativePath={afRelativePath}
+              onAfRelativePathChange={setAfRelativePath}
+              afSelectedItemId={afSelectedItemId}
+              onAfSelectedItemIdChange={setAfSelectedItemId}
+              afMirrorRefreshNonce={afMirrorRefreshNonce}
             />
 
             <HomeMainPaneContainer
@@ -1596,9 +1649,18 @@ export default function HomeScreen({ navigation, route }) {
               projectPhaseKeySafe={projectPhaseKeySafe}
               phaseActiveSection={phaseActiveSection}
               phaseActiveItem={phaseActiveItem}
+              phaseActiveNode={phaseActiveNode}
               setPhaseActiveSection={setPhaseActiveSection}
               setPhaseActiveItem={setPhaseActiveItem}
+              setPhaseActiveNode={setPhaseActiveNode}
               onOpenCreateProjectModal={openCreateProjectModal}
+
+              // AF-only explorer state shared with left panel
+              afRelativePath={afRelativePath}
+              setAfRelativePath={setAfRelativePath}
+              afSelectedItemId={afSelectedItemId}
+              setAfSelectedItemId={setAfSelectedItemId}
+              bumpAfMirrorRefreshNonce={() => setAfMirrorRefreshNonce((n) => n + 1)}
             />
           </View>
         ) : null}

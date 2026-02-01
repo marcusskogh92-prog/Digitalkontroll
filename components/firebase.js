@@ -4,10 +4,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { Alert, Platform } from 'react-native';
+import { buildKalkylskedeLockedStructure, KALKYLSKEDE_STRUCTURE_VERSIONS } from '../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition';
 import { uploadFile as uploadFileToAzure } from '../services/azure/fileService';
 
 // Firebase-konfiguration för DigitalKontroll
@@ -2643,101 +2644,29 @@ export async function getSharePointNavigationConfig(companyIdOverride) {
 // ============================================================================
 
 // Locked folder model for Kalkylskede projects.
-// These folders are created automatically and must not be renamed/moved/deleted.
-// Users may still create additional folders *inside* them.
-const KALKYLSKEDE_LOCKED_STRUCTURE = [
-  {
-    name: '01 - Översikt',
-    items: [
-      '01 - Projektinformation',
-      '02 - Organisation och roller',
-      '03 - Tidsplan och viktiga datum',
-      '04 - FrågaSvar',
-    ],
-  },
-  {
-    name: '02 - Förfrågningsunderlag',
-    items: [
-      '01 - Administrativa föreskrifter (AF)',
-      '02 - Tekniska beskrivningar',
-      '03 - Ritningar',
-      '04 - Kompletteringar och ändringar',
-      '05 - Referenshandlingar',
-      '06 - AI-analys och sammanställning',
-    ],
-  },
-  {
-    name: '03 - Kalkyl',
-    items: [
-      '01 - Kalkylritningar',
-      '02 - Kalkylanteckningar',
-      '03 - Nettokalkyl',
-      '04 - Offertkalkyl',
-      '05 - Omkostnadskalkyl',
-      '06 - Slutsida',
-    ],
-  },
-  {
-    name: '04 - UE och offerter',
-    items: ['01 - Förfrågningar', '02 - Inkomna offerter', '03 - Jämförelser', '04 - Vald UE'],
-  },
-  {
-    name: '05 - Konstruktion och beräkningar',
-    items: [
-      '01 - Konstruktionsritningar',
-      '02 - Statik och hållfasthet',
-      '03 - Brandskydd',
-      '04 - Tillgänglighet',
-      '05 - Akustik',
-      '06 - Energiberäkningar',
-      '07 - Geoteknik',
-      '08 - Teknisk samordning',
-    ],
-  },
-  {
-    name: '06 - Myndigheter',
-    items: [
-      '01 - Bygglov',
-      '02 - Tekniskt samråd',
-      '03 - Startbesked',
-      '04 - Kompletteringar',
-      '05 - Slutbesked',
-      '06 - Kommunikation',
-    ],
-  },
-  {
-    name: '07 - Risk och möjligheter',
-    items: [
-      '01 - Identifierade risker',
-      '02 - Möjligheter',
-      '03 - Konsekvens och sannolikhet',
-      '04 - Åtgärdsplan',
-      '05 - AI-riskanalys',
-    ],
-  },
-  {
-    name: '08 - Bilder',
-    items: ['01 - Platsbesök', '02 - Befintliga förhållanden', '03 - Referensbilder', '04 - Skador och avvikelser', '05 - Övrigt'],
-  },
-  {
-    name: '09 - Möten',
-    items: ['01 - Startmöte', '02 - Kalkylmöten', '03 - UE-genomgång', '04 - Beslutsmöten', '05 - Protokoll'],
-  },
-  {
-    name: '10 - Anbud',
-    items: ['01 - Anbudsdokument', '02 - Bilagor', '03 - Kalkylsammanfattning', '04 - Inlämnat anbud', '05 - Utfall och feedback'],
-  },
-];
+// IMPORTANT: these folder names/prefixes must match UI ordering.
+const KALKYLSKEDE_LOCKED_STRUCTURE_V1 = buildKalkylskedeLockedStructure(KALKYLSKEDE_STRUCTURE_VERSIONS.V1);
+const KALKYLSKEDE_LOCKED_STRUCTURE_V2 = buildKalkylskedeLockedStructure(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
 
-export function getKalkylskedeLockedRelativeFolderPaths() {
+export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null) {
+  const v = String(structureVersion || '').trim().toLowerCase();
+  const structures =
+    v === String(KALKYLSKEDE_STRUCTURE_VERSIONS.V2)
+      ? [KALKYLSKEDE_LOCKED_STRUCTURE_V2]
+      : v === String(KALKYLSKEDE_STRUCTURE_VERSIONS.V1)
+      ? [KALKYLSKEDE_LOCKED_STRUCTURE_V1]
+      : [KALKYLSKEDE_LOCKED_STRUCTURE_V1, KALKYLSKEDE_LOCKED_STRUCTURE_V2];
+
   const out = [];
-  for (const section of KALKYLSKEDE_LOCKED_STRUCTURE) {
-    if (!section?.name) continue;
-    out.push(String(section.name));
-    const items = Array.isArray(section.items) ? section.items : [];
-    for (const itemName of items) {
-      if (!itemName) continue;
-      out.push(`${String(section.name)}/${String(itemName)}`);
+  for (const structure of structures) {
+    for (const section of structure) {
+      if (!section?.name) continue;
+      out.push(String(section.name));
+      const items = Array.isArray(section.items) ? section.items : [];
+      for (const itemName of items) {
+        if (!itemName) continue;
+        out.push(`${String(section.name)}/${String(itemName)}`);
+      }
     }
   }
   return out;
@@ -2769,7 +2698,7 @@ export function formatSharePointProjectFolderName(projectNumber, projectName) {
   return left || right || '';
 }
 
-export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemPath }) {
+export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemPath, structureVersion = null }) {
   const root = normalizeSharePointPath(projectRootPath);
   const path = normalizeSharePointPath(itemPath);
   if (!root || !path) return false;
@@ -2781,13 +2710,65 @@ export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemP
   const rel = path.slice(root.length + 1); // remove root + '/'
   if (!rel) return true;
 
-  const lockedRel = getKalkylskedeLockedRelativeFolderPaths();
+  const lockedRel = getKalkylskedeLockedRelativeFolderPaths(structureVersion);
   return lockedRel.includes(rel);
 }
 
 // ============================================================================
 // SHAREPOINT PROJECT METADATA (phase/structure)
 // ============================================================================
+
+// SharePoint list/library metadata fields (used by Word/Excel templates via Document Properties/Quick Parts)
+export const SHAREPOINT_PROJECT_PROPERTIES_FIELDS = {
+  ProjectNumber: 'ProjectNumber',
+  ProjectName: 'ProjectName',
+};
+
+/**
+ * Update SharePoint Project Properties (library metadata) for the project root folder.
+ *
+ * Goals:
+ * - Firestore remains source of truth for projectNumber/projectName
+ * - SharePoint folder metadata is updated so Word/Excel documents can insert these
+ *   values via Document Properties / Quick Parts without hardcoding.
+ * - Does NOT rewrite any files.
+ */
+export async function updateSharePointProjectPropertiesFromFirestoreProject(companyIdOverride, project) {
+  const companyId = await resolveCompanyId(companyIdOverride, project || { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const safeText = (v) => String(v || '').trim();
+  const siteId = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
+  let projectPath = safeText(project?.rootFolderPath || project?.sharePointRootPath || project?.projectPath || project?.path);
+  const pn = safeText(project?.projectNumber || project?.number || project?.id);
+  const pnm = safeText(project?.projectName || project?.name);
+  if (!siteId) throw new Error('Missing SharePoint siteId on project');
+
+  if (!projectPath) {
+    // Best-effort: resolve the folder by searching in SharePoint
+    try {
+      const { resolveProjectRootFolderPath } = await import('../services/azure/fileService');
+      projectPath = await resolveProjectRootFolderPath({
+        siteId,
+        projectNumber: pn,
+        projectName: pnm,
+        fullName: safeText(project?.fullName),
+      });
+    } catch (e) {
+      const err = new Error(`Kunde inte hitta projektmappen i SharePoint för att uppdatera metadata: ${e?.message || e}`);
+      err.cause = e;
+      throw err;
+    }
+  }
+
+  const fields = {
+    [SHAREPOINT_PROJECT_PROPERTIES_FIELDS.ProjectNumber]: pn || null,
+    [SHAREPOINT_PROJECT_PROPERTIES_FIELDS.ProjectName]: pnm || null,
+  };
+
+  const { patchDriveItemListItemFieldsByPath } = await import('../services/azure/fileService');
+  return await patchDriveItemListItemFieldsByPath({ siteId, path: projectPath, fields });
+}
 
 function encodeSharePointProjectMetaId(siteId, projectPath) {
   const sid = String(siteId || '').trim();
@@ -2897,6 +2878,94 @@ export async function fetchSharePointProjectMetadataMap(companyIdOverride) {
 // PROJECTS (Firestore source of truth)
 // ============================================================================
 
+function normalizeProjectNumberForUniqueness(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function projectNumberIndexDocIdFromNormalized(normalized) {
+  const n = String(normalized || '').trim();
+  if (!n) return '';
+  // Doc IDs cannot contain '/'. encodeURIComponent is stable and safe.
+  return encodeURIComponent(n);
+}
+
+function duplicateProjectNumberMessage(projectNumber) {
+  const x = String(projectNumber || '').trim();
+  return `Det finns redan ett projekt med projektnummer ${x}. Projektnummer måste vara unikt.`;
+}
+
+function createDuplicateProjectNumberError(projectNumber) {
+  const err = new Error(duplicateProjectNumberMessage(projectNumber));
+  err.name = 'DuplicateProjectNumberError';
+  err.status = 409;
+  err.code = 'conflict';
+  return err;
+}
+
+/**
+ * Shared helper: check if a projectNumber is already in use within the company.
+ * - Trim + case-insensitive
+ * - Excludes a projectId when editing
+ */
+export async function hasDuplicateProjectNumber(companyIdOverride, projectNumber, excludeProjectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const raw = String(projectNumber || '').trim();
+  const normalized = normalizeProjectNumberForUniqueness(raw);
+  if (!normalized) return false;
+
+  const excluded = excludeProjectId != null ? String(excludeProjectId || '').trim() : '';
+
+  // Fast path: check the uniqueness index doc.
+  try {
+    const idxId = projectNumberIndexDocIdFromNormalized(normalized);
+    if (idxId) {
+      const idxRef = doc(db, 'foretag', companyId, 'project_number_index', idxId);
+      const idxSnap = await getDoc(idxRef);
+      if (idxSnap.exists()) {
+        const d = idxSnap.data() || {};
+        const owner = String(d?.projectId || '').trim();
+        if (!excluded || owner !== excluded) return true;
+      }
+    }
+  } catch (_e) {
+    // Non-fatal: fall back to collection scan below.
+  }
+
+  // Medium path: query any docs that already have normalized fields.
+  try {
+    const colRef = collection(db, 'foretag', companyId, 'projects');
+    const q = query(colRef, where('projectNumberNormalized', '==', normalized));
+    const snap = await getDocs(q);
+    let dup = false;
+    snap.forEach((docSnap) => {
+      const pid = String(docSnap.id || '').trim();
+      if (excluded && pid === excluded) return;
+      dup = true;
+    });
+    if (dup) return true;
+  } catch (_e) {
+    // Non-fatal: fall back to full scan.
+  }
+
+  // Last-resort: full scan of company projects (ensures correctness for legacy data).
+  // This is heavier, but avoids letting duplicates slip through when older docs
+  // lack normalized/index fields.
+  const colRef = collection(db, 'foretag', companyId, 'projects');
+  const snap = await getDocs(colRef);
+  let dup = false;
+  snap.forEach((docSnap) => {
+    const pid = String(docSnap.id || '').trim();
+    if (excluded && pid === excluded) return;
+    const d = docSnap.data() || {};
+    const pn = String(d?.projectNumber || d?.number || pid || '').trim();
+    if (!pn) return;
+    if (normalizeProjectNumberForUniqueness(pn) === normalized) dup = true;
+  });
+  return dup;
+}
+
 /**
  * Upsert a project document in Firestore.
  * Collection: foretag/{companyId}/projects/{projectId}
@@ -2919,6 +2988,8 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
     id: pid,
     projectId: pid,
     projectNumber: data?.projectNumber != null ? String(data.projectNumber) : pid,
+    projectNumberNormalized: null,
+    projectNumberIndexId: null,
     projectName: data?.projectName != null ? String(data.projectName) : null,
     fullName: data?.fullName != null ? String(data.fullName) : null,
     // Lifecycle status (source of truth)
@@ -2940,17 +3011,80 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
     updatedBy: auth.currentUser?.uid || null,
   };
 
-  // If doc doesn't exist yet, set createdAt/createdBy.
-  // We do this best-effort with merge semantics.
-  await setDoc(
-    ref,
-    sanitizeForFirestore({
-      ...payload,
-      createdAt: data?.createdAt || serverTimestamp(),
-      createdBy: data?.createdBy || auth.currentUser?.uid || null,
-    }),
-    { merge: true }
-  );
+  const rawPn = String(payload.projectNumber || '').trim();
+  const normalizedPn = normalizeProjectNumberForUniqueness(rawPn);
+  payload.projectNumber = rawPn || pid;
+  payload.projectNumberNormalized = normalizedPn || null;
+
+  const idxId = normalizedPn ? projectNumberIndexDocIdFromNormalized(normalizedPn) : '';
+  payload.projectNumberIndexId = idxId || null;
+
+  // Enforce projectNumber uniqueness per company via a transaction-based index.
+  await runTransaction(db, async (tx) => {
+    const projectSnap = await tx.get(ref);
+    const prev = projectSnap.exists() ? (projectSnap.data() || {}) : {};
+    const prevPnRaw = String(prev?.projectNumber || prev?.number || pid || '').trim();
+    const prevPnNorm = normalizeProjectNumberForUniqueness(prevPnRaw);
+
+    if (!normalizedPn) {
+      throw new Error('Projektnummer är obligatoriskt');
+    }
+
+    if (!idxId) {
+      throw new Error('Ogiltigt projektnummer');
+    }
+
+    const idxRef = doc(db, 'foretag', companyId, 'project_number_index', idxId);
+    const idxSnap = await tx.get(idxRef);
+    if (idxSnap.exists()) {
+      const d = idxSnap.data() || {};
+      const owner = String(d?.projectId || '').trim();
+      if (owner && owner !== pid) {
+        throw createDuplicateProjectNumberError(rawPn);
+      }
+    }
+
+    // If doc doesn't exist yet, set createdAt/createdBy.
+    const createdAt = data?.createdAt || serverTimestamp();
+    const createdBy = data?.createdBy || auth.currentUser?.uid || null;
+
+    tx.set(
+      ref,
+      sanitizeForFirestore({
+        ...payload,
+        ...(projectSnap.exists() ? {} : { createdAt, createdBy }),
+      }),
+      { merge: true }
+    );
+
+    tx.set(
+      idxRef,
+      sanitizeForFirestore({
+        projectId: pid,
+        projectNumber: rawPn,
+        normalized: normalizedPn,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.uid || null,
+      }),
+      { merge: true }
+    );
+
+    // If number changed, release the previous index (best-effort; only if we own it).
+    if (prevPnNorm && prevPnNorm !== normalizedPn) {
+      const prevIdxId = projectNumberIndexDocIdFromNormalized(prevPnNorm);
+      if (prevIdxId) {
+        const prevIdxRef = doc(db, 'foretag', companyId, 'project_number_index', prevIdxId);
+        const prevIdxSnap = await tx.get(prevIdxRef);
+        if (prevIdxSnap.exists()) {
+          const d = prevIdxSnap.data() || {};
+          const owner = String(d?.projectId || '').trim();
+          if (owner && owner === pid) {
+            tx.delete(prevIdxRef);
+          }
+        }
+      }
+    }
+  });
 
   return { id: pid, ...payload };
 }
@@ -2968,13 +3102,101 @@ export async function patchCompanyProject(companyIdOverride, projectId, patch) {
 
   const ref = doc(db, 'foretag', companyId, 'projects', pid);
 
+  const incoming = (patch && typeof patch === 'object') ? { ...patch } : {};
+  // Never allow callers to set this directly; we compute it.
+  if (Object.prototype.hasOwnProperty.call(incoming, 'projectNumberNormalized')) {
+    delete incoming.projectNumberNormalized;
+  }
+
+  const touchesProjectNumber =
+    Object.prototype.hasOwnProperty.call(incoming, 'projectNumber') ||
+    Object.prototype.hasOwnProperty.call(incoming, 'number');
+
+  if (!touchesProjectNumber) {
+    const payload = {
+      ...incoming,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    };
+    await updateDoc(ref, sanitizeForFirestore(payload));
+    return { id: pid, ...payload };
+  }
+
+  const desiredRaw = Object.prototype.hasOwnProperty.call(incoming, 'projectNumber')
+    ? String(incoming.projectNumber || '').trim()
+    : (Object.prototype.hasOwnProperty.call(incoming, 'number') ? String(incoming.number || '').trim() : '');
+  const desiredNorm = normalizeProjectNumberForUniqueness(desiredRaw);
+  const desiredIdxId = desiredNorm ? projectNumberIndexDocIdFromNormalized(desiredNorm) : '';
+
   const payload = {
-    ...(patch && typeof patch === 'object' ? patch : {}),
+    ...incoming,
+    projectNumber: desiredRaw,
+    // Keep the common alias in sync if it was included by callers.
+    ...(Object.prototype.hasOwnProperty.call(incoming, 'number') ? { number: desiredRaw } : {}),
+    projectNumberNormalized: desiredNorm || null,
+    projectNumberIndexId: desiredIdxId || null,
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,
   };
 
-  await updateDoc(ref, sanitizeForFirestore(payload));
+  // If projectNumber is being changed, enforce uniqueness via transaction-based index.
+  await runTransaction(db, async (tx) => {
+    const projectSnap = await tx.get(ref);
+    if (!projectSnap.exists()) {
+      throw new Error('Projektet finns inte längre. Ladda om och försök igen.');
+    }
+
+    const prev = projectSnap.data() || {};
+    const prevPnRaw = String(prev?.projectNumber || prev?.number || pid || '').trim();
+    const prevPnNorm = normalizeProjectNumberForUniqueness(prevPnRaw);
+
+    if (!desiredNorm) {
+      throw new Error('Projektnummer är obligatoriskt');
+    }
+
+    if (!desiredIdxId) {
+      throw new Error('Ogiltigt projektnummer');
+    }
+
+    const idxRef = doc(db, 'foretag', companyId, 'project_number_index', desiredIdxId);
+    const idxSnap = await tx.get(idxRef);
+    if (idxSnap.exists()) {
+      const d = idxSnap.data() || {};
+      const owner = String(d?.projectId || '').trim();
+      if (owner && owner !== pid) {
+        throw createDuplicateProjectNumberError(desiredRaw);
+      }
+    }
+
+    tx.set(ref, sanitizeForFirestore(payload), { merge: true });
+    tx.set(
+      idxRef,
+      sanitizeForFirestore({
+        projectId: pid,
+        projectNumber: desiredRaw,
+        normalized: desiredNorm,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.uid || null,
+      }),
+      { merge: true }
+    );
+
+    if (prevPnNorm && prevPnNorm !== desiredNorm) {
+      const prevIdxId = projectNumberIndexDocIdFromNormalized(prevPnNorm);
+      if (prevIdxId) {
+        const prevIdxRef = doc(db, 'foretag', companyId, 'project_number_index', prevIdxId);
+        const prevIdxSnap = await tx.get(prevIdxRef);
+        if (prevIdxSnap.exists()) {
+          const d = prevIdxSnap.data() || {};
+          const owner = String(d?.projectId || '').trim();
+          if (owner && owner === pid) {
+            tx.delete(prevIdxRef);
+          }
+        }
+      }
+    }
+  });
+
   return { id: pid, ...payload };
 }
 
@@ -2993,6 +3215,190 @@ export async function fetchCompanyProject(companyIdOverride, projectId) {
   if (!snap.exists()) return null;
   const d = snap.data() || {};
   return { id: snap.id, ...d };
+}
+
+// ============================================================================
+// PROJECT TIMELINE (important dates)
+// ============================================================================
+
+function isValidIsoDateLight(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
+
+function projectInfoMilestoneId(key) {
+  const k = String(key || '').trim();
+  if (!k) return null;
+  return `projectinfo:${k}`;
+}
+
+function projectInfoSourceKeyToProjectField(sourceKey) {
+  const k = String(sourceKey || '').trim();
+  if (!k) return null;
+  // Canonical project fields (required): keep timeline in sync with Projektinformation master.
+  if (k === 'sista-dag-for-fragor') return 'lastQuestionDate';
+  if (k === 'anbudsinlamning') return 'tenderSubmissionDate';
+  if (k === 'planerad-byggstart') return 'plannedConstructionStart';
+  if (k === 'klart-for-besiktning') return 'readyForInspectionDate';
+  return null;
+}
+
+/**
+ * Two-way sync support:
+ * If a Projektinformation-sourced milestone has been unlocked in the timeline,
+ * changing the date in the timeline should update the corresponding
+ * Projektinformation field (and legacy keys where relevant).
+ */
+export async function updateProjectInfoImportantDateFromTimeline(companyIdOverride, projectId, sourceKey, date) {
+  const field = projectInfoSourceKeyToProjectField(sourceKey);
+  if (!field) throw new Error('Unknown sourceKey');
+
+  const iso = isValidIsoDateLight(date) ? String(date).trim() : '';
+  const patch = { [field]: iso };
+
+  // Keep Swedish keys in sync for existing UI/logic.
+  if (field === 'lastQuestionDate') patch.sistaDagForFragor = iso;
+  if (field === 'tenderSubmissionDate') patch.anbudsinlamning = iso;
+  if (field === 'plannedConstructionStart') patch.planeradByggstart = iso;
+  if (field === 'readyForInspectionDate') patch.klartForBesiktning = iso;
+
+  // Backwards-compatibility mirrors (best effort).
+  if (field === 'tenderSubmissionDate') patch.anbudstid = iso;
+  if (field === 'plannedConstructionStart') patch.byggstart = iso;
+  if (field === 'readyForInspectionDate') patch.fardigstallning = iso;
+
+  await patchCompanyProject(companyIdOverride, projectId, patch);
+  return { field, iso, patch };
+}
+
+/**
+ * Upsert (or remove) a locked milestone date in project timeline.
+ * One-way source of truth: Projektinformation.
+ *
+ * Storage:
+ * foretag/{companyId}/project_timeline/{projectId}
+ *
+ * Behavior:
+ * - Uses deterministic id: `projectinfo:${key}` to avoid duplicates
+ * - If `date` is empty/invalid => removes that milestone from timeline
+ */
+export async function upsertProjectInfoTimelineMilestone(companyIdOverride, projectId, { key, title, date } = {}) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const milestoneKey = String(key || '').trim();
+  const id = projectInfoMilestoneId(milestoneKey);
+  if (!id) throw new Error('key is required');
+
+  const safeTitle = String(title || '').trim() || milestoneKey;
+  const iso = isValidIsoDateLight(date) ? String(date).trim() : '';
+
+  const ref = doc(db, 'foretag', companyId, 'project_timeline', pid);
+
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists() ? (snap.data() || {}) : {};
+    const existingCustom = Array.isArray(current.customDates) ? current.customDates : [];
+
+    const existingItem = existingCustom.find((d) => String(d?.id || '').trim() === id) || null;
+    const filtered = existingCustom.filter((d) => String(d?.id || '').trim() !== id);
+    const nextCustom = [...filtered];
+
+    if (iso) {
+      // Preserve user-edited fields (title/description/participants/etc) and unlock state.
+      // New items default to locked (date is controlled by Projektinformation).
+      const prevLocked = existingItem && typeof existingItem.locked === 'boolean' ? existingItem.locked : undefined;
+      const nextLocked = prevLocked === false ? false : true;
+
+      const prevTitle = existingItem ? String(existingItem?.title || '').trim() : '';
+      const prevType = existingItem ? String(existingItem?.type || existingItem?.customType || '').trim() : '';
+
+      nextCustom.push({
+        ...(existingItem && typeof existingItem === 'object' ? existingItem : {}),
+        id,
+        date: iso,
+        title: prevTitle || safeTitle,
+        type: prevType || 'Viktigt datum',
+        customType: String(existingItem?.customType || '').trim() || 'Viktigt datum',
+        source: 'projectinfo',
+        sourceKey: milestoneKey,
+        locked: nextLocked,
+      });
+    }
+
+    const payload = {
+      projectId: pid,
+      customDates: nextCustom,
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.currentUser?.uid || null,
+    };
+
+    tx.set(ref, sanitizeForFirestore(payload), { merge: true });
+    return true;
+  });
+}
+
+// ============================================================================
+// PROJECT ORGANISATION (groups & members)
+// ============================================================================
+
+/**
+ * Ensure a default internal main group exists for a project.
+ *
+ * Requirements:
+ * - Create automatically (no user interaction)
+ * - Group title equals company name
+ * - Classified as internal main group
+ * - Must be renameable but not deletable (enforced in UI + best-effort in hook)
+ * - If any groups already exist, do nothing
+ *
+ * Storage:
+ * foretag/{companyId}/project_organisation/{projectId}
+ */
+export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, projectId, { companyName } = {}) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const title = String(companyName || '').trim() || String(companyId).trim();
+  const ref = doc(db, 'foretag', companyId, 'project_organisation', pid);
+
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists() ? (snap.data() || {}) : {};
+    const groups = Array.isArray(current?.groups) ? current.groups : [];
+    if (groups.length > 0) {
+      return { ok: true, created: false, skipped: true, reason: 'has_groups' };
+    }
+
+    const defaultGroup = {
+      id: 'internal-main',
+      title,
+      members: [],
+      groupType: 'internal',
+      isInternalMainGroup: true,
+      locked: true,
+    };
+
+    tx.set(
+      ref,
+      sanitizeForFirestore({
+        projectId: pid,
+        groups: [defaultGroup],
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.uid || null,
+        createdAt: current?.createdAt || serverTimestamp(),
+        createdBy: current?.createdBy || auth.currentUser?.uid || null,
+      }),
+      { merge: true }
+    );
+
+    return { ok: true, created: true, skipped: false, groupId: defaultGroup.id };
+  });
 }
 
 /**

@@ -9,10 +9,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
 import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
-import { patchSharePointProjectMetadata } from '../../../../../../components/firebase';
+import { fetchCompanyProject, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
 import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
+import { enqueueFsExcelSync } from '../../services/fragaSvarExcelSyncQueue';
 
 function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -103,7 +104,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
   // Date picker modal state for ISO dates
   const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [datePickerField, setDatePickerField] = useState(null); // 'anbudstid' | 'byggstart' | 'fardigstallning'
+  const [datePickerField, setDatePickerField] = useState(null); // 'sistaDagForFragor' | 'anbudsinlamning' | 'planeradByggstart' | 'klartForBesiktning'
 
   // Store original values to detect changes
   const [originalValues, setOriginalValues] = useState({});
@@ -149,10 +150,16 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       kommun: project.kommun,
       region: project.region,
       fastighetsbeteckning: project.fastighetsbeteckning,
-      anbudstid: project.anbudstid,
-      byggstart: project.byggstart,
-      fardigstallning: project.fardigstallning,
-      bindningstid: project.bindningstid,
+      // Canonical important dates (required fields)
+      lastQuestionDate: project.lastQuestionDate,
+      tenderSubmissionDate: project.tenderSubmissionDate,
+      plannedConstructionStart: project.plannedConstructionStart,
+      readyForInspectionDate: project.readyForInspectionDate,
+      // Legacy mirrors (keep for backwards compatibility)
+      sistaDagForFragor: project.sistaDagForFragor,
+      anbudsinlamning: project.anbudsinlamning || project.anbudstid,
+      planeradByggstart: project.planeradByggstart || project.byggstart,
+      klartForBesiktning: project.klartForBesiktning || project.fardigstallning,
       anteckningar: project.anteckningar || project.beskrivning
     }) : '';
 
@@ -194,10 +201,11 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       kommun: project?.kommun || '',
       region: project?.region || '',
       fastighetsbeteckning: project?.fastighetsbeteckning || '',
-      anbudstid: project?.anbudstid || '',
-      byggstart: project?.byggstart || '',
-      fardigstallning: project?.fardigstallning || '',
-      bindningstid: project?.bindningstid || '',
+      // Hydrate from canonical fields first, then fall back to legacy mirrors.
+      sistaDagForFragor: project?.lastQuestionDate || project?.sistaDagForFragor || '',
+      anbudsinlamning: project?.tenderSubmissionDate || project?.anbudsinlamning || project?.anbudstid || '',
+      planeradByggstart: project?.plannedConstructionStart || project?.planeradByggstart || project?.byggstart || '',
+      klartForBesiktning: project?.readyForInspectionDate || project?.klartForBesiktning || project?.fardigstallning || '',
       anteckningar: project?.anteckningar || project?.beskrivning || ''
     };
 
@@ -217,10 +225,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setKommun(newValues.kommun);
     setRegion(newValues.region);
     setFastighetsbeteckning(newValues.fastighetsbeteckning);
-    setAnbudstid(newValues.anbudstid);
-    setByggstart(newValues.byggstart);
-    setFardigstallning(newValues.fardigstallning);
-    setBindningstid(newValues.bindningstid);
+    setSistaDagForFragor(newValues.sistaDagForFragor);
+    setAnbudsinlamning(newValues.anbudsinlamning);
+    setPlaneradByggstart(newValues.planeradByggstart);
+    setKlartForBesiktning(newValues.klartForBesiktning);
     setAnteckningar(newValues.anteckningar);
     
     // Reset all change flags
@@ -248,20 +256,111 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const [region, setRegion] = useState(project?.region || '');
   const [fastighetsbeteckning, setFastighetsbeteckning] = useState(project?.fastighetsbeteckning || '');
 
-  // Tider & viktiga datum state
-  const [anbudstid, setAnbudstid] = useState(project?.anbudstid || '');
-  const [byggstart, setByggstart] = useState(project?.byggstart || '');
-  const [fardigstallning, setFardigstallning] = useState(project?.fardigstallning || '');
-  const [bindningstid, setBindningstid] = useState(project?.bindningstid || '');
+  // Viktiga datum state (4 fixed fields)
+  const [sistaDagForFragor, setSistaDagForFragor] = useState(project?.sistaDagForFragor || '');
+  const [anbudsinlamning, setAnbudsinlamning] = useState(project?.anbudsinlamning || project?.anbudstid || '');
+  const [planeradByggstart, setPlaneradByggstart] = useState(project?.planeradByggstart || project?.byggstart || '');
+  const [klartForBesiktning, setKlartForBesiktning] = useState(project?.klartForBesiktning || project?.fardigstallning || '');
 
   // Kalkylanteckningar state (simplified from "Kalkylkritisk sammanfattning")
   const [anteckningar, setAnteckningar] = useState(project?.anteckningar || project?.beskrivning || '');
 
   // Helper function to update project in hierarchy
-  // Legacy Firestore-hierarki är avvecklad – denna funktion gör inget hierarki-ingrepp längre
+  // Legacy Firestore-hierarki är avvecklad – men vi använder denna som central persistensväg.
+  // Source of truth = backend (Firestore). Returnerar alltid nyhämtat projekt efter patch.
   const updateProjectInHierarchy = async (updates) => {
-    // Keep UI stable even if backend persistence is handled elsewhere.
-    return Object.assign({}, (project || {}), (updates || {}));
+    const cid = String(companyId || '').trim();
+    const pid = String(projectId || project?.id || '').trim();
+    if (!cid || !pid) {
+      throw new Error('Saknar companyId eller projectId – kan inte spara projektet.');
+    }
+
+    const u = (updates && typeof updates === 'object') ? { ...updates } : {};
+    const patch = { ...u };
+
+    const beforePn = String(project?.projectNumber || project?.number || project?.id || '').trim();
+    const beforePnm = String(project?.projectName || project?.name || '').trim();
+    const updatesProjectIdentity = (
+      Object.prototype.hasOwnProperty.call(u, 'projectNumber') ||
+      Object.prototype.hasOwnProperty.call(u, 'projectName') ||
+      Object.prototype.hasOwnProperty.call(u, 'name') ||
+      Object.prototype.hasOwnProperty.call(u, 'id')
+    );
+
+    // Normalize name/number. UI uses projectNumber/projectName.
+    // We also mirror to common aliases used around the app.
+    const nextNumber =
+      Object.prototype.hasOwnProperty.call(u, 'projectNumber')
+        ? String(u.projectNumber || '').trim()
+        : (Object.prototype.hasOwnProperty.call(u, 'id') ? String(u.id || '').trim() : '');
+
+    const nextName =
+      Object.prototype.hasOwnProperty.call(u, 'projectName')
+        ? String(u.projectName || '').trim()
+        : (Object.prototype.hasOwnProperty.call(u, 'name') ? String(u.name || '').trim() : '');
+
+    // Never treat projektnummer edit as Firestore doc-id rename here.
+    if (Object.prototype.hasOwnProperty.call(patch, 'id')) delete patch.id;
+    if (Object.prototype.hasOwnProperty.call(patch, 'projectId')) delete patch.projectId;
+
+    if (Object.prototype.hasOwnProperty.call(u, 'name')) {
+      patch.name = nextName || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(u, 'projectName') || Object.prototype.hasOwnProperty.call(u, 'name')) {
+      patch.projectName = nextName || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(u, 'projectNumber') || Object.prototype.hasOwnProperty.call(u, 'id')) {
+      patch.projectNumber = nextNumber || null;
+      patch.number = nextNumber || null;
+    }
+
+    if ((nextNumber || nextName) && !Object.prototype.hasOwnProperty.call(patch, 'fullName')) {
+      patch.fullName = (nextNumber && nextName) ? `${nextNumber} - ${nextName}` : (nextName || nextNumber || null);
+    }
+
+    // Mirror a few legacy field names used across the app.
+    if (Object.prototype.hasOwnProperty.call(u, 'kund')) {
+      const v = String(u.kund || '').trim();
+      patch.client = v || null;
+      patch.customer = v || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(u, 'epost')) {
+      patch.email = String(u.epost || '').trim() || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(u, 'anteckningar')) {
+      patch.beskrivning = String(u.anteckningar || '').trim() || null;
+    }
+
+    await patchCompanyProject(cid, pid, patch);
+
+    const latest = await fetchCompanyProject(cid, pid);
+    if (latest) {
+      // Preserve any transient/non-Firestore fields already present on `project`.
+      const merged = { ...(project || {}), ...latest };
+
+      // Best-effort: update SharePoint Project Properties (library metadata) so Word/Excel Quick Parts update.
+      if (updatesProjectIdentity) {
+        const afterPn = String(merged?.projectNumber || merged?.number || merged?.id || '').trim();
+        const afterPnm = String(merged?.projectName || merged?.name || '').trim();
+        const normalizePn = (v) => String(v || '').trim().toLowerCase();
+        const normalizePnm = (v) => String(v || '').trim().toLowerCase();
+        if (normalizePn(afterPn) !== normalizePn(beforePn) || normalizePnm(afterPnm) !== normalizePnm(beforePnm)) {
+          try {
+            void updateSharePointProjectPropertiesFromFirestoreProject(cid, merged).catch((e) => {
+              console.warn('[OversiktSummary] Kunde inte uppdatera SharePoint projektsmetadata (ProjectNumber/ProjectName):', e?.message || e);
+            });
+          } catch (e) {
+            console.warn('[OversiktSummary] Kunde inte uppdatera SharePoint projektsmetadata (ProjectNumber/ProjectName):', e?.message || e);
+          }
+        }
+      }
+
+      return merged;
+    }
+
+    return { ...(project || {}), ...patch, id: pid };
   };
 
   // Defensive defaults: these must exist to prevent render crashes on web.
@@ -339,10 +438,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Helper function to check if tider info has changes
   const checkTiderChanges = () => {
     return (
-      anbudstid.trim() !== (originalValues.anbudstid || '') ||
-      byggstart.trim() !== (originalValues.byggstart || '') ||
-      fardigstallning.trim() !== (originalValues.fardigstallning || '') ||
-      bindningstid.trim() !== (originalValues.bindningstid || '')
+      sistaDagForFragor.trim() !== (originalValues.sistaDagForFragor || '') ||
+      anbudsinlamning.trim() !== (originalValues.anbudsinlamning || '') ||
+      planeradByggstart.trim() !== (originalValues.planeradByggstart || '') ||
+      klartForBesiktning.trim() !== (originalValues.klartForBesiktning || '')
     );
   };
 
@@ -354,7 +453,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Memoize originalValues string to prevent unnecessary recalculations
   const originalValuesKey = React.useMemo(() => {
     return JSON.stringify(originalValues);
-  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.anbudstid, originalValues.byggstart, originalValues.fardigstallning, originalValues.bindningstid, originalValues.anteckningar]);
+  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.sistaDagForFragor, originalValues.anbudsinlamning, originalValues.planeradByggstart, originalValues.klartForBesiktning, originalValues.anteckningar]);
 
   // Calculate changes directly in render instead of useEffect to avoid re-renders during typing
   // These are computed values, not state, to prevent blocking input
@@ -362,7 +461,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const hasChangesInfoComputed = React.useMemo(() => checkInfoChanges(), [projectNumber, projectName, phaseKey, projectType, upphandlingsform, status, originalValuesKey]);
   const hasChangesKundComputed = React.useMemo(() => checkKundChanges(), [kund, organisationsnummer, JSON.stringify(kontaktperson), telefon, epost, originalValuesKey]);
   const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, originalValuesKey]);
-  const hasChangesTiderComputed = React.useMemo(() => checkTiderChanges(), [anbudstid, byggstart, fardigstallning, bindningstid, originalValuesKey]);
+  const hasChangesTiderComputed = React.useMemo(() => checkTiderChanges(), [sistaDagForFragor, anbudsinlamning, planeradByggstart, klartForBesiktning, originalValuesKey]);
   const hasChangesAnteckningarComputed = React.useMemo(() => checkAnteckningarChanges(), [anteckningar, originalValuesKey]);
 
   // Sync computed values to state (only when they actually change)
@@ -433,20 +532,20 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setFastighetsbeteckning(val);
   }, []);
 
-  const handleAnbudstidChange = useCallback((val) => {
-    setAnbudstid(val);
+  const handleSistaDagForFragorChange = useCallback((val) => {
+    setSistaDagForFragor(val);
   }, []);
 
-  const handleByggstartChange = useCallback((val) => {
-    setByggstart(val);
+  const handleAnbudsinlamningChange = useCallback((val) => {
+    setAnbudsinlamning(val);
   }, []);
 
-  const handleFardigstallningChange = useCallback((val) => {
-    setFardigstallning(val);
+  const handlePlaneradByggstartChange = useCallback((val) => {
+    setPlaneradByggstart(val);
   }, []);
 
-  const handleBindningstidChange = useCallback((val) => {
-    setBindningstid(val);
+  const handleKlartForBesiktningChange = useCallback((val) => {
+    setKlartForBesiktning(val);
   }, []);
 
   const openDatePicker = useCallback((fieldKey) => {
@@ -460,19 +559,27 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   }, []);
 
   const datePickerValue = React.useMemo(() => {
-    if (datePickerField === 'anbudstid') return anbudstid;
-    if (datePickerField === 'byggstart') return byggstart;
-    if (datePickerField === 'fardigstallning') return fardigstallning;
+    if (datePickerField === 'sistaDagForFragor') return sistaDagForFragor;
+    if (datePickerField === 'anbudsinlamning') return anbudsinlamning;
+    if (datePickerField === 'planeradByggstart') return planeradByggstart;
+    if (datePickerField === 'klartForBesiktning') return klartForBesiktning;
     return '';
-  }, [datePickerField, anbudstid, byggstart, fardigstallning]);
+  }, [datePickerField, sistaDagForFragor, anbudsinlamning, planeradByggstart, klartForBesiktning]);
 
   const handleDatePicked = useCallback((iso) => {
     const next = isValidIsoDate(iso) ? String(iso) : '';
     if (!datePickerField) return;
-    if (datePickerField === 'anbudstid') handleAnbudstidChange(next);
-    if (datePickerField === 'byggstart') handleByggstartChange(next);
-    if (datePickerField === 'fardigstallning') handleFardigstallningChange(next);
-  }, [datePickerField, handleAnbudstidChange, handleByggstartChange, handleFardigstallningChange]);
+    if (datePickerField === 'sistaDagForFragor') handleSistaDagForFragorChange(next);
+    if (datePickerField === 'anbudsinlamning') handleAnbudsinlamningChange(next);
+    if (datePickerField === 'planeradByggstart') handlePlaneradByggstartChange(next);
+    if (datePickerField === 'klartForBesiktning') handleKlartForBesiktningChange(next);
+  }, [
+    datePickerField,
+    handleSistaDagForFragorChange,
+    handleAnbudsinlamningChange,
+    handlePlaneradByggstartChange,
+    handleKlartForBesiktningChange,
+  ]);
 
   const handleAnteckningarChange = useCallback((val) => {
     setAnteckningar(val);
@@ -529,6 +636,28 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           onSave={async () => {
             if (saving) return;
 
+            // KRITISK: Projektnummer måste vara unikt per företag.
+            // Blockera innan vi sparar/uppdaterar något.
+            const beforePn = String(originalValues?.projectNumber || '').trim();
+            const afterPn = String(projectNumber || '').trim();
+            const normalizePn = (v) => String(v || '').trim().toLowerCase();
+            if (afterPn && normalizePn(afterPn) !== normalizePn(beforePn)) {
+              const cid = String(companyId || '').trim();
+              const pid = String(projectId || project?.id || '').trim();
+              if (cid && pid) {
+                try {
+                  const dup = await hasDuplicateProjectNumber(cid, afterPn, pid);
+                  if (dup) {
+                    Alert.alert('Fel', `Det finns redan ett projekt med projektnummer ${afterPn}. Projektnummer måste vara unikt.`);
+                    return;
+                  }
+                } catch (_e) {
+                  Alert.alert('Fel', 'Kunde inte kontrollera om projektnumret är unikt. Försök igen.');
+                  return;
+                }
+              }
+            }
+
             // Confirm phase change (project status) before saving
             const ok = await confirmPhaseChangeIfNeeded();
             if (!ok) return;
@@ -547,7 +676,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             setSaving(true);
             try {
               const updates = {
-                id: projectNumber.trim(),
+                projectNumber: projectNumber.trim(),
+                projectName: projectName.trim(),
                 name: projectName.trim(),
                 phase: phaseKey,
                 projectType: projectType.trim(),
@@ -640,21 +770,22 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               }
 
               console.log('[OversiktSummary] Project updated successfully:', { id: updatedProject?.id, name: updatedProject?.name, phase: updatedProject?.phase });
-              
-              // Check if project ID changed
-              const projectIdChanged = updates.id && String(updates.id).trim() !== String(projectId).trim();
-              
-              // Emit project update event with old ID info if ID changed
-              if (projectIdChanged) {
-                console.log('[OversiktSummary] Project ID changed, emitting with oldId:', projectId, 'newId:', updatedProject.id);
-                emitProjectUpdated({
-                  ...updatedProject,
-                  _oldId: projectId, // Include old ID for reference
-                  _idChanged: true
-                });
-              } else {
-                emitProjectUpdated(updatedProject);
-              }
+
+              // Backend is source of truth: emit what Firestore returns.
+              emitProjectUpdated(updatedProject);
+
+              // Best-effort: refresh FS-logg.xlsx so Excel headers reflect live metadata.
+              try {
+                const beforePn = String(originalValues?.projectNumber || '').trim();
+                const beforePnm = String(originalValues?.projectName || '').trim();
+                const afterPn = String(projectNumber || '').trim();
+                const afterPnm = String(projectName || '').trim();
+                const cid = String(companyId || '').trim();
+                const pid = String(projectId || project?.id || '').trim();
+                if (cid && pid && (beforePn !== afterPn || beforePnm !== afterPnm)) {
+                  enqueueFsExcelSync(cid, pid, { reason: 'project-metadata-updated' });
+                }
+              } catch (_e) {}
               
               // Update original values and reset change flag
               setOriginalValues(prev => ({
@@ -940,21 +1071,66 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             setSaving(true);
             try {
               const updates = {
-                anbudstid: anbudstid.trim(),
-                byggstart: byggstart.trim(),
-                fardigstallning: fardigstallning.trim(),
-                bindningstid: bindningstid.trim()
+                sistaDagForFragor: sistaDagForFragor.trim(),
+                anbudsinlamning: anbudsinlamning.trim(),
+                planeradByggstart: planeradByggstart.trim(),
+                klartForBesiktning: klartForBesiktning.trim(),
               };
 
-              const updatedProject = await updateProjectInHierarchy(updates);
+              // Canonical persistent keys (required by architecture).
+              const canonical = {
+                lastQuestionDate: updates.sistaDagForFragor,
+                tenderSubmissionDate: updates.anbudsinlamning,
+                plannedConstructionStart: updates.planeradByggstart,
+                readyForInspectionDate: updates.klartForBesiktning,
+              };
+
+              // Backwards-compatible mirroring for any legacy readers in the app.
+              const legacyMirror = {
+                anbudstid: updates.anbudsinlamning,
+                byggstart: updates.planeradByggstart,
+                fardigstallning: updates.klartForBesiktning,
+              };
+
+              // Persist (Firestore) via the same flow as the rest of Projektinformation.
+              const updatedProject = await updateProjectInHierarchy({ ...canonical, ...updates, ...legacyMirror });
+
+              // One-way sync into Tidsplan as locked milestones (no duplicates).
+              try {
+                if (companyId && projectId) {
+                  await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+                    key: 'sista-dag-for-fragor',
+                    title: 'Sista dag för frågor',
+                    date: updates.sistaDagForFragor,
+                  });
+                  await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+                    key: 'anbudsinlamning',
+                    title: 'Anbudsinlämning',
+                    date: updates.anbudsinlamning,
+                  });
+                  await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+                    key: 'planerad-byggstart',
+                    title: 'Planerad byggstart',
+                    date: updates.planeradByggstart,
+                  });
+                  await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+                    key: 'klart-for-besiktning',
+                    title: 'Klart för besiktning',
+                    date: updates.klartForBesiktning,
+                  });
+                }
+              } catch (syncErr) {
+                console.warn('[OversiktSummary] Warning syncing important dates to timeline:', syncErr?.message || syncErr);
+              }
+
               emitProjectUpdated(updatedProject);
               
               setOriginalValues(prev => ({
                 ...prev,
-                anbudstid: anbudstid.trim(),
-                byggstart: byggstart.trim(),
-                fardigstallning: fardigstallning.trim(),
-                bindningstid: bindningstid.trim()
+                sistaDagForFragor: sistaDagForFragor.trim(),
+                anbudsinlamning: anbudsinlamning.trim(),
+                planeradByggstart: planeradByggstart.trim(),
+                klartForBesiktning: klartForBesiktning.trim(),
               }));
               setHasChangesTider(false);
               showSaveSuccessFeedback('Datuminformation har uppdaterats');
@@ -967,44 +1143,44 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             }
           }}
           onCancel={() => {
-            setAnbudstid(originalValues.anbudstid || '');
-            setByggstart(originalValues.byggstart || '');
-            setFardigstallning(originalValues.fardigstallning || '');
-            setBindningstid(originalValues.bindningstid || '');
+            setSistaDagForFragor(originalValues.sistaDagForFragor || '');
+            setAnbudsinlamning(originalValues.anbudsinlamning || '');
+            setPlaneradByggstart(originalValues.planeradByggstart || '');
+            setKlartForBesiktning(originalValues.klartForBesiktning || '');
             setHasChangesTider(false);
           }}
         >
           <DateRow
-            key="anbudstid"
-            label="Anbudstid"
-            value={anbudstid}
-            originalValue={originalValues.anbudstid || ''}
+            key="sistaDagForFragor"
+            label="Sista dag för frågor"
+            value={sistaDagForFragor}
+            originalValue={originalValues.sistaDagForFragor || ''}
             placeholder="YYYY-MM-DD"
-            onOpen={() => openDatePicker('anbudstid')}
+            onOpen={() => openDatePicker('sistaDagForFragor')}
           />
           <DateRow
-            key="byggstart"
+            key="anbudsinlamning"
+            label="Anbudsinlämning"
+            value={anbudsinlamning}
+            originalValue={originalValues.anbudsinlamning || ''}
+            placeholder="YYYY-MM-DD"
+            onOpen={() => openDatePicker('anbudsinlamning')}
+          />
+          <DateRow
+            key="planeradByggstart"
             label="Planerad byggstart"
-            value={byggstart}
-            originalValue={originalValues.byggstart || ''}
+            value={planeradByggstart}
+            originalValue={originalValues.planeradByggstart || ''}
             placeholder="YYYY-MM-DD"
-            onOpen={() => openDatePicker('byggstart')}
+            onOpen={() => openDatePicker('planeradByggstart')}
           />
           <DateRow
-            key="fardigstallning"
-            label="Planerad färdigställning"
-            value={fardigstallning}
-            originalValue={originalValues.fardigstallning || ''}
+            key="klartForBesiktning"
+            label="Klart för besiktning"
+            value={klartForBesiktning}
+            originalValue={originalValues.klartForBesiktning || ''}
             placeholder="YYYY-MM-DD"
-            onOpen={() => openDatePicker('fardigstallning')}
-          />
-          <InfoRow
-            key="bindningstid"
-            label="Bindningstid"
-            value={bindningstid}
-            onChange={handleBindningstidChange}
-            originalValue={originalValues.bindningstid || ''}
-            placeholder="T.ex. 3 månader"
+            onOpen={() => openDatePicker('klartForBesiktning')}
           />
         </InfoCard>
           </View>

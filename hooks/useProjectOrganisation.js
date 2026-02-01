@@ -24,10 +24,16 @@ function normalizeGroups(raw) {
     .map((g) => {
       const id = String(g?.id || '').trim() || uuidv4();
       const title = String(g?.title || '').trim() || 'Grupp';
+      const groupType = String(g?.groupType || g?.type || '').trim() || null;
+      const isInternalMainGroup = !!g?.isInternalMainGroup;
+      const locked = g?.locked === true || g?.isLocked === true;
       const members = Array.isArray(g?.members) ? g.members : [];
       return {
         id,
         title,
+        groupType,
+        isInternalMainGroup,
+        locked,
         members: members
           .map((m) => {
             const mid = String(m?.id || '').trim() || uuidv4();
@@ -147,6 +153,12 @@ export function useProjectOrganisation({ companyId, projectId }) {
       const gid = String(groupId || '').trim();
       if (!gid) return;
       const current = latestRef.current;
+
+      const hit = (current.groups || []).find((g) => String(g?.id || '') === gid) || null;
+      if (hit && (hit.locked === true || hit.isInternalMainGroup === true)) {
+        return;
+      }
+
       const next = {
         ...current,
         groups: (current.groups || []).filter((g) => String(g?.id || '') !== gid),

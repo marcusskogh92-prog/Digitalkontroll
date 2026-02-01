@@ -29,9 +29,33 @@ function normalizeCustomDates(raw) {
       const id = String(d?.id || '').trim() || uuidv4();
       const title = String(d?.title || '').trim() || 'Datum';
       const date = isValidIsoDate(d?.date) ? String(d.date) : '';
-      const customType = String(d?.customType || d?.typeLabel || '').trim() || 'Milstolpe';
+      const type = String(d?.type || d?.customType || d?.typeLabel || '').trim() || 'Datum';
+      const customType = String(d?.customType || d?.type || d?.typeLabel || '').trim() || type || 'Datum';
       const description = String(d?.description || '').trim();
-      return { id, title, date, customType, description };
+
+      const startTime = String(d?.startTime || '').trim();
+      const endTime = String(d?.endTime || '').trim();
+      const outlookInvitationPrepared = !!d?.outlookInvitationPrepared;
+      const locked = !!d?.locked;
+      const source = d?.source != null ? String(d.source) : null;
+      const sourceKey = d?.sourceKey != null ? String(d.sourceKey) : null;
+      const participants = Array.isArray(d?.participants) ? d.participants : [];
+
+      return {
+        id,
+        title,
+        date,
+        customType,
+        type,
+        description,
+        startTime,
+        endTime,
+        participants,
+        outlookInvitationPrepared,
+        locked,
+        source,
+        sourceKey,
+      };
     })
     .filter((d) => d && d.id);
 }
@@ -125,18 +149,26 @@ export function useProjectTimelineDates({ companyId, projectId }) {
   );
 
   const addCustomDate = useCallback(
-    async ({ title, date, customType, description } = {}) => {
+    async ({ id, title, date, customType, type, description, participants, startTime, endTime, outlookInvitationPrepared, locked, source, sourceKey } = {}) => {
       const current = latestRef.current;
       const next = {
         ...current,
         customDates: [
           ...(current.customDates || []),
           {
-            id: uuidv4(),
+            id: String(id || '').trim() || uuidv4(),
             title: String(title || '').trim() || 'Datum',
             date: isValidIsoDate(date) ? String(date) : '',
-            customType: String(customType || '').trim() || 'Milstolpe',
+            customType: String(customType || type || '').trim() || 'Datum',
+            type: String(type || customType || '').trim() || 'Datum',
             description: String(description || '').trim(),
+            participants: Array.isArray(participants) ? participants : [],
+            startTime: String(startTime || '').trim(),
+            endTime: String(endTime || '').trim(),
+            outlookInvitationPrepared: !!outlookInvitationPrepared,
+            locked: !!locked,
+            source: source != null ? String(source) : null,
+            sourceKey: sourceKey != null ? String(sourceKey) : null,
           },
         ],
       };
@@ -160,14 +192,81 @@ export function useProjectTimelineDates({ companyId, projectId }) {
             ...d,
             title: p.title != null ? (String(p.title || '').trim() || 'Datum') : d.title,
             date: nextDate,
-            customType: p.customType != null ? (String(p.customType || '').trim() || 'Milstolpe') : d.customType,
+            customType: p.customType != null ? (String(p.customType || '').trim() || 'Datum') : d.customType,
+            type: p.type != null ? (String(p.type || '').trim() || 'Datum') : (d.type || d.customType),
             description: p.description != null ? String(p.description || '').trim() : d.description,
+            participants: p.participants != null ? (Array.isArray(p.participants) ? p.participants : []) : d.participants,
+            startTime: p.startTime != null ? String(p.startTime || '').trim() : d.startTime,
+            endTime: p.endTime != null ? String(p.endTime || '').trim() : d.endTime,
+            outlookInvitationPrepared: p.outlookInvitationPrepared != null ? !!p.outlookInvitationPrepared : !!d.outlookInvitationPrepared,
+            locked: p.locked != null ? !!p.locked : !!d.locked,
+            source: p.source != null ? String(p.source) : d.source,
+            sourceKey: p.sourceKey != null ? String(p.sourceKey) : d.sourceKey,
           };
         }),
       };
       await save(next);
     },
     [save]
+  );
+
+  const setCustomDates = useCallback(
+    async (customDates) => {
+      const current = latestRef.current;
+      const next = {
+        ...current,
+        customDates: Array.isArray(customDates) ? customDates : [],
+      };
+      await save(next);
+    },
+    [save]
+  );
+
+  const appendCustomDates = useCallback(
+    async (items) => {
+      const current = latestRef.current;
+      const nextItems = Array.isArray(items) ? items : [];
+      const next = {
+        ...current,
+        customDates: [...(current.customDates || []), ...nextItems],
+      };
+      await save(next);
+    },
+    [save]
+  );
+
+  const upsertCustomDate = useCallback(
+    async (id, item) => {
+      const did = String(id || '').trim();
+      if (!did) return;
+      const patch = item && typeof item === 'object' ? item : {};
+
+      const current = latestRef.current;
+      const list = Array.isArray(current.customDates) ? current.customDates : [];
+      const exists = list.some((d) => String(d?.id || '') === did);
+
+      if (exists) {
+        await updateCustomDate(did, patch);
+        return;
+      }
+
+      await addCustomDate({
+        id: did,
+        title: patch.title,
+        date: patch.date,
+        customType: patch.customType,
+        type: patch.type,
+        description: patch.description,
+        participants: patch.participants,
+        startTime: patch.startTime,
+        endTime: patch.endTime,
+        outlookInvitationPrepared: patch.outlookInvitationPrepared,
+        locked: patch.locked,
+        source: patch.source,
+        sourceKey: patch.sourceKey,
+      });
+    },
+    [addCustomDate, updateCustomDate]
   );
 
   const removeCustomDate = useCallback(
@@ -265,6 +364,9 @@ export function useProjectTimelineDates({ companyId, projectId }) {
       addCustomDate,
       updateCustomDate,
       removeCustomDate,
+      setCustomDates,
+      appendCustomDates,
+      upsertCustomDate,
       addSiteVisit,
       updateSiteVisit,
       removeSiteVisit,
@@ -277,6 +379,9 @@ export function useProjectTimelineDates({ companyId, projectId }) {
       addCustomDate,
       updateCustomDate,
       removeCustomDate,
+      setCustomDates,
+      appendCustomDates,
+      upsertCustomDate,
       addSiteVisit,
       updateSiteVisit,
       removeSiteVisit,

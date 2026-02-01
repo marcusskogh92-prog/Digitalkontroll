@@ -75,9 +75,18 @@ export default function WebMainPane(props) {
     projectPhaseKey,
     phaseActiveSection,
     phaseActiveItem,
+    phaseActiveNode,
     setPhaseActiveSection,
     setPhaseActiveItem,
+    setPhaseActiveNode,
     onOpenCreateProjectModal,
+
+    // AF-only explorer state (shared with left panel mirror)
+    afRelativePath,
+    setAfRelativePath,
+    afSelectedItemId,
+    setAfSelectedItemId,
+    bumpAfMirrorRefreshNonce,
   } = props;
 
   const isWeb = Platform.OS === 'web';
@@ -134,10 +143,22 @@ export default function WebMainPane(props) {
             onInlineViewChange: handleInlineViewChange,
             phaseActiveSection,
             phaseActiveItem,
+            phaseActiveNode,
+            afRelativePath,
+            setAfRelativePath,
+            afSelectedItemId,
+            setAfSelectedItemId,
+            bumpAfMirrorRefreshNonce,
             onPhaseSectionChange: setPhaseActiveSection,
-            onPhaseItemChange: (sectionId, itemId) => {
+            onPhaseItemChange: (sectionId, itemId, meta) => {
               setPhaseActiveSection(sectionId);
               setPhaseActiveItem(itemId);
+
+              if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
+                setPhaseActiveNode(meta.activeNode || null);
+              } else if (!itemId) {
+                setPhaseActiveNode(null);
+              }
             },
           },
         }}

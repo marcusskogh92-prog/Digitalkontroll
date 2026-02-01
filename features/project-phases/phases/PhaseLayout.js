@@ -2,9 +2,8 @@
  * Generic Phase Layout - Works for all project phases
  */
 
-import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import ProjectPageHeader from '../../../components/common/ProjectPageHeader';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
 import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
@@ -29,17 +28,19 @@ const SECTION_COMPONENTS = {
   anbud: AnbudSection
 };
 
-export default function PhaseLayout({ companyId, projectId, project, phaseKey, hideLeftPanel = false, externalActiveSection = null, externalActiveItem = null, onExternalSectionChange = null, onExternalItemChange = null, onPhaseChange = null, reactNavigation = null }) {
-  const { navigation, isLoading: navLoading } = usePhaseNavigation(companyId, projectId, phaseKey);
+export default function PhaseLayout({ companyId, projectId, project, phaseKey, hideLeftPanel = false, externalActiveSection = null, externalActiveItem = null, externalActiveNode = null, onExternalSectionChange = null, onExternalItemChange = null, onPhaseChange = null, reactNavigation = null, afRelativePath = '', setAfRelativePath = null, afSelectedItemId = null, setAfSelectedItemId = null, bumpAfMirrorRefreshNonce = null }) {
+  const { navigation, isLoading: navLoading } = usePhaseNavigation(companyId, projectId, phaseKey, project);
 
   const formatNavLabel = (value) => stripNumberPrefixForDisplay(value);
 
   // Use external state if provided (from HomeScreen), otherwise use internal state
   const [internalActiveSection, setInternalActiveSection] = useState(null);
   const [internalActiveItem, setInternalActiveItem] = useState(null);
+  const [internalActiveNode, setInternalActiveNode] = useState(null);
   
   const activeSection = externalActiveSection !== null ? externalActiveSection : internalActiveSection;
   const activeItem = externalActiveItem !== null ? externalActiveItem : internalActiveItem;
+  const activeNode = externalActiveNode !== null ? externalActiveNode : internalActiveNode;
   
   const setActiveSection = (sectionId) => {
     if (onExternalSectionChange) {
@@ -49,11 +50,17 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     }
   };
   
-  const setActiveItem = (sectionId, itemId) => {
+  const setActiveItem = (sectionId, itemId, meta = null) => {
     if (onExternalItemChange) {
-      onExternalItemChange(sectionId, itemId);
+      onExternalItemChange(sectionId, itemId, meta);
     } else {
       setInternalActiveItem(itemId);
+
+      if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
+        setInternalActiveNode(meta.activeNode || null);
+      } else if (!itemId) {
+        setInternalActiveNode(null);
+      }
     }
   };
   
@@ -65,7 +72,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       const firstSection = navigation.sections[0];
       setActiveSection(firstSection.id);
       // Don't auto-select first item - show section summary instead
-      setActiveItem(firstSection.id, null);
+      setActiveItem(firstSection.id, null, { activeNode: null });
     }
   }, [navigation, activeSection]);
 
@@ -85,12 +92,12 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const handleSelectSection = (sectionId) => {
     setActiveSection(sectionId);
     // Don't auto-select first item - show section summary instead
-    setActiveItem(sectionId, null);
+    setActiveItem(sectionId, null, { activeNode: null });
   };
 
-  const handleSelectItem = (sectionId, itemId) => {
+  const handleSelectItem = (sectionId, itemId, meta = null) => {
     setActiveSection(sectionId);
-    setActiveItem(sectionId, itemId);
+    setActiveItem(sectionId, itemId, meta);
   };
 
   const activeSectionConfig = navigation?.sections?.find(s => s.id === activeSection) || null;
@@ -100,6 +107,19 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
 
   const headerSectionLabel = activeSectionConfig ? formatNavLabel(activeSectionConfig.name) : '';
   const headerItemLabel = activeItemConfig ? formatNavLabel(activeItemConfig.name) : '';
+
+  // Background should only be visible for Översikt + 4 specific subpages.
+  // Everything else (Kalkyl/Anbud/Dokument/etc) keeps the plain white shell.
+  const bgEnabledItemIds = new Set([
+    'projektinfo',
+    'organisation-roller',
+    'tidsplan-viktiga-datum',
+    'status-beslut',
+  ]);
+
+  const shouldUseProjectBackground =
+    String(activeSection || '') === 'oversikt' &&
+    (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -134,7 +154,14 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         companyId={companyId}
         project={project}
         activeItem={activeItem}
+        activeNode={activeNode}
+        afRelativePath={afRelativePath}
+        setAfRelativePath={setAfRelativePath}
+        afSelectedItemId={afSelectedItemId}
+        setAfSelectedItemId={setAfSelectedItemId}
+        bumpAfMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
         navigation={navigation.sections.find(s => s.id === activeSection)}
+        onSelectItem={handleSelectItem}
         hidePageHeader
       />
     );
@@ -279,335 +306,11 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
           {Platform.OS === 'web' ? (
             <div data-phase-dropdown-project style={{ position: 'relative', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               {(() => {
-                const currentPhase = PROJECT_PHASES.find(p => p.key === currentPhaseKey) || PROJECT_PHASES[0];
-                return (
-                  <>
-                    {/* Phase Dropdown */}
-                    <div style={{ position: 'relative', flex: 1 }}>
-                      <TouchableOpacity
-                        onPress={() => setPhaseDropdownOpen(!phaseDropdownOpen)}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          paddingVertical: 8,
-                          paddingHorizontal: 10,
-                          borderRadius: 6,
-                          backgroundColor: `${currentPhase.color}15`,
-                          borderWidth: 2,
-                          borderColor: currentPhase.color,
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <View
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: 5,
-                            backgroundColor: currentPhase.color,
-                            marginRight: 8,
-                          }}
-                        />
-                        <Ionicons
-                          name={currentPhase.icon}
-                          size={16}
-                          color={currentPhase.color}
-                          style={{ marginRight: 8 }}
-                        />
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: '700',
-                            color: currentPhase.color,
-                            flex: 1,
-                          }}
-                        >
-                          {currentPhase.name}
-                        </Text>
-                        <Ionicons
-                          name={phaseDropdownOpen ? "chevron-up" : "chevron-down"}
-                          size={16}
-                          color={currentPhase.color}
-                        />
-                      </TouchableOpacity>
-                    
-                    {phaseDropdownOpen && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: '100%',
-                          left: 16,
-                          right: 16,
-                          marginTop: 4,
-                          backgroundColor: '#fff',
-                          borderRadius: 6,
-                          borderWidth: 1,
-                          borderStyle: 'solid',
-                          borderColor: '#e0e0e0',
-                          boxShadow: '0px 4px 12px rgba(0,0,0,0.15)',
-                          zIndex: 1000,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        {PROJECT_PHASES.map(phase => {
-                          const isSelected = currentPhaseKey === phase.key;
-                          return (
-                            <TouchableOpacity
-                              key={phase.key}
-                              onPress={() => handlePhaseChangeRequest(phase.key)}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                paddingVertical: 8,
-                                paddingHorizontal: 10,
-                                backgroundColor: isSelected ? `${phase.color}10` : 'transparent',
-                                borderBottomWidth: phase.key !== PROJECT_PHASES[PROJECT_PHASES.length - 1].key ? 1 : 0,
-                                borderBottomColor: '#f0f0f0',
-                              }}
-                              activeOpacity={0.7}
-                            >
-                              <View
-                                style={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: 4,
-                                  backgroundColor: phase.color,
-                                  marginRight: 8,
-                                }}
-                              />
-                              <Ionicons
-                                name={phase.icon}
-                                size={14}
-                                color={phase.color}
-                                style={{ marginRight: 8 }}
-                              />
-                              <Text
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: isSelected ? '700' : '500',
-                                  color: isSelected ? phase.color : '#333',
-                                  flex: 1,
-                                }}
-                              >
-                                {phase.name}
-                              </Text>
-                              {isSelected && (
-                                <Ionicons
-                                  name="checkmark-circle"
-                                  size={14}
-                                  color={phase.color}
-                                />
-                              )}
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </div>
-                    )}
-                    </div>
-                    
-                    {/* Home and Refresh buttons */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSpinHome(n => n + 1);
-                        handleGoHome();
-                      }}
-                      style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                      accessibilityLabel="Hem"
-                    >
-                      <Ionicons
-                        name="home-outline"
-                        size={18}
-                        color={currentPhase.color}
-                        style={{
-                          transform: `rotate(${spinHome * 360}deg)`,
-                          transition: 'transform 0.4s ease'
-                        }}
-                      />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSpinRefresh(n => n + 1);
-                        handleRefresh();
-                      }}
-                      style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                      accessibilityLabel="Uppdatera"
-                    >
-                      <Ionicons
-                        name="refresh"
-                        size={18}
-                        color={currentPhase.color}
-                        style={{
-                          transform: `rotate(${spinRefresh * 360}deg)`,
-                          transition: 'transform 0.4s ease'
-                        }}
-                      />
-                    </TouchableOpacity>
-                  </>
-                );
               })()}
             </div>
           ) : (
             <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, position: 'relative', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               {(() => {
-                const currentPhase = PROJECT_PHASES.find(p => p.key === currentPhaseKey) || PROJECT_PHASES[0];
-                return (
-                  <>
-                    {/* Phase Dropdown */}
-                    <View style={{ position: 'relative', flex: 1 }}>
-                      <TouchableOpacity
-                        onPress={() => setPhaseDropdownOpen(!phaseDropdownOpen)}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          paddingVertical: 8,
-                          paddingHorizontal: 10,
-                          borderRadius: 6,
-                          backgroundColor: `${currentPhase.color}15`,
-                          borderWidth: 2,
-                          borderColor: currentPhase.color,
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <View
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: 5,
-                            backgroundColor: currentPhase.color,
-                            marginRight: 8,
-                          }}
-                        />
-                        <Ionicons
-                          name={currentPhase.icon}
-                          size={16}
-                          color={currentPhase.color}
-                          style={{ marginRight: 8 }}
-                        />
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: '700',
-                            color: currentPhase.color,
-                            flex: 1,
-                          }}
-                        >
-                          {currentPhase.name}
-                        </Text>
-                        <Ionicons
-                          name={phaseDropdownOpen ? "chevron-up" : "chevron-down"}
-                          size={16}
-                          color={currentPhase.color}
-                        />
-                      </TouchableOpacity>
-                      
-                      {phaseDropdownOpen && (
-                        <View
-                          style={{
-                            position: 'absolute',
-                            top: '100%',
-                            left: 0,
-                            right: 0,
-                            marginTop: 4,
-                            backgroundColor: '#fff',
-                            borderRadius: 6,
-                            borderWidth: 1,
-                            borderColor: '#e0e0e0',
-                            elevation: 5,
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 2 },
-                            shadowOpacity: 0.25,
-                            shadowRadius: 3.84,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          {PROJECT_PHASES.map(phase => {
-                            const isSelected = currentPhaseKey === phase.key;
-                            return (
-                              <TouchableOpacity
-                                key={phase.key}
-                                onPress={() => handlePhaseChangeRequest(phase.key)}
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  paddingVertical: 8,
-                                  paddingHorizontal: 10,
-                                  backgroundColor: isSelected ? `${phase.color}10` : 'transparent',
-                                  borderBottomWidth: phase.key !== PROJECT_PHASES[PROJECT_PHASES.length - 1].key ? 1 : 0,
-                                  borderBottomColor: '#f0f0f0',
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <View
-                                  style={{
-                                    width: 8,
-                                    height: 8,
-                                    borderRadius: 4,
-                                    backgroundColor: phase.color,
-                                    marginRight: 8,
-                                  }}
-                                />
-                                <Ionicons
-                                  name={phase.icon}
-                                  size={14}
-                                  color={phase.color}
-                                  style={{ marginRight: 8 }}
-                                />
-                                <Text
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: isSelected ? '700' : '500',
-                                    color: isSelected ? phase.color : '#333',
-                                    flex: 1,
-                                  }}
-                                >
-                                  {phase.name}
-                                </Text>
-                                {isSelected && (
-                                  <Ionicons
-                                    name="checkmark-circle"
-                                    size={14}
-                                    color={phase.color}
-                                  />
-                                )}
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      )}
-                    </View>
-                    
-                    {/* Home and Refresh buttons */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSpinHome(n => n + 1);
-                        handleGoHome();
-                      }}
-                      style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                      accessibilityLabel="Hem"
-                    >
-                      <Ionicons
-                        name="home-outline"
-                        size={18}
-                        color={currentPhase.color}
-                      />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSpinRefresh(n => n + 1);
-                        handleRefresh();
-                      }}
-                      style={{ padding: 6, borderRadius: 6, backgroundColor: 'transparent' }}
-                      accessibilityLabel="Uppdatera"
-                    >
-                      <Ionicons
-                        name="refresh"
-                        size={18}
-                        color={currentPhase.color}
-                      />
-                    </TouchableOpacity>
-                  </>
-                );
               })()}
             </View>
           )}
@@ -638,11 +341,12 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         )}
 
         {/* Right Content - Takes remaining space */}
-        <View style={styles.contentArea}>
+        <View style={[styles.contentArea, shouldUseProjectBackground ? styles.contentAreaTransparent : null]}>
           <ProjectPageHeader
             project={project}
             sectionLabel={headerSectionLabel}
             itemLabel={headerItemLabel}
+            style={shouldUseProjectBackground ? styles.projectHeaderTransparent : null}
           />
           <View style={styles.contentBody}>{renderContent()}</View>
         </View>
@@ -786,6 +490,15 @@ const styles = StyleSheet.create({
     padding: 0,
     minHeight: 0,
     minWidth: 0,
+  },
+
+  contentAreaTransparent: {
+    backgroundColor: 'transparent',
+  },
+
+  projectHeaderTransparent: {
+    backgroundColor: 'transparent',
+    borderBottomColor: 'transparent',
   },
   contentBody: {
     flex: 1,

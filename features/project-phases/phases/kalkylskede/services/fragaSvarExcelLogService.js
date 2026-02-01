@@ -9,18 +9,18 @@ import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore
 import * as XLSX from 'xlsx-js-style';
 
 import {
-    auth,
-    db,
-    formatSharePointProjectFolderName,
-    patchCompanyProject,
+  auth,
+  db,
+  formatSharePointProjectFolderName,
+  patchCompanyProject,
 } from '../../../../../components/firebase';
 
 import {
-    ensureFolderPath,
-    getDriveItemByPath,
-    renameDriveItemByIdGuarded,
-    resolveProjectRootFolderPath as resolveProjectRootFolderPathInSite,
-    uploadFile,
+  ensureFolderPath,
+  getDriveItemByPath,
+  renameDriveItemByIdGuarded,
+  resolveProjectRootFolderPath as resolveProjectRootFolderPathInSite,
+  uploadFile,
 } from '../../../../../services/azure/fileService';
 
 import { getSiteByUrl } from '../../../../../services/azure/siteService';
@@ -526,6 +526,39 @@ export async function upsertFsLogXlsx({ companyId, projectId, siteId, fsList }) 
   });
 
   const wsRegister = XLSX.utils.aoa_to_sheet([]);
+
+  // Header area (rows 1-5) reserved above the register.
+  try {
+    const pn = safeText(project?.projectNumber) || safeText(project?.number) || safeText(pid);
+    const pnm = safeText(project?.projectName) || safeText(project?.name) || '';
+    const fullName = safeText(project?.fullName) || (pn && pnm ? `${pn} - ${pnm}` : (pnm || pn || ''));
+
+    const headerRows = [
+      ['FS-logg', ''],
+      ['Projekt', fullName],
+      ['Projektnummer', pn],
+      ['Projektnamn', pnm],
+    ];
+
+    XLSX.utils.sheet_add_aoa(wsRegister, headerRows, { origin: 'A1' });
+
+    // Simple styling for title.
+    if (wsRegister.A1) {
+      wsRegister.A1.s = {
+        ...(wsRegister.A1.s || {}),
+        font: { ...(wsRegister.A1.s?.font || {}), bold: true, sz: 16 },
+      };
+    }
+    // Make labels slightly bold.
+    for (const addr of ['A2', 'A3', 'A4']) {
+      if (!wsRegister[addr]) continue;
+      wsRegister[addr].s = {
+        ...(wsRegister[addr].s || {}),
+        font: { ...(wsRegister[addr].s?.font || {}), bold: true },
+      };
+    }
+  } catch (_e) {}
+
   XLSX.utils.sheet_add_aoa(wsRegister, [registerHeaders, ...registerRows], { origin: FS_LOG_TABLE_ORIGIN });
 
   for (let i = 0; i < sorted.length; i += 1) {

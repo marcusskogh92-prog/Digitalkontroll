@@ -6,17 +6,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Linking,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,10 +32,10 @@ import { ensureFolderPath, getDriveItemByPath, resolveProjectRootFolderPath as r
 import { getSiteByUrl } from '../../../../../../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../../../../../../services/sharepoint/sharePointStructureService';
 import {
-    createFragaSvarItem,
-    deleteFragaSvarItem,
-    listenFragaSvarItems,
-    updateFragaSvarItem,
+  createFragaSvarItem,
+  deleteFragaSvarItem,
+  listenFragaSvarItems,
+  updateFragaSvarItem,
 } from '../../../../services/fragaSvarService';
 
 import { subscribeFsExcelSyncState } from '../../../../services/fragaSvarExcelSyncQueue';
@@ -3583,7 +3583,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
 
   return (
     <ErrorBoundary>
-      <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       {/* File preview */}
       <Modal visible={previewVisible} transparent animationType="fade" onRequestClose={closePreview}>
         <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.50)', padding: 18, justifyContent: 'center' }}>

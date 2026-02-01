@@ -4,12 +4,14 @@
 
 import { StyleSheet, Text, View } from 'react-native';
 
+import ProjectBackgroundWrapper from '../../../../../../components/common/ProjectBackgroundWrapper';
+
 // Import items
 import DeadlinesView from './items/Deadlines/DeadlinesView';
 import FlodesschemaView from './items/Flodesschema/FlodesschemaView';
 import ProjektstatusView from './items/Projektstatus/ProjektstatusView';
 import RiskerView from './items/Risker/RiskerView';
-import OversiktSummary from './OversiktSummary';
+import OversiktDashboard from './OversiktDashboard';
 
 // New "Översikt 01–04" views (SharePoint filmappar)
 import FragaSvarView from './items/FragaSvar/FragaSvarView';
@@ -31,16 +33,28 @@ const ITEM_COMPONENTS = {
   risker: RiskerView
 };
 
-export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, hidePageHeader = false }) {
+export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, hidePageHeader = false, onSelectItem = null }) {
+  const bgEnabledItemIds = new Set([
+    'projektinfo',
+    'organisation-roller',
+    'tidsplan-viktiga-datum',
+    'status-beslut',
+  ]);
+
+  const shouldUseBackground = !activeItem || bgEnabledItemIds.has(String(activeItem || ''));
+
   // If no activeItem is selected, show summary view
   if (!activeItem) {
     return (
       <View style={styles.container}>
-        <OversiktSummary
-          projectId={projectId}
-          companyId={companyId}
-          project={project}
-        />
+        <ProjectBackgroundWrapper enabled={shouldUseBackground}>
+          <OversiktDashboard
+            projectId={projectId}
+            companyId={companyId}
+            project={project}
+            onNavigate={(itemId) => onSelectItem?.('oversikt', itemId)}
+          />
+        </ProjectBackgroundWrapper>
       </View>
     );
   }
@@ -57,12 +71,14 @@ export default function OversiktSection({ projectId, companyId, project, activeI
 
   return (
     <View style={styles.container}>
-      <ItemComponent
-        projectId={projectId}
-        companyId={companyId}
-        project={project}
-        hidePageHeader={hidePageHeader}
-      />
+      <ProjectBackgroundWrapper enabled={shouldUseBackground}>
+        <ItemComponent
+          projectId={projectId}
+          companyId={companyId}
+          project={project}
+          hidePageHeader={hidePageHeader}
+        />
+      </ProjectBackgroundWrapper>
     </View>
   );
 }

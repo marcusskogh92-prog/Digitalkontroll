@@ -23,6 +23,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TouchableOpacity, View } from 'react-native';
+import SharePointFolderHierarchyTree from '../SharePointFiles/SharePointFolderHierarchyTree';
 import ProjectTreeFile from './ProjectTreeFile';
 import ProjectTreeFolder from './ProjectTreeFolder';
 import ProjectTreeNode from './ProjectTreeNode';
@@ -55,6 +56,7 @@ export default function ProjectTree({
   activePhaseSection = null,
   activeOverviewPrefix = null,
   activePhaseSectionPrefix = null,
+  afMirror = null,
 }) {
   const {
     hierarchy: hierarchyWithFunctions,
@@ -270,7 +272,7 @@ export default function ProjectTree({
                   return prefix === '01' || prefix === '02' || prefix === '03' || prefix === '04';
                 };
 
-                const renderNodes = (nodes, level, parentNode = null) => {
+                const renderNodes = (nodes, level, parentNode = null, grandparentNode = null) => {
                   if (!Array.isArray(nodes) || nodes.length === 0) return null;
 
                   const sortedNodes = [...nodes].sort((a, b) =>
@@ -350,6 +352,30 @@ export default function ProjectTree({
                           parentNode?.type === 'project' &&
                           Boolean(getTwoDigitPrefix(folderNode?.name));
 
+                        const isParentPhaseSectionFolder =
+                          parentNode?.type === 'folder' &&
+                          grandparentNode?.type === 'project' &&
+                          Boolean(getTwoDigitPrefix(parentNode?.name));
+
+                        const isPhaseItemFolder =
+                          isParentPhaseSectionFolder &&
+                          Boolean(getTwoDigitPrefix(folderNode?.name));
+
+                        const isAfPhaseItemFolder = (() => {
+                          if (!afMirror || !afMirror.enabled) return false;
+                          if (!isPhaseItemFolder) return false;
+                          if (!afMirror.rootPath) return false;
+                          if (typeof afMirror.onRelativePathChange !== 'function') return false;
+
+                          const parentName = String(parentNode?.name || '').trim().toLowerCase();
+                          const looksLikeForfragningsunderlag = parentName.includes('förfrågningsunderlag') || parentName.includes('forfragningsunderlag');
+                          if (!looksLikeForfragningsunderlag) return false;
+
+                          const name = String(folderNode?.name || '').trim().toLowerCase();
+                          const looksLikeAf = name.includes('administrativa') && (name.includes('(af)') || name.includes('af'));
+                          return looksLikeAf;
+                        })();
+
                         const isActivePhaseSectionFolder =
                           isPhaseSectionFolder &&
                           Boolean(activePhaseSectionPrefix) &&
@@ -365,9 +391,9 @@ export default function ProjectTree({
                         const isSubExpanded = folderNode.expanded || false;
 
                         const handlePressFolder =
-                          (isOverviewPage || isPhaseSectionFolder) && typeof onPressFolder === 'function'
+                          (isOverviewPage || isPhaseSectionFolder || isPhaseItemFolder) && typeof onPressFolder === 'function'
                             ? () => {
-                                onPressFolder(folderNode, { parent: parentNode });
+                                onPressFolder(folderNode, { parent: parentNode, grandparent: grandparentNode });
                               }
                             : undefined;
 
@@ -411,7 +437,20 @@ export default function ProjectTree({
                             />
 
                             {isSubExpanded && !isOverviewPage && (
-                              folderNode.loading ? (
+                              isAfPhaseItemFolder ? (
+                                <SharePointFolderHierarchyTree
+                                  indentLevel={level + 1}
+                                  compact={compact}
+                                  companyId={afMirror.companyId}
+                                  project={afMirror.project}
+                                  rootPath={afMirror.rootPath}
+                                  relativePath={afMirror.relativePath}
+                                  onRelativePathChange={afMirror.onRelativePathChange}
+                                  selectedItemId={afMirror.selectedItemId}
+                                  onSelectedItemIdChange={afMirror.onSelectedItemIdChange}
+                                  refreshNonce={afMirror.refreshNonce}
+                                />
+                              ) : folderNode.loading ? (
                                 <Text
                                   style={{
                                     color: '#888',
@@ -449,7 +488,7 @@ export default function ProjectTree({
                                 </Text>
                               ) : (
                                 <View style={{ marginLeft: compact ? 10 : 12, marginTop: 4 }}>
-                                  {renderNodes(folderNode.children, level + 1, folderNode)}
+                                  {renderNodes(folderNode.children, level + 1, folderNode, parentNode)}
                                 </View>
                               )
                             )}
@@ -492,7 +531,7 @@ export default function ProjectTree({
                     </Text>
                   );
                 }
-                return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(folder.children, 1, folder)}</View>;
+                return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(folder.children, 1, folder, null)}</View>;
               })()}
             </View>
           );

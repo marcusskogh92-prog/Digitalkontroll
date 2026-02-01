@@ -478,6 +478,60 @@ export async function getDriveItemByPath(path, siteId) {
 }
 
 /**
+ * Patch SharePoint list item fields for a driveItem (file or folder).
+ * This is how we update SharePoint library metadata (columns) like ProjectNumber/ProjectName,
+ * which can be surfaced in Office via Document Properties / Quick Parts.
+ */
+export async function patchDriveItemListItemFields({ siteId, itemId, fields } = {}) {
+  const sid = String(siteId || '').trim();
+  const iid = String(itemId || '').trim();
+  const f = (fields && typeof fields === 'object') ? fields : null;
+  if (!sid) throw new Error('siteId is required');
+  if (!iid) throw new Error('itemId is required');
+  if (!f) throw new Error('fields is required');
+
+  const config = getAzureConfig();
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
+
+  const endpoint = `${config.graphApiEndpoint}/sites/${sid}/drive/items/${iid}/listItem/fields`;
+  const response = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(f),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw makeGraphHttpError('Failed to patch listItem fields', response, errorText);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Convenience: patch list item fields by drive-relative path.
+ */
+export async function patchDriveItemListItemFieldsByPath({ siteId, path, fields } = {}) {
+  const sid = String(siteId || '').trim();
+  const rel = normalizeDriveRelativePath(path);
+  if (!sid) throw new Error('siteId is required');
+  if (!rel) throw new Error('path is required');
+
+  const item = await getDriveItemByPath(rel, sid);
+  if (!item) {
+    const err = new Error('Drive item not found');
+    err.status = 404;
+    throw err;
+  }
+
+  return await patchDriveItemListItemFields({ siteId: sid, itemId: item.id, fields });
+}
+
+/**
  * Search drive for items matching a query.
  * Uses Microsoft Graph search on the site's default document library.
  */
@@ -990,14 +1044,36 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
  * @param {string} companyId - Company ID
  * @param {string} siteId - SharePoint site ID (DK Site / role=projects)
  */
-export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, companyId, siteId) {
+export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, companyId, siteId, structureVersion = null) {
   const root = String(projectRootPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
   if (!root) throw new Error('projectRootPath is required');
   if (!companyId) throw new Error('companyId is required');
   if (!siteId) throw new Error('siteId is required');
 
+  let resolvedVersion = String(structureVersion || '').trim().toLowerCase() || null;
+  if (!resolvedVersion) {
+    try {
+      const existingFolders = await listFolders(root, siteId);
+      const names = (existingFolders || []).map((f) => String(f?.name || '').trim()).filter(Boolean);
+      const { detectKalkylskedeStructureVersionFromSectionFolderNames, KALKYLSKEDE_STRUCTURE_VERSIONS } = await import('../../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition');
+      const detected = detectKalkylskedeStructureVersionFromSectionFolderNames(names);
+      if (detected) {
+        resolvedVersion = String(detected || '').trim().toLowerCase();
+      } else if (names.length === 0) {
+        // New/empty project root: default to the latest structure.
+        resolvedVersion = String(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
+      } else {
+        // Unknown/legacy: prefer v1 to avoid creating new numbered folders in existing projects.
+        resolvedVersion = String(KALKYLSKEDE_STRUCTURE_VERSIONS.V1);
+      }
+    } catch (_e) {
+      // Safe fallback: v1 avoids creating new numbered folders in existing projects.
+      resolvedVersion = 'v1';
+    }
+  }
+
   const { getKalkylskedeLockedRelativeFolderPaths } = await import('../../components/firebase');
-  const relPaths = getKalkylskedeLockedRelativeFolderPaths();
+  const relPaths = getKalkylskedeLockedRelativeFolderPaths(resolvedVersion);
 
   // Ensure section folders first, then nested item folders.
   // (The list already contains both; we keep ordering stable by sorting by depth.)

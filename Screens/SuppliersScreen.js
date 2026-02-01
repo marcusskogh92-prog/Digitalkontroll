@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { HomeHeader } from '../components/common/HomeHeader';
 import ContextMenu from '../components/ContextMenu';
 import {
