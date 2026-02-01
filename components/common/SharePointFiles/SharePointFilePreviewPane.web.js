@@ -8,6 +8,19 @@ import { fileExtFromName, safeText } from './sharePointFileUtils';
 let pdfjsConfigured = false;
 let pdfjsModulePromise = null;
 
+function isPdfDebugEnabled() {
+  try {
+    return !!(typeof window !== 'undefined' && window.__DK_PDF_DEBUG__);
+  } catch (_e) {
+    return false;
+  }
+}
+
+function logPdfDebug(...args) {
+  if (!isPdfDebugEnabled()) return;
+  console.debug('[PDFJS]', ...args);
+}
+
 async function getPdfJs() {
   if (!pdfjsModulePromise) {
     pdfjsModulePromise = import('pdfjs-dist/build/pdf.mjs');
@@ -15,12 +28,18 @@ async function getPdfJs() {
   const mod = await pdfjsModulePromise;
   const pdfjs = mod?.default || mod;
   if (pdfjs && !pdfjsConfigured) {
-    const version = safeText(pdfjs?.version);
-    if (version) {
-      // Use CDN worker to avoid Metro/Expo worker wiring pitfalls.
-      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    // Prefer bundler-resolved local worker. (Fixes black/blank canvas when worker can't load.)
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+    } catch (_e) {
+      // Fallback for environments without import.meta.url support.
+      const version = safeText(pdfjs?.version);
+      if (version) {
+        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+      }
     }
     pdfjsConfigured = true;
+    logPdfDebug('workerSrc', safeText(pdfjs?.GlobalWorkerOptions?.workerSrc));
   }
   return pdfjs;
 }
@@ -110,6 +129,7 @@ function PdfCanvasPage({
 
     (async () => {
       try {
+        logPdfDebug('getPage', { pageNumber });
         const page = await pdf.getPage(pageNumber);
 
         const baseViewport = page.getViewport({ scale: 1 });
@@ -126,8 +146,12 @@ function PdfCanvasPage({
         }
 
         const viewport = page.getViewport({ scale: resolvedScale });
-        const cssWidth = Math.max(1, Math.floor(viewport.width));
-        const cssHeight = Math.max(1, Math.floor(viewport.height));
+        const cssWidth = Math.max(1, Math.ceil(viewport.width));
+        const cssHeight = Math.max(1, Math.ceil(viewport.height));
+
+        if (!Number.isFinite(cssWidth) || !Number.isFinite(cssHeight) || cssWidth <= 0 || cssHeight <= 0) {
+          throw new Error(`Ogiltig canvas-size: ${cssWidth}x${cssHeight}`);
+        }
 
         const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
         c.width = Math.floor(cssWidth * dpr);
@@ -135,8 +159,18 @@ function PdfCanvasPage({
         c.style.width = `${cssWidth}px`;
         c.style.height = `${cssHeight}px`;
 
+        logPdfDebug('canvas size', { cssWidth, cssHeight, dpr, width: c.width, height: c.height });
+
         const ctx = c.getContext('2d');
         if (!ctx) throw new Error('Saknar canvas context');
+
+        // Canvas defaults to transparent. Since our preview stage uses a dark background,
+        // force a white page background so we don't end up with a "black" preview.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.restore();
 
         if (renderTaskRef.current && typeof renderTaskRef.current.cancel === 'function') {
           try { renderTaskRef.current.cancel(); } catch (_e) {}
@@ -146,10 +180,15 @@ function PdfCanvasPage({
         const task = page.render({ canvasContext: ctx, viewport, transform });
         renderTaskRef.current = task;
 
+        logPdfDebug('render start', { pageNumber, scale: resolvedScale, fitWidth: !!fitWidth });
+
         await task.promise;
         if (cancelled) return;
+
+        logPdfDebug('render done', { pageNumber });
       } catch (e) {
         if (cancelled) return;
+        logPdfDebug('render error', String(e?.message || e));
         onRenderError?.(e);
       }
     })();
