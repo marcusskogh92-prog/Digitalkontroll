@@ -942,6 +942,7 @@ export default function SharePointFolderFileArea({
             <SharePointFilePreviewPane
               item={previewItem}
               variant="panel"
+              siteId={siteId}
               onClose={() => {
                 setPreviewModalOpen(false);
                 setPreviewItemId(null);
@@ -967,6 +968,7 @@ export default function SharePointFolderFileArea({
           <SharePointFilePreviewPane
             item={previewItem}
             variant="modal"
+            siteId={siteId}
             zoom={previewZoom}
             onZoomChange={setPreviewZoom}
             page={previewPage}

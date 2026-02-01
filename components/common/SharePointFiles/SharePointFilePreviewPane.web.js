@@ -1,10 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { getSharePointDriveItemArrayBuffer } from '../../../services/sharepoint/sharePointFileContentService';
 import { fileExtFromName, safeText } from './sharePointFileUtils';
 
 let pdfjsConfigured = false;
+let pdfjsModulePromise = null;
+
+async function getPdfJs() {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = import('pdfjs-dist/build/pdf.mjs');
+  }
+  const mod = await pdfjsModulePromise;
+  const pdfjs = mod?.default || mod;
+  if (pdfjs && !pdfjsConfigured) {
+    const version = safeText(pdfjs?.version);
+    if (version) {
+      // Use CDN worker to avoid Metro/Expo worker wiring pitfalls.
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    }
+    pdfjsConfigured = true;
+  }
+  return pdfjs;
+}
 
 function isImageExt(ext) {
   const e = safeText(ext).toLowerCase();
@@ -26,6 +45,126 @@ function clamp(n, min, max) {
   const v = Number(n);
   if (!Number.isFinite(v)) return min;
   return Math.min(max, Math.max(min, v));
+}
+
+function usePdfBytes({ enabled, siteId, itemId, preferDownloadUrl }) {
+  const [state, setState] = useState({ loading: false, error: '', data: null });
+
+  useEffect(() => {
+    if (!enabled) {
+      setState({ loading: false, error: '', data: null });
+      return;
+    }
+
+    const sid = safeText(siteId);
+    const id = safeText(itemId);
+    if (!sid || !id) {
+      setState({ loading: false, error: 'Saknar SharePoint-koppling för PDF-preview.', data: null });
+      return;
+    }
+
+    let cancelled = false;
+
+    setState({ loading: true, error: '', data: null });
+
+    (async () => {
+      try {
+        const buf = await getSharePointDriveItemArrayBuffer(sid, id, { preferDownloadUrl });
+        if (cancelled) return;
+        setState({ loading: false, error: '', data: buf });
+      } catch (e) {
+        if (cancelled) return;
+        setState({
+          loading: false,
+          error: String(e?.message || e || 'Förhandsvisning stöds inte – öppna i ny flik'),
+          data: null,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, siteId, itemId, preferDownloadUrl]);
+
+  return state;
+}
+
+function PdfCanvasPage({
+  pdf,
+  pageNumber,
+  scale,
+  fitWidth,
+  containerWidth,
+  onBasePageWidth,
+  onRenderError,
+}) {
+  const canvasRef = useRef(null);
+  const renderTaskRef = useRef(null);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!pdf || !c) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const page = await pdf.getPage(pageNumber);
+
+        const baseViewport = page.getViewport({ scale: 1 });
+        const baseWidth = Number(baseViewport?.width);
+        if (Number.isFinite(baseWidth) && baseWidth > 0) {
+          onBasePageWidth?.(baseWidth);
+        }
+
+        let resolvedScale = clamp(scale || 1, 0.5, 4);
+        if (fitWidth && Number.isFinite(containerWidth) && containerWidth > 0 && Number.isFinite(baseWidth) && baseWidth > 0) {
+          // Leave some breathing room around the page.
+          const padding = 24;
+          resolvedScale = clamp((containerWidth - padding) / baseWidth, 0.5, 4);
+        }
+
+        const viewport = page.getViewport({ scale: resolvedScale });
+        const cssWidth = Math.max(1, Math.floor(viewport.width));
+        const cssHeight = Math.max(1, Math.floor(viewport.height));
+
+        const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+        c.width = Math.floor(cssWidth * dpr);
+        c.height = Math.floor(cssHeight * dpr);
+        c.style.width = `${cssWidth}px`;
+        c.style.height = `${cssHeight}px`;
+
+        const ctx = c.getContext('2d');
+        if (!ctx) throw new Error('Saknar canvas context');
+
+        if (renderTaskRef.current && typeof renderTaskRef.current.cancel === 'function') {
+          try { renderTaskRef.current.cancel(); } catch (_e) {}
+        }
+
+        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+        const task = page.render({ canvasContext: ctx, viewport, transform });
+        renderTaskRef.current = task;
+
+        await task.promise;
+        if (cancelled) return;
+      } catch (e) {
+        if (cancelled) return;
+        onRenderError?.(e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (renderTaskRef.current && typeof renderTaskRef.current.cancel === 'function') {
+        try { renderTaskRef.current.cancel(); } catch (_e) {}
+      }
+    };
+  }, [pdf, pageNumber, scale, fitWidth, containerWidth, onBasePageWidth, onRenderError]);
+
+  return (
+    <canvas ref={canvasRef} style={styles.pdfCanvas} />
+  );
 }
 
 function ToolbarButton({ icon, label, onPress, disabled = false }) {
@@ -54,6 +193,8 @@ function ToolbarButton({ icon, label, onPress, disabled = false }) {
 export default function SharePointFilePreviewPane({
   item,
   variant = 'panel',
+
+  siteId = null,
 
   onClose,
   onOpenInNewTab,
@@ -85,38 +226,91 @@ export default function SharePointFilePreviewPane({
     return 'unsupported';
   }, [ext]);
 
-  const [PdfDocument, setPdfDocument] = useState(null);
-  const [PdfPage, setPdfPage] = useState(null);
+  const itemId = safeText(item?.id);
+  const pdfBytes = usePdfBytes({
+    enabled: kind === 'pdf' && !!itemId,
+    siteId,
+    itemId,
+    preferDownloadUrl: downloadUrl,
+  });
+
+  const [pdfDoc, setPdfDoc] = useState(null);
+  const [pdfError, setPdfError] = useState('');
+  const [fitWidth, setFitWidth] = useState(false);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  const resolvedZoom = clamp(zoom || 1, 0.5, 4);
+  const resolvedNumPages = Number.isFinite(Number(numPages)) ? Number(numPages) : null;
+  const resolvedPage = resolvedNumPages ? clamp(page || 1, 1, resolvedNumPages) : clamp(page || 1, 1, 9999);
 
   useEffect(() => {
-    if (variant !== 'modal') return;
-    if (kind !== 'pdf') return;
+    if (kind !== 'pdf') {
+      setPdfDoc(null);
+      setPdfError('');
+      return;
+    }
+    setPdfDoc(null);
+    setPdfError('');
+    setFitWidth(false);
+
+    if (pdfBytes.loading) return;
+    if (pdfBytes.error) {
+      setPdfError(pdfBytes.error);
+      return;
+    }
+    if (!pdfBytes.data) return;
 
     let cancelled = false;
+    let loadingTask = null;
+
     (async () => {
       try {
-        const mod = await import('react-pdf');
+        const pdfjs = await getPdfJs();
         if (cancelled) return;
 
-        // Configure worker once (web-only). Uses CDN to avoid bundler/worker pitfalls.
-        if (!pdfjsConfigured && mod?.pdfjs?.version) {
-          const v = mod.pdfjs.version;
-          mod.pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${v}/build/pdf.worker.min.mjs`;
-          pdfjsConfigured = true;
-        }
+        loadingTask = pdfjs.getDocument({ data: pdfBytes.data });
+        const doc = await loadingTask.promise;
+        if (cancelled) return;
+        setPdfDoc(doc);
 
-        setPdfDocument(() => mod.Document);
-        setPdfPage(() => mod.Page);
+        const n = Number(doc?.numPages);
+        if (Number.isFinite(n) && n > 0) {
+          onNumPages?.(n);
+          const nextPage = clamp(resolvedPage, 1, n);
+          if (nextPage !== resolvedPage) onPageChange?.(nextPage);
+        }
       } catch (_e) {
-        setPdfDocument(null);
-        setPdfPage(null);
+        if (cancelled) return;
+        setPdfDoc(null);
+        setPdfError('Förhandsvisning stöds inte – öppna i ny flik');
       }
     })();
 
     return () => {
       cancelled = true;
+      if (loadingTask && typeof loadingTask.destroy === 'function') {
+        try { loadingTask.destroy(); } catch (_e) {}
+      }
     };
-  }, [variant, kind]);
+  }, [kind, pdfBytes.loading, pdfBytes.error, pdfBytes.data, onNumPages, onPageChange, resolvedPage]);
+
+  const canOpenModal = variant === 'panel' && typeof onOpenInModal === 'function' && kind === 'pdf';
+  const showPdfControls = kind === 'pdf' && variant === 'modal';
+  const canZoom = kind === 'pdf' || kind === 'image';
+
+  const onLayoutContainer = useCallback((e) => {
+    const w = Number(e?.nativeEvent?.layout?.width);
+    if (Number.isFinite(w) && w > 0) setContainerWidth(w);
+  }, []);
+
+  const onFitToWidth = useCallback(() => {
+    setFitWidth(true);
+  }, []);
+
+  const onZoomDelta = useCallback((delta) => {
+    setFitWidth(false);
+    onZoomChange?.(clamp(resolvedZoom + delta, 0.5, 4));
+  }, [onZoomChange, resolvedZoom]);
 
   if (!item) {
     return (
@@ -132,13 +326,10 @@ export default function SharePointFilePreviewPane({
     );
   }
 
-  const canOpenModal = variant === 'panel' && typeof onOpenInModal === 'function';
-  const canZoom = kind === 'pdf' || kind === 'image';
-  const canPage = kind === 'pdf' && Number.isFinite(Number(numPages)) && Number(numPages) > 0;
-
-  const resolvedZoom = clamp(zoom || 1, 0.5, 4);
-  const resolvedNumPages = Number.isFinite(Number(numPages)) ? Number(numPages) : null;
-  const resolvedPage = resolvedNumPages ? clamp(page || 1, 1, resolvedNumPages) : clamp(page || 1, 1, 9999);
+  const showPageIndicator = kind === 'pdf';
+  const pageIndicatorText = (kind === 'pdf')
+    ? (resolvedNumPages ? `Sida ${resolvedPage} av ${resolvedNumPages}` : `Sida ${resolvedPage} av …`)
+    : '';
 
   return (
     <View style={styles.container}>
@@ -148,33 +339,42 @@ export default function SharePointFilePreviewPane({
           <Text style={styles.subtitle} numberOfLines={1}>{safeText(ext).toUpperCase() || 'FIL'}</Text>
         </View>
 
-        {variant === 'modal' && canPage ? (
+        {showPageIndicator ? (
           <View style={styles.pagePill}>
             <Text style={styles.pagePillText} numberOfLines={1}>
-              Sida {resolvedPage} / {resolvedNumPages}
+              {pageIndicatorText}
             </Text>
           </View>
         ) : null}
 
-        {variant === 'modal' && canZoom ? (
+        {showPdfControls ? (
           <ToolbarButton
             icon="remove-outline"
-            label="Zoom"
-            onPress={() => onZoomChange?.(clamp(resolvedZoom - 0.25, 0.5, 4))}
+            label="Zoom −"
+            onPress={() => onZoomDelta(-0.25)}
             disabled={!canZoom}
           />
         ) : null}
 
-        {variant === 'modal' && canZoom ? (
+        {showPdfControls ? (
           <ToolbarButton
             icon="add-outline"
-            label="Zoom"
-            onPress={() => onZoomChange?.(clamp(resolvedZoom + 0.25, 0.5, 4))}
+            label="Zoom +"
+            onPress={() => onZoomDelta(0.25)}
             disabled={!canZoom}
           />
         ) : null}
 
-        {variant === 'modal' && kind === 'pdf' ? (
+        {showPdfControls ? (
+          <ToolbarButton
+            icon="scan-outline"
+            label="Fit to width"
+            onPress={onFitToWidth}
+            disabled={!pdfDoc}
+          />
+        ) : null}
+
+        {showPdfControls ? (
           <ToolbarButton
             icon="chevron-back-outline"
             label="Föreg"
@@ -183,7 +383,7 @@ export default function SharePointFilePreviewPane({
           />
         ) : null}
 
-        {variant === 'modal' && kind === 'pdf' ? (
+        {showPdfControls ? (
           <ToolbarButton
             icon="chevron-forward-outline"
             label="Nästa"
@@ -193,7 +393,7 @@ export default function SharePointFilePreviewPane({
         ) : null}
 
         {canOpenModal ? (
-          <ToolbarButton icon="expand-outline" label="Stor granskning" onPress={() => onOpenInModal?.()} />
+          <ToolbarButton icon="expand-outline" label="Öppna i granskning" onPress={() => onOpenInModal?.()} />
         ) : null}
 
         <ToolbarButton
@@ -219,46 +419,36 @@ export default function SharePointFilePreviewPane({
 
       <View style={styles.body}>
         {kind === 'pdf' ? (
-          safeText(preferredUrl) ? (
-            variant === 'modal' && PdfDocument && PdfPage ? (
+          <View style={styles.pdfStage} onLayout={onLayoutContainer}>
+            {pdfBytes.loading ? (
+              <Text style={styles.loadingText}>Laddar PDF…</Text>
+            ) : null}
+
+            {!pdfBytes.loading && (pdfError || pdfBytes.error) ? (
+              <View style={styles.pdfFallback}>
+                <Ionicons name="alert-circle-outline" size={22} color="#94A3B8" />
+                <Text style={styles.unsupportedTitle} numberOfLines={2}>
+                  Förhandsvisning stöds inte – öppna i ny flik
+                </Text>
+              </View>
+            ) : null}
+
+            {!pdfBytes.loading && !pdfError && !pdfBytes.error && pdfDoc ? (
               <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.viewerScrollContent}>
                 <View style={styles.pdfWrap}>
-                  <PdfDocument
-                    file={preferredUrl}
-                    onLoadSuccess={(info) => {
-                      const n = Number(info?.numPages);
-                      if (Number.isFinite(n) && n > 0) onNumPages?.(n);
-                      if (Number.isFinite(n) && n > 0) {
-                        const nextPage = clamp(resolvedPage, 1, n);
-                        if (nextPage !== resolvedPage) onPageChange?.(nextPage);
-                      }
-                    }}
-                    loading={<Text style={styles.loadingText}>Laddar PDF…</Text>}
-                    error={<Text style={styles.loadingText}>Kunde inte läsa PDF. Prova att öppna i ny flik.</Text>}
-                    noData={<Text style={styles.loadingText}>Saknar PDF-data.</Text>}
-                  >
-                    <PdfPage
-                      pageNumber={resolvedPage}
-                      scale={resolvedZoom}
-                      renderTextLayer={false}
-                      renderAnnotationLayer={false}
-                      loading={<Text style={styles.loadingText}>Renderar sida…</Text>}
-                    />
-                  </PdfDocument>
+                  <PdfCanvasPage
+                    pdf={pdfDoc}
+                    pageNumber={resolvedPage}
+                    scale={resolvedZoom}
+                    fitWidth={fitWidth}
+                    containerWidth={containerWidth}
+                    onBasePageWidth={() => {}}
+                    onRenderError={() => setPdfError('Förhandsvisning stöds inte – öppna i ny flik')}
+                  />
                 </View>
               </ScrollView>
-            ) : (
-              <iframe
-                title={name || 'PDF'}
-                src={preferredUrl}
-                style={{ width: '100%', height: '100%', border: 0, background: '#fff' }}
-              />
-            )
-          ) : (
-            <View style={styles.bodyCentered}>
-              <Text style={styles.muted}>Kunde inte ladda PDF (saknar länk).</Text>
-            </View>
-          )
+            ) : null}
+          </View>
         ) : kind === 'image' ? (
           safeText(preferredUrl) ? (
             variant === 'modal' ? (
@@ -410,6 +600,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 12,
     backgroundColor: '#0B1220',
+  },
+  pdfStage: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: '#0B1220',
+  },
+  pdfFallback: {
+    flex: 1,
+    minHeight: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 18,
+    gap: 10,
+  },
+  pdfCanvas: {
+    borderRadius: 8,
+    backgroundColor: '#fff',
   },
   loadingText: {
     padding: 12,

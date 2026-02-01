@@ -16,8 +16,8 @@ export default function FilePreviewModal({
   const cardStyle = useMemo(() => {
     if (Platform.OS === 'web') {
       return {
-        width: '100%',
-        maxWidth,
+        width: '90vw',
+        maxWidth: typeof maxWidth === 'number' ? maxWidth : '90vw',
         height: '90vh',
         maxHeight: '90vh',
       };
