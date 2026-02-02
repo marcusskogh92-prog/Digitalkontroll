@@ -11,6 +11,14 @@ import { getAccessToken } from '../azure/authService';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
+function fileExtFromName(name) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const m = n.match(/\.([a-zA-Z0-9]+)$/);
+  if (!m || !m[1]) return null;
+  return String(m[1]).trim().toLowerCase();
+}
+
 function encodeGraphPathSegments(path) {
   const raw = String(path || '');
   if (!raw) return '';
@@ -68,8 +76,11 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
       webUrl: item.webUrl || null,
       downloadUrl: item['@microsoft.graph.downloadUrl'] || null,
       size: item.size || 0,
+      createdDate: item.createdDateTime || null,
       lastModified: item.lastModifiedDateTime || null,
       createdBy: item.createdBy?.user?.displayName || null,
+      mimeType: item.file?.mimeType || null,
+      fileExtension: item.folder ? null : fileExtFromName(item.name),
       children: item.folder ? [] : undefined, // Will be populated if needed
     }));
   } catch (error) {
@@ -174,8 +185,11 @@ async function loadSharePointChildrenRecursive(parentItem, siteId, parentPath, a
         webUrl: item.webUrl || null,
         downloadUrl: item['@microsoft.graph.downloadUrl'] || null,
         size: item.size || 0,
+        createdDate: item.createdDateTime || null,
         lastModified: item.lastModifiedDateTime || null,
         createdBy: item.createdBy?.user?.displayName || null,
+        mimeType: item.file?.mimeType || null,
+        fileExtension: item.folder ? null : fileExtFromName(item.name),
         children: item.folder ? [] : undefined,
       };
 

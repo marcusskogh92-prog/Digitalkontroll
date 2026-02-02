@@ -1,16 +1,35 @@
 /**
- * PersonSelector - Component for selecting users or contacts
- * Allows choosing between company users/admins or contacts from contact registry
+ * PersonSelector - Modal for selecting a single person (internal user or contact).
+ * Used by Projektinformation ("Välj kontaktperson").
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
-import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSystemModal } from '../../../../../components/common/Modals/SystemModalProvider';
 import { fetchCompanyContacts, fetchCompanyMembers } from '../../../../../components/firebase';
 
-export default function PersonSelector({
-  visible,
-  onClose,
+function PersonSelectorRow({ selected, name, meta, onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!selected }}
+      style={({ hovered, focused, pressed }) => [
+        styles.row,
+        (hovered || focused || pressed) ? styles.rowHover : null,
+        Platform.OS === 'web' ? styles.rowWeb : null,
+      ]}
+    >
+      {selected ? <View pointerEvents="none" style={styles.rowSelectedIndicator} /> : null}
+      <Text style={styles.rowName} numberOfLines={1}>{String(name || '—')}</Text>
+      <Text style={styles.rowMeta} numberOfLines={1}>{String(meta || '')}</Text>
+    </Pressable>
+  );
+}
+
+function PersonSelectorContent({
+  requestClose,
   onSelect,
   companyId,
   value = null, // { type: 'user'|'contact', id: string, name: string, email?: string, phone?: string }
@@ -21,19 +40,19 @@ export default function PersonSelector({
   const [users, setUsers] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('users'); // 'users' or 'contacts'
 
   useEffect(() => {
-    if (!visible || !companyId) return;
+    if (!companyId) return;
     loadData();
-  }, [visible, companyId]);
+  }, [companyId]);
 
   const loadData = async () => {
     setLoading(true);
     try {
       // Load users
       const members = await fetchCompanyMembers(companyId);
-      const userList = Array.isArray(members) ? members.map(m => ({
+      const resolvedMembers = Array.isArray(members?.out) ? members.out : (Array.isArray(members) ? members : []);
+      const userList = Array.isArray(resolvedMembers) ? resolvedMembers.map(m => ({
         type: 'user',
         id: m.uid || m.id,
         name: m.displayName || m.name || m.email || 'Okänd användare',
@@ -64,351 +83,306 @@ export default function PersonSelector({
     }
   };
 
-  const filteredUsers = users.filter(u => {
-    const q = search.toLowerCase();
-    return u.name.toLowerCase().includes(q) || 
-           (u.email && u.email.toLowerCase().includes(q)) ||
-           (u.phone && u.phone.toLowerCase().includes(q));
-  });
+  const normalizeSearch = (s) => String(s || '').trim().toLowerCase();
+  const q = normalizeSearch(search);
 
-  const filteredContacts = contacts.filter(c => {
-    const q = search.toLowerCase();
-    return c.name.toLowerCase().includes(q) || 
-           (c.email && c.email.toLowerCase().includes(q)) ||
-           (c.phone && c.phone.toLowerCase().includes(q)) ||
-           (c.companyName && c.companyName.toLowerCase().includes(q));
-  });
+  const merged = [...(Array.isArray(users) ? users : []), ...(Array.isArray(contacts) ? contacts : [])]
+    .map((p) => {
+      const id = String(p?.id || '').trim();
+      const type = String(p?.type || '').trim();
+      if (!id || !type) return null;
+      return { ...p, _key: `${type}:${id}` };
+    })
+    .filter(Boolean)
+    .filter((p) => {
+      if (!q) return true;
+      const hay = [p?.name, p?.email, p?.phone, p?.role, p?.companyName]
+        .map((x) => String(x || '').toLowerCase())
+        .join(' ');
+      return hay.includes(q);
+    })
+    .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'sv'));
 
   const handleSelect = (person) => {
     if (onSelect) {
       onSelect(person);
     }
-    onClose();
-  };
-
-  const handleClear = () => {
-    if (onSelect) {
-      onSelect(null);
-    }
-    onClose();
+    requestClose();
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>{label}</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#666" />
-            </TouchableOpacity>
+    <View style={styles.card}>
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <View style={styles.iconBadge}>
+            <Ionicons name="person-outline" size={16} color="#1976D2" />
           </View>
-
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Sök efter namn, e-post eller telefon..."
-              style={styles.searchInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-
-          {/* Tabs */}
-          <View style={styles.tabs}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'users' && styles.tabActive]}
-              onPress={() => setActiveTab('users')}
-            >
-              <Ionicons 
-                name="people-outline" 
-                size={18} 
-                color={activeTab === 'users' ? '#1976D2' : '#666'} 
-              />
-              <Text style={[styles.tabText, activeTab === 'users' && styles.tabTextActive]}>
-                Användare ({filteredUsers.length})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'contacts' && styles.tabActive]}
-              onPress={() => setActiveTab('contacts')}
-            >
-              <Ionicons 
-                name="person-outline" 
-                size={18} 
-                color={activeTab === 'contacts' ? '#1976D2' : '#666'} 
-              />
-              <Text style={[styles.tabText, activeTab === 'contacts' && styles.tabTextActive]}>
-                Kontakter ({filteredContacts.length})
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* List */}
-          <ScrollView style={styles.list}>
-            {loading ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>Laddar...</Text>
-              </View>
-            ) : activeTab === 'users' ? (
-              filteredUsers.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>Inga användare hittades</Text>
-                </View>
-              ) : (
-                filteredUsers.map((user) => (
-                  <TouchableOpacity
-                    key={`user-${user.id}`}
-                    style={[
-                      styles.item,
-                      value && value.id === user.id && value.type === 'user' && styles.itemSelected
-                    ]}
-                    onPress={() => handleSelect(user)}
-                  >
-                    <View style={styles.itemContent}>
-                      <View style={styles.itemHeader}>
-                        <Ionicons name="person-circle-outline" size={24} color="#1976D2" />
-                        <View style={styles.itemTextContainer}>
-                          <Text style={styles.itemName}>{user.name}</Text>
-                          {user.role && (
-                            <Text style={styles.itemRole}>{user.role}</Text>
-                          )}
-                        </View>
-                      </View>
-                      <View style={styles.itemDetails}>
-                        {user.email && (
-                          <View style={styles.itemDetailRow}>
-                            <Ionicons name="mail-outline" size={14} color="#999" />
-                            <Text style={styles.itemDetailText}>{user.email}</Text>
-                          </View>
-                        )}
-                        {user.phone && (
-                          <View style={styles.itemDetailRow}>
-                            <Ionicons name="call-outline" size={14} color="#999" />
-                            <Text style={styles.itemDetailText}>{user.phone}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                ))
-              )
-            ) : (
-              filteredContacts.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>Inga kontakter hittades</Text>
-                </View>
-              ) : (
-                filteredContacts.map((contact) => (
-                  <TouchableOpacity
-                    key={`contact-${contact.id}`}
-                    style={[
-                      styles.item,
-                      value && value.id === contact.id && value.type === 'contact' && styles.itemSelected
-                    ]}
-                    onPress={() => handleSelect(contact)}
-                  >
-                    <View style={styles.itemContent}>
-                      <View style={styles.itemHeader}>
-                        <Ionicons name="person-outline" size={24} color="#FF9800" />
-                        <View style={styles.itemTextContainer}>
-                          <Text style={styles.itemName}>{contact.name}</Text>
-                          {contact.companyName && (
-                            <Text style={styles.itemRole}>{contact.companyName}</Text>
-                          )}
-                          {contact.role && (
-                            <Text style={styles.itemRole}>{contact.role}</Text>
-                          )}
-                        </View>
-                      </View>
-                      <View style={styles.itemDetails}>
-                        {contact.email && (
-                          <View style={styles.itemDetailRow}>
-                            <Ionicons name="mail-outline" size={14} color="#999" />
-                            <Text style={styles.itemDetailText}>{contact.email}</Text>
-                          </View>
-                        )}
-                        {contact.phone && (
-                          <View style={styles.itemDetailRow}>
-                            <Ionicons name="call-outline" size={14} color="#999" />
-                            <Text style={styles.itemDetailText}>{contact.phone}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                ))
-              )
-            )}
-          </ScrollView>
-
-          {/* Footer */}
-          <View style={styles.footer}>
-            {value && (
-              <TouchableOpacity onPress={handleClear} style={styles.clearButton}>
-                <Ionicons name="close-circle" size={20} color="#D32F2F" />
-                <Text style={styles.clearButtonText}>Rensa val</Text>
-              </TouchableOpacity>
-            )}
+          <View style={{ minWidth: 0 }}>
+            <Text style={styles.title} numberOfLines={1}>{label || placeholder}</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>Sök bland interna användare och kontakter</Text>
           </View>
         </View>
+
+        <Pressable
+          onPress={requestClose}
+          title={Platform.OS === 'web' ? 'Stäng' : undefined}
+          style={({ hovered, pressed }) => [
+            styles.secondaryButton,
+            hovered || pressed ? styles.secondaryButtonHot : null,
+            Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+          ]}
+        >
+          {({ hovered, pressed }) => (
+            <Text style={[styles.secondaryButtonLabel, { color: (hovered || pressed) ? '#1976D2' : '#6B7280' }]}>Stäng</Text>
+          )}
+        </Pressable>
       </View>
-    </Modal>
+
+      <View style={styles.body}>
+        <View style={styles.searchRow}>
+          <Ionicons name="search-outline" size={16} color="#6B7280" />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Sök namn, företag, e-post, telefon"
+            placeholderTextColor="#94A3B8"
+            style={[styles.input, Platform.OS === 'web' ? { outline: 'none' } : null]}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        <View style={styles.listBox}>
+          <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+            {loading ? (
+              <View style={styles.emptyRow}>
+                <Text style={styles.helperText}>Laddar…</Text>
+              </View>
+            ) : (
+              <>
+                {merged.length === 0 ? (
+                  <View style={styles.emptyRow}>
+                    <Text style={styles.helperText}>Inga träffar.</Text>
+                  </View>
+                ) : (
+                  merged.slice(0, 300).map((p) => {
+                    const selected = value && String(value?.id || '') === String(p?.id || '') && String(value?.type || '') === String(p?.type || '');
+
+                    const metaParts = [];
+                    const role = String(p?.role || '').trim();
+                    const companyName = String(p?.companyName || '').trim();
+                    const email = String(p?.email || '').trim();
+                    if (role) metaParts.push(role);
+                    if (companyName) metaParts.push(companyName);
+                    if (email) metaParts.push(email);
+                    const meta = metaParts.join(' • ');
+                    const metaText = meta || (p.type === 'user' ? 'Intern användare' : 'Kontakt');
+
+                    return (
+                      <PersonSelectorRow
+                        key={p._key}
+                        selected={selected}
+                        name={p?.name}
+                        meta={metaText}
+                        onPress={() => handleSelect(p)}
+                      />
+                    );
+                  })
+                )}
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </View>
   );
 }
 
+export default function PersonSelector({
+  visible,
+  onClose,
+  onSelect,
+  companyId,
+  value = null,
+  placeholder = 'Välj person...',
+  label = 'Person'
+}) {
+  const { openSystemModal, closeSystemModal } = useSystemModal();
+  const modalIdRef = React.useRef(null);
+
+  useEffect(() => {
+    if (visible && !modalIdRef.current) {
+      modalIdRef.current = openSystemModal({
+        component: PersonSelectorContent,
+        props: {
+          onSelect,
+          companyId,
+          value,
+          placeholder,
+          label,
+        },
+        onClose,
+      });
+      return;
+    }
+
+    if (!visible && modalIdRef.current) {
+      closeSystemModal(modalIdRef.current);
+      modalIdRef.current = null;
+    }
+  }, [visible, openSystemModal, closeSystemModal, onClose, onSelect, companyId, value, placeholder, label]);
+
+  useEffect(() => {
+    return () => {
+      if (modalIdRef.current) {
+        closeSystemModal(modalIdRef.current);
+        modalIdRef.current = null;
+      }
+    };
+  }, [closeSystemModal]);
+
+  return null;
+}
+
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modal: {
+  card: {
+    width: '100%',
+    maxWidth: 720,
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    ...(Platform.OS === 'web' ? { maxHeight: '600px' } : {}),
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E6E8EC',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : { elevation: 6 }),
   },
   header: {
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E6E8EC',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    gap: 12,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#222',
-  },
-  closeButton: {
-    padding: 4,
-  },
-  searchContainer: {
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    margin: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
+    gap: 10,
+    minWidth: 0,
+  },
+  iconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#222',
-  },
-  tabs: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
+    borderColor: '#BFDBFE',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    gap: 6,
   },
-  tabActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#1976D2',
-  },
-  tabText: {
-    fontSize: 14,
-    color: '#666',
+  title: {
+    fontSize: 16,
     fontWeight: '500',
+    color: '#111',
   },
-  tabTextActive: {
-    color: '#1976D2',
-    fontWeight: '600',
+  subtitle: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#64748b',
+  },
+  body: {
+    padding: 18,
+    gap: 12,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    fontWeight: '400',
+    backgroundColor: '#fff',
+    color: '#111',
+  },
+  listBox: {
+    borderWidth: 1,
+    borderColor: '#EEF0F3',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    height: 420,
   },
   list: {
     flex: 1,
-    maxHeight: 400,
   },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-  },
-  item: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  itemSelected: {
-    backgroundColor: '#E3F2FD',
-  },
-  itemContent: {
+  emptyRow: {
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     flex: 1,
-  },
-  itemHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  itemTextContainer: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  itemName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#222',
-    marginBottom: 2,
-  },
-  itemRole: {
-    fontSize: 13,
-    color: '#666',
-  },
-  itemDetails: {
-    marginLeft: 36,
-    gap: 4,
-  },
-  itemDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  itemDetailText: {
-    fontSize: 13,
-    color: '#666',
-  },
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-  },
-  clearButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 8,
   },
-  clearButtonText: {
-    fontSize: 14,
-    color: '#D32F2F',
-    fontWeight: '600',
+  helperText: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#64748b',
+  },
+  row: {
+    position: 'relative',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF0F3',
+    backgroundColor: '#fff',
+  },
+  rowHover: {
+    backgroundColor: '#F6F8FB',
+  },
+  rowWeb: Platform.OS === 'web' ? {
+    cursor: 'pointer',
+    transitionProperty: 'background-color',
+    transitionDuration: '120ms',
+    transitionTimingFunction: 'ease',
+  } : {},
+  rowSelectedIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
+    backgroundColor: '#1976D2',
+  },
+  rowName: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#111',
+  },
+  rowMeta: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#64748b',
+  },
+  secondaryButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#fff',
+  },
+  secondaryButtonHot: {
+    backgroundColor: '#F8FAFC',
+  },
+  secondaryButtonLabel: {
+    fontSize: 12,
+    fontWeight: '500',
   },
 });

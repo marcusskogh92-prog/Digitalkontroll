@@ -24,7 +24,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TouchableOpacity, View } from 'react-native';
 import SharePointFolderHierarchyTree from '../SharePointFiles/SharePointFolderHierarchyTree';
-import ProjectTreeFile from './ProjectTreeFile';
 import ProjectTreeFolder from './ProjectTreeFolder';
 import ProjectTreeNode from './ProjectTreeNode';
 import { useProjectTree } from './useProjectTree';
@@ -279,7 +278,6 @@ export default function ProjectTree({
                     (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' }),
                   );
 
-                  const files = sortedNodes.filter((n) => n?.type === 'file');
                   const containers = sortedNodes.filter((n) => {
                     const t = n?.type;
                     return t === 'folder' || t === 'sub' || t === 'project' || t === 'projectFunction' || !t;
@@ -287,10 +285,6 @@ export default function ProjectTree({
 
                   return (
                     <>
-                      {files.map((file) => (
-                        <ProjectTreeFile key={file.id} file={file} level={level} compact={compact} />
-                      ))}
-
                       {containers.map((node) => {
                         const isProject = node.type === 'project' || (node.type === 'folder' && isProjectFolder(node));
 
@@ -361,19 +355,14 @@ export default function ProjectTree({
                           isParentPhaseSectionFolder &&
                           Boolean(getTwoDigitPrefix(folderNode?.name));
 
-                        const isAfPhaseItemFolder = (() => {
+                        const isFfuSectionFolder = (() => {
                           if (!afMirror || !afMirror.enabled) return false;
-                          if (!isPhaseItemFolder) return false;
+                          if (!isPhaseSectionFolder) return false;
                           if (!afMirror.rootPath) return false;
                           if (typeof afMirror.onRelativePathChange !== 'function') return false;
 
-                          const parentName = String(parentNode?.name || '').trim().toLowerCase();
-                          const looksLikeForfragningsunderlag = parentName.includes('förfrågningsunderlag') || parentName.includes('forfragningsunderlag');
-                          if (!looksLikeForfragningsunderlag) return false;
-
                           const name = String(folderNode?.name || '').trim().toLowerCase();
-                          const looksLikeAf = name.includes('administrativa') && (name.includes('(af)') || name.includes('af'));
-                          return looksLikeAf;
+                          return name.includes('förfrågningsunderlag') || name.includes('forfragningsunderlag');
                         })();
 
                         const isActivePhaseSectionFolder =
@@ -437,7 +426,7 @@ export default function ProjectTree({
                             />
 
                             {isSubExpanded && !isOverviewPage && (
-                              isAfPhaseItemFolder ? (
+                              isFfuSectionFolder ? (
                                 <SharePointFolderHierarchyTree
                                   indentLevel={level + 1}
                                   compact={compact}
@@ -449,6 +438,10 @@ export default function ProjectTree({
                                   selectedItemId={afMirror.selectedItemId}
                                   onSelectedItemIdChange={afMirror.onSelectedItemIdChange}
                                   refreshNonce={afMirror.refreshNonce}
+                                  systemFolderName="AI-sammanställning"
+                                  ensureSystemFolder
+                                  pinSystemFolderLast
+                                  systemFolderRootOnly
                                 />
                               ) : folderNode.loading ? (
                                 <Text
@@ -486,11 +479,37 @@ export default function ProjectTree({
                                 >
                                   Tom mapp
                                 </Text>
-                              ) : (
-                                <View style={{ marginLeft: compact ? 10 : 12, marginTop: 4 }}>
-                                  {renderNodes(folderNode.children, level + 1, folderNode, parentNode)}
-                                </View>
-                              )
+                              ) : (() => {
+                                const children = Array.isArray(folderNode.children) ? folderNode.children : [];
+                                const hasFolderChildren = children.some((c) => {
+                                  const t = c?.type;
+                                  return t === 'folder' || t === 'sub' || t === 'project' || t === 'projectFunction' || !t;
+                                });
+                                const hasFileChildren = children.some((c) => c?.type === 'file');
+
+                                if (!hasFolderChildren && hasFileChildren) {
+                                  return (
+                                    <Text
+                                      style={{
+                                        color: '#888',
+                                        fontSize: compact ? 12 : 13,
+                                        marginLeft: hideFolderIcons
+                                          ? (compact ? 10 : 12) + 12 * Math.max(1, level + 1) + 8 + (compact ? 22 : 26)
+                                          : (compact ? 14 : 18),
+                                        marginTop: 4,
+                                      }}
+                                    >
+                                      Inga undermappar
+                                    </Text>
+                                  );
+                                }
+
+                                return (
+                                  <View style={{ marginLeft: compact ? 10 : 12, marginTop: 4 }}>
+                                    {renderNodes(children, level + 1, folderNode, parentNode)}
+                                  </View>
+                                );
+                              })()
                             )}
                           </View>
                         );
@@ -531,7 +550,33 @@ export default function ProjectTree({
                     </Text>
                   );
                 }
-                return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(folder.children, 1, folder, null)}</View>;
+                {
+                  const children = Array.isArray(folder.children) ? folder.children : [];
+                  const hasFolderChildren = children.some((c) => {
+                    const t = c?.type;
+                    return t === 'folder' || t === 'sub' || t === 'project' || t === 'projectFunction' || !t;
+                  });
+                  const hasFileChildren = children.some((c) => c?.type === 'file');
+
+                  if (!hasFolderChildren && hasFileChildren) {
+                    return (
+                      <Text
+                        style={{
+                          color: '#888',
+                          fontSize: compact ? 12 : 14,
+                          marginLeft: hideFolderIcons
+                            ? 12 + 8 + (compact ? 22 : 26)
+                            : (compact ? 14 : 18),
+                          marginTop: compact ? 6 : 8,
+                        }}
+                      >
+                        Inga undermappar
+                      </Text>
+                    );
+                  }
+
+                  return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(children, 1, folder, null)}</View>;
+                }
               })()}
             </View>
           );

@@ -31,14 +31,8 @@ const SECTION_DEFS = {
   forfragningsunderlag: {
     title: 'Förfrågningsunderlag',
     icon: 'folder-outline',
-    items: [
-      '01 - Administrativa föreskrifter (AF)',
-      '02 - Tekniska beskrivningar',
-      '03 - Ritningar',
-      '04 - Kompletteringar och ändringar',
-      '05 - Referenshandlingar',
-      '06 - AI-analys och sammanställning',
-    ],
+    // GOLDEN RULE (FFU): no fixed subfolder structure; users manage their own folders.
+    items: [],
   },
   kalkyl: {
     title: 'Kalkyl',
@@ -136,12 +130,17 @@ const ORDER_BY_VERSION = {
 export function buildKalkylskedeLockedStructure(version = KALKYLSKEDE_STRUCTURE_VERSIONS.V1) {
   const v = ORDER_BY_VERSION[version] ? version : KALKYLSKEDE_STRUCTURE_VERSIONS.V1;
   const ids = ORDER_BY_VERSION[v];
+  const FFU_SYSTEM_FOLDER = 'AI-sammanställning';
 
   return ids
     .map((id, idx) => {
       const def = SECTION_DEFS[id];
       if (!def) return null;
       const name = `${pad2(idx + 1)} - ${def.title}`;
+      // FFU is user-controlled, with one system exception.
+      if (id === 'forfragningsunderlag') {
+        return { name, items: [FFU_SYSTEM_FOLDER] };
+      }
       return { name, items: Array.isArray(def.items) ? [...def.items] : [] };
     })
     .filter(Boolean);
@@ -179,14 +178,8 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'status-beslut', name: '04 - FrågaSvar', component: 'StatusBeslutView', order: 4, enabled: true },
           ];
         } else if (id === 'forfragningsunderlag') {
-          section.items = [
-            { id: 'administrativa-foreskrifter', name: '01 - Administrativa föreskrifter (AF)', component: 'AdministrativaForeskrifterView', order: 1, enabled: true },
-            { id: 'tekniska-beskrivningar', name: '02 - Tekniska beskrivningar', component: 'TekniskaBeskrivningarView', order: 2, enabled: true },
-            { id: 'ritningar', name: '03 - Ritningar', component: 'RitningarView', order: 3, enabled: true },
-            { id: 'kompletteringar-andringar', name: '04 - Kompletteringar och ändringar', component: 'KompletteringarAndringarView', order: 4, enabled: true },
-            { id: 'referenshandlingar', name: '05 - Referenshandlingar', component: 'ReferenshandlingarView', order: 5, enabled: true },
-            { id: 'ai-analys-sammanstallning', name: '06 - AI-analys och sammanställning', component: 'AIAnalysSammanstallningView', order: 6, enabled: true },
-          ];
+          // GOLDEN RULE (FFU): no fixed item navigation; browse folders directly.
+          section.items = [];
         } else if (id === 'kalkyl') {
           section.items = [
             { id: 'kalkylritningar', name: '01 - Kalkylritningar', component: 'KalkylritningarView', order: 1, enabled: true },

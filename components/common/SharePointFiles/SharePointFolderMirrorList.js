@@ -203,9 +203,6 @@ export default function SharePointFolderMirrorList({
           </Text>
         ) : null}
       </View>
-      {Platform.OS === 'web' && !isFolder ? (
-        <Ionicons name="open-outline" size={compact ? 14 : 16} color="#1976D2" />
-      ) : null}
     </Pressable>
   );
 

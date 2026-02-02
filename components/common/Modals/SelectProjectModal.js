@@ -52,11 +52,11 @@ const SelectProjectModal = ({
         />
         <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 24, width: 360, maxHeight: 540 }}>
           {type && (
-            <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 6, color: '#222', textAlign: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: '500', marginBottom: 6, color: '#222', textAlign: 'center' }}>
               {type}
             </Text>
           )}
-          <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj projekt</Text>
+          <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center' }}>Välj projekt</Text>
           <View style={{ position: 'relative', marginBottom: 14 }}>
             <TextInput
               value={searchText}
@@ -120,7 +120,7 @@ const SelectProjectModal = ({
                 <View key={main.id} style={{ backgroundColor: '#fff', borderRadius: 16, marginBottom: 3, padding: 6, shadowColor: '#1976D2', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6, elevation: 2 }}>
                   <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }} onPress={() => toggleMain(main.id)} activeOpacity={0.7}>
                     <Ionicons name={isMainExpanded(main.id) ? 'chevron-down' : 'chevron-forward'} size={22} color="#222" />
-                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#222', marginLeft: 8 }}>{main.name}</Text>
+                    <Text style={{ fontSize: 16, fontWeight: '500', color: '#222', marginLeft: 8 }}>{main.name}</Text>
                   </TouchableOpacity>
                   {isMainExpanded(main.id) && (
                     !main.children || main.children.length === 0 ? (
@@ -142,7 +142,7 @@ const SelectProjectModal = ({
                             <View style={{ flexDirection: 'row', alignItems: 'center', padding: '2px 0 2px 0', userSelect: 'none' }}>
                               <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }} onPress={() => toggleSub(sub.id)} activeOpacity={0.7}>
                                 <Ionicons name={isSubExpanded(sub.id) ? 'chevron-down' : 'chevron-forward'} size={16} color="#222" style={{ marginRight: 4 }} />
-                                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginLeft: 2 }}>{sub.name}</Text>
+                                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginLeft: 2 }}>{sub.name}</Text>
                               </TouchableOpacity>
                             </View>
                             {isSubExpanded(sub.id) && (

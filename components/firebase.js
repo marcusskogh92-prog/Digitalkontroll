@@ -347,35 +347,30 @@ async function resolveCompanyId(preferredCompanyId, payload) {
 // Convert any nested array values into an object map with numeric keys so writes succeed.
 function sanitizeForFirestore(value) {
   // Ensure no nested arrays exist anywhere in the data structure.
-  // Firestore rejects nested arrays (arrays that contain arrays anywhere inside them).
-  // Strategy:
-  // - Walk the value recursively.
-  // - If an array is found that contains another array anywhere in its subtree,
-  //   convert that array into an object keyed by index (so Firestore accepts it).
-  // - Otherwise keep arrays as arrays but ensure their elements are sanitized.
-  function containsArray(v) {
-    if (!v) return false;
-    if (Array.isArray(v)) return true;
-    if (typeof v === 'object') {
-      for (const k of Object.keys(v)) if (containsArray(v[k])) return true;
-    }
-    return false;
-  }
+  // Firestore rejects nested arrays (arrays containing arrays) at any depth.
+  // NOTE: Arrays inside objects are fine (e.g. group.members: []), so only rewrite
+  // arrays that directly contain array elements.
+  const isPlainObject = (v) => {
+    if (!v || typeof v !== 'object') return false;
+    const proto = Object.getPrototypeOf(v);
+    return proto === Object.prototype || proto === null;
+  };
 
   function _walk(v) {
     if (Array.isArray(v)) {
-      // If any element (recursively) contains an array, convert the whole array to an object
-      // keyed by index to avoid nested arrays anywhere.
-      const hasNested = v.some(el => containsArray(el));
-      if (hasNested) {
+      // Rewrite only true nested arrays: arrays that contain array elements.
+      const hasNestedArray = v.some((el) => Array.isArray(el));
+      if (hasNestedArray) {
         const obj = {};
         for (let i = 0; i < v.length; i++) obj[i] = _walk(v[i]);
         return obj;
       }
       // Safe to keep as array; sanitize elements.
-      return v.map(el => _walk(el));
+      return v.map((el) => _walk(el));
     }
-    if (v && typeof v === 'object' && !(v instanceof Date)) {
+    // Only walk plain objects. Preserve special SDK objects like Firestore FieldValue
+    // (e.g. serverTimestamp()), DocumentReference, etc.
+    if (isPlainObject(v)) {
       const out = {};
       for (const k of Object.keys(v)) out[k] = _walk(v[k]);
       return out;
@@ -3349,10 +3344,11 @@ export async function upsertProjectInfoTimelineMilestone(companyIdOverride, proj
  *
  * Requirements:
  * - Create automatically (no user interaction)
- * - Group title equals company name
+ * - Group title equals company name (exact)
  * - Classified as internal main group
- * - Must be renameable but not deletable (enforced in UI + best-effort in hook)
- * - If any groups already exist, do nothing
+ * - Must NOT be renameable or deletable (enforced in UI + best-effort in hook)
+ * - Create once per project
+ * - If the company group already exists (by id/flag/title), reuse it
  *
  * Storage:
  * foretag/{companyId}/project_organisation/{projectId}
@@ -3370,25 +3366,68 @@ export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, p
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const current = snap.exists() ? (snap.data() || {}) : {};
-    const groups = Array.isArray(current?.groups) ? current.groups : [];
-    if (groups.length > 0) {
-      return { ok: true, created: false, skipped: true, reason: 'has_groups' };
-    }
+    const rawGroups = current?.groups;
+    const groups = Array.isArray(rawGroups)
+      ? [...rawGroups]
+      : (rawGroups && typeof rawGroups === 'object'
+        ? Object.keys(rawGroups)
+            .sort((a, b) => Number(a) - Number(b))
+            .map((k) => rawGroups[k])
+        : []);
 
-    const defaultGroup = {
-      id: 'internal-main',
+    const norm = (v) => String(v || '').trim().toLowerCase();
+
+    // Find an existing company group to reuse.
+    // Priority:
+    // 1) explicit id "internal-main"
+    // 2) flagged internal main group
+    // 3) group title matches company title
+    let idx = groups.findIndex((g) => String(g?.id || '').trim() === 'internal-main');
+    if (idx < 0) idx = groups.findIndex((g) => g?.isInternalMainGroup === true);
+    if (idx < 0) idx = groups.findIndex((g) => norm(g?.title) === norm(title));
+
+    const makeCompanyGroup = (base) => ({
+      ...(base && typeof base === 'object' ? base : null),
+      id: String(base?.id || '').trim() || 'internal-main',
       title,
-      members: [],
+      members: Array.isArray(base?.members) ? base.members : [],
       groupType: 'internal',
       isInternalMainGroup: true,
       locked: true,
-    };
+    });
+
+    let created = false;
+    let updated = false;
+
+    if (idx >= 0) {
+      const before = groups[idx] || {};
+      const next = makeCompanyGroup(before);
+
+      // Only treat it as an update if anything important changed.
+      if (
+        String(before?.title || '').trim() !== String(next.title || '').trim() ||
+        before?.locked !== true ||
+        before?.isInternalMainGroup !== true ||
+        String(before?.groupType || '').trim() !== 'internal'
+      ) {
+        groups[idx] = next;
+        updated = true;
+      }
+    } else {
+      groups.push(makeCompanyGroup(null));
+      created = true;
+      updated = true;
+    }
+
+    if (!updated) {
+      return { ok: true, created: false, updated: false, skipped: true, reason: 'already_ok' };
+    }
 
     tx.set(
       ref,
       sanitizeForFirestore({
         projectId: pid,
-        groups: [defaultGroup],
+        groups,
         updatedAt: serverTimestamp(),
         updatedBy: auth.currentUser?.uid || null,
         createdAt: current?.createdAt || serverTimestamp(),
@@ -3397,7 +3436,8 @@ export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, p
       { merge: true }
     );
 
-    return { ok: true, created: true, skipped: false, groupId: defaultGroup.id };
+    const ensuredId = idx >= 0 ? String(groups[idx]?.id || '').trim() : 'internal-main';
+    return { ok: true, created, updated, skipped: false, groupId: ensuredId };
   });
 }
 

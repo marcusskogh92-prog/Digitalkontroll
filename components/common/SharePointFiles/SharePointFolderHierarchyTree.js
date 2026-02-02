@@ -59,6 +59,12 @@ export default function SharePointFolderHierarchyTree({
   selectedItemId,
   onSelectedItemIdChange,
   refreshNonce = 0,
+
+  // Optional (FFU): ensure/pin a system folder in the root.
+  systemFolderName = null,
+  ensureSystemFolder = false,
+  pinSystemFolderLast = false,
+  systemFolderRootOnly = true,
 }) {
   const cid = safeText(companyId);
   const base = safeText(rootPath);
@@ -66,6 +72,7 @@ export default function SharePointFolderHierarchyTree({
   const [siteId, setSiteId] = useState('');
   const [expandedByPath, setExpandedByPath] = useState({ '': true });
   const [childrenByPath, setChildrenByPath] = useState({});
+  const [fileCountByPath, setFileCountByPath] = useState({});
   const [loadingByPath, setLoadingByPath] = useState({});
   const [errorByPath, setErrorByPath] = useState({});
 
@@ -110,6 +117,7 @@ export default function SharePointFolderHierarchyTree({
   // When something mutates in SharePoint, reload cached children.
   useEffect(() => {
     setChildrenByPath({});
+    setFileCountByPath({});
     setLoadingByPath({});
     setErrorByPath({});
     inflightRef.current = new Set();
@@ -129,23 +137,39 @@ export default function SharePointFolderHierarchyTree({
 
     try {
       await ensureFolderPath(currentPath, cid, siteId, { siteRole: 'projects', strict: true });
+
+      if (ensureSystemFolder && safeText(systemFolderName) && (!systemFolderRootOnly || key === '')) {
+        await ensureFolderPath(joinPath(base, safeText(systemFolderName)), cid, siteId, { siteRole: 'projects', strict: true });
+      }
+
       const next = await getSharePointFolderItems(siteId, `/${currentPath}`);
 
-      const folders = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'folder');
-      const files = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file');
+      const fileCount = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file').length;
 
-      folders.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' }));
-      files.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' }));
+      // GOLDEN RULE: navigation tree shows folders only (never files).
+      const folders = (Array.isArray(next) ? next : [])
+        .filter((x) => x?.type === 'folder')
+        .sort((a, b) => {
+          if (pinSystemFolderLast && safeText(systemFolderName) && (!systemFolderRootOnly || key === '')) {
+            const aSys = safeText(a?.name).trim().toLowerCase() === safeText(systemFolderName).trim().toLowerCase();
+            const bSys = safeText(b?.name).trim().toLowerCase() === safeText(systemFolderName).trim().toLowerCase();
+            if (aSys && !bSys) return 1;
+            if (!aSys && bSys) return -1;
+          }
+          return safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' });
+        });
 
-      setChildrenByPath((prev) => ({ ...prev, [key]: [...folders, ...files] }));
+      setChildrenByPath((prev) => ({ ...prev, [key]: folders }));
+      setFileCountByPath((prev) => ({ ...prev, [key]: fileCount }));
     } catch (e) {
       setChildrenByPath((prev) => ({ ...prev, [key]: [] }));
+      setFileCountByPath((prev) => ({ ...prev, [key]: 0 }));
       setErrorByPath((prev) => ({ ...prev, [key]: String(e?.message || e || 'Kunde inte läsa innehåll.') }));
     } finally {
       setLoadingByPath((prev) => ({ ...prev, [key]: false }));
       inflightRef.current.delete(key);
     }
-  }, [cid, base, siteId]);
+  }, [cid, base, siteId, ensureSystemFolder, systemFolderName, pinSystemFolderLast, systemFolderRootOnly]);
 
   const expandedKey = useMemo(() => {
     const keys = Object.keys(expandedByPath || {}).filter((k) => expandedByPath?.[k]);
@@ -180,6 +204,7 @@ export default function SharePointFolderHierarchyTree({
     const error = safeText(errorByPath?.[key]);
     const loading = Boolean(loadingByPath?.[key]);
     const items = childrenByPath?.[key];
+    const fileCount = Number(fileCountByPath?.[key] || 0);
 
     if (error) {
       rows.push(
@@ -227,13 +252,14 @@ export default function SharePointFolderHierarchyTree({
             fontStyle: 'italic',
           }}
         >
-          Inga objekt
+          {fileCount > 0 ? 'Inga undermappar' : 'Mappen är tom'}
         </Text>,
       );
     }
 
     (Array.isArray(items) ? items : []).forEach((it) => {
       const isFolder = it?.type === 'folder';
+      if (!isFolder) return;
       const name = safeText(it?.name) || (isFolder ? 'Mapp' : 'Fil');
       const id = safeText(it?.id) || safeText(it?.webUrl) || name;
 
@@ -323,14 +349,6 @@ export default function SharePointFolderHierarchyTree({
           >
             {name}
           </Text>
-
-          {!isFolder ? (
-            <Ionicons
-              name="eye-outline"
-              size={compact ? 16 : 18}
-              color={isSelectedFile ? '#1976D2' : '#94A3B8'}
-            />
-          ) : null}
         </Pressable>,
       );
 

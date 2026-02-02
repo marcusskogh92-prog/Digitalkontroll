@@ -1,15 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { PROJECT_PHASES } from '../../../features/projects/constants';
 import { getSharePointNavigationConfig } from '../../firebase';
@@ -988,13 +988,13 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     marginBottom: 8,
     marginTop: 0,
   },
   label: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     marginBottom: 8,
   },
   input: {
@@ -1165,7 +1165,7 @@ const styles = StyleSheet.create({
   },
   statusTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   statusItems: {
     marginLeft: 28,
@@ -1191,7 +1191,7 @@ const styles = StyleSheet.create({
   circleText: {
     fontSize: 12,
     color: '#fff',
-    fontWeight: '700',
+    fontWeight: '500',
   },
   helperText: {
     fontSize: 12,
@@ -1209,7 +1209,7 @@ const styles = StyleSheet.create({
   },
   sectionHeaderTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   folderRow: {
     flexDirection: 'row',
@@ -1228,7 +1228,7 @@ const styles = StyleSheet.create({
   },
   folderName: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   folderPath: {
     fontSize: 11,
@@ -1250,7 +1250,7 @@ const styles = StyleSheet.create({
   },
   structureOptionTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#111827',
   },
   structureOptionDescription: {
@@ -1279,7 +1279,7 @@ const styles = StyleSheet.create({
   },
   structureTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     lineHeight: 18,
   },
   structureDescription: {
@@ -1339,7 +1339,7 @@ const styles = StyleSheet.create({
   },
   createText: {
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   freeRow: {
     padding: 12,
@@ -1354,7 +1354,7 @@ const styles = StyleSheet.create({
   },
   freeTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   freeDescription: {
     fontSize: 12,
@@ -1380,7 +1380,7 @@ const styles = StyleSheet.create({
   },
   locationPickerTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     marginBottom: 6,
     color: '#374151',
   },
@@ -1426,7 +1426,7 @@ const styles = StyleSheet.create({
   selectLocationButtonText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   // Loading overlay styles
   loadingOverlay: {
@@ -1448,7 +1448,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#1976D2',
     marginTop: 16,
     marginBottom: 8,

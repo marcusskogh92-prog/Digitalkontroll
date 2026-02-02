@@ -55,7 +55,7 @@ export const EFTERMARKNAD_PROJECT_FUNCTIONS = [
     name: 'Överblick', 
     type: 'projectFunction',
     functionType: 'overblick',
-    icon: 'eye-outline',
+    icon: 'grid-outline',
     order: 1
   },
   { 

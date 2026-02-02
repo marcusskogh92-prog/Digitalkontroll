@@ -121,6 +121,8 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
+  const lockViewportForSection = Platform.OS === 'web' && String(activeSection || '') === 'forfragningsunderlag';
+
   const renderContent = () => {
     if (navLoading || !navigation) {
       return (
@@ -299,7 +301,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const [spinRefresh, setSpinRefresh] = useState(0);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, lockViewportForSection ? styles.lockViewport : null]}>
       {/* Phase selector, home, and refresh buttons are now in GlobalPhaseToolbar - removed from here */}
       {false && onPhaseChange && (
         <View style={[styles.phaseSelectorContainer, styles.stickyNavigation]}>
@@ -348,7 +350,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
             itemLabel={headerItemLabel}
             style={shouldUseProjectBackground ? styles.projectHeaderTransparent : null}
           />
-          <View style={styles.contentBody}>{renderContent()}</View>
+          <View style={[styles.contentBody, lockViewportForSection ? styles.contentBodyLocked : null]}>{renderContent()}</View>
         </View>
       </View>
 
@@ -467,6 +469,14 @@ const styles = StyleSheet.create({
     minHeight: 0,
     minWidth: 0,
   },
+  lockViewport: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: '100%',
+          overflow: 'hidden',
+        }
+      : null),
+  },
   phaseSelectorContainer: {
     backgroundColor: '#fff',
     borderBottomWidth: 1,
@@ -505,6 +515,13 @@ const styles = StyleSheet.create({
     padding: 24,
     minHeight: 0,
     minWidth: 0,
+  },
+  contentBodyLocked: {
+    ...(Platform.OS === 'web'
+      ? {
+          overflow: 'hidden',
+        }
+      : null),
   },
   loadingContainer: {
     flex: 1,

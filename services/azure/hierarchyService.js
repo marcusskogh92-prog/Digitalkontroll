@@ -31,6 +31,14 @@ const isFolderLikeDriveItem = (item) => {
   return false;
 };
 
+const fileExtFromName = (name) => {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const m = n.match(/\.([a-zA-Z0-9]+)$/);
+  if (!m || !m[1]) return null;
+  return String(m[1]).trim().toLowerCase();
+};
+
 /**
  * Get SharePoint site ID for a company
  * @param {string} companyId - Company ID
@@ -470,6 +478,7 @@ async function buildFolderHierarchy(siteId, folderItem, currentPath = '', maxDep
             size: item.size,
             lastModified: item.lastModifiedDateTime,
             mimeType: item.file?.mimeType,
+            fileExtension: fileExtFromName(item.name),
           };
         }
       })

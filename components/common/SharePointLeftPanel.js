@@ -53,6 +53,9 @@ function RecursiveFolderView({
         .filter(child => child && (child.type === 'folder' || !child.type))
         .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }))
     : [];
+  const hasFiles = Array.isArray(folder?.children)
+    ? folder.children.some((child) => child && child.type === 'file')
+    : false;
   
   // Check if this folder is a project (if not already determined)
   const folderIsProject = isProject || isProjectFolder(folder);
@@ -221,7 +224,7 @@ function RecursiveFolderView({
                 fontStyle: 'italic',
               }}
             >
-              {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : 'Mappen är tom'}
+                {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : (hasFiles ? 'Inga undermappar' : 'Mappen är tom')}
             </span>
           </div>
         )}
@@ -322,7 +325,7 @@ function RecursiveFolderView({
             paddingLeft: 4,
           }}
         >
-          {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : 'Mappen är tom'}
+          {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : (hasFiles ? 'Inga undermappar' : 'Mappen är tom')}
         </Text>
       )}
     </View>
@@ -427,7 +430,7 @@ export function SharePointLeftPanel({
     return getTwoDigitPrefix(section?.name);
   })();
 
-  const isAfActive = String(phaseActiveNode?.key || '') === 'AF';
+  const isFfuActive = String(phaseActiveSection || '') === 'forfragningsunderlag';
   const afMirrorRootPath = useMemo(() => {
     if (!selectedProject) return '';
     const basePath = String(
@@ -446,9 +449,8 @@ export function SharePointLeftPanel({
       .replace(/\/+/, '/');
 
     const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
-    const AF_FOLDER = '01 - Administrativa föreskrifter (AF)';
     if (!basePath) return '';
-    return `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}/${AF_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
+    return `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
   }, [selectedProject]);
 
   const closeProjectContextMenu = () => setProjectContextMenu({ visible: false, x: 0, y: 0, target: null });
@@ -1899,12 +1901,7 @@ export function SharePointLeftPanel({
           const fallbackBySectionId = {
             oversikt: ['01 - Projektinformation', '02 - Organisation och roller', '03 - Tidsplan och viktiga datum', '04 - FrågaSvar'],
             forfragningsunderlag: [
-              '01 - Administrativa föreskrifter (AF)',
-              '02 - Tekniska beskrivningar',
-              '03 - Ritningar',
-              '04 - Kompletteringar och ändringar',
-              '05 - Referenshandlingar',
-              '06 - AI-analys och sammanställning',
+              'AI-sammanställning',
             ],
           };
 
@@ -2281,7 +2278,7 @@ export function SharePointLeftPanel({
                     activeOverviewPrefix={activeOverviewPrefix}
                     activePhaseSectionPrefix={activePhaseSectionPrefix}
                     afMirror={{
-                      enabled: isAfActive,
+                      enabled: Boolean(isFfuActive && afMirrorRootPath),
                       companyId,
                       project: selectedProject,
                       rootPath: afMirrorRootPath,

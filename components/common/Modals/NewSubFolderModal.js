@@ -3,7 +3,6 @@
  * Extracted from HomeScreen.js to improve code organization
  */
 
-import React from 'react';
 import { Modal, Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const NewSubFolderModal = ({
@@ -63,7 +62,7 @@ const NewSubFolderModal = ({
             onPress={onCreate}
             disabled={isDisabled}
           >
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>
+            <Text style={{ color: '#fff', fontWeight: '500', fontSize: 16 }}>
               Skapa
             </Text>
           </TouchableOpacity>
@@ -71,7 +70,7 @@ const NewSubFolderModal = ({
             style={{ backgroundColor: '#e0e0e0', borderRadius: 8, paddingVertical: 10, alignItems: 'center' }}
             onPress={onClose}
           >
-            <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+            <Text style={{ color: '#222', fontWeight: '500', fontSize: 16 }}>Avbryt</Text>
           </TouchableOpacity>
         </View>
       </View>

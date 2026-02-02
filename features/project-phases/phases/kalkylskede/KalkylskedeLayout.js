@@ -177,20 +177,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f4f6fa',
-    height: '100%',
-    ...(Platform.OS === 'web' ? {
-      maxHeight: '100vh',
-      overflow: 'hidden'
-    } : {})
+    ...(Platform.OS === 'web'
+      ? {
+          minHeight: 0,
+        }
+      : {}),
   },
   mainContent: {
     flex: 1,
     flexDirection: 'row',
-    ...(Platform.OS === 'web' ? {
-      minHeight: 0,
-      maxHeight: '100%',
-      overflow: 'hidden'
-    } : {})
+    ...(Platform.OS === 'web'
+      ? {
+          minHeight: 0,
+        }
+      : {}),
   },
   contentArea: {
     flex: 1,

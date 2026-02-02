@@ -396,7 +396,7 @@ const NewProjectModal = ({
             return (
               <View style={cardStyle}>
                 <View style={headerStyle}>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#111' }}>Skapa nytt projekt</Text>
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#111' }}>Skapa nytt projekt</Text>
                   <TouchableOpacity
                     style={{ position: 'absolute', right: 12, top: 10, padding: 6 }}
                     onPress={() => {
@@ -463,7 +463,7 @@ const NewProjectModal = ({
                         {String(newProjectNumber ?? '').trim() !== '' && !isProjectNumberUnique(newProjectNumber) ? (
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                             <Ionicons name="warning" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
-                            <Text style={{ color: '#B91C1C', fontSize: 12, fontWeight: '700' }}>Projektnummer används redan.</Text>
+                            <Text style={{ color: '#B91C1C', fontSize: 12, fontWeight: '500' }}>Projektnummer används redan.</Text>
                           </View>
                         ) : null}
                       </View>
@@ -612,7 +612,7 @@ const NewProjectModal = ({
                             }}
                             activeOpacity={0.8}
                           >
-                            <Text style={{ fontSize: 13, color: newProjectResponsible ? '#111' : '#94A3B8', fontWeight: '700' }} numberOfLines={1}>
+                            <Text style={{ fontSize: 13, color: newProjectResponsible ? '#111' : '#94A3B8', fontWeight: '500' }} numberOfLines={1}>
                               {newProjectResponsible ? formatPersonName(newProjectResponsible) : 'Välj ansvarig...'}
                             </Text>
                             <Ionicons 
@@ -657,7 +657,7 @@ const NewProjectModal = ({
                                 </View>
                               ) : companyAdminsPermissionDenied ? (
                                 <View style={{ padding: 16 }}>
-                                  <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>
+                                  <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '500' }}>
                                     Saknar behörighet att läsa användare.
                                   </Text>
                                 </View>
@@ -728,7 +728,7 @@ const NewProjectModal = ({
                                           alignItems: 'center', 
                                           justifyContent: 'center' 
                                         }}>
-                                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 10 }}>
+                                          <Text style={{ color: '#fff', fontWeight: '500', fontSize: 10 }}>
                                             {initials(m)}
                                           </Text>
                                         </View>
@@ -737,7 +737,7 @@ const NewProjectModal = ({
                                             numberOfLines={1} 
                                             style={{ 
                                               fontSize: 13, 
-                                              fontWeight: isSelected ? '700' : '600', 
+                                              fontWeight: '500', 
                                               color: '#111' 
                                             }}
                                           >
@@ -756,7 +756,7 @@ const NewProjectModal = ({
                           )}
                         </View>
                         {!newProjectResponsible && !responsibleDropdownOpen ? (
-                          <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 6, fontWeight: '700' }}>
+                          <Text style={{ color: '#B91C1C', fontSize: 12, marginTop: 6, fontWeight: '500' }}>
                             Du måste välja ansvarig.
                           </Text>
                         ) : null}
@@ -781,7 +781,7 @@ const NewProjectModal = ({
                           </View>
                         ) : companyMembersPermissionDenied ? (
                           <View style={{ padding: 12 }}>
-                            <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '700' }}>Saknar behörighet att läsa användare.</Text>
+                            <Text style={{ color: '#B91C1C', fontSize: 13, fontWeight: '500' }}>Saknar behörighet att läsa användare.</Text>
                           </View>
                         ) : visibleMembers.length === 0 ? (
                           <View style={{ padding: 12 }}>
@@ -833,10 +833,10 @@ const NewProjectModal = ({
                                 >
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                                     <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1E40AF', alignItems: 'center', justifyContent: 'center' }}>
-                                      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>{initials(m)}</Text>
+                                      <Text style={{ color: '#fff', fontWeight: '500', fontSize: 12 }}>{initials(m)}</Text>
                                     </View>
                                     <View style={{ minWidth: 0, flex: 1 }}>
-                                      <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '800', color: '#111' }}>{formatPersonName(m)}</Text>
+                                      <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '500', color: '#111' }}>{formatPersonName(m)}</Text>
                                       <Text numberOfLines={1} style={{ fontSize: 12, color: '#64748b' }}>{String(m?.role || '').trim() || 'Användare'}</Text>
                                     </View>
                                   </View>
@@ -1027,7 +1027,7 @@ const NewProjectModal = ({
                             }}
                             activeOpacity={0.8}
                           >
-                            <Text style={{ color: '#111', fontWeight: '800', fontSize: 14 }}>Avbryt</Text>
+                            <Text style={{ color: '#111', fontWeight: '500', fontSize: 14 }}>Avbryt</Text>
                           </TouchableOpacity>
 
                           <TouchableOpacity
@@ -1072,10 +1072,10 @@ const NewProjectModal = ({
                                     }
                                   `}</style>
                                 )}
-                                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Skapar...</Text>
+                                <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15 }}>Skapar...</Text>
                               </>
                             ) : (
-                              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Skapa</Text>
+                              <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15 }}>Skapa</Text>
                             )}
                           </TouchableOpacity>
                         </View>
@@ -1099,7 +1099,7 @@ const NewProjectModal = ({
                 onPress={() => setResponsiblePickerVisible(false)}
               />
               <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-                <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                <Text style={{ fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 12, textAlign: 'center' }}>
                   Välj ansvarig
                 </Text>
                 {loadingCompanyAdmins ? (
@@ -1126,7 +1126,7 @@ const NewProjectModal = ({
                           setResponsiblePickerVisible(false);
                         }}
                       >
-                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                        <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>
                           {formatPersonName(m)}
                         </Text>
                       </TouchableOpacity>
@@ -1138,7 +1138,7 @@ const NewProjectModal = ({
                   style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
                   onPress={() => setResponsiblePickerVisible(false)}
                 >
-                  <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                  <Text style={{ color: '#222', fontWeight: '500', fontSize: 16 }}>Stäng</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1184,7 +1184,7 @@ const NewProjectModal = ({
                 <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 12, color: '#222', textAlign: 'center', marginTop: 6 }}>{`Skapa nytt projekt${buildStamp ? ` (${buildStamp})` : ''}`}</Text>
                 {buildStamp && (
                   <View style={{ position: 'absolute', left: 12, top: 14, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FDE68A' }}>
-                    <Text style={{ fontSize: 10, color: '#92400E', fontWeight: '900' }}>{`LEGACY  OS=${String(Platform.OS)}`}</Text>
+                    <Text style={{ fontSize: 10, color: '#92400E', fontWeight: '500' }}>{`LEGACY  OS=${String(Platform.OS)}`}</Text>
                   </View>
                 )}
 
@@ -1213,7 +1213,7 @@ const NewProjectModal = ({
                 {String(newProjectNumber ?? '').trim() !== '' && !isProjectNumberUnique(newProjectNumber) && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 6 }}>
                     <Ionicons name="warning" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
-                    <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: 'bold' }}>Projektnummer används redan.</Text>
+                    <Text style={{ color: '#D32F2F', fontSize: 15, fontWeight: '500' }}>Projektnummer används redan.</Text>
                   </View>
                 )}
 
@@ -1239,7 +1239,7 @@ const NewProjectModal = ({
                 />
 
                 {/* Ansvarig (required) */}
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginBottom: 6 }}>
                   Ansvarig
                 </Text>
                 <TouchableOpacity
@@ -1275,7 +1275,7 @@ const NewProjectModal = ({
                 </TouchableOpacity>
 
                 {/* Deltagare (optional, multi-select) */}
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginBottom: 6 }}>
                   Deltagare
                 </Text>
                 <TouchableOpacity
@@ -1307,7 +1307,7 @@ const NewProjectModal = ({
                   <Ionicons name="chevron-down" size={18} color="#222" />
                 </TouchableOpacity>
 
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginBottom: 6 }}>
                   Första skyddsrond senast
                 </Text>
                 <TextInput
@@ -1362,7 +1362,7 @@ const NewProjectModal = ({
                       }}
                     />
                     <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 12, textAlign: 'center' }}>
                         Välj ansvarig
                       </Text>
                       {loadingCompanyAdmins ? (
@@ -1394,7 +1394,7 @@ const NewProjectModal = ({
                                 setNewProjectKeyboardLockHeight(0);
                               }}
                             >
-                              <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                              <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>
                                 {formatPersonName(m)}
                               </Text>
                             </TouchableOpacity>
@@ -1409,13 +1409,13 @@ const NewProjectModal = ({
                           setNewProjectKeyboardLockHeight(0);
                         }}
                       >
-                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                        <Text style={{ color: '#222', fontWeight: '500', fontSize: 16 }}>Stäng</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 </Modal>
 
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginBottom: 6 }}>
                   Skyddsronder
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -1426,7 +1426,7 @@ const NewProjectModal = ({
                   />
                 </View>
 
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#222', marginBottom: 6 }}>
                   Veckor mellan skyddsronder
                 </Text>
                 <TouchableOpacity
@@ -1465,7 +1465,7 @@ const NewProjectModal = ({
                       onPress={() => setSkyddsrondWeeksPickerVisible(false)}
                     />
                     <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, width: 340, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
-                      <Text style={{ fontSize: 18, fontWeight: '700', color: '#222', marginBottom: 12, textAlign: 'center' }}>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 12, textAlign: 'center' }}>
                         Veckor mellan skyddsronder
                       </Text>
                       {[1, 2, 3, 4].map((w) => (
@@ -1477,7 +1477,7 @@ const NewProjectModal = ({
                             setSkyddsrondWeeksPickerVisible(false);
                           }}
                         >
-                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '600' }}>
+                          <Text style={{ fontSize: 16, color: '#222', fontWeight: '500' }}>
                             {w}
                           </Text>
                         </TouchableOpacity>
@@ -1486,7 +1486,7 @@ const NewProjectModal = ({
                         style={{ backgroundColor: '#e0e0e0', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 12 }}
                         onPress={() => setSkyddsrondWeeksPickerVisible(false)}
                       >
-                        <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Stäng</Text>
+                          <Text style={{ color: '#222', fontWeight: '500', fontSize: 16 }}>Stäng</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1506,7 +1506,7 @@ const NewProjectModal = ({
                     disabled={String(newProjectName ?? '').trim() === '' || String(newProjectNumber ?? '').trim() === '' || !isProjectNumberUnique(newProjectNumber) || !newProjectResponsible || !newProjectSkyddsrondFirstDueValid}
                     onPress={handleCreateProject}
                   >
-                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Skapa</Text>
+                    <Text style={{ color: '#fff', fontWeight: '500', fontSize: 16 }}>Skapa</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1516,7 +1516,7 @@ const NewProjectModal = ({
                       resetProjectFields();
                     }}
                   >
-                    <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
+                    <Text style={{ color: '#222', fontWeight: '500', fontSize: 16 }}>Avbryt</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1557,7 +1557,7 @@ const NewProjectModal = ({
             }}>
               <Ionicons name="checkmark" size={36} color="#fff" />
             </View>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8, textAlign: 'center' }}>
+            <Text style={{ fontSize: 20, fontWeight: '600', color: '#111', marginBottom: 8, textAlign: 'center' }}>
               Projekt skapat
             </Text>
             <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 24 }}>
@@ -1575,7 +1575,7 @@ const NewProjectModal = ({
               }}
               activeOpacity={0.85}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>OK</Text>
+              <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15 }}>OK</Text>
             </TouchableOpacity>
           </View>
         </View>

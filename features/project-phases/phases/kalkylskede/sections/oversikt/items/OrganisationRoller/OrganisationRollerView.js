@@ -4,14 +4,36 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
-import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
+import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
+import ContextMenu from '../../../../../../../../components/ContextMenu';
 import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
+
+const COMPANY_GROUP_ROLE_PRESETS = [
+  'Ombud',
+  'Kalkylansvarig',
+  'Projekteringsledare',
+  'Projektchef',
+  'Platschef',
+  'Arbetsledare',
+  'Inköp',
+  'Offertintag',
+  'Konstruktion',
+  'BAS-P',
+  'BAS-U',
+];
+
+function isPresetCompanyRole(role) {
+  const r = String(role || '').trim();
+  if (!r) return false;
+  return COMPANY_GROUP_ROLE_PRESETS.includes(r);
+}
 
 function confirmWebOrNative(message) {
   if (Platform.OS === 'web') return window.confirm(message);
@@ -35,7 +57,58 @@ function buildExistingMemberKeys(group) {
   return out;
 }
 
+function makePendingMemberFromCandidate(candidate) {
+  const c = candidate || {};
+  const source = String(c?.source || '').trim();
+  const refId = String(c?.refId || '').trim();
+  const id = `tmp:${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  return {
+    id,
+    source,
+    refId,
+    name: String(c?.name || '—').trim(),
+    company: String(c?.company || '—').trim(),
+    email: String(c?.email || '').trim(),
+    phone: String(c?.phone || '').trim(),
+    role: String(c?.role || '').trim(),
+    _pendingAdded: true,
+  };
+}
+
+function pendingHasChanges(p) {
+  if (!p || typeof p !== 'object') return false;
+  const addedCount = p?.added && typeof p.added === 'object' ? Object.keys(p.added).length : 0;
+  const removedCount = p?.removed && typeof p.removed === 'object' ? Object.keys(p.removed).length : 0;
+  const roleCount = p?.roles && typeof p.roles === 'object' ? Object.keys(p.roles).length : 0;
+  return (addedCount + removedCount + roleCount) > 0;
+}
+
+function computeDisplayMembers(baseMembers, pending) {
+  const removed = pending?.removed && typeof pending.removed === 'object' ? pending.removed : {};
+  const roles = pending?.roles && typeof pending.roles === 'object' ? pending.roles : {};
+  const added = pending?.added && typeof pending.added === 'object' ? pending.added : {};
+
+  const list = (Array.isArray(baseMembers) ? baseMembers : [])
+    .filter((m) => !removed[String(m?.id || '').trim()])
+    .map((m) => {
+      const mid = String(m?.id || '').trim();
+      const role = (mid && (mid in roles)) ? String(roles[mid] || '').trim() : String(m?.role || '').trim();
+      const dirtyRole = (mid && (mid in roles)) ? true : false;
+      return { ...m, role, _pendingRole: dirtyRole };
+    });
+
+  const addedList = Object.values(added).map((pm) => {
+    const mid = String(pm?.id || '').trim();
+    const role = (mid && (mid in roles)) ? String(roles[mid] || '').trim() : String(pm?.role || '').trim();
+    const dirtyRole = (mid && (mid in roles)) ? true : false;
+    return { ...pm, role, _pendingRole: dirtyRole, _pendingAdded: true };
+  });
+
+  return [...list, ...addedList];
+}
+
 export default function OrganisationRollerView({ projectId, companyId, project, hidePageHeader = false }) {
+  const navigation = useNavigation();
   const COLORS = {
     blue: '#1976D2',
     blueHover: '#155FB5',
@@ -64,28 +137,365 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => ({}));
   const [expandedInitialized, setExpandedInitialized] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState(null);
+
+  const [roleMenuVisible, setRoleMenuVisible] = useState(false);
+  const [roleMenuPos, setRoleMenuPos] = useState({ x: 20, y: 64 });
+  const [roleMenuTarget, setRoleMenuTarget] = useState(null); // { groupId, memberId, displayRole, baseRole }
+  const [roleEditTarget, setRoleEditTarget] = useState(null); // { groupId, memberId }
+  const [roleEditText, setRoleEditText] = useState('');
+
+  // Pending changes per group (golden rule): do not write to backend until user hits Save.
+  // Structure: { [gid]: { added: { [tmpId]: memberObj }, removed: { [memberId]: true }, roles: { [memberIdOrTmpId]: roleString } } }
+  const [pendingByGroup, setPendingByGroup] = useState(() => ({}));
+  const [savingGroupId, setSavingGroupId] = useState(null);
+  const [savedFlashByGroup, setSavedFlashByGroup] = useState(() => ({}));
+
+  const dirtyRef = useRef(false);
+  const pendingAny = useMemo(() => {
+    const map = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup : {};
+    return Object.keys(map).some((gid) => pendingHasChanges(map[gid]));
+  }, [pendingByGroup]);
+
+  useEffect(() => {
+    dirtyRef.current = !!pendingAny;
+  }, [pendingAny]);
   const activeGroup = useMemo(
     () => (groups || []).find((g) => String(g?.id || '') === String(activeModalGroupId || '')) || null,
     [groups, activeModalGroupId]
   );
 
+  const activeIsLockedGroup = useMemo(() => {
+    const gid = String(activeGroup?.id || '').trim();
+    return activeGroup?.locked === true || activeGroup?.isInternalMainGroup === true || gid === 'internal-main';
+  }, [activeGroup]);
+
   const existingMemberKeys = useMemo(() => buildExistingMemberKeys(activeGroup), [activeGroup]);
+
+  const activeExistingMemberKeys = useMemo(() => {
+    const keys = { ...(existingMemberKeys || {}) };
+    const gid = String(activeModalGroupId || '').trim();
+    if (!gid) return keys;
+    const pending = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup[gid] : null;
+    const added = pending?.added && typeof pending.added === 'object' ? pending.added : null;
+    if (!added) return keys;
+    Object.values(added).forEach((m) => {
+      const src = String(m?.source || '').trim();
+      const refId = String(m?.refId || '').trim();
+      if (!src || !refId) return;
+      keys[`${src}:${refId}`] = true;
+    });
+    return keys;
+  }, [existingMemberKeys, activeModalGroupId, pendingByGroup]);
 
   const hasContext = String(companyId || '').trim() && String(projectId || '').trim();
 
-  // Ensure a default internal main group exists if the project currently has no groups.
-  // This makes the group visible immediately when opening the view, even if project creation
-  // didn't get a chance to run the initializer.
+  // Navigation guard: warn when leaving with unsaved Organisation & roller changes.
+  useEffect(() => {
+    if (!navigation?.addListener) return;
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      const msg = 'Du har osparade ändringar i Organisation & roller. Vill du lämna utan att spara?';
+      if (Platform.OS === 'web') {
+        const ok = window.confirm(msg);
+        if (ok) navigation.dispatch(e.data.action);
+        return;
+      }
+      Alert.alert('Osparade ändringar', msg, [
+        { text: 'Stanna kvar', style: 'cancel' },
+        { text: 'Lämna', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
+      ]);
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    const onBeforeUnload = (e) => {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      try { window.removeEventListener('beforeunload', onBeforeUnload); } catch (_e) {}
+    };
+  }, []);
+
+  const getPendingForGroup = (gid) => {
+    const id = String(gid || '').trim();
+    const map = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup : {};
+    const p = map[id];
+    return {
+      added: (p?.added && typeof p.added === 'object') ? p.added : {},
+      removed: (p?.removed && typeof p.removed === 'object') ? p.removed : {},
+      roles: (p?.roles && typeof p.roles === 'object') ? p.roles : {},
+    };
+  };
+
+  const setPendingForGroup = (gid, next) => {
+    const id = String(gid || '').trim();
+    if (!id) return;
+    setPendingByGroup((prev) => {
+      const p = prev && typeof prev === 'object' ? prev : {};
+      const merged = { ...(p || {}) };
+      const normalized = {
+        added: (next?.added && typeof next.added === 'object') ? next.added : {},
+        removed: (next?.removed && typeof next.removed === 'object') ? next.removed : {},
+        roles: (next?.roles && typeof next.roles === 'object') ? next.roles : {},
+      };
+      if (!pendingHasChanges(normalized)) {
+        delete merged[id];
+        return merged;
+      }
+      merged[id] = normalized;
+      return merged;
+    });
+  };
+
+  const stageAddCandidates = (gid, candidates) => {
+    const id = String(gid || '').trim();
+    if (!id) return;
+    const list = Array.isArray(candidates) ? candidates : [];
+    if (list.length === 0) return;
+    setPendingByGroup((prev) => {
+      const p = prev && typeof prev === 'object' ? prev : {};
+      const existing = p[id] || { added: {}, removed: {}, roles: {} };
+      const next = {
+        added: { ...(existing.added || {}) },
+        removed: { ...(existing.removed || {}) },
+        roles: { ...(existing.roles || {}) },
+      };
+
+      const alreadyKeys = new Set();
+      const group = (Array.isArray(groups) ? groups : []).find((g) => String(g?.id || '') === id) || null;
+      (Array.isArray(group?.members) ? group.members : []).forEach((m) => {
+        const src = String(m?.source || '').trim();
+        const refId = String(m?.refId || '').trim();
+        if (src && refId) alreadyKeys.add(`${src}:${refId}`);
+      });
+      Object.values(next.added).forEach((m) => {
+        const src = String(m?.source || '').trim();
+        const refId = String(m?.refId || '').trim();
+        if (src && refId) alreadyKeys.add(`${src}:${refId}`);
+      });
+
+      list.forEach((c) => {
+        const src = String(c?.source || '').trim();
+        const refId = String(c?.refId || '').trim();
+        if (!src || !refId) return;
+        const key = `${src}:${refId}`;
+        if (alreadyKeys.has(key)) return;
+        const pm = makePendingMemberFromCandidate(c);
+        next.added[pm.id] = pm;
+        // Default role can be empty; user can set role before saving.
+        if (String(pm?.role || '').trim()) next.roles[pm.id] = String(pm.role).trim();
+        alreadyKeys.add(key);
+      });
+
+      const merged = { ...(p || {}) };
+      if (!pendingHasChanges(next)) {
+        delete merged[id];
+        return merged;
+      }
+      merged[id] = next;
+      return merged;
+    });
+  };
+
+  const stageRemoveMember = (gid, memberId) => {
+    const id = String(gid || '').trim();
+    const mid = String(memberId || '').trim();
+    if (!id || !mid) return;
+    const pending = getPendingForGroup(id);
+    const next = {
+      added: { ...(pending.added || {}) },
+      removed: { ...(pending.removed || {}) },
+      roles: { ...(pending.roles || {}) },
+    };
+    if (next.added[mid]) {
+      delete next.added[mid];
+      delete next.roles[mid];
+      setPendingForGroup(id, next);
+      return;
+    }
+    next.removed[mid] = true;
+    delete next.roles[mid];
+    setPendingForGroup(id, next);
+  };
+
+  const stageRoleChange = (gid, memberId, nextRole, baseRole) => {
+    const id = String(gid || '').trim();
+    const mid = String(memberId || '').trim();
+    if (!id || !mid) return;
+    const nr = String(nextRole || '').trim();
+    const br = String(baseRole || '').trim();
+    const pending = getPendingForGroup(id);
+    const next = {
+      added: { ...(pending.added || {}) },
+      removed: { ...(pending.removed || {}) },
+      roles: { ...(pending.roles || {}) },
+    };
+    if (nr === br) delete next.roles[mid];
+    else next.roles[mid] = nr;
+    setPendingForGroup(id, next);
+  };
+
+  const cancelGroupChanges = (gid) => {
+    const id = String(gid || '').trim();
+    if (!id) return;
+    setPendingByGroup((prev) => {
+      const p = prev && typeof prev === 'object' ? prev : {};
+      if (!p[id]) return prev;
+      const next = { ...p };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const saveGroupChanges = async (gid) => {
+    const id = String(gid || '').trim();
+    if (!id) return;
+    const pending = getPendingForGroup(id);
+    if (!pendingHasChanges(pending)) return;
+    if (!hasContext) return;
+    if (savingGroupId) return;
+
+    setSavingGroupId(id);
+    try {
+      // 1) Remove members
+      const removedIds = Object.keys(pending.removed || {});
+      for (const mid of removedIds) {
+        await removeMember({ groupId: id, memberId: mid });
+      }
+
+      // 2) Add members (with role if staged)
+      const addedMembers = Object.values(pending.added || {});
+      for (const pm of addedMembers) {
+        const candidate = {
+          source: String(pm?.source || '').trim(),
+          refId: String(pm?.refId || '').trim(),
+          name: String(pm?.name || '').trim(),
+          company: String(pm?.company || '').trim(),
+          email: String(pm?.email || '').trim(),
+          phone: String(pm?.phone || '').trim(),
+        };
+        const role = String((pending.roles && pending.roles[pm.id]) ?? pm?.role ?? '').trim();
+        const res = await addMember({ groupId: id, candidate, role });
+        if (res && res.ok === false && res.reason === 'duplicate') {
+          // If backend says duplicate, treat as already added elsewhere.
+          continue;
+        }
+        if (res && res.ok === false) {
+          throw new Error('Kunde inte lägga till deltagare.');
+        }
+      }
+
+      // 3) Update roles for existing members (skip removed + skip tmp ids)
+      const roleEntries = Object.entries(pending.roles || {});
+      for (const [mid, role] of roleEntries) {
+        if (String(mid).startsWith('tmp:')) continue;
+        if (pending.removed && pending.removed[mid]) continue;
+        await updateMemberRole({ groupId: id, memberId: mid, role: String(role || '').trim() });
+      }
+
+      // Clear pending for group
+      cancelGroupChanges(id);
+      setSavedFlashByGroup((prev) => ({ ...(prev || {}), [id]: Date.now() }));
+      setTimeout(() => {
+        setSavedFlashByGroup((prev) => {
+          const p = prev && typeof prev === 'object' ? prev : {};
+          if (!p[id]) return prev;
+          const next = { ...p };
+          delete next[id];
+          return next;
+        });
+      }, 1200);
+    } catch (e) {
+      const msg = String(e?.message || e || 'Kunde inte spara ändringar.');
+      Alert.alert('Fel', msg);
+    } finally {
+      setSavingGroupId((prev) => (String(prev || '') === id ? null : prev));
+    }
+  };
+
+  const closeRoleMenu = () => {
+    setRoleMenuVisible(false);
+    setRoleMenuTarget(null);
+  };
+
+  const beginRoleEdit = ({ groupId, memberId, currentRole }) => {
+    setRoleEditTarget({ groupId: String(groupId || ''), memberId: String(memberId || '') });
+    setRoleEditText(String(currentRole || '').trim());
+  };
+
+  const commitRoleEdit = ({ groupId, memberId, prevRole, baseRole }) => {
+    const nextRole = String(roleEditText || '').trim();
+    stageRoleChange(String(groupId || ''), String(memberId || ''), nextRole, String(baseRole ?? prevRole ?? '').trim());
+    setRoleEditTarget(null);
+    setRoleEditText('');
+  };
+
+  const openRolePicker = (e, { groupId, memberId, displayRole, baseRole }) => {
+    const gid = String(groupId || '').trim();
+    const mid = String(memberId || '').trim();
+    const role = String(displayRole || '').trim();
+    const base = String(baseRole || '').trim();
+    if (!gid || !mid) return;
+
+    if (Platform.OS !== 'web') {
+      // Native fallback: use Alert. Not as compact as web dropdown, but keeps flow inline.
+      const buttons = [
+        ...COMPANY_GROUP_ROLE_PRESETS.map((label) => ({
+          text: label,
+          onPress: () => stageRoleChange(gid, mid, label, base),
+        })),
+        { text: 'Valfri roll (egen text)', onPress: () => beginRoleEdit({ groupId: gid, memberId: mid, currentRole: role }) },
+        { text: 'Avbryt', style: 'cancel' },
+      ];
+      Alert.alert('Välj roll', 'Välj en fördefinierad roll eller skriv en egen.', buttons);
+      return;
+    }
+
+    try {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+
+      const ne = e?.nativeEvent || e;
+      const x = Number(ne?.pageX ?? ne?.clientX ?? ne?.locationX ?? 20);
+      const y = Number(ne?.pageY ?? ne?.clientY ?? ne?.locationY ?? 64);
+      setRoleMenuPos({ x: Number.isFinite(x) ? x : 20, y: Number.isFinite(y) ? y : 64 });
+    } catch (_e) {
+      setRoleMenuPos({ x: 20, y: 64 });
+    }
+
+    setRoleMenuTarget({ groupId: gid, memberId: mid, displayRole: role, baseRole: base });
+    setRoleMenuVisible(true);
+  };
+
+  const roleMenuItems = useMemo(() => {
+    const t = roleMenuTarget;
+    const current = String(t?.displayRole || '').trim();
+    return [
+      ...COMPANY_GROUP_ROLE_PRESETS.map((label) => ({
+        key: `preset:${label}`,
+        label,
+        isSelected: current === label,
+      })),
+      { key: 'sep-custom', isSeparator: true },
+      { key: 'custom', label: 'Valfri roll (egen text)', iconName: 'create-outline' },
+    ];
+  }, [roleMenuTarget]);
+
+  // Ensure the mandatory company group exists and is named exactly as the company.
+  // This is the "anchor" group for membership → dashboard/notifications.
   useEffect(() => {
     if (!hasContext) return;
     if (defaultGroupEnsured) return;
     if (loading) return;
     if (error) return;
-    const list = Array.isArray(groups) ? groups : [];
-    if (list.length > 0) {
-      setDefaultGroupEnsured(true);
-      return;
-    }
 
     let cancelled = false;
     (async () => {
@@ -94,7 +504,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         const companyName = String(profile?.companyName || profile?.name || companyId).trim();
         await ensureDefaultProjectOrganisationGroup(companyId, projectId, { companyName });
       } catch (_e) {
-        // ignore: view will just remain empty and user can still add groups manually
+        // ignore: user can still work with groups; this is best-effort
       } finally {
         if (!cancelled) setDefaultGroupEnsured(true);
       }
@@ -208,10 +618,16 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
       {(Array.isArray(groups) ? groups : []).map((group) => {
         const gid = String(group?.id || '');
-        const members = Array.isArray(group?.members) ? group.members : [];
-        const participantCount = members.length;
+        const baseMembers = Array.isArray(group?.members) ? group.members : [];
         const isOpen = expandedGroupIds[gid] !== false; // default open
         const isLockedGroup = group?.locked === true || group?.isInternalMainGroup === true || gid === 'internal-main';
+
+        const pending = getPendingForGroup(gid);
+        const displayMembers = computeDisplayMembers(baseMembers, pending);
+
+        const participantCount = displayMembers.length;
+        const groupHasPending = pendingHasChanges(pending);
+        const flashSaved = !!(savedFlashByGroup && savedFlashByGroup[gid]);
 
         const toggleOpen = () => {
           if (String(editingGroupId || '') === gid) return;
@@ -270,9 +686,11 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                     onFocus={() => setEditingGroupId(gid)}
                     onBlur={(e) => {
                       setEditingGroupId(null);
+                      if (isLockedGroup) return;
                       const next = String(e?.nativeEvent?.text ?? group?.title ?? '').trim();
                       if (next !== String(group?.title || '').trim()) updateGroupTitle(gid, next);
                     }}
+                    editable={!isLockedGroup}
                     style={{
                       minWidth: 180,
                       maxWidth: Platform.OS === 'web' ? 520 : 260,
@@ -288,7 +706,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                   />
                   {isLockedGroup ? (
                     <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#3730A3' }}>Intern huvudgrupp</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#3730A3' }}>Systemstyrd – kan inte raderas</Text>
                     </View>
                   ) : null}
                   <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: '600' }}>({participantCount})</Text>
@@ -328,7 +746,9 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                       if (ok) removeGroup(gid);
                     }}
                     disabled={isLockedGroup}
-                    title={Platform.OS === 'web' ? 'Ta bort grupp' : undefined}
+                    title={Platform.OS === 'web'
+                      ? (isLockedGroup ? 'Systemstyrd grupp – kan inte raderas' : 'Ta bort grupp')
+                      : undefined}
                     style={({ hovered, pressed }) => {
                       if (isLockedGroup) {
                         return {
@@ -363,7 +783,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                         return (
                           <>
                             <Ionicons name="lock-closed-outline" size={15} color={COLORS.neutral} />
-                            <Text style={{ color: COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Låst</Text>
+                            <Text style={{ color: COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Kan inte raderas</Text>
                           </>
                         );
                       }
@@ -384,6 +804,68 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
             {!isOpen ? null : (
               <View style={{ paddingHorizontal: 12, paddingBottom: 10, paddingTop: 8, backgroundColor: '#fff' }}>
                 <View style={{ borderTopWidth: 1, borderTopColor: COLORS.tableBorder }}>
+                  {(groupHasPending || flashSaved) ? (
+                    <View style={{ paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder, backgroundColor: groupHasPending ? '#FFF7ED' : '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 40 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                        {groupHasPending ? (
+                          <Ionicons name="time-outline" size={16} color="#C2410C" />
+                        ) : (
+                          <Ionicons name="checkmark-circle-outline" size={16} color="#15803D" />
+                        )}
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: groupHasPending ? '#9A3412' : '#166534' }} numberOfLines={1}>
+                          {groupHasPending ? 'Osparade ändringar' : 'Ändringar sparade'}
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Pressable
+                          onPress={() => cancelGroupChanges(gid)}
+                          disabled={!groupHasPending || savingGroupId === gid}
+                          style={({ hovered, pressed }) => {
+                            const disabled = !groupHasPending || savingGroupId === gid;
+                            const hot = hovered || pressed;
+                            return {
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 10,
+                              backgroundColor: disabled ? '#F3F4F6' : (hot ? '#EEF2FF' : '#fff'),
+                              borderWidth: 1,
+                              borderColor: disabled ? COLORS.border : '#C7D2FE',
+                              opacity: disabled ? 0.6 : 1,
+                              ...(Platform.OS === 'web' ? { cursor: disabled ? 'not-allowed' : 'pointer' } : {}),
+                            };
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#3730A3' }}>Avbryt</Text>
+                        </Pressable>
+
+                        <Pressable
+                          onPress={() => saveGroupChanges(gid)}
+                          disabled={!groupHasPending || savingGroupId === gid}
+                          style={({ hovered, pressed }) => {
+                            const disabled = !groupHasPending || savingGroupId === gid;
+                            const hot = hovered || pressed;
+                            const bg = disabled ? '#94A3B8' : (hot ? COLORS.blueHover : COLORS.blue);
+                            return {
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 10,
+                              backgroundColor: bg,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                              opacity: disabled ? 0.6 : 1,
+                              ...(Platform.OS === 'web' ? { cursor: disabled ? 'not-allowed' : 'pointer' } : {}),
+                            };
+                          }}
+                        >
+                          <Ionicons name={savingGroupId === gid ? 'time-outline' : 'save-outline'} size={14} color="#fff" />
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>{savingGroupId === gid ? 'Sparar…' : 'Spara'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : null}
+
                   <View style={{ paddingVertical: 6, paddingHorizontal: 10, flexDirection: 'row', gap: 10 }}>
                     <Text style={{ flex: 0.9, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Roll</Text>
                     <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Namn</Text>
@@ -393,41 +875,117 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                     <Text style={{ width: 40, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText, textAlign: 'right' }}>Ta bort</Text>
                   </View>
 
-                  {members.length === 0 ? (
+                  {displayMembers.length === 0 ? (
                     <View style={{ paddingVertical: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder }}>
                       <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga deltagare i gruppen.</Text>
                     </View>
                   ) : (
-                    members.map((m) => {
+                    displayMembers.map((m) => {
                       const mid = String(m?.id || '');
+                      const isCompanyGroup = isLockedGroup;
+                      const currentRole = String(m?.role || '').trim();
+                      const baseRole = String((!m?._pendingAdded ? (baseMembers.find((x) => String(x?.id || '') === mid)?.role) : '') || '').trim();
+                      const isEditingRole =
+                        !!roleEditTarget &&
+                        String(roleEditTarget?.groupId || '') === String(gid) &&
+                        String(roleEditTarget?.memberId || '') === String(mid);
+                      const roleIsPreset = isPresetCompanyRole(currentRole);
+                      const roleDirty = !!m?._pendingRole;
                       return (
                         <View key={mid} style={{ paddingVertical: 5, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                          <TextInput
-                            defaultValue={String(m?.role || '')}
-                            placeholder="Roll"
-                            placeholderTextColor="#94A3B8"
-                            onBlur={(e) => {
-                              const nextRole = String(e?.nativeEvent?.text ?? m?.role ?? '').trim();
-                              if (nextRole !== String(m?.role || '').trim()) {
-                                updateMemberRole({ groupId: gid, memberId: mid, role: nextRole });
-                              }
-                            }}
-                            style={{
-                              flex: 0.9,
-                              flexBasis: 0,
-                              flexShrink: 1,
-                              minWidth: 0,
-                              borderWidth: 1,
-                              borderColor: COLORS.inputBorder,
-                              borderRadius: 8,
-                              paddingVertical: 4,
-                              paddingHorizontal: 6,
-                              fontSize: 12,
-                              color: COLORS.text,
-                              backgroundColor: '#fff',
-                              ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
-                            }}
-                          />
+                          {isCompanyGroup ? (
+                            isEditingRole ? (
+                              <TextInput
+                                value={roleEditText}
+                                onChangeText={setRoleEditText}
+                                placeholder="Roll"
+                                placeholderTextColor="#94A3B8"
+                                autoFocus={Platform.OS === 'web'}
+                                onBlur={() => commitRoleEdit({ groupId: gid, memberId: mid, prevRole: currentRole, baseRole: baseRole })}
+                                onSubmitEditing={() => commitRoleEdit({ groupId: gid, memberId: mid, prevRole: currentRole, baseRole: baseRole })}
+                                style={{
+                                  flex: 0.9,
+                                  flexBasis: 0,
+                                  flexShrink: 1,
+                                  minWidth: 0,
+                                  borderWidth: 1,
+                                  borderColor: roleDirty ? '#F59E0B' : COLORS.inputBorder,
+                                  borderRadius: 8,
+                                  paddingVertical: 4,
+                                  paddingHorizontal: 6,
+                                  fontSize: 12,
+                                  color: COLORS.text,
+                                  backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
+                                  ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                                }}
+                              />
+                            ) : (
+                              <Pressable
+                                onPress={(e) => {
+                                  // If role is custom text, clicking goes straight to edit.
+                                  if (currentRole && !roleIsPreset) {
+                                    beginRoleEdit({ groupId: gid, memberId: mid, currentRole });
+                                    return;
+                                  }
+                                  openRolePicker(e, { groupId: gid, memberId: mid, displayRole: currentRole, baseRole });
+                                }}
+                                title={Platform.OS === 'web' ? 'Välj roll' : undefined}
+                                style={({ hovered, pressed }) => {
+                                  const hot = !!(hovered || pressed);
+                                  return {
+                                    flex: 0.9,
+                                    flexBasis: 0,
+                                    flexShrink: 1,
+                                    minWidth: 0,
+                                    borderWidth: 1,
+                                    borderColor: roleDirty ? '#F59E0B' : (hot ? COLORS.blue : COLORS.inputBorder),
+                                    borderRadius: 8,
+                                    paddingVertical: 4,
+                                    paddingHorizontal: 6,
+                                    backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 6,
+                                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                                  };
+                                }}
+                              >
+                                <Text
+                                  style={{ fontSize: 12, color: currentRole ? COLORS.text : '#94A3B8' }}
+                                  numberOfLines={1}
+                                >
+                                  {currentRole || 'Välj roll'}
+                                </Text>
+                                <Ionicons name={currentRole && !roleIsPreset ? 'create-outline' : 'chevron-down'} size={14} color={COLORS.neutral} />
+                              </Pressable>
+                            )
+                          ) : (
+                            <TextInput
+                              defaultValue={String(currentRole || '')}
+                              placeholder="Roll"
+                              placeholderTextColor="#94A3B8"
+                              onBlur={(e) => {
+                                const nextRole = String(e?.nativeEvent?.text ?? currentRole ?? '').trim();
+                                stageRoleChange(gid, mid, nextRole, baseRole);
+                              }}
+                              style={{
+                                flex: 0.9,
+                                flexBasis: 0,
+                                flexShrink: 1,
+                                minWidth: 0,
+                                borderWidth: 1,
+                                borderColor: roleDirty ? '#F59E0B' : COLORS.inputBorder,
+                                borderRadius: 8,
+                                paddingVertical: 4,
+                                paddingHorizontal: 6,
+                                fontSize: 12,
+                                color: COLORS.text,
+                                backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
+                                ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                              }}
+                            />
+                          )}
                           <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.text }} numberOfLines={1}>
                             {String(m?.name || '—')}
                           </Text>
@@ -442,7 +1000,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                           </Text>
                           <View style={{ width: 40, alignItems: 'flex-end' }}>
                             <Pressable
-                              onPress={() => removeMember({ groupId: gid, memberId: mid })}
+                              onPress={() => stageRemoveMember(gid, mid)}
                               title={Platform.OS === 'web' ? 'Ta bort deltagare' : undefined}
                               style={({ hovered, pressed }) => ({
                                 paddingVertical: 4,
@@ -465,19 +1023,53 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         );
       })}
 
+      {Platform.OS === 'web' ? (
+        <ContextMenu
+          visible={roleMenuVisible}
+          x={roleMenuPos.x}
+          y={roleMenuPos.y}
+          items={roleMenuItems}
+          onClose={closeRoleMenu}
+          onSelect={(it) => {
+            const t = roleMenuTarget;
+            const gid = String(t?.groupId || '').trim();
+            const mid = String(t?.memberId || '').trim();
+            const displayRole = String(t?.displayRole || '').trim();
+            const baseRole = String(t?.baseRole || '').trim();
+            if (!gid || !mid || !it) return;
+
+            if (String(it.key || '') === 'custom') {
+              closeRoleMenu();
+              beginRoleEdit({ groupId: gid, memberId: mid, currentRole: displayRole });
+              return;
+            }
+
+            const key = String(it.key || '');
+            if (key.startsWith('preset:')) {
+              const label = key.slice('preset:'.length);
+              stageRoleChange(gid, mid, String(label || '').trim(), baseRole);
+              closeRoleMenu();
+              return;
+            }
+          }}
+        />
+      ) : null}
+
       <AddParticipantModal
         visible={!!activeModalGroupId}
         onClose={() => setActiveModalGroupId(null)}
         companyId={companyId}
-        existingMemberKeys={existingMemberKeys}
-        onAdd={async (candidate, role) => {
-          const res = await addMember({ groupId: activeModalGroupId, candidate, role });
-          if (res && res.ok === false && res.reason === 'duplicate') {
-            throw new Error('Personen finns redan i gruppen.');
-          }
-          if (res && res.ok === false) {
-            throw new Error('Kunde inte lägga till deltagare.');
-          }
+        existingMemberKeys={activeExistingMemberKeys}
+        defaultShowInternal
+        defaultShowExternal={!activeIsLockedGroup}
+        allowInternal
+        allowExternal
+        lazyLoadExternal={activeIsLockedGroup}
+        onAdd={async (candidates) => {
+          const list = Array.isArray(candidates) ? candidates : [];
+          if (!activeModalGroupId) throw new Error('Saknar grupp.');
+          if (list.length === 0) return;
+          stageAddCandidates(activeModalGroupId, list);
         }}
       />
     </ScrollView>

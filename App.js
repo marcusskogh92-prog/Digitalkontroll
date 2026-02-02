@@ -8,8 +8,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // AppLoading borttagen, ersätts med View och Text
 
 import ErrorBoundary from './components/ErrorBoundary';
-import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
+import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
@@ -18,13 +19,13 @@ import ContactRegistryScreen from './Screens/ContactRegistryScreen';
 import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
 import HomeScreen from './Screens/HomeScreen';
-import SuppliersScreen from './Screens/SuppliersScreen';
 import LoginScreen from './Screens/LoginScreen';
 import ManageCompany from './Screens/ManageCompany';
 import ManageControlTypes from './Screens/ManageControlTypes';
-import ManageUsers from './Screens/ManageUsers';
 import ManageSharePointNavigation from './Screens/ManageSharePointNavigation';
+import ManageUsers from './Screens/ManageUsers';
 import ProjectDetails from './Screens/ProjectDetails';
+import SuppliersScreen from './Screens/SuppliersScreen';
 import TemplateControlScreen from './Screens/TemplateControlScreen';
 import KMAScreen from './features/kma/screens/KMAScreen';
 
@@ -304,14 +305,15 @@ export default function App() {
             route={{ name: currentRoute }}
           />
         )}
-        <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
-          <NavigationContainer
-            ref={navigationRef}
-            documentTitle={{ enabled: false }}
-            onReady={ensureWebTitle}
-            onStateChange={handleStateChange}
-          >
-          <Stack.Navigator
+        <SystemModalProvider>
+          <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
+            <NavigationContainer
+              ref={navigationRef}
+              documentTitle={{ enabled: false }}
+              onReady={ensureWebTitle}
+              onStateChange={handleStateChange}
+            >
+            <Stack.Navigator
             initialRouteName="Login"
             screenOptions={({ route, navigation }) => {
               const isWeb = Platform.OS === 'web';
@@ -693,9 +695,10 @@ export default function App() {
               }}
             />
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
-          </Stack.Navigator>
-          </NavigationContainer>
-        </View>
+            </Stack.Navigator>
+            </NavigationContainer>
+          </View>
+        </SystemModalProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
   );

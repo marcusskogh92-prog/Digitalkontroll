@@ -6,7 +6,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
 import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
 import { fetchCompanyProject, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
@@ -953,6 +953,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             label="Kontaktperson"
             person={kontaktperson}
             onSelect={() => setKontaktpersonSelectorVisible(true)}
+            onClear={() => {
+              setKontaktperson(null);
+              setHasChangesKund(true);
+            }}
             placeholder="Välj kontaktperson..."
             hasChanged={JSON.stringify(kontaktperson) !== JSON.stringify(originalValues.kontaktperson)}
           />
@@ -1532,6 +1536,15 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: '#FFF8E1'
   },
+  personActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 10
+  },
+  personClearButton: {
+    padding: 2
+  },
   personInfo: {
     flex: 1,
     flexDirection: 'row',
@@ -1848,7 +1861,7 @@ const AnteckningarInput = ({ value, onChange, placeholder, originalValue = '' })
 };
 
 // PersonRow component - defined at module level to prevent re-creation on every render
-const PersonRow = React.memo(({ label, person, onSelect, placeholder, hasChanged = false }) => {
+const PersonRow = React.memo(({ label, person, onSelect, onClear, placeholder, hasChanged = false }) => {
   return (
     <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
       <Text style={styles.infoLabel}>{label}:</Text>
@@ -1877,7 +1890,26 @@ const PersonRow = React.memo(({ label, person, onSelect, placeholder, hasChanged
         ) : (
           <Text style={styles.personPlaceholder}>{placeholder}</Text>
         )}
-        <Ionicons name="chevron-forward" size={18} color="#999" />
+        <View style={styles.personActions}>
+          {person && typeof onClear === 'function' ? (
+            <Pressable
+              onPress={(e) => {
+                try {
+                  e?.stopPropagation?.();
+                } catch (_err) {}
+                onClear();
+              }}
+              hitSlop={10}
+              style={[
+                styles.personClearButton,
+                Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+              ]}
+            >
+              <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+            </Pressable>
+          ) : null}
+          <Ionicons name="chevron-forward" size={18} color="#999" />
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -1966,18 +1998,22 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
   
   return (
     <>
-      <View
-        style={[
+      <Pressable
+        onPress={onToggleVisible}
+        disabled={typeof onToggleVisible !== 'function'}
+        style={({ hovered, pressed }) => [
           styles.infoRow,
           hasChanged && styles.infoRowChanged,
           {
             overflow: 'visible',
             position: 'relative',
             ...(visible ? { zIndex: 2000 } : {}),
+            ...(Platform.OS === 'web' ? { cursor: typeof onToggleVisible === 'function' ? 'pointer' : 'default' } : {}),
           },
+          (hovered || pressed) ? { backgroundColor: '#F8FAFC' } : null,
         ]}
       >
-        <Text style={styles.infoLabel}>{label}:</Text>
+        <Text style={styles.infoLabel} pointerEvents="none">{label}:</Text>
         <View
           ref={inputWrapRef}
           style={{
@@ -2022,7 +2058,8 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
             autoCorrect={false}
             pointerEvents="none"
           />
-          <TouchableOpacity
+          <View
+            pointerEvents="none"
             style={{
               position: 'absolute',
               right: 8,
@@ -2031,13 +2068,10 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
               justifyContent: 'center',
               alignItems: 'center',
               paddingHorizontal: 8,
-              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
             }}
-            onPress={onToggleVisible}
-            activeOpacity={0.7}
           >
             <Ionicons name={visible ? 'chevron-up' : 'chevron-down'} size={20} color="#666" />
-          </TouchableOpacity>
+          </View>
 
           {visible && (
             <View
@@ -2106,7 +2140,7 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
             </View>
           )}
         </View>
-      </View>
+      </Pressable>
     </>
   );
 };

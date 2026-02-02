@@ -51,6 +51,7 @@ export function adaptSharePointToProjectTree(sharePointHierarchy) {
                         downloadUrl: nestedChild.downloadUrl,
                         size: nestedChild.size,
                         mimeType: nestedChild.mimeType,
+                        fileExtension: nestedChild.fileExtension,
                         lastModified: nestedChild.lastModified,
                       };
                     }
@@ -77,6 +78,7 @@ export function adaptSharePointToProjectTree(sharePointHierarchy) {
                   downloadUrl: child.downloadUrl,
                   size: child.size,
                   mimeType: child.mimeType,
+                  fileExtension: child.fileExtension,
                   lastModified: child.lastModified,
                 };
               }
@@ -105,6 +107,7 @@ export function adaptSharePointToProjectTree(sharePointHierarchy) {
             downloadUrl: file.downloadUrl,
             size: file.size,
             mimeType: file.mimeType,
+            fileExtension: file.fileExtension,
             lastModified: file.lastModified,
           }));
 
@@ -130,6 +133,7 @@ export function adaptSharePointToProjectTree(sharePointHierarchy) {
         downloadUrl: file.downloadUrl,
         size: file.size,
         mimeType: file.mimeType,
+        fileExtension: file.fileExtension,
         lastModified: file.lastModified,
       }));
 
@@ -246,7 +250,7 @@ function getFunctionIcon(folderName) {
   if (name.includes('möte') || name.includes('mote')) return 'people-outline';
   if (name.includes('förfrågning') || name.includes('forfragning')) return 'folder-outline';
   if (name.includes('kma') || name.includes('kontroll')) return 'shield-checkmark-outline';
-  if (name.includes('överblick') || name.includes('overblick')) return 'eye-outline';
+  if (name.includes('överblick') || name.includes('overblick')) return 'grid-outline';
   if (name.includes('felanmälan') || name.includes('felanmalning')) return 'alert-circle-outline';
   if (name.includes('service') || name.includes('besök') || name.includes('besok')) return 'build-outline';
   if (name.includes('garanti') || name.includes('besiktning')) return 'checkmark-circle-outline';

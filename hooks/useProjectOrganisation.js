@@ -19,7 +19,13 @@ import { auth, db } from '../components/firebase';
 const COLLECTION = 'project_organisation';
 
 function normalizeGroups(raw) {
-  const groups = Array.isArray(raw) ? raw : [];
+  const groups = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === 'object'
+      ? Object.keys(raw)
+          .sort((a, b) => Number(a) - Number(b))
+          .map((k) => raw[k])
+      : []);
   return groups
     .map((g) => {
       const id = String(g?.id || '').trim() || uuidv4();
@@ -174,6 +180,12 @@ export function useProjectOrganisation({ companyId, projectId }) {
       if (!gid) return;
       const t = String(title || '').trim();
       const current = latestRef.current;
+
+      const hit = (current.groups || []).find((g) => String(g?.id || '') === gid) || null;
+      if (hit && (hit.locked === true || hit.isInternalMainGroup === true)) {
+        return { ok: false, reason: 'locked' };
+      }
+
       const next = {
         ...current,
         groups: (current.groups || []).map((g) =>
@@ -181,6 +193,7 @@ export function useProjectOrganisation({ companyId, projectId }) {
         ),
       };
       await save(next);
+      return { ok: true };
     },
     [save]
   );
@@ -198,7 +211,6 @@ export function useProjectOrganisation({ companyId, projectId }) {
       if (!source || !refId) return { ok: false, reason: 'bad_candidate' };
 
       const roleText = String(role || '').trim();
-      if (!roleText) return { ok: false, reason: 'no_role' };
 
       const current = latestRef.current;
       const groups = current.groups || [];

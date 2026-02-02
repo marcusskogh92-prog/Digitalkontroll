@@ -1670,7 +1670,11 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       ref={scrollRef}
       style={[styles.container, Platform.OS === 'web' ? { backgroundColor: '#F7FAFC' } : null]}
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
+      contentContainerStyle={{
+        paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER,
+        flexGrow: 1,
+        minHeight: 0,
+      }}
     >
       {/* Rubrik för projektinfo (med tillbaka-pil i appen och redigera-knapp till höger) */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, gap: 12 }}>
