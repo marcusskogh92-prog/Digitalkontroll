@@ -10,8 +10,9 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import OverviewWeekCalendar from '../../../../../../components/common/OverviewWeekCalendar';
 import { toTsMs } from '../../../../../../components/common/Dashboard/dashboardUtils';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../components/common/projectTypography';
 import { useProjectOrganisation } from '../../../../../../hooks/useProjectOrganisation';
@@ -113,19 +114,25 @@ function computeTimelineHighlights(data) {
   const nextUpcoming = upcoming.length > 0 ? upcoming[0] : null;
   const lastPassed = passed.length > 0 ? passed[passed.length - 1] : null;
 
-  const status = nextUpcoming
-    ? 'Kommande'
-    : (lastPassed ? 'Försenad' : null);
+  let status = null;
+  if (nextUpcoming) {
+    status = nextUpcoming.iso === isoToday ? 'Idag' : 'Kommande';
+  } else if (lastPassed) {
+    status = 'Passerat';
+  }
 
   return { nextUpcoming, lastPassed, status };
 }
 
 function badgeStyle(status) {
+  if (status === 'Idag') {
+    return { bg: 'rgba(25, 118, 210, 0.12)', border: 'rgba(25, 118, 210, 0.26)', text: '#0B4AA2' };
+  }
   if (status === 'Kommande') {
     return { bg: 'rgba(22, 163, 74, 0.10)', border: 'rgba(22, 163, 74, 0.22)', text: '#166534' };
   }
-  if (status === 'Försenad') {
-    return { bg: 'rgba(220, 38, 38, 0.08)', border: 'rgba(220, 38, 38, 0.22)', text: '#991B1B' };
+  if (status === 'Passerat') {
+    return { bg: 'rgba(148, 163, 184, 0.14)', border: 'rgba(148, 163, 184, 0.28)', text: '#64748B' };
   }
   return { bg: 'transparent', border: 'transparent', text: COLORS.textSubtle };
 }
@@ -221,7 +228,11 @@ function Row({ label, value, tone = 'normal' }) {
   );
 }
 
+const TIDSPLAN_ITEM_ID = 'tidsplan-viktiga-datum';
+
 export default function OversiktDashboard({ companyId, projectId, project, onNavigate }) {
+  const [navigatingTo, setNavigatingTo] = useState(null);
+
   const projectNumber = String(project?.projectNumber || project?.number || project?.id || '').trim();
   const rawName = String(project?.projectName || project?.name || '').trim();
   const projectName = rawName;
@@ -248,15 +259,49 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
     return requiredRoles.filter((r) => !allMembers.some((m) => roleMatches(m?.role, r)));
   }, [allMembers]);
 
-  const { data: timelineData } = useProjectTimelineDates({ companyId, projectId });
+  const { customDates, siteVisits } = useProjectTimelineDates({ companyId, projectId });
+  const timelineData = useMemo(() => ({ customDates: customDates || [], siteVisits: siteVisits || [] }), [customDates, siteVisits]);
   const timeline = useMemo(() => computeTimelineHighlights(timelineData), [timelineData]);
+
+  const calendarItems = useMemo(() => {
+    const custom = Array.isArray(customDates) ? customDates : [];
+    const visits = Array.isArray(siteVisits) ? siteVisits : [];
+    const list = custom
+      .filter((d) => isValidIsoDate(d?.date))
+      .map((d) => ({ id: d.id, date: String(d.date), title: String(d?.title || '').trim() || 'Datum', type: String(d?.customType || d?.type || '').trim() || 'Datum', ...d }));
+    visits.forEach((v) => {
+      (Array.isArray(v?.dates) ? v.dates : []).forEach((iso) => {
+        if (!isValidIsoDate(iso)) return;
+        list.push({
+          id: `${v.id}_${iso}`,
+          date: iso,
+          title: String(v?.title || '').trim() || 'Platsbesök',
+          type: 'Platsbesök',
+          ...v,
+        });
+      });
+    });
+    list.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return String(a.title).localeCompare(String(b.title), 'sv');
+    });
+    return list;
+  }, [customDates, siteVisits]);
 
   const fsSummary = useFragaSvarSummary({ companyId, projectId });
 
   const statusBadge = timeline?.status ? badgeStyle(timeline.status) : null;
 
+  const hasAnyDates = (timeline?.nextUpcoming || timeline?.lastPassed) != null;
+  const hasCalendarItems = calendarItems.length > 0;
+
+  const handleNavigateToTidsplan = (selectedIso) => {
+    setNavigatingTo(TIDSPLAN_ITEM_ID);
+    onNavigate?.(TIDSPLAN_ITEM_ID, selectedIso != null ? { selectedIso: String(selectedIso) } : undefined);
+  };
+
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.container} showsVerticalScrollIndicator={true}>
       <View style={styles.helpRow}>
         <Ionicons name="information-circle-outline" size={16} color={COLORS.textSubtle} style={{ marginRight: 8 }} />
         <Text style={styles.helpText} numberOfLines={2}>
@@ -264,6 +309,7 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
         </Text>
       </View>
 
+      <Text style={styles.sectionHeading}>Översiktskort</Text>
       <View style={styles.grid}>
         <Card
           title="Skede"
@@ -297,7 +343,7 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
         <Card
           title="Tidsplan & viktiga datum"
           icon="calendar-outline"
-          onPress={() => onNavigate?.('tidsplan-viktiga-datum')}
+          onPress={() => handleNavigateToTidsplan()}
           hintRight={
             timeline?.status ? (
               <View style={[styles.badge, { backgroundColor: statusBadge.bg, borderColor: statusBadge.border }]}>
@@ -307,22 +353,28 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
           }
         >
           <View style={{ gap: 6 }}>
-            <View style={styles.lineBlock}>
-              <Text style={styles.lineLabel} numberOfLines={1}>Nästa</Text>
-              <Text style={styles.lineValue} numberOfLines={2}>
-                {timeline?.nextUpcoming
-                  ? `${timeline.nextUpcoming.title} – ${formatIsoDateSv(timeline.nextUpcoming.iso)}`
-                  : '—'}
-              </Text>
-            </View>
-            <View style={styles.lineBlock}>
-              <Text style={styles.lineLabel} numberOfLines={1}>Senast passerat</Text>
-              <Text style={styles.lineValue} numberOfLines={2}>
-                {timeline?.lastPassed
-                  ? `${timeline.lastPassed.title} – ${formatIsoDateSv(timeline.lastPassed.iso)}`
-                  : '—'}
-              </Text>
-            </View>
+            {!hasAnyDates ? (
+              <Text style={styles.emptyHint}>Inga datum tillagda än</Text>
+            ) : (
+              <>
+                <View style={styles.lineBlock}>
+                  <Text style={styles.lineLabel} numberOfLines={1}>Nästa</Text>
+                  <Text style={styles.lineValue} numberOfLines={2}>
+                    {timeline?.nextUpcoming
+                      ? `${timeline.nextUpcoming.title} – ${formatIsoDateSv(timeline.nextUpcoming.iso)}`
+                      : '—'}
+                  </Text>
+                </View>
+                <View style={styles.lineBlock}>
+                  <Text style={styles.lineLabel} numberOfLines={1}>Senast passerat</Text>
+                  <Text style={styles.lineValue} numberOfLines={2}>
+                    {timeline?.lastPassed
+                      ? `${timeline.lastPassed.title} – ${formatIsoDateSv(timeline.lastPassed.iso)}`
+                      : '—'}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
         </Card>
 
@@ -337,19 +389,63 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
         </Card>
       </View>
 
-      <Text style={[PROJECT_TYPOGRAPHY.smallHintText, { color: COLORS.textSubtle, marginTop: 10 }]} numberOfLines={1}>
+      <View style={styles.calendarCard}>
+        {!hasCalendarItems ? (
+          <Pressable
+            onPress={handleNavigateToTidsplan}
+            style={({ hovered, pressed }) => [
+              styles.calendarEmpty,
+              (hovered || pressed) && Platform.OS === 'web' ? { backgroundColor: 'rgba(25, 118, 210, 0.04)' } : {},
+            ]}
+          >
+            <Ionicons name="calendar-outline" size={28} color={COLORS.textSubtle} style={{ marginBottom: 8 }} />
+            <Text style={styles.emptyHint}>Inga datum tillagda än</Text>
+            <Text style={styles.emptyHintSub}>Klicka för att gå till Tidsplan och lägga in datum</Text>
+          </Pressable>
+        ) : (
+          <>
+            <OverviewWeekCalendar
+              items={calendarItems}
+              todayIso={todayIso()}
+              onPressItem={(item) => handleNavigateToTidsplan(item?.date)}
+              onPressDay={(iso) => handleNavigateToTidsplan(iso)}
+              colors={COLORS}
+            />
+            {navigatingTo ? (
+              <View style={styles.calendarLoadingOverlay} pointerEvents="none">
+                <View style={styles.calendarLoadingBox}>
+                  <Text style={styles.calendarLoadingText}>Laddar...</Text>
+                </View>
+              </View>
+            ) : null}
+          </>
+        )}
+      </View>
+
+      <Text style={[PROJECT_TYPOGRAPHY.smallHintText, styles.footerHint]} numberOfLines={1}>
         Läsbar sammanfattning – inga redigeringsfält i denna vy.
       </Text>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  scroll: {
     flex: 1,
     minHeight: 0,
-    minWidth: 0,
+  },
+  container: {
+    minHeight: 0,
     padding: 18,
+    paddingBottom: 24,
+  },
+
+  sectionHeading: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.textSubtle,
+    marginBottom: 10,
+    marginTop: 4,
   },
 
   helpRow: {
@@ -376,7 +472,7 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
+    gap: 24,
     alignContent: 'flex-start',
   },
 
@@ -502,5 +598,62 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: COLORS.text,
     lineHeight: 18,
+  },
+
+  emptyHint: {
+    fontSize: 13,
+    color: COLORS.textSubtle,
+    fontStyle: 'italic',
+  },
+  emptyHintSub: {
+    fontSize: 12,
+    color: COLORS.textSubtle,
+    marginTop: 4,
+  },
+
+  calendarCard: {
+    width: '100%',
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingTop: 10,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    marginTop: 48,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+    position: 'relative',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  calendarLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarLoadingBox: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  calendarLoadingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textMuted,
+  },
+  calendarEmpty: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+  },
+  footerHint: {
+    color: COLORS.textSubtle,
+    marginTop: 10,
   },
 });

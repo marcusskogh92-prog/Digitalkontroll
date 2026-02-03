@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 
@@ -11,6 +10,7 @@ function resolveFontWeight(weight) {
  * Shared sidebar row.
  * - Works on native + web (hover/pressed via Pressable)
  * - Supports active + hover styling and optional left/right slots
+ * - Uses native onClick / onDoubleClick (no timeout); chevron/children use stopPropagation to avoid row click
  */
 export default function SidebarItem({
   label,
@@ -41,57 +41,14 @@ export default function SidebarItem({
   const basePaddingHorizontal = LEFT_NAV.rowPaddingHorizontal;
 
   const isWeb = Platform.OS === 'web';
-  const clickTimeoutRef = useRef(null);
-
-  useEffect(() => {
-    return () => {
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
-        clickTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  const clickDelayMs = 200;
-
-  const onPressEffective = (() => {
-    if (!isWeb) return onPress;
-    if (typeof onPress !== 'function') return onPress;
-    if (typeof onDoubleClick !== 'function') return onPress;
-
-    // When double click is enabled, delay the single-click action slightly so we can
-    // cancel it if a double click happens. This prevents “toggle twice then collapse”.
-    return () => {
-      if (clickTimeoutRef.current) {
-        clearTimeout(clickTimeoutRef.current);
-        clickTimeoutRef.current = null;
-      }
-      clickTimeoutRef.current = setTimeout(() => {
-        clickTimeoutRef.current = null;
-        onPress();
-      }, clickDelayMs);
-    };
-  })();
-
-  const onDoubleClickEffective = !isWeb
-    ? undefined
-    : (e) => {
-        if (clickTimeoutRef.current) {
-          clearTimeout(clickTimeoutRef.current);
-          clickTimeoutRef.current = null;
-        }
-        if (typeof onDoubleClick === 'function') {
-          onDoubleClick(e);
-        }
-      };
 
   return (
     <Pressable
       testID={testID}
       disabled={disabled}
-      onPress={onPressEffective}
+      onPress={onPress}
       onLongPress={onLongPress}
-      onDoubleClick={isWeb ? onDoubleClickEffective : undefined}
+      onDoubleClick={isWeb && typeof onDoubleClick === 'function' ? onDoubleClick : undefined}
       onContextMenu={Platform.OS === 'web' ? onContextMenu : undefined}
       onHoverIn={Platform.OS === 'web' ? onHoverIn : undefined}
       onHoverOut={Platform.OS === 'web' ? onHoverOut : undefined}

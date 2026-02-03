@@ -635,6 +635,15 @@ export default function PhaseLeftPanel({
     }));
   }, []);
 
+  // When navigating from dashboard (e.g. calendar click), expand the target section so the sidebar shows as if user opened it
+  useEffect(() => {
+    if (!activeSection || !activeItem) return;
+    setExpandedSections((prev) => {
+      if (prev?.[activeSection]) return prev;
+      return { ...(prev || {}), [activeSection]: true };
+    });
+  }, [activeSection, activeItem]);
+
   const handleAddSection = async () => {
     if (!newSectionName.trim() || !companyId || !loadNavigation) return;
     
@@ -819,7 +828,7 @@ export default function PhaseLeftPanel({
 
           return (
             <View key={section.id} style={styles.sectionContainer}>
-              {/* Section header */}
+              {/* Section header: hela raden klickbar – expand/collapse + välj sektion */}
               <SidebarItem
                 squareCorners={squareCorners}
                 indentMode={rowIndentMode}
@@ -828,34 +837,23 @@ export default function PhaseLeftPanel({
                 hovered={isHovered}
                 active={isActive}
                 onPress={() => {
-                  // Single click: navigation ONLY
+                  toggleSectionStructure(section.id);
                   if (onSelectSection) {
                     onSelectSection(section.id);
                     if (onSelectItem) onSelectItem(section.id, null);
                   }
                 }}
-                onDoubleClick={hasItems ? () => toggleSectionStructure(section.id) : undefined}
+                onDoubleClick={isExpanded ? () => toggleSectionStructure(section.id) : undefined}
                 onHoverIn={isWeb ? () => setHoveredKey(sectionHoverKey) : undefined}
                 onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
                 left={() => (
                   <>
-                    {hasItems ? (
-                      <TouchableOpacity
-                        onPress={(e) => {
-                          try { e?.stopPropagation?.(); } catch (_e) {}
-                          toggleSectionStructure(section.id);
-                        }}
-                        style={{ padding: 2, marginRight: 6 }}
-                      >
-                        <Ionicons
-                          name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                          size={14}
-                          color={sectionIconColor}
-                        />
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={{ width: 18, marginRight: 6 }} />
-                    )}
+                    <Ionicons
+                      name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
+                      size={14}
+                      color={sectionIconColor}
+                      style={{ marginRight: 6 }}
+                    />
                     <Ionicons
                       name={section.icon || 'folder-outline'}
                       size={16}
@@ -915,7 +913,7 @@ export default function PhaseLeftPanel({
 
                     return (
                       <View key={item.id}>
-                        {/* Item */}
+                        {/* Item: hela raden klickbar – vid undermeny: växla expand + välj; annars bara välj */}
                         <SidebarItem
                           squareCorners={squareCorners}
                           indentMode={rowIndentMode}
@@ -925,10 +923,12 @@ export default function PhaseLeftPanel({
                           active={isItemActive}
                           indent={isWeb ? 24 : 8}
                           onPress={() => {
-                            // Single click: navigation ONLY
+                            if (hasNestedItems) {
+                              toggleNestedStructure(section.id, item.id);
+                            }
                             if (onSelectItem) onSelectItem(section.id, item.id);
                           }}
-                          onDoubleClick={hasNestedItems ? () => toggleNestedStructure(section.id, item.id) : undefined}
+                          onDoubleClick={hasNestedItems && isNestedExpanded ? () => toggleNestedStructure(section.id, item.id) : undefined}
                           onHoverIn={isWeb ? () => setHoveredKey(itemHoverKey) : undefined}
                           onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
                           label={`• ${stripNumberPrefixForDisplay(item.name)}`}
@@ -942,6 +942,13 @@ export default function PhaseLeftPanel({
                           }
                           right={() => (
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              {hasNestedItems ? (
+                                <Ionicons
+                                  name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
+                                  size={14}
+                                  color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
+                                />
+                              ) : null}
                               {canEdit && (
                                 <>
                                   {hasNestedItems && (
@@ -968,21 +975,6 @@ export default function PhaseLeftPanel({
                                     <Ionicons name="close-circle-outline" size={16} color="#D32F2F" />
                                   </TouchableOpacity>
                                 </>
-                              )}
-                              {hasNestedItems && (
-                                <TouchableOpacity
-                                  onPress={(e) => {
-                                    try { e?.stopPropagation?.(); } catch (_e) {}
-                                    toggleNestedStructure(section.id, item.id);
-                                  }}
-                                  style={{ padding: 2 }}
-                                >
-                                  <Ionicons
-                                    name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                                    size={14}
-                                    color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
-                                  />
-                                </TouchableOpacity>
                               )}
                             </View>
                           )}

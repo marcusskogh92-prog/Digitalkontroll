@@ -34,6 +34,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
 
   const [activeSection, setActiveSection] = useState(null);
   const [activeItem, setActiveItem] = useState(null);
+  const [navigationParams, setNavigationParams] = useState(null);
   
   // Listen for project updates to keep in sync if project ID changes
   useEffect(() => {
@@ -93,10 +94,11 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
     }
   };
 
-  const handleSelectItem = (sectionId, itemId) => {
+  const handleSelectItem = (sectionId, itemId, params) => {
     console.log('[KalkylskedeLayout] handleSelectItem called - sectionId:', sectionId, 'itemId:', itemId);
     setActiveSection(sectionId);
     setActiveItem(itemId);
+    setNavigationParams(params ?? null);
   };
 
   const renderContent = () => {
@@ -137,6 +139,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
         project={project}
         activeItem={activeItem}
         navigation={navigation.sections.find(s => s.id === activeSection)}
+        navigationParams={navigationParams}
       />
     );
   };

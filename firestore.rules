@@ -39,6 +39,16 @@ service cloud.firestore {
       return resource.data.projectNumberIndexId == request.resource.data.projectNumberIndexId;
     }
 
+    // True if user is allowed to read/write file_comments: must be logged in and either
+    // company member or listed in project members (foretag/{company}/projects/{projectId}/members/{userId}).
+    function canAccessFileComments(company, projectId) {
+      return request.auth != null
+        && (
+          isCompanyMember(company)
+          || exists(/databases/$(database)/documents/foretag/$(company)/projects/$(projectId)/members/$(request.auth.uid))
+        );
+    }
+
     // Allow read for hierarchy; writes only when authenticated and token.companyId matches path
     match /foretag/{company}/hierarki/state {
       allow read: if true;
@@ -223,6 +233,45 @@ service cloud.firestore {
     // foretag/{company}/projects/{projectId}/phaseData/kalkylskede/fragaSvar/{docId}
     match /foretag/{company}/projects/{projectId}/phaseData/{phaseKey}/{document=**} {
       allow read, write: if isCompanyMember(company);
+    }
+
+    // Project members (optional per-project access; used by file_comments).
+    // Collection: foretag/{company}/projects/{projectId}/members/{userId}
+    // When present, file_comments allow read/write for these users; otherwise company members only.
+    match /foretag/{company}/projects/{projectId}/members/{userId} {
+      allow read: if request.auth != null && isCompanyMember(company);
+      allow write: if request.auth != null && isCompanyMember(company);
+    }
+
+    // File comments (company-scoped, project-specific)
+    // Path: foretag/{company}/projects/{projectId}/file_comments/{commentId}
+    // Only logged-in users who are company members OR project members may read/create.
+    // Delete: only the comment author (so users can remove their own comments).
+    match /foretag/{company}/projects/{projectId}/file_comments/{commentId} {
+      allow get, list, create: if canAccessFileComments(company, projectId);
+      allow update: if canAccessFileComments(company, projectId);
+      allow delete: if canAccessFileComments(company, projectId) && resource.data.authorId == request.auth.uid;
+    }
+
+    // Project notifications (comment mentions, etc.)
+    // Path: foretag/{company}/projects/{projectId}/notifications/{notificationId}
+    // Create: any project/company member (when posting comment with @mentions).
+    // Read/update/delete: only the recipient (userId == request.auth.uid).
+    match /foretag/{company}/projects/{projectId}/notifications/{notificationId} {
+      allow read, update, delete: if request.auth != null
+        && resource.data.userId == request.auth.uid
+        && canAccessFileComments(company, projectId);
+      allow create: if canAccessFileComments(company, projectId);
+    }
+
+    // Collection group rule for notifications (required for collectionGroup('notifications') queries).
+    // Dashboard subscribes to all notifications where userId == request.auth.uid across projects.
+    // Use get, list explicitly; create stays denied here (use specific path rule for create).
+    match /{path=**}/notifications/{notificationId} {
+      allow get, list: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null
+        && resource.data.userId == request.auth.uid;
     }
 
     // Project organisation (company-scoped, project-specific)

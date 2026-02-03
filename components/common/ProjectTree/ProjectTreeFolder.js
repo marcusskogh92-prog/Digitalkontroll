@@ -36,6 +36,7 @@ export default function ProjectTreeFolder({
 }) {
   const [chevronSpinTick, setChevronSpinTick] = useState(0);
   const clickTimeoutRef = useRef(null);
+  const lastClickTimeRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -189,8 +190,24 @@ export default function ProjectTreeFolder({
     onToggle(folder.id);
   };
 
+  const DOUBLE_CLICK_MS = 350;
+
   const handlePress = () => {
-    // Single click must ONLY navigate; never expand/collapse.
+    const now = Date.now();
+    const timeSinceLastClick = now - lastClickTimeRef.current;
+
+    // Dubbelklick när mappen är öppen: stäng (kollapsa).
+    if (isExpanded && canToggle && timeSinceLastClick < DOUBLE_CLICK_MS) {
+      lastClickTimeRef.current = 0;
+      handleStructureToggle();
+      return;
+    }
+    lastClickTimeRef.current = now;
+
+    // Enkelklick: expandera om kollapsad, sedan navigera.
+    if (!isExpanded && canToggle) {
+      handleStructureToggle();
+    }
     if (typeof onPress === 'function') {
       onPress(folder);
     }
@@ -223,8 +240,10 @@ export default function ProjectTreeFolder({
       clearTimeout(clickTimeoutRef.current);
       clickTimeoutRef.current = null;
     }
-    // Double click mirrors chevron behavior (structure action only).
-    handleStructureToggle();
+    // Dubbelklick ska bara stänga (kollapsa) – inte växla igen, annars öppnas mappen direkt efter stängning.
+    if (isExpanded && canToggle) {
+      handleStructureToggle();
+    }
   };
 
   if (edgeToEdge) {
@@ -249,25 +268,14 @@ export default function ProjectTreeFolder({
         left={(state) => (
           <>
             {hideFolderIcon ? (
-              canToggle ? (
-                <Pressable
-                  onPress={(e) => {
-                    try {
-                      e?.stopPropagation?.();
-                    } catch (_e) {}
-                    handleToggle();
+              reserveChevronSpace || canToggle ? (
+                <View
+                  style={{
+                    marginRight: 6,
+                    minWidth: chevronSize,
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                  style={({ hovered, pressed }) => [
-                    {
-                      marginRight: 6,
-                      minWidth: chevronSize,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      opacity: canToggle ? 1 : 0.5,
-                    },
-                    Platform.OS === 'web' ? { cursor: 'pointer' } : null,
-                    (hovered || pressed) ? { opacity: 0.9 } : null,
-                  ]}
                 >
                   <AnimatedChevron
                     expanded={Boolean(isExpanded)}
@@ -275,15 +283,7 @@ export default function ProjectTreeFolder({
                     size={chevronSize}
                     color={(state.active || state.hovered) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
                   />
-                </Pressable>
-              ) : reserveChevronSpace ? (
-                <View
-                  style={{
-                    marginRight: 6,
-                    minWidth: chevronSize,
-                    alignItems: 'center',
-                  }}
-                />
+                </View>
               ) : null
             ) : null}
             {!hideFolderIcon ? renderFolderIcon(state) : null}

@@ -6,7 +6,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
 import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
@@ -15,24 +15,25 @@ import ContextMenu from '../../../../../../../../components/ContextMenu';
 import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
-const COMPANY_GROUP_ROLE_PRESETS = [
-  'Ombud',
+const ROLE_QUICK = [
   'Kalkylansvarig',
-  'Projekteringsledare',
   'Projektchef',
   'Platschef',
   'Arbetsledare',
+  'Projekteringsledare',
   'Inköp',
-  'Offertintag',
   'Konstruktion',
-  'BAS-P',
-  'BAS-U',
+  'Intern',
 ];
+
+const ROLE_ADVANCED = ['BAS-P', 'BAS-U', 'Ombud', 'Offertintag'];
+
+const ROLE_ALL_PRESETS = [...ROLE_QUICK, ...ROLE_ADVANCED];
 
 function isPresetCompanyRole(role) {
   const r = String(role || '').trim();
   if (!r) return false;
-  return COMPANY_GROUP_ROLE_PRESETS.includes(r);
+  return ROLE_ALL_PRESETS.includes(r);
 }
 
 function confirmWebOrNative(message) {
@@ -62,6 +63,9 @@ function makePendingMemberFromCandidate(candidate) {
   const source = String(c?.source || '').trim();
   const refId = String(c?.refId || '').trim();
   const id = `tmp:${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const roles = Array.isArray(c?.roles)
+    ? c.roles.map((r) => String(r || '').trim()).filter(Boolean)
+    : (c?.role ? [String(c.role).trim()].filter(Boolean) : []);
   return {
     id,
     source,
@@ -70,7 +74,7 @@ function makePendingMemberFromCandidate(candidate) {
     company: String(c?.company || '—').trim(),
     email: String(c?.email || '').trim(),
     phone: String(c?.phone || '').trim(),
-    role: String(c?.role || '').trim(),
+    roles,
     _pendingAdded: true,
   };
 }
@@ -83,25 +87,35 @@ function pendingHasChanges(p) {
   return (addedCount + removedCount + roleCount) > 0;
 }
 
+function ensureRolesArray(m) {
+  if (Array.isArray(m?.roles)) return m.roles.map((r) => String(r || '').trim()).filter(Boolean);
+  if (m?.role != null && m.role !== '') return [String(m.role).trim()];
+  return [];
+}
+
 function computeDisplayMembers(baseMembers, pending) {
   const removed = pending?.removed && typeof pending.removed === 'object' ? pending.removed : {};
-  const roles = pending?.roles && typeof pending.roles === 'object' ? pending.roles : {};
+  const rolesByMember = pending?.roles && typeof pending.roles === 'object' ? pending.roles : {};
   const added = pending?.added && typeof pending.added === 'object' ? pending.added : {};
 
   const list = (Array.isArray(baseMembers) ? baseMembers : [])
     .filter((m) => !removed[String(m?.id || '').trim()])
     .map((m) => {
       const mid = String(m?.id || '').trim();
-      const role = (mid && (mid in roles)) ? String(roles[mid] || '').trim() : String(m?.role || '').trim();
-      const dirtyRole = (mid && (mid in roles)) ? true : false;
-      return { ...m, role, _pendingRole: dirtyRole };
+      const roles = (mid && Array.isArray(rolesByMember[mid]))
+        ? rolesByMember[mid].map((r) => String(r || '').trim()).filter(Boolean)
+        : ensureRolesArray(m);
+      const dirtyRole = !!(mid && mid in rolesByMember);
+      return { ...m, roles, _pendingRole: dirtyRole };
     });
 
   const addedList = Object.values(added).map((pm) => {
     const mid = String(pm?.id || '').trim();
-    const role = (mid && (mid in roles)) ? String(roles[mid] || '').trim() : String(pm?.role || '').trim();
-    const dirtyRole = (mid && (mid in roles)) ? true : false;
-    return { ...pm, role, _pendingRole: dirtyRole, _pendingAdded: true };
+    const roles = (mid && Array.isArray(rolesByMember[mid]))
+      ? rolesByMember[mid].map((r) => String(r || '').trim()).filter(Boolean)
+      : ensureRolesArray(pm);
+    const dirtyRole = !!(mid && mid in rolesByMember);
+    return { ...pm, roles, _pendingRole: dirtyRole, _pendingAdded: true };
   });
 
   return [...list, ...addedList];
@@ -126,9 +140,11 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     tableBorder: '#EEF0F3',
     tableHeaderText: '#64748b',
     groupTitle: '#334155',
+    /** Svag blå bakgrund för gruppkort (ca 6% opacity) */
+    groupCardBg: 'rgba(25, 118, 210, 0.06)',
   };
 
-  const { groups, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRole } =
+  const { groups, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRoles } =
     useProjectOrganisation({ companyId, projectId });
 
   const [defaultGroupEnsured, setDefaultGroupEnsured] = useState(false);
@@ -137,15 +153,25 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => ({}));
   const [expandedInitialized, setExpandedInitialized] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState(null);
+  /** Åtgärdsmeny för grupp (⋮): { x, y, gid } */
+  const [groupMenuAnchor, setGroupMenuAnchor] = useState(null);
+  /** Modal "Byt namn på grupp": { gid, currentTitle } */
+  const [renameGroupModal, setRenameGroupModal] = useState(null);
+  /** Modal "Lägg till grupp": visar formulär med obligatoriskt gruppnamn */
+  const [addGroupModalOpen, setAddGroupModalOpen] = useState(false);
+  const [addGroupName, setAddGroupName] = useState('');
+  /** Draft för "Byt namn"-modal */
+  const [renameGroupDraft, setRenameGroupDraft] = useState('');
 
   const [roleMenuVisible, setRoleMenuVisible] = useState(false);
   const [roleMenuPos, setRoleMenuPos] = useState({ x: 20, y: 64 });
-  const [roleMenuTarget, setRoleMenuTarget] = useState(null); // { groupId, memberId, displayRole, baseRole }
+  const [roleMenuTarget, setRoleMenuTarget] = useState(null); // { groupId, memberId, currentRoles }
+  const [roleMenuAdvancedOpen, setRoleMenuAdvancedOpen] = useState(false);
   const [roleEditTarget, setRoleEditTarget] = useState(null); // { groupId, memberId }
   const [roleEditText, setRoleEditText] = useState('');
 
   // Pending changes per group (golden rule): do not write to backend until user hits Save.
-  // Structure: { [gid]: { added: { [tmpId]: memberObj }, removed: { [memberId]: true }, roles: { [memberIdOrTmpId]: roleString } } }
+  // Structure: { [gid]: { added: { [tmpId]: memberObj }, removed: { [memberId]: true }, roles: { [memberIdOrTmpId]: string[] } } }
   const [pendingByGroup, setPendingByGroup] = useState(() => ({}));
   const [savingGroupId, setSavingGroupId] = useState(null);
   const [savedFlashByGroup, setSavedFlashByGroup] = useState(() => ({}));
@@ -189,6 +215,16 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
   const hasContext = String(companyId || '').trim() && String(projectId || '').trim();
 
+  const groupMenuItems = useMemo(() => {
+    const a = groupMenuAnchor;
+    if (!a) return [];
+    return [
+      { key: 'rename', label: 'Byt namn på grupp', disabled: !!a.isLockedGroup },
+      { isSeparator: true, key: 'sep-group' },
+      { key: 'delete', label: 'Radera grupp', iconName: 'trash-outline', danger: true, disabled: !!a.isLockedGroup || (Number(a.participantCount) || 0) > 0 },
+    ];
+  }, [groupMenuAnchor]);
+
   // Navigation guard: warn when leaving with unsaved Organisation & roller changes.
   useEffect(() => {
     if (!navigation?.addListener) return;
@@ -228,10 +264,16 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     const id = String(gid || '').trim();
     const map = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup : {};
     const p = map[id];
+    const rolesRaw = (p?.roles && typeof p.roles === 'object') ? p.roles : {};
+    const roles = {};
+    Object.keys(rolesRaw).forEach((k) => {
+      const v = rolesRaw[k];
+      roles[k] = Array.isArray(v) ? v.map((r) => String(r || '').trim()).filter(Boolean) : (v ? [String(v).trim()].filter(Boolean) : []);
+    });
     return {
       added: (p?.added && typeof p.added === 'object') ? p.added : {},
       removed: (p?.removed && typeof p.removed === 'object') ? p.removed : {},
-      roles: (p?.roles && typeof p.roles === 'object') ? p.roles : {},
+      roles,
     };
   };
 
@@ -241,10 +283,16 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     setPendingByGroup((prev) => {
       const p = prev && typeof prev === 'object' ? prev : {};
       const merged = { ...(p || {}) };
+      const rolesRaw = (next?.roles && typeof next.roles === 'object') ? next.roles : {};
+      const roles = {};
+      Object.keys(rolesRaw).forEach((k) => {
+        const v = rolesRaw[k];
+        roles[k] = Array.isArray(v) ? v.map((r) => String(r || '').trim()).filter(Boolean) : (v != null ? [String(v).trim()].filter(Boolean) : []);
+      });
       const normalized = {
         added: (next?.added && typeof next.added === 'object') ? next.added : {},
         removed: (next?.removed && typeof next.removed === 'object') ? next.removed : {},
-        roles: (next?.roles && typeof next.roles === 'object') ? next.roles : {},
+        roles,
       };
       if (!pendingHasChanges(normalized)) {
         delete merged[id];
@@ -290,8 +338,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         if (alreadyKeys.has(key)) return;
         const pm = makePendingMemberFromCandidate(c);
         next.added[pm.id] = pm;
-        // Default role can be empty; user can set role before saving.
-        if (String(pm?.role || '').trim()) next.roles[pm.id] = String(pm.role).trim();
+        if (Array.isArray(pm.roles) && pm.roles.length > 0) next.roles[pm.id] = [...pm.roles];
         alreadyKeys.add(key);
       });
 
@@ -326,20 +373,37 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     setPendingForGroup(id, next);
   };
 
-  const stageRoleChange = (gid, memberId, nextRole, baseRole) => {
+  const stageRoleAdd = (gid, memberId, role, currentRoles) => {
     const id = String(gid || '').trim();
     const mid = String(memberId || '').trim();
-    if (!id || !mid) return;
-    const nr = String(nextRole || '').trim();
-    const br = String(baseRole || '').trim();
+    const r = String(role || '').trim();
+    if (!id || !mid || !r) return;
+    const list = Array.isArray(currentRoles) ? [...currentRoles] : [];
+    if (list.includes(r)) return;
+    list.push(r);
     const pending = getPendingForGroup(id);
     const next = {
       added: { ...(pending.added || {}) },
       removed: { ...(pending.removed || {}) },
       roles: { ...(pending.roles || {}) },
     };
-    if (nr === br) delete next.roles[mid];
-    else next.roles[mid] = nr;
+    next.roles[mid] = list;
+    setPendingForGroup(id, next);
+  };
+
+  const stageRoleRemove = (gid, memberId, role, currentRoles) => {
+    const id = String(gid || '').trim();
+    const mid = String(memberId || '').trim();
+    const r = String(role || '').trim();
+    if (!id || !mid) return;
+    const list = Array.isArray(currentRoles) ? currentRoles.filter((x) => String(x || '').trim() !== r) : [];
+    const pending = getPendingForGroup(id);
+    const next = {
+      added: { ...(pending.added || {}) },
+      removed: { ...(pending.removed || {}) },
+      roles: { ...(pending.roles || {}) },
+    };
+    next.roles[mid] = list;
     setPendingForGroup(id, next);
   };
 
@@ -371,7 +435,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         await removeMember({ groupId: id, memberId: mid });
       }
 
-      // 2) Add members (with role if staged)
+      // 2) Add members (with roles if staged)
       const addedMembers = Object.values(pending.added || {});
       for (const pm of addedMembers) {
         const candidate = {
@@ -382,8 +446,8 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
           email: String(pm?.email || '').trim(),
           phone: String(pm?.phone || '').trim(),
         };
-        const role = String((pending.roles && pending.roles[pm.id]) ?? pm?.role ?? '').trim();
-        const res = await addMember({ groupId: id, candidate, role });
+        const roles = Array.isArray(pending.roles?.[pm.id]) ? pending.roles[pm.id] : (Array.isArray(pm.roles) ? pm.roles : []);
+        const res = await addMember({ groupId: id, candidate, roles });
         if (res && res.ok === false && res.reason === 'duplicate') {
           // If backend says duplicate, treat as already added elsewhere.
           continue;
@@ -395,10 +459,11 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
       // 3) Update roles for existing members (skip removed + skip tmp ids)
       const roleEntries = Object.entries(pending.roles || {});
-      for (const [mid, role] of roleEntries) {
+      for (const [mid, rolesArr] of roleEntries) {
         if (String(mid).startsWith('tmp:')) continue;
         if (pending.removed && pending.removed[mid]) continue;
-        await updateMemberRole({ groupId: id, memberId: mid, role: String(role || '').trim() });
+        const arr = Array.isArray(rolesArr) ? rolesArr : [];
+        await updateMemberRoles({ groupId: id, memberId: mid, roles: arr });
       }
 
       // Clear pending for group
@@ -424,6 +489,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const closeRoleMenu = () => {
     setRoleMenuVisible(false);
     setRoleMenuTarget(null);
+    setRoleMenuAdvancedOpen(false);
   };
 
   const beginRoleEdit = ({ groupId, memberId, currentRole }) => {
@@ -431,31 +497,51 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     setRoleEditText(String(currentRole || '').trim());
   };
 
-  const commitRoleEdit = ({ groupId, memberId, prevRole, baseRole }) => {
+  const commitRoleEdit = ({ groupId, memberId, currentRoles }) => {
     const nextRole = String(roleEditText || '').trim();
-    stageRoleChange(String(groupId || ''), String(memberId || ''), nextRole, String(baseRole ?? prevRole ?? '').trim());
+    if (nextRole) stageRoleAdd(String(groupId || ''), String(memberId || ''), nextRole, currentRoles || []);
     setRoleEditTarget(null);
     setRoleEditText('');
   };
 
-  const openRolePicker = (e, { groupId, memberId, displayRole, baseRole }) => {
+  const openRolePicker = (e, { groupId, memberId, currentRoles }) => {
     const gid = String(groupId || '').trim();
     const mid = String(memberId || '').trim();
-    const role = String(displayRole || '').trim();
-    const base = String(baseRole || '').trim();
+    const roles = Array.isArray(currentRoles) ? currentRoles : [];
     if (!gid || !mid) return;
 
     if (Platform.OS !== 'web') {
-      // Native fallback: use Alert. Not as compact as web dropdown, but keeps flow inline.
-      const buttons = [
-        ...COMPANY_GROUP_ROLE_PRESETS.map((label) => ({
-          text: label,
-          onPress: () => stageRoleChange(gid, mid, label, base),
-        })),
-        { text: 'Valfri roll (egen text)', onPress: () => beginRoleEdit({ groupId: gid, memberId: mid, currentRole: role }) },
-        { text: 'Avbryt', style: 'cancel' },
-      ];
-      Alert.alert('Välj roll', 'Välj en fördefinierad roll eller skriv en egen.', buttons);
+      const quickButtons = ROLE_QUICK.map((label) => ({
+        text: label,
+        onPress: () => stageRoleAdd(gid, mid, label, roles),
+      }));
+      const advancedButtons = ROLE_ADVANCED.map((label) => ({
+        text: label,
+        onPress: () => stageRoleAdd(gid, mid, label, roles),
+      }));
+      Alert.alert(
+        'Lägg till roll',
+        'Snabbval',
+        [
+          ...quickButtons.slice(0, 5),
+          {
+            text: 'Visa fler roller…',
+            onPress: () => {
+              Alert.alert(
+                'Avancerade roller',
+                undefined,
+                [
+                  ...quickButtons.slice(5),
+                  ...advancedButtons,
+                  { text: 'Valfri roll (egen text)', onPress: () => beginRoleEdit({ groupId: gid, memberId: mid, currentRole: '' }) },
+                  { text: 'Avbryt', style: 'cancel' },
+                ]
+              );
+            },
+          },
+          { text: 'Avbryt', style: 'cancel' },
+        ]
+      );
       return;
     }
 
@@ -471,23 +557,43 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
       setRoleMenuPos({ x: 20, y: 64 });
     }
 
-    setRoleMenuTarget({ groupId: gid, memberId: mid, displayRole: role, baseRole: base });
+    setRoleMenuTarget({ groupId: gid, memberId: mid, currentRoles: roles });
+    setRoleMenuAdvancedOpen(false);
     setRoleMenuVisible(true);
   };
 
   const roleMenuItems = useMemo(() => {
     const t = roleMenuTarget;
-    const current = String(t?.displayRole || '').trim();
+    const currentRoles = Array.isArray(t?.currentRoles) ? t.currentRoles : [];
+    const hasRole = (label) => currentRoles.includes(String(label || '').trim());
+    const quickItems = ROLE_QUICK.map((label) => ({
+      key: `preset:${label}`,
+      label,
+      disabled: hasRole(label),
+    }));
+    const advancedItems = ROLE_ADVANCED.map((label) => ({
+      key: `preset:${label}`,
+      label,
+      disabled: hasRole(label),
+    }));
+    const snabbval = [
+      { key: 'header:quick', isSeparator: true, label: 'Snabbval' },
+      ...quickItems,
+    ];
+    if (!roleMenuAdvancedOpen) {
+      return [
+        ...snabbval,
+        { key: 'expand', label: 'Avancerade roller  ▶', keepOpen: true },
+      ];
+    }
     return [
-      ...COMPANY_GROUP_ROLE_PRESETS.map((label) => ({
-        key: `preset:${label}`,
-        label,
-        isSelected: current === label,
-      })),
+      ...snabbval,
+      { key: 'header:advanced', isSeparator: true, label: 'Avancerade  ▼' },
+      ...advancedItems,
       { key: 'sep-custom', isSeparator: true },
       { key: 'custom', label: 'Valfri roll (egen text)', iconName: 'create-outline' },
     ];
-  }, [roleMenuTarget]);
+  }, [roleMenuTarget, roleMenuAdvancedOpen]);
 
   // Ensure the mandatory company group exists and is named exactly as the company.
   // This is the "anchor" group for membership → dashboard/notifications.
@@ -582,7 +688,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
           Grupper ({Array.isArray(groups) ? groups.length : 0})
         </Text>
         <Pressable
-          onPress={() => addGroup({ title: 'Ny grupp' })}
+          onPress={() => { setAddGroupName(''); setAddGroupModalOpen(true); }}
           disabled={!hasContext}
           style={({ hovered, pressed }) => {
             const disabled = !hasContext;
@@ -605,6 +711,12 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
       {loading ? (
         <Text style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>Laddar…</Text>
+      ) : null}
+
+      {(Array.isArray(groups) ? groups : []).length > 0 ? (
+        <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginBottom: 10 }}>
+          Klicka på ⋮ bredvid gruppnamnet för att byta namn eller radera gruppen.
+        </Text>
       ) : null}
 
       {(Array.isArray(groups) ? groups : []).length === 0 ? (
@@ -637,15 +749,38 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
           });
         };
 
+        const openGroupMenu = (e) => {
+          const payload = { gid, title: group?.title, participantCount, isLockedGroup };
+          if (Platform.OS === 'web' && e?.nativeEvent) {
+            setGroupMenuAnchor({ x: e.nativeEvent.clientX, y: e.nativeEvent.clientY, ...payload });
+          } else if (Platform.OS !== 'web') {
+            const canRename = !isLockedGroup;
+            const canDelete = !isLockedGroup && participantCount === 0;
+            Alert.alert(
+              'Grupp',
+              undefined,
+              [
+                { text: 'Avbryt', style: 'cancel' },
+                ...(canRename ? [{ text: 'Byt namn på grupp', onPress: () => { setRenameGroupDraft(String(group?.title || '').trim() || ''); setRenameGroupModal({ gid, currentTitle: group?.title }); } }] : []),
+                ...(canDelete ? [{ text: 'Radera grupp', style: 'destructive', onPress: async () => { const ok = await confirmWebOrNative('Ta bort gruppen?'); if (ok) removeGroup(gid); } }] : []),
+              ].filter(Boolean)
+            );
+          } else {
+            setGroupMenuAnchor({ x: 20, y: 64, ...payload });
+          }
+        };
+
         return (
           <View
             key={gid}
             style={{
               borderWidth: 1,
               borderColor: COLORS.border,
-              borderRadius: 8,
-              backgroundColor: '#fff',
-              marginBottom: 8,
+              borderLeftWidth: 3,
+              borderLeftColor: COLORS.blue,
+              borderRadius: 10,
+              backgroundColor: COLORS.groupCardBg,
+              marginBottom: 16,
               overflow: 'hidden',
             }}
           >
@@ -657,9 +792,9 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: 10,
-                paddingVertical: 6,
-                paddingHorizontal: 12,
-                backgroundColor: '#fff',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                backgroundColor: 'transparent',
               }}
             >
               <Pressable
@@ -672,137 +807,69 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                   gap: 10,
                   paddingVertical: 2,
                   paddingHorizontal: 0,
-                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'transparent',
+                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.12)' : 'transparent',
                   borderRadius: 8,
                 })}
               >
-                <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={COLORS.neutral} />
+                <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={18} color={COLORS.blue} />
 
                 <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  {/* Left: group title + participant count as one unit */}
-                  <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <TextInput
-                      defaultValue={String(group?.title || '')}
-                      placeholder="Gruppens rubrik"
-                      placeholderTextColor="#94A3B8"
-                      onFocus={() => setEditingGroupId(gid)}
-                      onBlur={(e) => {
-                        setEditingGroupId(null);
-                        if (isLockedGroup) return;
-                        const next = String(e?.nativeEvent?.text ?? group?.title ?? '').trim();
-                        if (next !== String(group?.title || '').trim()) updateGroupTitle(gid, next);
-                      }}
-                      editable={!isLockedGroup}
-                      style={{
-                        minWidth: 180,
-                        maxWidth: Platform.OS === 'web' ? 520 : 260,
-                        flexShrink: 1,
-                        fontSize: 13,
-                        color: COLORS.groupTitle,
-                        fontWeight: '500',
-                        paddingVertical: 2,
-                        paddingHorizontal: 0,
-                        backgroundColor: 'transparent',
-                        ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
-                      }}
-                    />
-                    <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: '600' }}>({participantCount})</Text>
+                  <Text style={{ fontSize: 15, color: COLORS.groupTitle, fontWeight: '600', flex: 1, minWidth: 0 }} numberOfLines={1}>
+                    {String(group?.title || 'Grupp').trim() || 'Grupp'}
+                  </Text>
+                  <View style={{ backgroundColor: COLORS.border, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 }}>
+                    <Text style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: '600' }}>{participantCount}</Text>
                   </View>
-
                 </View>
               </Pressable>
 
-              {!isOpen ? null : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Pressable
-                    onPress={() => setActiveModalGroupId(gid)}
-                    disabled={!hasContext}
-                    style={({ hovered, pressed }) => {
-                      const disabled = !hasContext;
-                      const borderColor = disabled ? COLORS.borderStrong : COLORS.blue;
-                      const bg = disabled ? '#F3F4F6' : (hovered || pressed ? '#EFF6FF' : '#fff');
-                      return {
-                        paddingVertical: 6,
-                        paddingHorizontal: 8,
-                        borderRadius: 10,
-                        backgroundColor: bg,
-                        borderWidth: 1,
-                        borderColor,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                      };
-                    }}
-                  >
-                    <Ionicons name="person-add-outline" size={15} color={hasContext ? COLORS.blue : COLORS.neutral} />
-                    <Text style={{ color: hasContext ? COLORS.blue : COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Lägg till</Text>
-                  </Pressable>
+              {/* Åtgärdsmeny (⋮) – alltid synlig på grupp-raden */}
+              <Pressable
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  openGroupMenu(e);
+                }}
+                style={({ hovered, pressed }) => ({
+                  padding: 6,
+                  borderRadius: 8,
+                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'transparent',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                })}
+                accessibilityLabel="Åtgärder för gruppen"
+              >
+                <Ionicons name="ellipsis-vertical" size={18} color={COLORS.textSubtle} />
+              </Pressable>
 
-                  <Pressable
-                    onPress={async () => {
-                      if (isLockedGroup) return;
-                      const ok = await confirmWebOrNative('Ta bort gruppen? Detta tar även bort alla personer i gruppen.');
-                      if (ok) removeGroup(gid);
-                    }}
-                    disabled={isLockedGroup}
-                    title={Platform.OS === 'web'
-                      ? (isLockedGroup ? 'Systemstyrd grupp – kan inte raderas' : 'Ta bort grupp')
-                      : undefined}
-                    style={({ hovered, pressed }) => {
-                      if (isLockedGroup) {
-                        return {
-                          paddingVertical: 6,
-                          paddingHorizontal: 8,
-                          borderRadius: 10,
-                          backgroundColor: '#F8FAFC',
-                          borderWidth: 1,
-                          borderColor: COLORS.border,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 8,
-                          opacity: 0.55,
-                        };
-                      }
-                      const hot = !!(hovered || pressed);
-                      return {
-                        paddingVertical: 6,
-                        paddingHorizontal: 8,
-                        borderRadius: 10,
-                        backgroundColor: '#fff',
-                        borderWidth: 1,
-                        borderColor: hot ? COLORS.danger : COLORS.borderStrong,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                      };
-                    }}
-                  >
-                    {({ hovered, pressed }) => {
-                      if (isLockedGroup) {
-                        return (
-                          <>
-                            <Ionicons name="lock-closed-outline" size={15} color={COLORS.neutral} />
-                            <Text style={{ color: COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Kan inte raderas</Text>
-                          </>
-                        );
-                      }
-                      const hot = !!(hovered || pressed);
-                      const c = hot ? COLORS.danger : COLORS.neutral;
-                      return (
-                        <>
-                          <Ionicons name="trash-outline" size={15} color={c} />
-                          <Text style={{ color: c, fontWeight: '700', fontSize: 12 }}>Ta bort</Text>
-                        </>
-                      );
-                    }}
-                  </Pressable>
-                </View>
-              )}
+              {isOpen ? (
+                <Pressable
+                  onPress={() => setActiveModalGroupId(gid)}
+                  disabled={!hasContext}
+                  style={({ hovered, pressed }) => {
+                    const disabled = !hasContext;
+                    const borderColor = disabled ? COLORS.borderStrong : COLORS.blue;
+                    const bg = disabled ? '#F3F4F6' : (hovered || pressed ? '#EFF6FF' : '#fff');
+                    return {
+                      paddingVertical: 6,
+                      paddingHorizontal: 8,
+                      borderRadius: 10,
+                      backgroundColor: bg,
+                      borderWidth: 1,
+                      borderColor,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                    };
+                  }}
+                >
+                  <Ionicons name="person-add-outline" size={15} color={hasContext ? COLORS.blue : COLORS.neutral} />
+                  <Text style={{ color: hasContext ? COLORS.blue : COLORS.neutral, fontWeight: '700', fontSize: 12 }}>Lägg till</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {!isOpen ? null : (
-              <View style={{ paddingHorizontal: 12, paddingBottom: 10, paddingTop: 8, backgroundColor: '#fff' }}>
-                <View style={{ borderTopWidth: 1, borderTopColor: COLORS.tableBorder }}>
+              <View style={{ paddingHorizontal: 14, paddingBottom: 14, paddingTop: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: COLORS.tableBorder }}>
+                <View>
                   {(groupHasPending || flashSaved) ? (
                     <View style={{ paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder, backgroundColor: groupHasPending ? '#FFF7ED' : '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 40 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
@@ -865,7 +932,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                     </View>
                   ) : null}
 
-                  <View style={{ paddingVertical: 6, paddingHorizontal: 10, flexDirection: 'row', gap: 10 }}>
+                  <View style={{ paddingVertical: 8, paddingHorizontal: 10, flexDirection: 'row', gap: 10, backgroundColor: COLORS.bgMuted, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder }}>
                     <Text style={{ flex: 0.9, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Roll</Text>
                     <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Namn</Text>
                     <Text style={{ flex: 1.1, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Företag</Text>
@@ -875,116 +942,102 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                   </View>
 
                   {displayMembers.length === 0 ? (
-                    <View style={{ paddingVertical: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder }}>
+                    <View style={{ paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, backgroundColor: '#fff' }}>
                       <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga deltagare i gruppen.</Text>
                     </View>
                   ) : (
-                    displayMembers.map((m) => {
+                    displayMembers.map((m, memberIndex) => {
                       const mid = String(m?.id || '');
-                      const isCompanyGroup = isLockedGroup;
-                      const currentRole = String(m?.role || '').trim();
-                      const baseRole = String((!m?._pendingAdded ? (baseMembers.find((x) => String(x?.id || '') === mid)?.role) : '') || '').trim();
+                      const currentRoles = Array.isArray(m?.roles) ? m.roles : [];
                       const isEditingRole =
                         !!roleEditTarget &&
                         String(roleEditTarget?.groupId || '') === String(gid) &&
                         String(roleEditTarget?.memberId || '') === String(mid);
-                      const roleIsPreset = isPresetCompanyRole(currentRole);
                       const roleDirty = !!m?._pendingRole;
+                      const rowBg = memberIndex % 2 === 0 ? '#fff' : '#FAFAFA';
                       return (
-                        <View key={mid} style={{ paddingVertical: 5, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                          {isCompanyGroup ? (
-                            isEditingRole ? (
-                              <TextInput
-                                value={roleEditText}
-                                onChangeText={setRoleEditText}
-                                placeholder="Roll"
-                                placeholderTextColor="#94A3B8"
-                                autoFocus={Platform.OS === 'web'}
-                                onBlur={() => commitRoleEdit({ groupId: gid, memberId: mid, prevRole: currentRole, baseRole: baseRole })}
-                                onSubmitEditing={() => commitRoleEdit({ groupId: gid, memberId: mid, prevRole: currentRole, baseRole: baseRole })}
-                                style={{
-                                  flex: 0.9,
-                                  flexBasis: 0,
-                                  flexShrink: 1,
-                                  minWidth: 0,
-                                  borderWidth: 1,
-                                  borderColor: roleDirty ? '#F59E0B' : COLORS.inputBorder,
-                                  borderRadius: 8,
-                                  paddingVertical: 4,
-                                  paddingHorizontal: 6,
-                                  fontSize: 12,
-                                  color: COLORS.text,
-                                  backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
-                                  ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
-                                }}
-                              />
-                            ) : (
-                              <Pressable
-                                onPress={(e) => {
-                                  // If role is custom text, clicking goes straight to edit.
-                                  if (currentRole && !roleIsPreset) {
-                                    beginRoleEdit({ groupId: gid, memberId: mid, currentRole });
-                                    return;
-                                  }
-                                  openRolePicker(e, { groupId: gid, memberId: mid, displayRole: currentRole, baseRole });
-                                }}
-                                title={Platform.OS === 'web' ? 'Välj roll' : undefined}
-                                style={({ hovered, pressed }) => {
-                                  const hot = !!(hovered || pressed);
-                                  return {
-                                    flex: 0.9,
-                                    flexBasis: 0,
-                                    flexShrink: 1,
-                                    minWidth: 0,
-                                    borderWidth: 1,
-                                    borderColor: roleDirty ? '#F59E0B' : (hot ? COLORS.blue : COLORS.inputBorder),
-                                    borderRadius: 8,
-                                    paddingVertical: 4,
-                                    paddingHorizontal: 6,
-                                    backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
+                        <View key={mid} style={{ paddingVertical: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, backgroundColor: rowBg, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                          <View style={{ flex: 0.9, flexBasis: 0, flexShrink: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                            <Pressable
+                              onPress={(e) => openRolePicker(e, { groupId: gid, memberId: mid, currentRoles })}
+                              title={Platform.OS === 'web' ? 'Lägg till roll' : undefined}
+                              style={({ hovered, pressed }) => {
+                                const hot = hovered || pressed;
+                                return {
+                                  flexShrink: 0,
+                                  padding: 4,
+                                  borderRadius: 6,
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  ...(hot ? { backgroundColor: 'rgba(25, 118, 210, 0.1)' } : {}),
+                                  ...(Platform.OS === 'web' ? {
+                                    cursor: 'pointer',
+                                    ...(hot ? { boxShadow: '0 0 0 1px rgba(25, 118, 210, 0.25)' } : {}),
+                                  } : {}),
+                                };
+                              }}
+                              accessibilityLabel="Lägg till roll"
+                            >
+                              <Ionicons name="add" size={18} color={COLORS.blue} />
+                            </Pressable>
+                            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                              {currentRoles.map((roleLabel) => (
+                                <View
+                                  key={roleLabel}
+                                  style={{
                                     flexDirection: 'row',
                                     alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    gap: 6,
-                                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                                  };
-                                }}
-                              >
-                                <Text
-                                  style={{ fontSize: 12, color: currentRole ? COLORS.text : '#94A3B8' }}
-                                  numberOfLines={1}
+                                    gap: 4,
+                                    backgroundColor: roleDirty ? '#FEF3C7' : '#EFF6FF',
+                                    borderWidth: 1,
+                                    borderColor: roleDirty ? '#F59E0B' : '#BFDBFE',
+                                    borderRadius: 6,
+                                    paddingVertical: 2,
+                                    paddingLeft: 6,
+                                    paddingRight: 2,
+                                  }}
                                 >
-                                  {currentRole || 'Välj roll'}
-                                </Text>
-                                <Ionicons name={currentRole && !roleIsPreset ? 'create-outline' : 'chevron-down'} size={14} color={COLORS.neutral} />
-                              </Pressable>
-                            )
-                          ) : (
-                            <TextInput
-                              defaultValue={String(currentRole || '')}
-                              placeholder="Roll"
-                              placeholderTextColor="#94A3B8"
-                              onBlur={(e) => {
-                                const nextRole = String(e?.nativeEvent?.text ?? currentRole ?? '').trim();
-                                stageRoleChange(gid, mid, nextRole, baseRole);
-                              }}
-                              style={{
-                                flex: 0.9,
-                                flexBasis: 0,
-                                flexShrink: 1,
-                                minWidth: 0,
-                                borderWidth: 1,
-                                borderColor: roleDirty ? '#F59E0B' : COLORS.inputBorder,
-                                borderRadius: 8,
-                                paddingVertical: 4,
-                                paddingHorizontal: 6,
-                                fontSize: 12,
-                                color: COLORS.text,
-                                backgroundColor: roleDirty ? '#FFFBEB' : '#fff',
-                                ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
-                              }}
-                            />
-                          )}
+                                  <Text style={{ fontSize: 11, color: COLORS.text, fontWeight: '500' }} numberOfLines={1}>
+                                    {roleLabel}
+                                  </Text>
+                                  <Pressable
+                                    onPress={() => stageRoleRemove(gid, mid, roleLabel, currentRoles)}
+                                    style={({ hovered, pressed }) => ({
+                                      padding: 2,
+                                      borderRadius: 4,
+                                      backgroundColor: (hovered || pressed) ? 'rgba(0,0,0,0.08)' : 'transparent',
+                                    })}
+                                    accessibilityLabel={`Ta bort roll ${roleLabel}`}
+                                  >
+                                    <Ionicons name="close" size={14} color={COLORS.textSubtle} />
+                                  </Pressable>
+                                </View>
+                              ))}
+                              {isEditingRole ? (
+                                <TextInput
+                                  value={roleEditText}
+                                  onChangeText={setRoleEditText}
+                                  placeholder="Egen roll"
+                                  placeholderTextColor="#94A3B8"
+                                  autoFocus={Platform.OS === 'web'}
+                                  onBlur={() => commitRoleEdit({ groupId: gid, memberId: mid, currentRoles })}
+                                  onSubmitEditing={() => commitRoleEdit({ groupId: gid, memberId: mid, currentRoles })}
+                                  style={{
+                                    minWidth: 80,
+                                    borderWidth: 1,
+                                    borderColor: COLORS.inputBorder,
+                                    borderRadius: 6,
+                                    paddingVertical: 4,
+                                    paddingHorizontal: 6,
+                                    fontSize: 12,
+                                    color: COLORS.text,
+                                    backgroundColor: '#fff',
+                                    ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                                  }}
+                                />
+                              ) : null}
+                            </View>
+                          </View>
                           <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.text }} numberOfLines={1}>
                             {String(m?.name || '—')}
                           </Text>
@@ -1005,10 +1058,13 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                                 paddingVertical: 4,
                                 paddingHorizontal: 4,
                                 borderRadius: 8,
-                                backgroundColor: (hovered || pressed) ? 'rgba(220, 38, 38, 0.08)' : 'transparent',
+                                backgroundColor: (hovered || pressed) ? 'rgba(220, 38, 38, 0.12)' : 'transparent',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                               })}
                             >
-                              <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
+                              {({ hovered, pressed }) => (
+                                <Ionicons name="trash-outline" size={16} color={(hovered || pressed) ? COLORS.danger : COLORS.textSubtle} />
+                              )}
                             </Pressable>
                           </View>
                         </View>
@@ -1022,31 +1078,136 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         );
       })}
 
+      <Modal visible={!!renameGroupModal} transparent animationType="fade" onRequestClose={() => setRenameGroupModal(null)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setRenameGroupModal(null)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, padding: 20, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 12 }}>Byt namn på grupp</Text>
+            <TextInput
+              value={renameGroupDraft}
+              onChangeText={setRenameGroupDraft}
+              placeholder="T.ex. Leverantörer, Byggledning"
+              placeholderTextColor="#94A3B8"
+              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 16, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <Pressable onPress={() => setRenameGroupModal(null)} style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.textMuted }}>Avbryt</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  const gid = renameGroupModal?.gid;
+                  const next = String(renameGroupDraft || '').trim();
+                  if (gid && next) {
+                    updateGroupTitle(gid, next);
+                    setRenameGroupModal(null);
+                    setRenameGroupDraft('');
+                  }
+                }}
+                disabled={!String(renameGroupDraft || '').trim()}
+                style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: (hovered || pressed) ? COLORS.blueHover : COLORS.blue, opacity: !String(renameGroupDraft || '').trim() ? 0.5 : 1 })}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Spara</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={addGroupModalOpen} transparent animationType="fade" onRequestClose={() => setAddGroupModalOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setAddGroupModalOpen(false)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, padding: 20, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 12 }}>Ny grupp</Text>
+            <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Gruppnamn (obligatoriskt)</Text>
+            <TextInput
+              value={addGroupName}
+              onChangeText={setAddGroupName}
+              placeholder="T.ex. Leverantörer, Byggledning"
+              placeholderTextColor="#94A3B8"
+              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 16, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <Pressable onPress={() => setAddGroupModalOpen(false)} style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.textMuted }}>Avbryt</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  const title = String(addGroupName || '').trim();
+                  if (title) {
+                    addGroup({ title });
+                    setAddGroupModalOpen(false);
+                    setAddGroupName('');
+                  }
+                }}
+                disabled={!String(addGroupName || '').trim()}
+                style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: !String(addGroupName || '').trim() ? COLORS.border : (hovered || pressed) ? COLORS.blueHover : COLORS.blue, opacity: !String(addGroupName || '').trim() ? 0.6 : 1 })}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Skapa</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {Platform.OS === 'web' ? (
+        <ContextMenu
+          visible={!!groupMenuAnchor}
+          x={groupMenuAnchor?.x ?? 0}
+          y={groupMenuAnchor?.y ?? 0}
+          items={groupMenuItems}
+          onClose={() => setGroupMenuAnchor(null)}
+          onSelect={async (it) => {
+            const a = groupMenuAnchor;
+            if (!a?.gid || !it) return;
+            setGroupMenuAnchor(null);
+            if (String(it.key) === 'rename') {
+              setRenameGroupDraft(String(a.title || '').trim() || '');
+              setRenameGroupModal({ gid: a.gid, currentTitle: a.title });
+              return;
+            }
+            if (String(it.key) === 'delete') {
+              const count = Number(a.participantCount) || 0;
+              const msg = count > 0
+                ? `Gruppen innehåller ${count} person(er). Ta bort dem först, eller bekräfta att du vill radera gruppen och alla i den.`
+                : 'Ta bort gruppen?';
+              const ok = await confirmWebOrNative(msg);
+              if (ok) removeGroup(a.gid);
+            }
+          }}
+        />
+      ) : null}
+
       {Platform.OS === 'web' ? (
         <ContextMenu
           visible={roleMenuVisible}
           x={roleMenuPos.x}
           y={roleMenuPos.y}
           items={roleMenuItems}
+          compact
+          maxWidth={260}
           onClose={closeRoleMenu}
           onSelect={(it) => {
             const t = roleMenuTarget;
             const gid = String(t?.groupId || '').trim();
             const mid = String(t?.memberId || '').trim();
-            const displayRole = String(t?.displayRole || '').trim();
-            const baseRole = String(t?.baseRole || '').trim();
+            const currentRoles = Array.isArray(t?.currentRoles) ? t.currentRoles : [];
             if (!gid || !mid || !it) return;
+            if (String(it.key || '') === 'expand') {
+              setRoleMenuAdvancedOpen(true);
+              return;
+            }
+            if (String(it.key || '').startsWith('header:') || String(it.key || '').startsWith('sep-')) return;
 
             if (String(it.key || '') === 'custom') {
               closeRoleMenu();
-              beginRoleEdit({ groupId: gid, memberId: mid, currentRole: displayRole });
+              beginRoleEdit({ groupId: gid, memberId: mid, currentRole: '' });
               return;
             }
 
             const key = String(it.key || '');
             if (key.startsWith('preset:')) {
-              const label = key.slice('preset:'.length);
-              stageRoleChange(gid, mid, String(label || '').trim(), baseRole);
+              const label = key.slice('preset:'.length).trim();
+              if (it.disabled) { closeRoleMenu(); return; }
+              stageRoleAdd(gid, mid, label, currentRoles);
               closeRoleMenu();
               return;
             }

@@ -5,7 +5,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { v4 as uuidv4 } from 'uuid';
 import CompactMonthCalendar from '../../../../../../../../components/common/CompactMonthCalendar';
@@ -16,6 +16,8 @@ import { fetchCompanyContacts, updateProjectInfoImportantDateFromTimeline } from
 import { emitProjectUpdated } from '../../../../../../../../components/projectBus';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 import { useProjectTimelineDates } from '../../../../../../../../hooks/useProjectTimelineDates';
+import { cancelOutlookEvent, updateOutlookEvent } from '../../../../../../../../services/outlook/outlookCalendarService';
+import ContextMenu from '../../../../../../../../components/ContextMenu';
 
 import DateModal from './tidsplan/DateModal';
 
@@ -37,7 +39,7 @@ const COLORS = {
 const FW_REG = '400';
 const FW_MED = '500';
 
-const CONTENT_MAX_WIDTH = 960;
+const CONTENT_MAX_WIDTH = 1200;
 
 function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -258,6 +260,16 @@ function formatTimeRangePlain(startTime, endTime) {
   return '';
 }
 
+/** Single source of truth: Outlook invitation sent (for UI "Kallelse skickad" and delete warning). */
+function hasOutlookInvitation(item) {
+  return Boolean(
+    item?.outlookEventId ||
+    item?.outlook?.eventId ||
+    item?.outlookStatus === 'sent' ||
+    item?.outlook === 'sent'
+  );
+}
+
 function formatTimeLabel(startTime, endTime) {
   const range = formatTimeRangePlain(startTime, endTime);
   return range ? `kl. ${range}` : '';
@@ -290,22 +302,59 @@ function normalizeParticipants(raw) {
     .sort((a, b) => participantSortKey(a).localeCompare(participantSortKey(b), 'sv'));
 }
 
-export default function TidsplanViktigaDatumView({ projectId, companyId, project, hidePageHeader = false }) {
+export default function TidsplanViktigaDatumView({ projectId, companyId, project, hidePageHeader = false, navigationParams }) {
   const todayIso = React.useMemo(() => toIsoDate(new Date()), []);
 
   const timeline = useProjectTimelineDates({ companyId, projectId });
-  const items = React.useMemo(
-    () => (Array.isArray(timeline?.customDates) ? timeline.customDates : []),
-    [timeline?.customDates]
-  );
+
+  const navSelectedIso = React.useMemo(() => {
+    const iso = navigationParams?.selectedIso;
+    return isValidIsoDate(iso) ? String(iso) : '';
+  }, [navigationParams?.selectedIso]);
+
+  const [flashIsoFromNav, setFlashIsoFromNav] = React.useState('');
+  React.useEffect(() => {
+    if (!navSelectedIso) return;
+    setFlashIsoFromNav(navSelectedIso);
+    const t = setTimeout(() => setFlashIsoFromNav(''), 2500);
+    return () => clearTimeout(t);
+  }, [navSelectedIso]);
+
+  /** Optimistic update: hide these ids from the list until Firestore snapshot confirms (or rollback on error). */
+  const [optimisticRemovedIds, setOptimisticRemovedIds] = React.useState(() => []);
+
+  const items = React.useMemo(() => {
+    const list = Array.isArray(timeline?.customDates) ? timeline.customDates : [];
+    const removed = Array.isArray(optimisticRemovedIds) ? optimisticRemovedIds : [];
+    if (removed.length === 0) return list;
+    return list.filter((item) => !removed.includes(String(item?.id || '')));
+  }, [timeline?.customDates, optimisticRemovedIds]);
+
+  React.useEffect(() => {
+    const list = Array.isArray(timeline?.customDates) ? timeline.customDates : [];
+    const idsInBackend = new Set(list.map((d) => String(d?.id || '')));
+    setOptimisticRemovedIds((prev) => prev.filter((id) => idsInBackend.has(id)));
+  }, [timeline?.customDates]);
 
   const scrollRef = React.useRef(null);
   const scrollYRef = React.useRef(0);
   const rowRefsRef = React.useRef({});
 
-  const [selectedIso, setSelectedIso] = React.useState('');
-  const [flashIso, setFlashIso] = React.useState('');
+  const [selectedDateId, setSelectedDateId] = React.useState('');
+  const [flashDateId, setFlashDateId] = React.useState('');
   const flashTimerRef = React.useRef(null);
+
+  const selectedIsoFromList = React.useMemo(() => {
+    const item = (timeline?.customDates || []).find((d) => String(d?.id || '') === selectedDateId);
+    return item && isValidIsoDate(item?.date) ? String(item.date) : '';
+  }, [timeline?.customDates, selectedDateId]);
+  const flashIsoFromList = React.useMemo(() => {
+    const item = (timeline?.customDates || []).find((d) => String(d?.id || '') === flashDateId);
+    return item && isValidIsoDate(item?.date) ? String(item.date) : '';
+  }, [timeline?.customDates, flashDateId]);
+
+  const selectedIso = selectedIsoFromList || navSelectedIso;
+  const flashIso = flashIsoFromNav || flashIsoFromList;
 
   const {
     groups: organisationGroups,
@@ -408,6 +457,34 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     initial: null,
   }));
 
+  /** Modal when deleting a date that has an Outlook event: user chooses cancel-in-Outlook or local-only. */
+  const [outlookDeleteModal, setOutlookDeleteModal] = React.useState(() => ({
+    open: false,
+    item: null,
+    choice: null,
+  }));
+
+  /** Row overflow menu (⋯): anchor { item, x, y } when open. */
+  const [rowMenuAnchor, setRowMenuAnchor] = React.useState(null);
+
+  /** Modal: "Avboka möte i Outlook" only (no delete) – requires confirmation. */
+  const [cancelOutlookOnlyModal, setCancelOutlookOnlyModal] = React.useState({ open: false, item: null });
+
+  /** Optimistic Outlook status per id: 'sending' | 'sent'. Cleared when Firestore snapshot has outlookStatus. */
+  const [optimisticOutlook, setOptimisticOutlook] = React.useState(() => ({}));
+
+  React.useEffect(() => {
+    const list = Array.isArray(timeline?.customDates) ? timeline.customDates : [];
+    const sentIds = new Set(list.filter((d) => d?.outlookStatus === 'sent' || hasOutlookInvitation(d)).map((d) => String(d?.id || '')));
+    setOptimisticOutlook((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((id) => {
+        if (sentIds.has(id)) delete next[id];
+      });
+      return next;
+    });
+  }, [timeline?.customDates]);
+
   const sortedItems = React.useMemo(() => {
     const list = Array.isArray(items) ? items : [];
     const withSortKey = list.map((it) => {
@@ -423,12 +500,12 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       .map(({ _sortKey, ...rest }) => rest);
   }, [items]);
 
-  const flashSelection = React.useCallback((iso) => {
-    const value = isValidIsoDate(iso) ? String(iso) : '';
-    if (!value) return;
-    setFlashIso(value);
+  const flashSelectionById = React.useCallback((id) => {
+    const sid = id != null ? String(id).trim() : '';
+    if (!sid) return;
+    setFlashDateId(sid);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-    flashTimerRef.current = setTimeout(() => setFlashIso(''), 1200);
+    flashTimerRef.current = setTimeout(() => setFlashDateId(''), 1200);
   }, []);
 
   React.useEffect(() => {
@@ -471,8 +548,13 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     const list = Array.isArray(sortedItems) ? sortedItems : [];
     const match = list.find((it) => String(it?.date || '').trim() === targetIso);
     if (!match) return;
-    scrollToItemId(match.id);
-  }, [sortedItems, scrollToItemId]);
+    const mid = String(match?.id || '').trim();
+    if (mid) {
+      setSelectedDateId(mid);
+      flashSelectionById(mid);
+    }
+    scrollToItemId(mid);
+  }, [sortedItems, scrollToItemId, flashSelectionById]);
 
   const openAddGeneric = React.useCallback(() => {
     setModalState({
@@ -499,6 +581,8 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     const source = String(it?.source || '').trim();
     const sourceKey = String(it?.sourceKey || '').trim();
     const locked = typeof it?.locked === 'boolean' ? it.locked : undefined;
+    const outlookEventId = it?.outlookEventId != null && String(it.outlookEventId).trim() ? String(it.outlookEventId).trim() : null;
+    const outlookStatus = ['sent', 'updated', 'cancelled'].includes(String(it?.outlookStatus || '').trim()) ? String(it.outlookStatus).trim() : undefined;
     setModalState({
       open: true,
       initial: {
@@ -514,6 +598,8 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         endTime: String(it?.endTime || '').trim(),
         participants: normalizeParticipants(it?.participants),
         outlookInvitationPrepared: !!it?.outlookInvitationPrepared,
+        outlookEventId: outlookEventId || undefined,
+        outlookStatus,
 
         // Sync metadata (Projektinformation-milestones)
         source: source || null,
@@ -526,14 +612,11 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
   const projectSubjectMeta = React.useMemo(() => extractProjectNumberAndName(project), [project]);
 
   const prepareOutlookInvitation = React.useCallback((it) => {
-    // IMPORTANT LIMITATIONS (user-driven status):
-    // - DigitalKontroll generates a local .ics file only (no backend / no Outlook integration).
-    // - DigitalKontroll does NOT verify that the invitation is actually sent.
-    // - No sync with Outlook afterwards, and no tracking of responses (accepted/declined).
-    // - Status is set when the user clicks the action (intent), not when Outlook sends.
     const id = String(it?.id || '').trim();
     const iso = isValidIsoDate(it?.date) ? String(it.date) : '';
     if (!id || !iso) return;
+
+    setOptimisticOutlook((prev) => ({ ...prev, [id]: 'sending' }));
 
     const eventType = deriveEventType(it);
     const title = formatExternalCalendarSubject({
@@ -567,25 +650,161 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       attendees,
     });
 
-    if (!ics) return;
+    if (!ics) {
+      setOptimisticOutlook((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
 
-    // Web: download an .ics file. The OS/browser decides whether Outlook opens automatically
-    // or if the user must open the downloaded invite manually.
     if (Platform.OS === 'web') {
       const safe = String(eventType || 'mote').replace(/[^a-z0-9\- _]/gi, '').trim() || 'mote';
       const filename = `${iso}_${safe}.ics`;
       downloadIcsOnWeb(filename, ics);
     }
 
-    // User-driven status: assume intent to send once user chose to open the invite.
-    try {
-      timeline.updateCustomDate(id, { outlookInvitationPrepared: true });
-    } catch (_e) {}
+    timeline
+      .updateCustomDate(id, { outlookInvitationPrepared: true, outlookStatus: 'sent' })
+      .then(() => {
+        setOptimisticOutlook((prev) => ({ ...prev, [id]: 'sent' }));
+      })
+      .catch(() => {
+        setOptimisticOutlook((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      });
   }, [timeline, projectSubjectMeta]);
 
   const closeModal = React.useCallback(() => {
     setModalState({ open: false, initial: null });
   }, []);
+
+  const requestDeleteDate = React.useCallback((it) => {
+    if (!it) return;
+    const src = String(it?.source || '').trim();
+    if (src === 'projectinfo' || src === 'projectInformation') return;
+    const id = String(it?.id || '').trim();
+
+    if (hasOutlookInvitation(it)) {
+      setOutlookDeleteModal({ open: true, item: it, choice: null });
+      return;
+    }
+
+    const doRemove = () => {
+      setOptimisticRemovedIds((prev) => [...prev, id]);
+      timeline.removeCustomDate(id).catch((e) => {
+        setOptimisticRemovedIds((prev) => prev.filter((x) => x !== id));
+        const msg = String(e?.message || e || 'Kunde inte radera datum.');
+        if (Platform.OS === 'web' && typeof window?.alert === 'function') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Kunde inte radera', msg);
+        }
+      });
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
+      const ok = window.confirm('Vill du radera detta datum?');
+      if (ok) doRemove();
+    } else {
+      Alert.alert('Radera datum', 'Vill du radera detta datum?', [
+        { text: 'Avbryt', style: 'cancel' },
+        { text: 'Radera', style: 'destructive', onPress: doRemove },
+      ]);
+    }
+  }, [timeline]);
+
+  const confirmOutlookReminderAndDelete = React.useCallback(() => {
+    const item = outlookDeleteModal?.item;
+    const id = item ? String(item.id || '').trim() : '';
+
+    setOutlookDeleteModal({ open: false, item: null, choice: null });
+    if (!id) return;
+
+    setOptimisticRemovedIds((prev) => [...prev, id]);
+    timeline.removeCustomDate(id).catch((e) => {
+      setOptimisticRemovedIds((prev) => prev.filter((x) => x !== id));
+      const msg = String(e?.message || e || 'Kunde inte radera datum.');
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Kunde inte radera', msg);
+      }
+    });
+  }, [outlookDeleteModal?.item, timeline]);
+
+  const closeOutlookDeleteModal = React.useCallback(() => {
+    setOutlookDeleteModal({ open: false, item: null, choice: null });
+  }, []);
+
+  const openRowMenu = React.useCallback((e, it) => {
+    e?.stopPropagation?.();
+    const id = String(it?.id || '').trim();
+    if (!id) return;
+    const rowEl = rowRefsRef.current?.[id];
+    if (rowEl && typeof rowEl.measure === 'function') {
+      rowEl.measure((_x, _y, width, height, pageX, pageY) => {
+        const x = Number(pageX ?? 0) + Number(width ?? 0) - 24;
+        const y = Number(pageY ?? 0) + Number(height ?? 0) + 4;
+        setRowMenuAnchor({ item: it, x, y });
+      });
+    } else {
+      const ev = e?.nativeEvent;
+      const x = Number(ev?.clientX ?? ev?.pageX ?? 0);
+      const y = Number(ev?.clientY ?? ev?.pageY ?? 0) + 4;
+      setRowMenuAnchor({ item: it, x, y });
+    }
+  }, []);
+
+  const closeRowMenu = React.useCallback(() => setRowMenuAnchor(null), []);
+
+  const onRowMenuSelect = React.useCallback((menuItem) => {
+    const it = rowMenuAnchor?.item;
+    if (!it) return;
+    const key = menuItem?.key;
+    if (key === 'edit') {
+      openEdit(it);
+    } else if (key === 'delete') {
+      requestDeleteDate(it);
+    } else if (key === 'resend_outlook') {
+      prepareOutlookInvitation(it);
+    } else if (key === 'cancel_outlook') {
+      setCancelOutlookOnlyModal({ open: true, item: it });
+    }
+    closeRowMenu();
+  }, [rowMenuAnchor?.item, openEdit, requestDeleteDate, prepareOutlookInvitation, closeRowMenu]);
+
+  const confirmCancelOutlookOnly = React.useCallback(async () => {
+    const it = cancelOutlookOnlyModal?.item;
+    const id = it ? String(it.id || '').trim() : '';
+    const outlookEventId = it?.outlookEventId != null ? String(it.outlookEventId).trim() : '';
+    setCancelOutlookOnlyModal({ open: false, item: null });
+    if (!id || !outlookEventId) return;
+    try {
+      await cancelOutlookEvent(outlookEventId);
+      await timeline.updateCustomDate(id, { outlookStatus: 'cancelled' });
+    } catch (_e) {}
+  }, [cancelOutlookOnlyModal?.item, timeline]);
+
+  const rowMenuItems = React.useMemo(() => {
+    const it = rowMenuAnchor?.item;
+    if (!it) return [];
+    const src = String(it?.source || '').trim();
+    const isProjectInfo = src === 'projectinfo' || src === 'projectInformation';
+    const hasOutlook = hasOutlookInvitation(it);
+    const list = [
+      { key: 'edit', label: 'Redigera datum / möte', icon: '✏️' },
+      { key: 'delete', label: 'Radera datum', icon: '🗑️', danger: true, disabled: isProjectInfo },
+    ];
+    if (hasOutlook) {
+      list.push({ key: 'resend_outlook', label: 'Skicka om Outlook-kallelse', icon: '📤' });
+      list.push({ key: 'cancel_outlook', label: 'Avboka möte i Outlook', icon: '❌', danger: true });
+    }
+    return list;
+  }, [rowMenuAnchor?.item]);
 
   const onSaveModal = React.useCallback(async (payload) => {
     const p = payload && typeof payload === 'object' ? payload : {};
@@ -660,17 +879,25 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
 
       const current = items.find((x) => String(x?.id || '') === id) || null;
       const prevIso = isValidIsoDate(current?.date) ? String(current.date) : '';
+      const outlookEventId = current?.outlookEventId != null && String(current.outlookEventId).trim() ? String(current.outlookEventId).trim() : null;
+      const updatedPayload = {
+        date: iso,
+        title: t,
+        type: ty,
+        customType: ty,
+        description: desc,
+        participants,
+        startTime,
+        endTime,
+      };
+      if (outlookEventId) {
+        try {
+          await updateOutlookEvent(outlookEventId, { date: iso, startTime, endTime, title: t, description: desc });
+        } catch (_e) {}
+        updatedPayload.outlookStatus = 'updated';
+      }
       try {
-        await timeline.updateCustomDate(id, {
-          date: iso,
-          title: t,
-          type: ty,
-          customType: ty,
-          description: desc,
-          participants,
-          startTime,
-          endTime,
-        });
+        await timeline.updateCustomDate(id, updatedPayload);
       } catch (_e) {}
 
       // Two-way sync: unlocked Projektinformation milestone => update Projektinformation field.
@@ -710,7 +937,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     closeModal();
   }, [closeModal, timeline]);
 
-  const onDeleteModal = React.useCallback(async () => {
+  const onDeleteModal = React.useCallback(() => {
     const id = String(modalState?.initial?.id || '').trim();
     if (!id) {
       closeModal();
@@ -725,10 +952,23 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       return;
     }
 
-    try {
-      await timeline.removeCustomDate(id);
-    } catch (_e) {}
+    if (hasOutlookInvitation(current)) {
+      closeModal();
+      setOutlookDeleteModal({ open: true, item: current, choice: null });
+      return;
+    }
+
+    setOptimisticRemovedIds((prev) => [...prev, id]);
     closeModal();
+    timeline.removeCustomDate(id).catch((e) => {
+      setOptimisticRemovedIds((prev) => prev.filter((x) => x !== id));
+      const msg = String(e?.message || e || 'Kunde inte radera datum.');
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Kunde inte radera', msg);
+      }
+    });
   }, [modalState?.initial?.id, closeModal, timeline, items]);
 
   const projectLabel = React.useMemo(() => {
@@ -810,11 +1050,11 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         <View style={{ borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, overflow: 'hidden' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7', backgroundColor: '#fff' }}>
             <Text style={{ width: 110, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Datum</Text>
-            <Text style={{ flexGrow: 0, flexShrink: 1, flexBasis: 500, minWidth: 0, maxWidth: 540, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Titel</Text>
+            <Text style={{ flex: 1, minWidth: 120, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Titel</Text>
             <Text style={{ width: 86, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Deltagare</Text>
             <Text style={{ width: 92, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Status</Text>
             <Text style={{ width: 150, fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, textAlign: 'left' }}>Outlook</Text>
-            <View style={{ width: 30 }} />
+            <View style={{ width: 44, alignItems: 'flex-end' }} />
           </View>
 
           {sortedItems.length === 0 ? (
@@ -831,9 +1071,12 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
               const badge = statusBadgeStyle(status);
               const participantCount = Array.isArray(it?.participants) ? it.participants.length : 0;
 
-              const isSelected = !!iso && iso === selectedIso;
-              const isFlashing = !!iso && iso === flashIso;
-              const outlookPrepared = !!it?.outlookInvitationPrepared;
+              const rowId = String(it?.id || '').trim();
+              const isSelected = rowId === selectedDateId;
+              const isFlashing = rowId === flashDateId;
+              const outlookStatusValue = ['sent', 'updated', 'cancelled'].includes(String(it?.outlookStatus || '').trim()) ? String(it.outlookStatus).trim() : undefined;
+              const optimisticStatus = optimisticOutlook[rowId];
+              const effectiveSent = optimisticStatus === 'sent' || (outlookStatusValue !== 'cancelled' && hasOutlookInvitation(it));
               const outlookHelp = 'DigitalKontroll skapar en .ics-kallelse. Outlook kan öppnas automatiskt eller behöva öppnas manuellt. DigitalKontroll skickar inte kallelsen – du skickar i Outlook.';
 
               const src = String(it?.source || '').trim();
@@ -851,9 +1094,9 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                     else rowRefsRef.current[id] = r;
                   }}
                   onPress={() => {
-                    if (!iso) return;
-                    setSelectedIso(iso);
-                    flashSelection(iso);
+                    if (!rowId) return;
+                    setSelectedDateId(rowId);
+                    flashSelectionById(rowId);
                     openEdit(it);
                   }}
                   style={({ hovered, pressed }) => ({
@@ -895,7 +1138,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                     )}
                   </View>
 
-                  <View style={{ flexGrow: 0, flexShrink: 1, flexBasis: 500, minWidth: 0, maxWidth: 540, paddingRight: 12 }}>
+                  <View style={{ flex: 1, minWidth: 120, paddingRight: 12 }}>
                     <Text style={{ fontSize: 13, color: COLORS.text, fontWeight: FW_REG }} numberOfLines={1}>
                       {String(it?.title || it?.type || '—')}
                     </Text>
@@ -927,49 +1170,75 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                   </View>
 
                   <View style={{ width: 150, alignItems: 'flex-start' }}>
-                    <Pressable
-                      onPress={(e) => {
-                        e?.stopPropagation?.();
-                        prepareOutlookInvitation(it);
-                      }}
-                      hitSlop={8}
-                      accessibilityLabel="Skicka Outlook-kallelse"
-                      {...(Platform.OS === 'web' ? { title: outlookHelp } : {})}
-                      style={({ hovered, pressed }) => ({
-                        padding: 4,
-                        borderRadius: 8,
-                        backgroundColor: hovered || pressed ? '#F1F5F9' : 'transparent',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 6,
-                      })}
-                    >
-                      <Ionicons
-                        name={outlookPrepared ? 'checkmark-circle' : 'mail-outline'}
-                        size={18}
-                        color={outlookPrepared ? COLORS.green : COLORS.textSubtle}
-                      />
-                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: outlookPrepared ? COLORS.green : COLORS.textSubtle }} numberOfLines={1}>
-                        {outlookPrepared ? 'Kallelse skickad' : 'Ej skickad'}
-                      </Text>
-                    </Pressable>
+                    {outlookStatusValue === 'cancelled' ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="close-circle-outline" size={18} color={COLORS.textSubtle} />
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
+                          ❌ Kallelse avbokad
+                        </Text>
+                      </View>
+                    ) : outlookStatusValue === 'updated' ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="refresh" size={18} color={COLORS.textSubtle} />
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
+                          🔄 Uppdaterad kallelse
+                        </Text>
+                      </View>
+                    ) : optimisticStatus === 'sending' ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <ActivityIndicator size="small" color={COLORS.textSubtle} />
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
+                          Skickar…
+                        </Text>
+                      </View>
+                    ) : effectiveSent ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="checkmark-circle" size={18} color={COLORS.green} />
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.green }} numberOfLines={1}>
+                          ✔ Kallelse skickad
+                        </Text>
+                      </View>
+                    ) : (
+                      <Pressable
+                        onPress={(e) => {
+                          e?.stopPropagation?.();
+                          prepareOutlookInvitation(it);
+                        }}
+                        hitSlop={8}
+                        accessibilityLabel="Skicka Outlook-kallelse"
+                        {...(Platform.OS === 'web' ? { title: outlookHelp } : {})}
+                        style={({ hovered, pressed }) => ({
+                          padding: 4,
+                          borderRadius: 8,
+                          backgroundColor: hovered || pressed ? '#F1F5F9' : 'transparent',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                        })}
+                      >
+                        <Ionicons name="mail-outline" size={18} color={COLORS.textSubtle} />
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
+                          Ej skickad
+                        </Text>
+                      </Pressable>
+                    )}
                   </View>
 
-                  <View style={{ width: 30, alignItems: 'flex-end' }}>
+                  <View style={{ width: 44, alignItems: 'flex-end' }}>
                     <Pressable
-                      onPress={(e) => {
-                        e?.stopPropagation?.();
-                        openEdit(it);
-                      }}
+                      onPress={(e) => openRowMenu(e, it)}
                       hitSlop={8}
-                      {...(Platform.OS === 'web' && isDateLocked ? { title: lockTooltip } : {})}
+                      accessibilityLabel="Visa åtgärder"
                       style={({ hovered, pressed }) => ({
-                        padding: 4,
+                        width: 32,
+                        height: 32,
                         borderRadius: 8,
+                        alignItems: 'center',
+                        justifyContent: 'center',
                         backgroundColor: hovered || pressed ? '#F1F5F9' : 'transparent',
                       })}
                     >
-                      <Ionicons name={isDateLocked ? 'lock-closed-outline' : 'create-outline'} size={16} color={COLORS.textSubtle} />
+                      <Ionicons name="ellipsis-vertical" size={18} color={COLORS.textSubtle} />
                     </Pressable>
                   </View>
                 </Pressable>
@@ -978,26 +1247,24 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
           )}
         </View>
 
-        <View style={{ marginTop: 18, marginBottom: 10 }}>
+        <View style={{ marginTop: 14, marginBottom: 6 }}>
           <View style={{ height: 1, backgroundColor: '#EEF2F7' }} />
         </View>
 
-        <CompactMonthCalendar
-          items={sortedItems}
-          todayIso={todayIso}
-          onPressItem={openEdit}
-          selectedIso={selectedIso}
-          flashIso={flashIso}
-          onPressDay={(iso, dayItems) => {
-            const targetIso = isValidIsoDate(iso) ? String(iso) : '';
-            setSelectedIso(targetIso);
-            if (targetIso) flashSelection(targetIso);
-            const list = Array.isArray(dayItems) ? dayItems : [];
-            if (list.length > 0 && targetIso) scrollToFirstItemForIso(targetIso);
-          }}
-          colors={COLORS}
-          maxWidth={980}
-          typography={{
+        <View style={{ paddingVertical: 8, paddingHorizontal: 0 }}>
+          <CompactMonthCalendar
+            items={sortedItems}
+            todayIso={todayIso}
+            onPressItem={openEdit}
+            selectedIso={selectedIso}
+            flashIso={flashIso}
+            onPressDay={(iso, dayItems) => {
+              const targetIso = isValidIsoDate(iso) ? String(iso) : '';
+              if (targetIso && Array.isArray(dayItems) && dayItems.length > 0) scrollToFirstItemForIso(targetIso);
+            }}
+            colors={COLORS}
+            maxWidth={CONTENT_MAX_WIDTH}
+            typography={{
             headerTitleStyle: { fontWeight: FW_MED },
             navTextStyle: { fontWeight: FW_MED },
             navTodayTextStyle: { fontWeight: FW_MED },
@@ -1008,9 +1275,10 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
             eventTitleStyle: { fontSize: 13, fontWeight: FW_REG, color: COLORS.text },
             eventTypeStyle: { fontSize: 12, fontWeight: FW_REG, color: COLORS.textSubtle },
             moreTextStyle: { fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle },
-          }}
-          options={{ todayDayNumberUsesAccentText: false, neutralEventText: true, showTimeInEventCell: true }}
-        />
+            }}
+            options={{ todayDayNumberUsesAccentText: false, neutralEventText: true, showTimeInEventCell: true }}
+          />
+        </View>
       </View>
 
       <DateModal
@@ -1030,6 +1298,131 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         peopleLoading={!!contactCandidates?.loading || !!organisationLoading}
         peopleError={String(contactCandidates?.error || organisationError || '').trim()}
       />
+
+      <Modal visible={!!outlookDeleteModal?.open} transparent animationType="fade" onRequestClose={closeOutlookDeleteModal}>
+        <Pressable
+          onPress={closeOutlookDeleteModal}
+          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
+        >
+          <Pressable
+            onPress={(e) => e?.stopPropagation?.()}
+            style={{
+              width: '100%',
+              maxWidth: 440,
+              alignSelf: 'center',
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+              overflow: 'hidden',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
+            }}
+          >
+            <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
+              <Text style={{ fontSize: 16, fontWeight: FW_MED, color: COLORS.text }}>Outlook-kallelse är skickad</Text>
+            </View>
+            <View style={{ padding: 14, gap: 12 }}>
+              <Text style={{ fontSize: 13, color: COLORS.textMuted }}>
+                Detta möte har skickats som kallelse via Outlook. Om du raderar datumet här tas det inte bort i Outlook. Glöm inte att även avboka mötet i Outlook.
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7' }}>
+              <Pressable
+                onPress={closeOutlookDeleteModal}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#CBD5E1',
+                  backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmOutlookReminderAndDelete}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: hovered || pressed ? COLORS.blueHover : COLORS.blue,
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#fff' }}>Radera ändå</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <ContextMenu
+        visible={!!rowMenuAnchor}
+        x={rowMenuAnchor?.x ?? 0}
+        y={rowMenuAnchor?.y ?? 0}
+        items={rowMenuItems}
+        onSelect={onRowMenuSelect}
+        onClose={closeRowMenu}
+        align="right"
+        direction="down"
+      />
+
+      <Modal visible={!!cancelOutlookOnlyModal?.open} transparent animationType="fade" onRequestClose={() => setCancelOutlookOnlyModal({ open: false, item: null })}>
+        <Pressable
+          onPress={() => setCancelOutlookOnlyModal({ open: false, item: null })}
+          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
+        >
+          <Pressable
+            onPress={(e) => e?.stopPropagation?.()}
+            style={{
+              width: '100%',
+              maxWidth: 400,
+              alignSelf: 'center',
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+              overflow: 'hidden',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
+            }}
+          >
+            <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
+              <Text style={{ fontSize: 16, fontWeight: FW_MED, color: COLORS.text }}>❌ Avboka möte i Outlook</Text>
+            </View>
+            <View style={{ padding: 14 }}>
+              <Text style={{ fontSize: 13, color: COLORS.textMuted }}>
+                Vill du avboka detta möte i Outlook? Datumet finns kvar i DigitalKontroll.
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7' }}>
+              <Pressable
+                onPress={() => setCancelOutlookOnlyModal({ open: false, item: null })}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#CBD5E1',
+                  backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmCancelOutlookOnly}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: hovered || pressed ? COLORS.blueHover : COLORS.blue,
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#fff' }}>Bekräfta</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }

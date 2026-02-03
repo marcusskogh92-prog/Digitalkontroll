@@ -45,6 +45,9 @@ function normalizeGroups(raw) {
             const mid = String(m?.id || '').trim() || uuidv4();
             const source = String(m?.source || '').trim() || 'contact';
             const refId = String(m?.refId || '').trim() || null;
+            const roles = Array.isArray(m?.roles)
+              ? m.roles.map((r) => String(r || '').trim()).filter(Boolean)
+              : (m?.role ? [String(m.role).trim()].filter(Boolean) : []);
             return {
               id: mid,
               source,
@@ -53,7 +56,7 @@ function normalizeGroups(raw) {
               company: String(m?.company || '').trim() || '',
               email: String(m?.email || '').trim() || '',
               phone: String(m?.phone || '').trim() || '',
-              role: String(m?.role || '').trim() || '',
+              roles,
             };
           })
           .filter(Boolean),
@@ -199,7 +202,7 @@ export function useProjectOrganisation({ companyId, projectId }) {
   );
 
   const addMember = useCallback(
-    async ({ groupId, candidate, role }) => {
+    async ({ groupId, candidate, role, roles: rolesParam }) => {
       const gid = String(groupId || '').trim();
       if (!gid) return { ok: false, reason: 'no_group' };
 
@@ -210,7 +213,9 @@ export function useProjectOrganisation({ companyId, projectId }) {
       const refId = String(c.refId || '').trim();
       if (!source || !refId) return { ok: false, reason: 'bad_candidate' };
 
-      const roleText = String(role || '').trim();
+      const roles = Array.isArray(rolesParam)
+        ? rolesParam.map((r) => String(r || '').trim()).filter(Boolean)
+        : (role ? [String(role).trim()].filter(Boolean) : []);
 
       const current = latestRef.current;
       const groups = current.groups || [];
@@ -229,7 +234,7 @@ export function useProjectOrganisation({ companyId, projectId }) {
         company: String(c.company || '').trim() || '',
         email: String(c.email || '').trim() || '',
         phone: String(c.phone || '').trim() || '',
-        role: roleText,
+        roles,
       };
 
       const next = {
@@ -266,12 +271,14 @@ export function useProjectOrganisation({ companyId, projectId }) {
     [save]
   );
 
-  const updateMemberRole = useCallback(
-    async ({ groupId, memberId, role }) => {
+  const updateMemberRoles = useCallback(
+    async ({ groupId, memberId, roles: rolesParam }) => {
       const gid = String(groupId || '').trim();
       const mid = String(memberId || '').trim();
       if (!gid || !mid) return;
-      const r = String(role || '').trim();
+      const roles = Array.isArray(rolesParam)
+        ? rolesParam.map((r) => String(r || '').trim()).filter(Boolean)
+        : [];
       const current = latestRef.current;
       const next = {
         ...current,
@@ -279,7 +286,9 @@ export function useProjectOrganisation({ companyId, projectId }) {
           if (String(g?.id || '') !== gid) return g;
           return {
             ...g,
-            members: (g.members || []).map((m) => (String(m?.id || '') === mid ? { ...m, role: r } : m)),
+            members: (g.members || []).map((m) =>
+              String(m?.id || '') === mid ? { ...m, roles } : m
+            ),
           };
         }),
       };
@@ -299,9 +308,9 @@ export function useProjectOrganisation({ companyId, projectId }) {
       updateGroupTitle,
       addMember,
       removeMember,
-      updateMemberRole,
+      updateMemberRoles,
     }),
-    [organisation, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRole]
+    [organisation, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRoles]
   );
 
   return api;

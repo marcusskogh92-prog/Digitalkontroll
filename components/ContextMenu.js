@@ -15,6 +15,8 @@ export default function ContextMenu({
   direction = 'down',
   offsetX = 0,
   offsetY = 0,
+  compact = false,
+  maxWidth,
 }) {
   if (!visible) return null;
 
@@ -182,8 +184,9 @@ export default function ContextMenu({
             borderRadius: 12,
             borderWidth: 1,
             borderColor: '#e0e0e0',
-            paddingVertical: 8,
-            minWidth: 200,
+            paddingVertical: compact ? 4 : 8,
+            minWidth: compact ? 180 : 200,
+            ...(maxWidth != null ? { maxWidth: Number(maxWidth) } : {}),
             shadowColor: '#000',
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.15,
@@ -204,14 +207,14 @@ export default function ContextMenu({
                 <View
                   key={item.key || `sep-${idx}`}
                   style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
+                    paddingVertical: compact ? 4 : 8,
+                    paddingHorizontal: compact ? 10 : 12,
                     borderBottomWidth: idx < items.length - 1 ? 1 : 0,
                     borderColor: '#f0f0f0',
                   }}
                 >
                   {item.label ? (
-                    <Text style={{ fontSize: 11, color: '#999', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    <Text style={{ fontSize: compact ? 10 : 11, color: '#999', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                       {item.label}
                     </Text>
                   ) : (
@@ -222,12 +225,12 @@ export default function ContextMenu({
             }
             
             const iconColor = item.danger 
-              ? '#D32F2F' 
+              ? '#B91C1C' 
               : (isSelected && item.phaseColor 
                 ? item.phaseColor 
                 : '#666');
             const textColor = item.danger 
-              ? '#D32F2F' 
+              ? '#B91C1C' 
               : (isSelected && item.phaseColor 
                 ? item.phaseColor 
                 : '#222');
@@ -247,14 +250,14 @@ export default function ContextMenu({
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
+                  paddingVertical: compact ? 5 : 10,
+                  paddingHorizontal: compact ? 10 : 14,
                   borderBottomWidth: idx < items.length - 1 && !items[idx + 1]?.isSeparator ? 1 : 0,
                   borderColor: '#f0f0f0',
                   opacity: disabled ? 0.5 : 1,
                   backgroundColor: isSelected 
                     ? (item.phaseColor ? item.phaseColor + '10' : '#e3f2fd')
-                    : (item.danger ? '#fff5f5' : '#fff'),
+                    : (item.danger ? '#FEF2F2' : '#fff'),
                   ...(Platform.OS === 'web' ? {
                     transition: 'background-color 0.15s ease',
                   } : {}),
@@ -262,7 +265,7 @@ export default function ContextMenu({
                 onMouseEnter={Platform.OS === 'web' ? (e) => {
                   if (!disabled && e?.currentTarget) {
                     if (item.danger) {
-                      e.currentTarget.style.backgroundColor = '#ffe5e5';
+                      e.currentTarget.style.backgroundColor = '#FECACA';
                     } else if (isSelected && item.phaseColor) {
                       e.currentTarget.style.backgroundColor = item.phaseColor + '15';
                     } else {
@@ -273,7 +276,7 @@ export default function ContextMenu({
                 onMouseLeave={Platform.OS === 'web' ? (e) => {
                   if (e?.currentTarget) {
                     if (item.danger) {
-                      e.currentTarget.style.backgroundColor = '#fff5f5';
+                      e.currentTarget.style.backgroundColor = '#FEF2F2';
                     } else if (isSelected && item.phaseColor) {
                       e.currentTarget.style.backgroundColor = item.phaseColor + '10';
                     } else {
@@ -282,20 +285,20 @@ export default function ContextMenu({
                   }
                 } : undefined}
               >
-                <View style={{ width: 24, marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: compact ? 20 : 24, marginRight: compact ? 8 : 12, alignItems: 'center', justifyContent: 'center' }}>
                   {item.icon ? (
-                    React.isValidElement(item.icon) 
-                      ? item.icon 
-                      : (item.iconName 
-                        ? <Ionicons name={item.iconName} size={18} color={iconColor} />
-                        : <Text style={{ fontSize: 18 }}>{String(item.icon)}</Text>)
+                    React.isValidElement(item.icon)
+                      ? item.icon
+                      : (item.iconName
+                        ? <Ionicons name={item.iconName} size={compact ? 16 : 18} color={iconColor} />
+                        : <Text style={{ fontSize: compact ? 14 : 18 }}>{String(item.icon)}</Text>)
                   ) : null}
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{
-                    fontSize: 14,
+                    fontSize: compact ? 12 : 14,
                     color: textColor,
-                    fontWeight: isSelected ? '600' : '400',
+                    fontWeight: (item.danger || isSelected) ? '600' : '400',
                   }} numberOfLines={1}>
                     {item.label}
                   </Text>

@@ -6,17 +6,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Linking,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { v4 as uuidv4 } from 'uuid';
@@ -28,14 +28,16 @@ import ContextMenu from '../../../../../../../../components/ContextMenu';
 import ErrorBoundary from '../../../../../../../../components/ErrorBoundary';
 import { auth, formatSharePointProjectFolderName, logCompanyActivity, patchCompanyProject } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
-import { ensureFolderPath, getDriveItemByPath, resolveProjectRootFolderPath as resolveProjectRootFolderPathInSite, uploadFile } from '../../../../../../../../services/azure/fileService';
+import { deleteFile, ensureFolderPath, getDriveItemByPath, renameDriveItemByIdGuarded, resolveProjectRootFolderPath as resolveProjectRootFolderPathInSite, uploadFile } from '../../../../../../../../services/azure/fileService';
 import { getSiteByUrl } from '../../../../../../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../../../../../../services/sharepoint/sharePointStructureService';
 import {
-    createFragaSvarItem,
-    deleteFragaSvarItem,
-    listenFragaSvarItems,
-    updateFragaSvarItem,
+  createFragaSvarItem,
+  deleteFragaSvarItem,
+  getFragaSvarItemsOnce,
+  listenFragaSvarItems,
+  setFragaSvarNextFsSeq,
+  updateFragaSvarItem,
 } from '../../../../services/fragaSvarService';
 
 import { subscribeFsExcelSyncState } from '../../../../services/fragaSvarExcelSyncQueue';
@@ -672,6 +674,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const [sortDirection, setSortDirection] = useState('asc');
 
   const [optimisticallyDeletedById, setOptimisticallyDeletedById] = useState({});
+  // Prevent race condition when deleting FS items: only one row can be in "deleting" state at a time
+  const [deletingFsId, setDeletingFsId] = useState(null);
 
   const [statusMenuVisible, setStatusMenuVisible] = useState(false);
   const [statusMenuPos, setStatusMenuPos] = useState({ x: 20, y: 64 });
@@ -683,6 +687,37 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const [panelVisible, setPanelVisible] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [selectedRowId, setSelectedRowId] = useState(null);
+
+  // Rättighet att radera FS: endast admin/projektadmin (företagsadmin) för aktuellt företag
+  const [canDeleteFs, setCanDeleteFs] = useState(false);
+  useEffect(() => {
+    if (!hasContext || !companyId) {
+      setCanDeleteFs(false);
+      return;
+    }
+    const user = auth?.currentUser;
+    if (!user?.getIdTokenResult) {
+      setCanDeleteFs(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const tokenRes = await user.getIdTokenResult(false).catch(() => null);
+        const claims = tokenRes?.claims;
+        const companyFromClaims = String(claims?.companyId || '').trim();
+        const sameCompany = companyFromClaims === String(companyId || '').trim();
+        const isAdmin = !!(claims?.admin === true || String(claims?.role || '').toLowerCase() === 'admin');
+        const isSuperadmin = !!(claims?.superadmin === true || String(claims?.role || '').toLowerCase() === 'superadmin');
+        if (!cancelled) {
+          setCanDeleteFs(sameCompany && (isAdmin || isSuperadmin));
+        }
+      } catch (_e) {
+        if (!cancelled) setCanDeleteFs(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hasContext, companyId]);
 
   // Quick-create (collapsible panel)
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
@@ -2018,28 +2053,131 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
 
   const handleDelete = async (it) => {
     if (!hasContext) return;
-    const ok = await confirmWebOrNative('Är du säker att du vill radera raden?');
+    // Prevent race condition when deleting FS items: block new delete while one is in progress
+    if (deletingFsId) return;
+    const ok = await confirmWebOrNative(
+      'Är du säker på att du vill radera denna fråga?\n\nDetta tar bort frågan, tillhörande mappar och Excel-logg och kan inte ångras.'
+    );
     if (!ok) return;
     const deletedId = String(it?.id || '').trim();
+    const item = deletedId ? (items.find((i) => String(i?.id) === deletedId) || it) : it;
+    setDeletingFsId(deletedId);
+    const deleteStartedAt = Date.now();
+    const MIN_DELETE_LOADING_MS = 500; // Säkerställ att "Raderar…" alltid syns minst en kort stund
+    // Ge React och webbläsaren tid att rita "Raderar…" innan vi startar async-jobbet (annars kan raden försvinna innan nästa paint)
+    await new Promise((r) => setTimeout(r, 120));
     try {
-      const user = auth?.currentUser || null;
-      await deleteFragaSvarItem(companyId, projectId, it?.id, {
-        userId: user?.uid || null,
-        displayName: safeText(user?.displayName) || safeText(user?.email) || null,
-      });
+      // 1. Ta bort FS-dokumentet i Firestore (Excel-loggen uppdateras via kö)
+      await deleteFragaSvarItem(companyId, projectId, deletedId);
 
-      // Consider the row deleted only after the mutation (incl Excel write-through) succeeds.
+      // 2. Excel uppdateras asynkront av deleteFragaSvarItem (enqueueFsExcelSync)
+
+      // 3. Ta bort FS-mappen i FrågaSvar
+      const folderPath = safeText(item?.sharePointFolderPath);
+      if (folderPath) {
+        try {
+          const siteId = await resolveProjectSiteId();
+          await deleteFile(folderPath, safeText(companyId), siteId);
+        } catch (folderErr) {
+          const msg = String(folderErr?.message || folderErr || '').toLowerCase();
+          const is404 = msg.includes('404') || folderErr?.status === 404 || folderErr?.response?.status === 404;
+          if (is404) {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('[FS delete] Mappen hittades inte (404), fortsätter:', folderPath);
+            }
+          } else {
+            if (typeof console !== 'undefined' && console.warn) {
+              console.warn('[FS delete] Kunde inte ta bort mapp, fortsätter:', folderErr?.message || folderErr);
+            }
+          }
+        }
+      }
+
+      // 4. Uppdatera numrering/metadata (stäng glappet)
+      const remaining = await getFragaSvarItemsOnce(companyId, projectId);
+      const renumbers = [];
+      for (let i = 0; i < remaining.length; i += 1) {
+        const newSeq = i + 1;
+        const rem = remaining[i];
+        const currentSeq = Number(rem?.fsSeq) || 0;
+        if (currentSeq !== newSeq) {
+          renumbers.push({
+            item: rem,
+            newSeq,
+            newFsNumber: `FS${String(newSeq).padStart(2, '0')}`,
+          });
+        }
+      }
+      renumbers.sort((a, b) => (Number(b?.item?.fsSeq) || 0) - (Number(a?.item?.fsSeq) || 0));
+      if (renumbers.length > 0) {
+        const siteId = await resolveProjectSiteId();
+        const rootFsPath = await resolveFragaSvarRootPath();
+        let projectRootPath;
+        try {
+          projectRootPath = await resolveProjectRootFolderPath();
+        } catch (_e) {
+          projectRootPath = '';
+        }
+        for (const { item: renumItem, newSeq, newFsNumber } of renumbers) {
+          const title = safeText(renumItem?.title) || deriveTitleFromText(renumItem?.question) || 'Ärende';
+          const newFolderName = sanitizeSharePointFolderName(`${newFsNumber} – ${title}`) || newFsNumber;
+          const currentPath = safeText(renumItem?.sharePointFolderPath);
+          if (currentPath) {
+            try {
+              const driveItem = await getDriveItemByPath(currentPath, siteId);
+              if (driveItem?.id) {
+                await renameDriveItemByIdGuarded({
+                  siteId,
+                  itemId: driveItem.id,
+                  newName: newFolderName,
+                  projectRootPath: projectRootPath || undefined,
+                  itemPath: currentPath,
+                });
+              }
+            } catch (folderErr) {
+              const msg = String(folderErr?.message || folderErr || '').toLowerCase();
+              const is404 = msg.includes('404') || folderErr?.status === 404;
+              if (!is404 && typeof console !== 'undefined' && console.warn) {
+                console.warn('[FS renumber] Kunde inte byta mappnamn, uppdaterar endast Firestore:', currentPath, folderErr?.message || folderErr);
+              }
+            }
+          }
+          const newPath = rootFsPath ? `${rootFsPath}/${newFolderName}` : newFolderName;
+          await updateFragaSvarItem(companyId, projectId, renumItem.id, {
+            fsSeq: newSeq,
+            fsNumber: newFsNumber,
+            sharePointFolderPath: newPath,
+            sharePointFolderName: newFolderName,
+          });
+        }
+        await setFragaSvarNextFsSeq(companyId, projectId, remaining.length + 1);
+      } else if (remaining.length === 0) {
+        await setFragaSvarNextFsSeq(companyId, projectId, 1);
+      }
+
+      // Säkerställ att "Raderar…" syns minst MIN_DELETE_LOADING_MS (annars kan det kännas som att inget hände)
+      const elapsed = Date.now() - deleteStartedAt;
+      if (elapsed < MIN_DELETE_LOADING_MS) {
+        await new Promise((r) => setTimeout(r, MIN_DELETE_LOADING_MS - elapsed));
+      }
+
+      // UI uppdateras först när alla steg lyckats
       if (deletedId) {
         setOptimisticallyDeletedById((prev) => ({ ...(prev || {}), [deletedId]: true }));
       }
-
-      if (deletedId && deletedId === String(selectedRowId || '').trim()) {
+      if (deletedId === String(selectedRowId || '').trim()) {
         setPanelVisible(false);
         setEditingId(null);
         setSelectedRowId(null);
       }
+      setError('');
+      Alert.alert('Klart', 'Frågan har raderats');
     } catch (e) {
-      setError(String(e?.message || e || 'Kunde inte ta bort.'));
+      const msg = String(e?.message || e || 'Kunde inte ta bort.');
+      setError(msg);
+      Alert.alert('Kunde inte radera', msg);
+    } finally {
+      setDeletingFsId(null);
     }
   };
 
@@ -2360,7 +2498,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     ansvarig: { width: 170 },
     svarSenast: { width: 130 },
     status: { width: 180 },
-    action: { width: 120 },
+    action: { width: 160 },
   };
 
   const toneForRow = (status, overdue) => {
@@ -2631,7 +2769,25 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                 borderRadius: 12,
                 backgroundColor: '#F8FAFC',
                 padding: 12,
+                position: 'relative',
               }}>
+                {quickSaving ? (
+                  <View style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(255,255,255,0.92)',
+                    borderRadius: 12,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 10,
+                  }}>
+                    <ActivityIndicator size="large" color={COLORS.blue} />
+                    <Text style={{ marginTop: 12, fontSize: 15, fontWeight: FW_MED, color: COLORS.text }}>Sparar fråga…</Text>
+                  </View>
+                ) : null}
                 <View
                   style={{
                     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
@@ -3127,6 +3283,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
       const expanded = safeText(selectedRowId) === id;
       const isUploading = !!rowUploadingById?.[id];
       const rowErr = safeText(rowUploadErrorById?.[id]);
+      // Prevent race condition when deleting FS items: disable row while delete in progress
+      const isDeleting = deletingFsId === id;
 
       const hasLiveKey = Object.prototype.hasOwnProperty.call(fsFolderFilesById || {}, id);
       const liveFiles = fsFolderFilesById?.[id];
@@ -3153,13 +3311,15 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           <View style={{ borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.tableBorder, overflow: 'hidden', borderBottomLeftRadius: isLastVisibleRow ? 12 : 0, borderBottomRightRadius: isLastVisibleRow ? 12 : 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
               <Pressable
-                onPress={() => toggleExpandedRow(it)}
+                onPress={isDeleting ? undefined : () => toggleExpandedRow(it)}
+                disabled={isDeleting}
                 style={({ hovered, pressed }) => ({
                   flex: 1,
                   flexDirection: 'row',
-                  backgroundColor: pressed ? 'rgba(25,118,210,0.04)' : tone.bg,
-                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : tone.bg),
+                  opacity: isDeleting ? 0.85 : 1,
+                  ...(Platform.OS === 'web' && hovered && !isDeleting ? { filter: 'brightness(0.99)' } : {}),
+                  ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
                 })}
               >
                 <View style={{ ...tableColStyles.byggdel, paddingVertical: 10, paddingHorizontal: 10 }}>
@@ -3201,18 +3361,20 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               </Pressable>
 
               <Pressable
-                onPress={(e) => openRowStatusMenu(e, it)}
+                onPress={isDeleting ? undefined : (e) => openRowStatusMenu(e, it)}
+                disabled={isDeleting}
                 style={({ hovered, pressed }) => ({
                   ...tableColStyles.status,
                   paddingVertical: 10,
                   paddingHorizontal: 10,
-                  backgroundColor: pressed ? 'rgba(25,118,210,0.04)' : tone.bg,
+                  backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : tone.bg),
+                  opacity: isDeleting ? 0.85 : 1,
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'flex-start',
                   gap: 8,
-                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  ...(Platform.OS === 'web' && hovered && !isDeleting ? { filter: 'brightness(0.99)' } : {}),
+                  ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
                 })}
               >
                 <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: tone.statusBorder, backgroundColor: tone.statusBg, flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
@@ -3224,26 +3386,55 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                 </View>
               </Pressable>
 
-              <Pressable
-                onPress={(e) => {
-                  stopPressPropagation(e);
-                  openAnswer(it);
-                }}
-                style={({ hovered, pressed }) => ({
-                  ...tableColStyles.action,
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  backgroundColor: pressed ? 'rgba(25,118,210,0.04)' : tone.bg,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'flex-start',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: '#fff' }}>
-                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>Svara</Text>
-                </View>
-              </Pressable>
+              <View style={{ ...tableColStyles.action, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 10, backgroundColor: isDeleting ? COLORS.bgMuted : tone.bg }}>
+                {isDeleting ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <ActivityIndicator size="small" color={COLORS.textMuted} />
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>Raderar…</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Pressable
+                      onPress={(e) => {
+                        stopPressPropagation(e);
+                        openAnswer(it);
+                      }}
+                      style={({ hovered, pressed }) => ({
+                        paddingVertical: 4,
+                        paddingHorizontal: 10,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: COLORS.inputBorder,
+                        backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : '#fff',
+                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>Svara</Text>
+                    </Pressable>
+                    {canDeleteFs ? (
+                      <Pressable
+                        onPress={(e) => {
+                          stopPressPropagation(e);
+                          handleDelete(it);
+                        }}
+                        style={({ hovered, pressed }) => ({
+                          paddingVertical: 4,
+                          paddingHorizontal: 10,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#FCA5A5',
+                          backgroundColor: pressed ? '#FEE2E2' : '#FEF2F2',
+                          ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.danger } : {}),
+                          ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                        })}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.danger }} numberOfLines={1}>Ta bort</Text>
+                      </Pressable>
+                    ) : null}
+                  </>
+                )}
+              </View>
             </View>
 
             {expanded ? (
@@ -4857,14 +5048,21 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
 
             {/* Footer */}
             <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {editingId ? (
-                <Pressable
-                  onPress={() => handleDelete({ id: editingId })}
-                  disabled={saving}
-                  style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', opacity: saving ? 0.7 : 1 }}
-                >
-                  <Text style={{ color: COLORS.danger, fontWeight: FW_MED }}>Ta bort</Text>
-                </Pressable>
+              {editingId && canDeleteFs ? (
+                deletingFsId === editingId ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 }}>
+                    <ActivityIndicator size="small" color={COLORS.danger} />
+                    <Text style={{ color: COLORS.textMuted, fontWeight: FW_MED }}>Raderar…</Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => handleDelete({ id: editingId })}
+                    disabled={saving || !!deletingFsId}
+                    style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', opacity: (saving || deletingFsId) ? 0.7 : 1 }}
+                  >
+                    <Text style={{ color: COLORS.danger, fontWeight: FW_MED }}>Ta bort</Text>
+                  </Pressable>
+                )
               ) : (
                 <View />
               )}

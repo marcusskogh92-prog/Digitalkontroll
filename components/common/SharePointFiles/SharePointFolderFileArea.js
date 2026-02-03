@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
 import { deleteDriveItemById, getDriveItemByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
@@ -8,12 +8,15 @@ import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
 import { buildLockedFileRename, normalizeLockedRenameBase, splitBaseAndExt as splitLockedBaseAndExt } from '../../../utils/lockedFileRename';
 import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDirectoryFiles';
+import { subscribeProjectFileComments } from '../../firebase';
 import ContextMenu from '../../ContextMenu';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
 import { useUploadManager } from '../uploads/UploadManagerContext';
 import SharePointFilePreviewPane from './SharePointFilePreviewPane';
 import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
+
+const DND_MOVE_TYPE = 'application/x-digitalkontroll-move';
 
 function joinPath(a, b) {
   const left = safeText(a).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -109,14 +112,6 @@ export default function SharePointFolderFileArea({
   // Example (AF): ['Förfrågningsunderlag', 'Administrativa föreskrifter (AF)']
   breadcrumbBaseSegments = null,
 
-  // AF-only (opt-in): keep file list visible and show a preview pane for clicked/selected files.
-  enableInlinePreview = false,
-
-  // Inline preview behavior:
-  // - 'toggle' (default): show a toolbar button to show/hide preview.
-  // - 'on-select-only': no toolbar button; preview pane only appears when a file is selected.
-  inlinePreviewMode = 'toggle',
-
   // Root folder for this view (e.g. ".../02 - Förfrågningsunderlag/01 - Administrativa föreskrifter (AF)")
   rootPath,
 
@@ -141,6 +136,7 @@ export default function SharePointFolderFileArea({
   // Keep "Senast ändrad" anchored to the right, while letting other columns share space closer to Filnamn.
   const COL_DATE_W = 140;
   const COL_MENU_W = 46;
+  const COL_SELECT_W = 34;
 
   const cid = safeText(companyId);
   const hasContext = Boolean(cid && safeText(rootPath));
@@ -215,11 +211,11 @@ export default function SharePointFolderFileArea({
   const [items, setItems] = useState([]);
 
   const [previewItemId, setPreviewItemId] = useState(null);
-  const [previewEnabled, setPreviewEnabled] = useState(false);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewNumPages, setPreviewNumPages] = useState(null);
+  const [fileCommentCount, setFileCommentCount] = useState({});
 
   // Web drag/drop state (single source of truth)
   const [isDragging, setIsDragging] = useState(false);
@@ -228,12 +224,13 @@ export default function SharePointFolderFileArea({
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
-  const lastWebClickRef = useRef({ id: '', t: 0 });
   const tableDragDepthRef = useRef(0);
   const tableRootRef = useRef(null);
   const isDraggingRef = useRef(false);
   const activeDropFolderRef = useRef('');
   const uploadEntriesWithPathsRef = useRef(null);
+  const handleWebDropToDropTargetRef = useRef(null);
+  const moveItemsToFolderRef = useRef(null);
 
   const uploadManager = useUploadManager();
   const [dragOverBreadcrumbRelPath, setDragOverBreadcrumbRelPath] = useState('');
@@ -252,10 +249,46 @@ export default function SharePointFolderFileArea({
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteTargets, setDeleteTargets] = useState([]); // bulk: flera objekt att radera
   const [deleteError, setDeleteError] = useState('');
+
+  // Urval med cirklar (SharePoint-stil) för bulk Flytta/Radera
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedItems = useMemo(() => {
+    const idSet = new Set(selectedIds.map(String).filter(Boolean));
+    return (Array.isArray(items) ? items : []).filter((it) => idSet.has(String(it?.id)));
+  }, [items, selectedIds]);
+  const selectableItems = useMemo(() => {
+    return (Array.isArray(items) ? items : []).filter((it) => {
+      if (!it?.id) return false;
+      if (it?.type === 'folder' && lockSystemFolder && isSystemFolder(it)) return false;
+      return true;
+    });
+  }, [items, lockSystemFolder, isSystemFolder]);
+  const toggleSelection = useCallback((id) => {
+    const s = String(id || '');
+    if (!s) return;
+    setSelectedIds((prev) => {
+      const set = new Set(prev.map(String));
+      if (set.has(s)) {
+        set.delete(s);
+      } else {
+        set.add(s);
+      }
+      return Array.from(set);
+    });
+  }, []);
+  const isIdSelected = useCallback((id) => selectedIds.includes(String(id || '')), [selectedIds]);
+  const selectAll = useCallback(() => {
+    setSelectedIds(selectableItems.map((it) => String(it?.id)).filter(Boolean));
+  }, [selectableItems]);
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+  const allSelected = selectableItems.length > 0 && selectedIds.length >= selectableItems.length;
+  const someSelected = selectedIds.length > 0;
 
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
+  const [moveTargets, setMoveTargets] = useState([]); // bulk: flera objekt att flytta
   const [moveSelectedPath, setMoveSelectedPath] = useState('');
   const [folderChildrenByPath, setFolderChildrenByPath] = useState({}); // path -> [{id,name,type}]
   const [folderExpanded, setFolderExpanded] = useState({});
@@ -287,30 +320,15 @@ export default function SharePointFolderFileArea({
 
   const isTableDragActive = Platform.OS === 'web' && enableWebDnD && isDragging && !safeText(activeDropFolder);
 
-  const isWidePreviewLayout = useMemo(() => {
-    const w = Dimensions.get('window')?.width || 1200;
-    return Platform.OS === 'web' && w >= 1180;
-  }, []);
-
-  const previewMode = String(inlinePreviewMode || 'toggle').trim().toLowerCase();
-
-  // Listan ska visa metadata (på web), men previewn ska vara ren.
+  // Listan ska visa metadata (på web).
   const showListMetadataColumns = Platform.OS === 'web';
   const isCompactTable = !showListMetadataColumns;
 
   const previewItem = useMemo(() => {
-    if (!enableInlinePreview) return null;
     const id = safeText(previewItemId);
     if (!id) return null;
     return (Array.isArray(items) ? items : []).find((x) => x?.type === 'file' && safeText(x?.id) === id) || null;
-  }, [enableInlinePreview, items, previewItemId]);
-
-  const isInlinePreviewVisible = Boolean(
-    enableInlinePreview &&
-    (previewMode === 'on-select-only'
-      ? !!previewItem
-      : previewEnabled),
-  );
+  }, [items, previewItemId]);
 
   const resolveSiteId = useCallback(async () => {
     const fromProject = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
@@ -359,18 +377,16 @@ export default function SharePointFolderFileArea({
       const folders = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'folder');
       const files = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file');
 
-      folders.sort((a, b) => {
-        if (pinSystemFolderLast) {
-          const aSys = isSystemFolder(a);
-          const bSys = isSystemFolder(b);
-          if (aSys && !bSys) return 1;
-          if (!aSys && bSys) return -1;
-        }
-        return safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' });
-      });
+      // AI-sammanställning (systemmapp) ska alltid vara längst ner i tabellen.
+      const systemFolderItems = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => isSystemFolder(f)) : [];
+      const otherFolders = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => !isSystemFolder(f)) : folders;
+
+      otherFolders.sort((a, b) =>
+        safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' })
+      );
       files.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' }));
 
-      setItems([...folders, ...files]);
+      setItems([...otherFolders, ...files, ...systemFolderItems]);
     } catch (e) {
       setError(String(e?.message || e || 'Kunde inte läsa filer från SharePoint.'));
       setItems([]);
@@ -409,6 +425,17 @@ export default function SharePointFolderFileArea({
     }
 
     const targetRel = resolveDropTargetRelativePath(dropTarget);
+    // Låsta systemmappen (t.ex. AI-sammanställning) ska inte acceptera drop – varken när vi släpper på mappen eller när vi är inne i den.
+    if (lockSystemFolder && safeText(systemFolderName)) {
+      if (normalizeKey(targetRel) === normalizeKey(systemFolderName)) {
+        setError('Denna mapp är låst. Du kan inte lägga filer här – den används för AI-genererat innehåll.');
+        return;
+      }
+      if (normalizeKey(relativePath) === normalizeKey(systemFolderName)) {
+        setError('Denna mapp är låst. Du kan inte lägga filer här – den används för AI-genererat innehåll.');
+        return;
+      }
+    }
     const uploader = uploadEntriesWithPathsRef.current;
     if (typeof uploader !== 'function') {
       // Uploader not ready yet (should be rare, but avoids TDZ / race issues)
@@ -438,7 +465,11 @@ export default function SharePointFolderFileArea({
         setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
       }
     })();
-  }, [resolveDropTargetRelativePath, siteId]);
+  }, [resolveDropTargetRelativePath, siteId, lockSystemFolder, systemFolderName, relativePath]);
+
+  useEffect(() => {
+    handleWebDropToDropTargetRef.current = handleWebDropToDropTarget;
+  }, [handleWebDropToDropTarget]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -473,8 +504,19 @@ export default function SharePointFolderFileArea({
       }
     };
 
+    const isOurMoveDrag = (evt) => {
+      try {
+        const types = Array.from(evt?.dataTransfer?.types || []);
+        return types.includes(DND_MOVE_TYPE);
+      } catch (_e) {
+        return false;
+      }
+    };
+
     const onDocDragOver = (evt) => {
-      if (!isFileDrag(evt)) return;
+      const isFile = isFileDrag(evt);
+      const isMove = isOurMoveDrag(evt);
+      if (!isFile && !isMove) return;
       try {
         evt.preventDefault();
       } catch (_e) {}
@@ -482,24 +524,93 @@ export default function SharePointFolderFileArea({
       const inside = isInsideTable(evt);
       if (inside) {
         setIsDraggingSafe(true);
+        if (isFile || isMove) {
+          let dropRelPath = null;
+          try {
+            let el = evt.target;
+            while (el) {
+              const path = el.getAttribute?.('data-droppath') ?? el.getAttribute?.('data-drop-path');
+              if (path != null && String(path).trim() !== '') {
+                dropRelPath = String(path).trim();
+                break;
+              }
+              el = el?.parentElement;
+            }
+          } catch (_e2) {}
+          setActiveDropFolderSafe(dropRelPath);
+        }
       } else {
-        // If you leave the app/window (or drag outside the table), make sure we never get stuck.
         resetDragState();
       }
     };
 
     const onDocDrop = (evt) => {
-      if (!isFileDrag(evt)) return;
       try {
         evt.preventDefault();
       } catch (_e) {}
 
-      // Important: don't clear folder-hover state when dropping inside the table,
-      // otherwise the drop target can be lost before component onDrop runs.
       if (!isInsideTable(evt)) {
         resetDragState();
-        setError('Släpp filerna i tabellen för att ladda upp.');
+        if (isFileDrag(evt)) setError('Släpp filerna i tabellen för att ladda upp.');
+        return;
       }
+
+      try {
+        evt.stopPropagation();
+      } catch (_e2) {}
+
+      const dt = evt?.dataTransfer;
+      const moveData = dt?.getData?.(DND_MOVE_TYPE);
+      if (moveData) {
+        let dropRelPath = null;
+        try {
+          let el = evt.target;
+          while (el) {
+            const path = el.getAttribute?.('data-droppath') ?? el.getAttribute?.('data-drop-path');
+            if (path != null && String(path).trim() !== '') {
+              dropRelPath = String(path).trim();
+              break;
+            }
+            el = el?.parentElement;
+          }
+        } catch (_e3) {}
+        const targetRel = dropRelPath || relativePath;
+        const moveFn = moveItemsToFolderRef.current;
+        if (typeof moveFn === 'function') {
+          try {
+            const payload = JSON.parse(moveData);
+            const ids = Array.isArray(payload?.ids) ? payload.ids : [];
+            if (ids.length > 0 && targetRel !== null && targetRel !== undefined) {
+              moveFn(ids, targetRel);
+            }
+          } catch (_e4) {}
+        }
+        resetDragState();
+        return;
+      }
+
+      if (!isFileDrag(evt)) {
+        resetDragState();
+        return;
+      }
+
+      let dropRelPath = null;
+      try {
+        let el = evt.target;
+        while (el) {
+          const path = el.getAttribute?.('data-droppath') ?? el.getAttribute?.('data-drop-path');
+          if (path != null && String(path).trim() !== '') {
+            dropRelPath = String(path).trim();
+            break;
+          }
+          el = el?.parentElement;
+        }
+      } catch (_e3) {}
+      const handler = handleWebDropToDropTargetRef.current;
+      if (typeof handler === 'function') {
+        handler(evt, dropRelPath ? { type: 'folder-row', relativePath: dropRelPath } : { type: 'current-folder' });
+      }
+      resetDragState();
     };
 
     document.addEventListener('dragenter', onDocDragOver, true);
@@ -511,7 +622,7 @@ export default function SharePointFolderFileArea({
       document.removeEventListener('dragover', onDocDragOver, true);
       document.removeEventListener('drop', onDocDrop, true);
     };
-  }, [enableWebDnD, resetDragState, setIsDraggingSafe]);
+  }, [enableWebDnD, resetDragState, setIsDraggingSafe, setActiveDropFolderSafe]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -592,21 +703,40 @@ export default function SharePointFolderFileArea({
 
 
 
-  // Navigating to another folder should clear file preview and return to the calm list-default.
+  // Navigating to another folder closes preview modal and clears preview item.
   useEffect(() => {
-    if (!enableInlinePreview) return;
     setPreviewModalOpen(false);
-    setPreviewEnabled(false);
     setPreviewItemId(null);
-  }, [enableInlinePreview, relativePath]);
+  }, [relativePath]);
 
-  // Changing the preview target resets viewer state.
+  // Changing the preview target resets viewer state (zoom, page).
   useEffect(() => {
-    if (!enableInlinePreview) return;
     setPreviewZoom(1);
     setPreviewPage(1);
     setPreviewNumPages(null);
-  }, [enableInlinePreview, previewItemId]);
+  }, [previewItemId]);
+
+  const pid = project?.id ?? project?.projectId ?? project?.projectNumber ?? null;
+  useEffect(() => {
+    if (!cid || !pid) {
+      setFileCommentCount({});
+      return () => {};
+    }
+    const unsubscribe = subscribeProjectFileComments(cid, pid, {
+      onData(comments) {
+        const byFile = {};
+        (Array.isArray(comments) ? comments : []).forEach((c) => {
+          const fid = c?.fileId ? String(c.fileId).trim() : null;
+          if (fid) byFile[fid] = (byFile[fid] || 0) + 1;
+        });
+        setFileCommentCount(byFile);
+      },
+      onError() {
+        setFileCommentCount({});
+      },
+    });
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
+  }, [cid, pid]);
 
   const existingFileNamesLower = useMemo(() => {
     const set = new Set();
@@ -933,6 +1063,7 @@ export default function SharePointFolderFileArea({
   const startMove = (it) => {
     setMoveError('');
     setMoveTarget(it);
+    setMoveTargets(it ? [it] : []);
     setMoveSelectedPath('');
     setFolderChildrenByPath({});
     setFolderExpanded({});
@@ -1011,17 +1142,54 @@ export default function SharePointFolderFileArea({
       const destId = safeText(destItem?.id);
       if (!destId) throw new Error('Kunde inte identifiera målmappen i SharePoint.');
 
-      await moveDriveItemById(siteId, it.id, destId);
+      const toMove = moveTargets.length > 0 ? moveTargets : (moveTarget ? [moveTarget] : []);
+      for (const item of toMove) {
+        if (item?.id) await moveDriveItemById(siteId, item.id, destId);
+      }
       setMoveOpen(false);
       setMoveTarget(null);
+      setMoveTargets([]);
+      clearSelection();
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
       } catch (_e) {}
     } catch (e) {
-      setMoveError(String(e?.message || e || 'Kunde inte flytta filen.'));
+      setMoveError(String(e?.message || e || 'Kunde inte flytta.'));
     }
   };
+
+  const moveItemsToFolder = useCallback(async (itemIds, targetRel) => {
+    const ids = Array.isArray(itemIds) ? itemIds.filter(Boolean) : [];
+    if (ids.length === 0 || !safeText(siteId)) return;
+    if (lockSystemFolder && safeText(systemFolderName) && normalizeKey(targetRel) === normalizeKey(systemFolderName)) {
+      setError('Denna mapp är låst. Du kan inte flytta filer hit.');
+      return;
+    }
+    const destPath = joinPath(rootPath, targetRel);
+    if (!destPath) return;
+    setError('');
+    try {
+      const destItem = await getDriveItemByPath(siteId, `/${destPath}`);
+      const destId = safeText(destItem?.id);
+      if (!destId) throw new Error('Kunde inte identifiera målmappen.');
+      const idSet = new Set(ids.map(String));
+      const toMove = (Array.isArray(items) ? items : []).filter((it) => it?.id && idSet.has(String(it.id)));
+      for (const item of toMove) {
+        await moveDriveItemById(siteId, item.id, destId);
+      }
+      await refresh();
+      try {
+        if (typeof onDidMutate === 'function') onDidMutate();
+      } catch (_e) {}
+    } catch (e) {
+      setError(String(e?.message || e || 'Kunde inte flytta.'));
+    }
+  }, [siteId, rootPath, items, refresh, onDidMutate, lockSystemFolder, systemFolderName]);
+
+  useEffect(() => {
+    moveItemsToFolderRef.current = moveItemsToFolder;
+  }, [moveItemsToFolder]);
 
   const menuItems = useMemo(() => {
     const it = menuTarget;
@@ -1055,7 +1223,7 @@ export default function SharePointFolderFileArea({
         key: 'move',
         label: 'Flytta…',
         iconName: 'return-up-forward-outline',
-        disabled: !isFile,
+        disabled: !(isFile || isFolder),
         subtitle: 'Inom Förfrågningsunderlag',
       },
       { isSeparator: true, key: 'sep2' },
@@ -1106,6 +1274,7 @@ export default function SharePointFolderFileArea({
     if (key === 'delete') {
       setDeleteError('');
       setDeleteTarget(it);
+      setDeleteTargets([it]);
       setDeleteOpen(true);
       return;
     }
@@ -1160,11 +1329,12 @@ export default function SharePointFolderFileArea({
   };
 
   const performDelete = async () => {
-    const it = deleteTarget;
-    if (!it) return;
+    const toDelete = deleteTargets.length > 0 ? deleteTargets : (deleteTarget ? [deleteTarget] : []);
+    if (toDelete.length === 0) return;
 
-    if (lockSystemFolder && isSystemFolder(it)) {
-      setDeleteError('Denna systemmapp kan inte raderas.');
+    const locked = toDelete.find((it) => it?.type === 'folder' && lockSystemFolder && isSystemFolder(it));
+    if (locked) {
+      setDeleteError('En av de valda objekten är en skyddad systemmapp och kan inte raderas.');
       return;
     }
     if (!safeText(siteId)) {
@@ -1174,9 +1344,13 @@ export default function SharePointFolderFileArea({
 
     try {
       setDeleteError('');
-      await deleteDriveItemById(siteId, it.id);
+      for (const it of toDelete) {
+        if (it?.id) await deleteDriveItemById(siteId, it.id);
+      }
       setDeleteOpen(false);
       setDeleteTarget(null);
+      setDeleteTargets([]);
+      clearSelection();
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
@@ -1285,7 +1459,7 @@ export default function SharePointFolderFileArea({
   }
 
   return (
-    <View style={[styles.container, enableInlinePreview ? styles.containerOverBackground : null]}>
+    <View style={styles.container}>
       {/* Hidden file input (web) */}
       {Platform.OS === 'web' ? (
         <>
@@ -1321,7 +1495,7 @@ export default function SharePointFolderFileArea({
         </>
       ) : null}
 
-      <View style={enableInlinePreview ? styles.contentCard : null}>
+      <View>
 
       {siteError && !sharePointNotLinked ? (
         <View style={styles.errorBox}>
@@ -1471,54 +1645,55 @@ export default function SharePointFolderFileArea({
         </View>
       ) : null}
 
-      {enableInlinePreview && previewMode !== 'on-select-only' ? (
-        <View style={styles.listToolbarRow}>
-          <Pressable
-            onPress={() => {
-              setPreviewModalOpen(false);
-              setPreviewEnabled((v) => {
-                const next = !v;
-                if (next) {
-                  // If a file is selected, open it directly when enabling preview.
-                  if (!safeText(previewItemId) && safeText(selectedItemId)) {
-                    setPreviewItemId(String(selectedItemId));
-                  }
-                } else {
-                  // Reset state when closing preview.
-                  setPreviewItemId(null);
-                }
-                return next;
-              });
-            }}
-            style={({ hovered, pressed }) => ({
-              paddingVertical: 8,
-              paddingHorizontal: 10,
-              borderRadius: 10,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              backgroundColor: isInlinePreviewVisible
-                ? (hovered || pressed ? 'rgba(0,0,0,0.04)' : '#fff')
-                : (hovered || pressed ? 'rgba(25, 118, 210, 0.92)' : '#1976D2'),
-              borderWidth: 1,
-              borderColor: isInlinePreviewVisible ? 'rgba(148,163,184,0.6)' : '#1976D2',
-              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-            })}
-          >
-            <Ionicons
-              name={isInlinePreviewVisible ? 'close-outline' : 'reader-outline'}
-              size={16}
-              color={isInlinePreviewVisible ? '#334155' : '#fff'}
-            />
-            <Text style={[styles.listToolbarButtonText, isInlinePreviewVisible ? styles.listToolbarButtonTextSecondary : null]}>
-              {isInlinePreviewVisible ? 'Dölj förhandsvisning' : 'Visa förhandsvisning'}
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <View style={[styles.splitRow, !enableInlinePreview ? styles.splitRowSingle : null]}>
-        <View style={[styles.listPane, styles.paneStretch, enableInlinePreview && isWidePreviewLayout ? { flex: 1 } : null]}>
+      <View style={[styles.splitRow, styles.splitRowSingle]}>
+        <View style={[styles.listPane, styles.paneStretch]}>
+          {someSelected ? (
+            <View style={styles.bulkToolbar}>
+              <Text style={styles.bulkToolbarText}>
+                {selectedIds.length} {selectedIds.length === 1 ? 'vald' : 'valda'}
+              </Text>
+              <Pressable
+                onPress={() => {
+                  setMoveTargets(selectedItems);
+                  setMoveTarget(null);
+                  setMoveSelectedPath(safeText(scopeRootPath) || '');
+                  setMoveOpen(true);
+                }}
+                style={({ hovered, pressed }) => [
+                  styles.bulkToolbarButton,
+                  (hovered || pressed) && styles.bulkToolbarButtonHover,
+                ]}
+              >
+                <Ionicons name="return-up-forward-outline" size={16} color="#1976D2" />
+                <Text style={styles.bulkToolbarButtonText}>Flytta</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setDeleteTargets(selectedItems);
+                  setDeleteTarget(null);
+                  setDeleteError('');
+                  setDeleteOpen(true);
+                }}
+                style={({ hovered, pressed }) => [
+                  styles.bulkToolbarButton,
+                  styles.bulkToolbarButtonDanger,
+                  (hovered || pressed) && styles.bulkToolbarButtonDangerHover,
+                ]}
+              >
+                <Ionicons name="trash-outline" size={16} color="#B91C1C" />
+                <Text style={styles.bulkToolbarButtonTextDanger}>Radera</Text>
+              </Pressable>
+              <Pressable
+                onPress={clearSelection}
+                style={({ hovered, pressed }) => [
+                  styles.bulkToolbarButton,
+                  (hovered || pressed) && styles.bulkToolbarButtonHover,
+                ]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>Avmarkera alla</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {sharePointNotLinked ? (
             <Text style={styles.inlineSharePointNotLinked}>
               Uppladdning är inte tillgänglig – SharePoint är inte kopplat ännu
@@ -1610,6 +1785,24 @@ export default function SharePointFolderFileArea({
                     ? { title: dndTipText }
                     : {})}
                 >
+                  <View style={[styles.colSelect, { width: COL_SELECT_W }]}>
+                    {selectableItems.length > 0 ? (
+                      <Pressable
+                        onPress={() => {
+                          if (allSelected) clearSelection();
+                          else selectAll();
+                        }}
+                        style={[styles.selectCircle, allSelected ? styles.selectCircleChecked : null]}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: allSelected }}
+                        accessibilityLabel={allSelected ? 'Avmarkera alla' : 'Markera alla'}
+                      >
+                        {allSelected ? (
+                          <Ionicons name="checkmark" size={12} color="#fff" />
+                        ) : null}
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Text style={[styles.th, styles.colName]} numberOfLines={1}>Filnamn</Text>
                   <Text style={[styles.th, styles.colType]} numberOfLines={1}>Typ</Text>
                   {!isCompactTable ? (
@@ -1625,8 +1818,9 @@ export default function SharePointFolderFileArea({
                 </View>
 
                 {isTableDragActive ? (
-                  <View style={[styles.tableDropHint, { top: tableHeaderHeight }]} pointerEvents="none">
+                  <View style={[styles.tableDropHint, styles.tableDropHintLarge, { top: tableHeaderHeight }]} pointerEvents="none">
                     <View style={styles.tableDropHintPlate}>
+                      <Ionicons name="cloud-upload-outline" size={28} color="rgba(25, 118, 210, 0.9)" style={{ marginBottom: 8 }} />
                       <Text style={styles.tableDropHintText}>
                         Släpp filer för att ladda upp till aktuell mapp
                       </Text>
@@ -1639,12 +1833,9 @@ export default function SharePointFolderFileArea({
                   contentContainerStyle={{ paddingBottom: 12 }}
                   pointerEvents="auto"
                 >
-              {loading ? (
-                <Text style={{ padding: 12, fontSize: 12, color: '#64748b' }}>Laddar…</Text>
-              ) : null}
-
               {!loading && Array.isArray(items) && items.length === 0 ? (
                 <View style={styles.tableHelpRow} pointerEvents="none">
+                  <View style={[styles.colSelect, { width: COL_SELECT_W }]} />
                   <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
                     <Ionicons name="cloud-upload-outline" size={16} color="#94A3B8" />
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -1664,11 +1855,12 @@ export default function SharePointFolderFileArea({
               {(Array.isArray(items) ? items : []).map((it) => {
             const name = safeText(it?.name) || (it?.type === 'folder' ? 'Mapp' : 'Fil');
             const isFolder = it?.type === 'folder';
+            const isLockedFolder = isFolder && lockSystemFolder && isSystemFolder(it);
             const rowRelPath = isFolder ? joinPath(relativePath, name) : '';
-            const isRowDragOver = enableWebDnD && isFolder && safeText(activeDropFolder) === safeText(rowRelPath);
+            const isRowDragOver = enableWebDnD && isFolder && !isLockedFolder && safeText(activeDropFolder) === safeText(rowRelPath);
 
             const isSelected = !isFolder && safeText(it?.id) && safeText(selectedItemId) === safeText(it?.id);
-            const isPreviewing = isInlinePreviewVisible && !isFolder && safeText(previewItemId) && safeText(previewItemId) === safeText(it?.id);
+            const isPreviewing = !isFolder && safeText(previewItemId) === safeText(it?.id);
             const ext = fileExtFromName(name);
             const typeMeta = isFolder
               ? { label: 'MAPP', icon: 'folder-outline' }
@@ -1677,7 +1869,19 @@ export default function SharePointFolderFileArea({
             return (
               <Pressable
                 key={safeText(it?.id) || name}
-                {...(enableWebDnD && isFolder
+                {...(Platform.OS === 'web' && isFolder && !isLockedFolder ? { dataSet: { dropPath: rowRelPath } } : {})}
+                {...(Platform.OS === 'web' && enableWebDnD && !isLockedFolder && (isFolder || it?.type === 'file') && it?.id
+                  ? {
+                    draggable: true,
+                    onDragStart: (e) => {
+                      try {
+                        e.dataTransfer.setData(DND_MOVE_TYPE, JSON.stringify({ ids: [it.id] }));
+                        e.dataTransfer.effectAllowed = 'move';
+                      } catch (_e) {}
+                    },
+                  }
+                  : {})}
+                {...(enableWebDnD && isFolder && !isLockedFolder
                   ? {
                     onDragEnter: (e) => {
                       try { e.preventDefault(); } catch (_e) {}
@@ -1739,85 +1943,95 @@ export default function SharePointFolderFileArea({
                 onPress={() => {
                   if (isFolder) {
                     setSelectedItemId(null);
-                    if (enableInlinePreview) {
-                      setPreviewModalOpen(false);
-                      setPreviewEnabled(false);
-                      setPreviewItemId(null);
-                    }
+                    setPreviewModalOpen(false);
+                    setPreviewItemId(null);
                     openFolder(name);
                     return;
                   }
                   const id = safeText(it?.id) || null;
                   setSelectedItemId(id);
-
-                  if (enableInlinePreview) {
-                    // Desired UX:
-                    // - Single click: open inline preview (auto-enables preview panel).
-                    // - Double click (web): open large preview modal.
-                    if (Platform.OS === 'web' && id) {
-                      const now = Date.now();
-                      const prev = lastWebClickRef.current || { id: '', t: 0 };
-                      const isDouble = safeText(prev.id) === id && (now - Number(prev.t || 0)) < 380;
-                      lastWebClickRef.current = { id, t: now };
-
-                      // In "on-select-only" mode, preview visibility is driven by selected file,
-                      // so we must set a preview item id to show the panel.
-                      setPreviewItemId(id);
-                      if (previewMode !== 'on-select-only') setPreviewEnabled(true);
-
-                      if (isDouble) {
-                        setPreviewModalOpen(true);
-                      } else {
-                        setPreviewModalOpen(false);
-                      }
-                      return;
-                    }
-
-                    setPreviewModalOpen(false);
+                  // Single click on file: open floating preview modal (no side-by-side pane).
+                  if (id) {
                     setPreviewItemId(id);
-                    if (previewMode !== 'on-select-only') setPreviewEnabled(true);
-                    return;
+                    setPreviewModalOpen(true);
+                  } else {
+                    openUrl(it?.webUrl);
                   }
-
-                  openUrl(it?.webUrl);
                 }}
                 style={({ hovered, pressed }) => ({
                   position: 'relative',
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 14,
-                  paddingVertical: 8,
+                  paddingVertical: 4,
                   paddingHorizontal: 12,
                   borderBottomWidth: 1,
                   borderBottomColor: '#EEF2F7',
                   ...(isRowDragOver
                     ? {
-                      backgroundColor: 'rgba(25, 118, 210, 0.08)',
-                      borderLeftWidth: 3,
-                      borderLeftColor: 'rgba(25, 118, 210, 0.55)',
+                      backgroundColor: '#E3F2FD',
+                      borderLeftWidth: 4,
+                      borderLeftColor: '#1976D2',
                     }
-                    : null),
-                  backgroundColor: isPreviewing
-                    ? 'rgba(25, 118, 210, 0.12)'
-                    : isSelected
-                      ? 'rgba(25, 118, 210, 0.06)'
-                      : (hovered || pressed ? '#F8FAFC' : '#fff'),
-                  borderLeftWidth: isPreviewing ? 3 : 0,
-                  borderLeftColor: isPreviewing ? '#1976D2' : 'transparent',
+                    : {
+                      backgroundColor: isPreviewing
+                        ? 'rgba(25, 118, 210, 0.12)'
+                        : isSelected
+                          ? 'rgba(25, 118, 210, 0.06)'
+                          : (hovered || pressed ? '#F8FAFC' : '#fff'),
+                      borderLeftWidth: isPreviewing ? 3 : 0,
+                      borderLeftColor: isPreviewing ? '#1976D2' : 'transparent',
+                    }),
                   ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
-                {Platform.OS === 'web' && isRowDragOver ? (
-                  <View style={styles.folderRowDropHint} pointerEvents="none">
-                    <Text style={styles.folderRowDropHintText} numberOfLines={1}>
-                      Släpp här för att ladda upp i denna mapp
-                    </Text>
-                  </View>
-                ) : null}
-
+                {!isLockedFolder && safeText(it?.id) ? (
+                  <Pressable
+                    style={[styles.colSelect, styles.colSelectPressable, { width: COL_SELECT_W }]}
+                    onPress={(e) => {
+                      try { e.stopPropagation?.(); } catch (_e2) {}
+                      toggleSelection(it.id);
+                    }}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isIdSelected(it.id) }}
+                    accessibilityLabel={isIdSelected(it.id) ? 'Avmarkera' : 'Markera'}
+                  >
+                    <View style={[styles.selectCircle, isIdSelected(it.id) ? styles.selectCircleChecked : null]}>
+                      {isIdSelected(it.id) ? (
+                        <Ionicons name="checkmark" size={12} color="#fff" />
+                      ) : null}
+                    </View>
+                  </Pressable>
+                ) : (
+                  <View style={[styles.colSelect, { width: COL_SELECT_W }]} />
+                )}
                 <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
                   <Ionicons name={typeMeta.icon} size={16} color={isFolder ? '#475569' : '#64748b'} />
                   <Text style={styles.tdName} numberOfLines={1}>{name}</Text>
+                  {isLockedFolder ? (
+                    <Ionicons name="lock-closed" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+                  ) : null}
+                  {!isFolder && safeText(it?.id) && (fileCommentCount[safeText(it.id)] || 0) > 0 ? (
+                    <Pressable
+                      onPress={(e) => {
+                        try { e.stopPropagation?.(); } catch (_e2) {}
+                        setPreviewItemId(it.id);
+                        setPreviewModalOpen(true);
+                      }}
+                      style={({ hovered, pressed }) => ({
+                        paddingVertical: 2,
+                        paddingHorizontal: 4,
+                        borderRadius: 6,
+                        backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.15)' : 'rgba(25, 118, 210, 0.08)',
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                      accessibilityLabel={`${fileCommentCount[safeText(it.id)]} kommentar${fileCommentCount[safeText(it.id)] !== 1 ? 'er' : ''} – öppna förhandsvisning`}
+                    >
+                      <Text style={{ fontSize: 12, color: '#1976D2' }}>
+                        💬 {fileCommentCount[safeText(it.id)]}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                 </View>
 
                 <View style={[styles.colType, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
@@ -1855,7 +2069,7 @@ export default function SharePointFolderFileArea({
                     width: COL_MENU_W,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    paddingVertical: 6,
+                    paddingVertical: 4,
                     borderRadius: 10,
                     backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
                     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
@@ -1870,55 +2084,44 @@ export default function SharePointFolderFileArea({
               </View>
             </View>
           </View>
+
+          {enableWebDnD ? (
+            <View style={styles.tableDndHintRow} pointerEvents="none">
+              <Ionicons name="cloud-upload-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+              <Text style={styles.tableDndHintRowText}>Dra och släpp filer eller mappar ovanför</Text>
+            </View>
+          ) : null}
+
+          {loading ? (
+            <View style={styles.tableLoadingOverlay} pointerEvents="auto">
+              <ActivityIndicator size="large" color="#1976D2" />
+              <Text style={styles.tableLoadingOverlayText}>Laddar…</Text>
+            </View>
+          ) : null}
         </View>
 
-        {isInlinePreviewVisible ? (
-          <View style={[styles.previewPane, styles.paneStretch, styles.previewPaneAligned, isWidePreviewLayout ? null : styles.previewPaneStacked]}>
-            {previewItem ? (
-              <SharePointFilePreviewPane
-                key={safeText(previewItem?.id) || 'preview'}
-                item={previewItem}
-                variant="panel"
-                siteId={siteId}
-                onClose={() => {
-                  setPreviewModalOpen(false);
-                  setPreviewItemId(null);
-                  if (previewMode !== 'on-select-only') {
-                    setPreviewEnabled(false);
-                  } else {
-                    // In focused FFU mode: closing preview means no file is selected.
-                    setSelectedItemId(null);
-                  }
-                }}
-                onOpenInModal={() => {
-                  if (!previewItem) return;
-                  if (Platform.OS !== 'web') return;
-                  setPreviewModalOpen(true);
-                }}
-                onOpenInNewTab={(url) => openUrl(url)}
-              />
-            ) : (previewMode === 'on-select-only' ? null : (
-              <View style={styles.previewPlaceholder}>
-                <View style={styles.previewPlaceholderHeader}>
-                  <Text style={styles.previewPlaceholderTitle} numberOfLines={1}>Förhandsvisning</Text>
-                </View>
-                <View style={styles.previewPlaceholderBody}>
-                  <Ionicons name="document-outline" size={22} color="#94A3B8" />
-                  <Text style={styles.previewPlaceholderMuted}>Välj en fil för att förhandsvisa</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
       </View>
 
       </View>
 
-      {isInlinePreviewVisible && Platform.OS === 'web' ? (
+      {Platform.OS === 'web' && previewModalOpen && previewItem ? (
         <FilePreviewModal
-          visible={previewModalOpen && !!previewItem}
-          onClose={() => setPreviewModalOpen(false)}
+          visible
+          onClose={() => {
+            setPreviewModalOpen(false);
+            setPreviewItemId(null);
+          }}
+          fileItem={previewItem}
+          onOpenInNewTab={(url) => openUrl(url)}
           maxWidth={1500}
+          companyId={cid}
+          projectId={project?.id ?? project?.projectId ?? project?.projectNumber ?? null}
+          pageNumber={previewPage}
+          onRequestPage={setPreviewPage}
+          zoomLevel={previewZoom}
+          onZoomChange={setPreviewZoom}
+          onZoomIn={() => setPreviewZoom((z) => Math.min(3, (z || 1) + 0.25))}
+          onZoomOut={() => setPreviewZoom((z) => Math.max(0.5, (z || 1) - 0.25))}
         >
           <SharePointFilePreviewPane
             item={previewItem}
@@ -1930,7 +2133,10 @@ export default function SharePointFolderFileArea({
             numPages={previewNumPages}
             onNumPages={setPreviewNumPages}
             onPageChange={setPreviewPage}
-            onClose={() => setPreviewModalOpen(false)}
+            onClose={() => {
+              setPreviewModalOpen(false);
+              setPreviewItemId(null);
+            }}
             onOpenInNewTab={(url) => openUrl(url)}
           />
         </FilePreviewModal>
@@ -2037,15 +2243,22 @@ export default function SharePointFolderFileArea({
       <FileActionModal
         visible={deleteOpen}
         title="Ta bort"
-        description={deleteTarget ? `Tar bort "${safeText(deleteTarget?.name) || 'objekt'}" från SharePoint.` : ''}
+        description={
+          deleteTargets.length > 1
+            ? `Tar bort ${deleteTargets.length} objekt från SharePoint.`
+            : (deleteTargets[0] || deleteTarget)
+              ? `Tar bort "${safeText((deleteTargets[0] || deleteTarget)?.name) || 'objekt'}" från SharePoint.`
+              : ''
+        }
         onClose={() => {
           setDeleteOpen(false);
           setDeleteTarget(null);
+          setDeleteTargets([]);
           setDeleteError('');
         }}
         primaryLabel="Ta bort"
         onPrimary={performDelete}
-        primaryDisabled={!deleteTarget}
+        primaryDisabled={deleteTargets.length === 0 && !deleteTarget}
       >
         {deleteError ? (
           <View style={styles.errorBox}>
@@ -2060,12 +2273,16 @@ export default function SharePointFolderFileArea({
 
       <FileActionModal
         visible={moveOpen}
-        title="Flytta fil"
+        title={moveTargets.length > 1 ? 'Flytta objekt' : 'Flytta fil'}
         description="Välj en målmapp inom Förfrågningsunderlag."
-        onClose={() => setMoveOpen(false)}
+        onClose={() => {
+          setMoveOpen(false);
+          setMoveTarget(null);
+          setMoveTargets([]);
+        }}
         primaryLabel="Flytta"
         onPrimary={performMove}
-        primaryDisabled={!moveTarget || !safeText(moveSelectedPath)}
+        primaryDisabled={(!moveTarget && moveTargets.length === 0) || !safeText(moveSelectedPath)}
         maxHeight={moveModalMaxHeight}
       >
         {moveError ? (
@@ -2154,6 +2371,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     marginTop: 12,
+    position: 'relative',
+  },
+
+  tableLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    gap: 12,
+  },
+
+  tableLoadingOverlayText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
   },
 
   tableDropActive: {
@@ -2179,18 +2416,19 @@ const styles = StyleSheet.create({
     right: 12,
     zIndex: 2,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  tableDropHintLarge: {
+    minHeight: 120,
+    left: 16,
+    right: 16,
   },
 
   tableDropHintText: {
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '600',
     color: 'rgba(25, 118, 210, 0.95)',
-    backgroundColor: 'rgba(25, 118, 210, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(25, 118, 210, 0.22)',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 999,
   },
 
   folderRowDropHint: {
@@ -2244,7 +2482,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 12,
     backgroundColor: '#F1F5F9',
     borderBottomWidth: 2,
@@ -2259,7 +2497,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#EEF2F7',
@@ -2275,6 +2513,127 @@ const styles = StyleSheet.create({
   tableHelpRowHint: {
     fontSize: 11,
     color: '#94A3B8',
+  },
+
+  colSelect: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
+  },
+
+  colSelectPressable: {
+    alignSelf: 'stretch',
+    minHeight: 32,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+
+  selectCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+
+  selectCircleChecked: {
+    backgroundColor: '#22c55e',
+    borderColor: '#22c55e',
+  },
+
+  bulkToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+  },
+
+  bulkToolbarText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginRight: 8,
+  },
+
+  bulkToolbarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+
+  bulkToolbarButtonHover: {
+    backgroundColor: 'rgba(25, 118, 210, 0.08)',
+  },
+
+  bulkToolbarButtonDanger: {},
+  bulkToolbarButtonDangerHover: {
+    backgroundColor: '#FEF2F2',
+  },
+
+  bulkToolbarButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1976D2',
+  },
+
+  bulkToolbarButtonTextDanger: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+
+  tableDndHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+  },
+
+  tableDndHintRowText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+
+  tableInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.4)',
+    backgroundColor: 'rgba(226, 232, 240, 0.65)',
+  },
+
+  tableInfoRowText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: 'rgba(71, 85, 105, 0.85)',
   },
 
   colName: {
@@ -2293,18 +2652,21 @@ const styles = StyleSheet.create({
   },
 
   tableDropHintPlate: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 320,
     maxWidth: 520,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.35)',
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 2,
+    borderColor: 'rgba(25, 118, 210, 0.35)',
+    borderRadius: 16,
+    paddingVertical: 20,
+    paddingHorizontal: 24,
     ...(Platform.OS === 'web'
       ? {
-        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.10)',
-        backdropFilter: 'blur(6px)',
+        boxShadow: '0 12px 40px rgba(25, 118, 210, 0.15)',
+        backdropFilter: 'blur(8px)',
       }
       : {}),
   },

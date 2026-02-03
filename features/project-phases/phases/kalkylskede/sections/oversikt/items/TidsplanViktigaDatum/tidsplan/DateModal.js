@@ -7,7 +7,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ActivityParticipantPickerModal from '../../../../../../../../../components/common/ActivityParticipants/ActivityParticipantPickerModal';
 import IsoDatePickerModal from '../../../../../../../../../components/common/Modals/IsoDatePickerModal';
@@ -111,6 +111,75 @@ function getMinEndDropdownMinutes(startTime) {
   const minEnd = sm + 30;
   // Dropdown options are in 30-minute increments; round up to the next available slot.
   return Math.ceil(minEnd / 30) * 30;
+}
+
+/** Format minutes since midnight as HH:MM (00:00–23:59). */
+function minutesToHHMM(totalMinutes) {
+  const m = Number(totalMinutes);
+  if (!Number.isFinite(m)) return '';
+  const wrapped = ((m % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const hh = String(Math.floor(wrapped / 60)).padStart(2, '0');
+  const mm = String(wrapped % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/** Default start time for new meeting: next whole half-hour from now (08:12→08:30, 08:40→09:00). Never 00:00 or 07:00. */
+function getDefaultStartTime() {
+  const now = new Date();
+  const minutesFromMidnight = now.getHours() * 60 + now.getMinutes();
+  let nextSlot = Math.ceil(minutesFromMidnight / 30) * 30;
+  if (nextSlot >= 24 * 60) nextSlot = 8 * 60;
+  if (nextSlot === 0) nextSlot = 8 * 60;
+  if (nextSlot === 7 * 60) nextSlot = 8 * 60;
+  return minutesToHHMM(nextSlot);
+}
+
+const DEFAULT_DURATION_MINUTES = 60;
+
+/** Build a Date on the given ISO date (YYYY-MM-DD) at HH:MM. Never pass undefined/empty. */
+function hhmmToDate(isoDate, hhmmStr) {
+  const iso = String(isoDate || '').trim();
+  const t = String(hhmmStr || '').trim();
+  if (!isValidIsoDate(iso) || !isValidTimeHHMM(t)) return null;
+  const parts = t.split(':');
+  const hh = parseInt(parts[0], 10);
+  const mm = parseInt(parts[1], 10);
+  const dateParts = iso.split('-');
+  const y = parseInt(dateParts[0], 10);
+  const mo = parseInt(dateParts[1], 10);
+  const d = parseInt(dateParts[2], 10);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || !Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  return new Date(y, mo - 1, d, hh, mm, 0, 0);
+}
+
+/** Add minutes to a Date. Returns new Date. */
+function addMinutes(date, minutes) {
+  if (!(date instanceof Date) || !Number.isFinite(Number(minutes))) return null;
+  const d = new Date(date.getTime());
+  d.setMinutes(d.getMinutes() + Number(minutes));
+  return d;
+}
+
+/** Format Date as HH:MM (minutes/seconds zero). */
+function dateToHHMM(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/** Default start as Date (today, next half-hour). Never 00:00 or 07:00. */
+function getDefaultStartDateTime() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const d = now.getDate();
+  const minutesFromMidnight = now.getHours() * 60 + now.getMinutes();
+  let nextSlot = Math.ceil(minutesFromMidnight / 30) * 30;
+  if (nextSlot >= 24 * 60) nextSlot = 8 * 60;
+  if (nextSlot === 0) nextSlot = 8 * 60;
+  if (nextSlot === 7 * 60) nextSlot = 8 * 60;
+  return new Date(y, m, d, Math.floor(nextSlot / 60), nextSlot % 60, 0, 0);
 }
 
 function participantCountLabel(count) {
@@ -241,16 +310,6 @@ function OccurrenceEditModal({
   fwReg,
   fwMed,
 }) {
-  React.useEffect(() => {
-    const st = String(startTime || '').trim();
-    const et = String(endTime || '').trim();
-    if (!isValidTimeHHMM(st) || !isValidTimeHHMM(et)) return;
-    const sm = timeToMinutes(st);
-    const em = timeToMinutes(et);
-    if (sm == null || em == null) return;
-    if (em <= sm) onChangeEndTime?.('');
-  }, [endTime, onChangeEndTime, startTime]);
-
   const minEndDropdownMinutes = React.useMemo(() => getMinEndDropdownMinutes(startTime), [startTime]);
 
   return (
@@ -491,13 +550,15 @@ export default function DateModal({
   const [title, setTitle] = React.useState('');
   const [description, setDescription] = React.useState('');
   const [date, setDate] = React.useState('');
-  const [startTime, setStartTime] = React.useState('');
-  const [endTime, setEndTime] = React.useState('');
+  const [startDateTime, setStartDateTime] = React.useState(null);
+  const [endDateTime, setEndDateTime] = React.useState(null);
   const [dates, setDates] = React.useState([]);
   const [allowMulti, setAllowMulti] = React.useState(false);
   const [baseNumber, setBaseNumber] = React.useState(1);
   const [datePickerOpen, setDatePickerOpen] = React.useState(false);
   const [activeDropdown, setActiveDropdown] = React.useState(null);
+  const [startManuallyEdited, setStartManuallyEdited] = React.useState(false);
+  const [endTimeManuallyEdited, setEndTimeManuallyEdited] = React.useState(false);
 
   const [multiDrafts, setMultiDrafts] = React.useState(() => ({}));
   const [participantsTargetIso, setParticipantsTargetIso] = React.useState(null);
@@ -506,6 +567,11 @@ export default function DateModal({
 
   const [participants, setParticipants] = React.useState([]);
   const [participantsModalOpen, setParticipantsModalOpen] = React.useState(false);
+
+  const handleClose = React.useCallback(() => {
+    setActiveDropdown(null);
+    safeOnClose();
+  }, [safeOnClose]);
 
   const warningColor = '#D97706';
 
@@ -590,18 +656,62 @@ export default function DateModal({
     );
   }, [safeOnUnlockDate]);
 
-  React.useEffect(() => {
-    if (isSeries) return;
-    const st = String(startTime || '').trim();
-    const et = String(endTime || '').trim();
-    if (!isValidTimeHHMM(st) || !isValidTimeHHMM(et)) return;
-    const sm = timeToMinutes(st);
-    const em = timeToMinutes(et);
-    if (sm == null || em == null) return;
-    if (em <= sm) setEndTime('');
-  }, [endTime, isSeries, startTime]);
+  const startTime = React.useMemo(() => (startDateTime ? dateToHHMM(startDateTime) : ''), [startDateTime]);
+  const endTime = React.useMemo(() => (endDateTime ? dateToHHMM(endDateTime) : ''), [endDateTime]);
 
   const minEndDropdownMinutes = React.useMemo(() => getMinEndDropdownMinutes(startTime), [startTime]);
+
+  const handleStartTimeChange = React.useCallback(
+    (hhmm) => {
+      const v = String(hhmm || '').trim();
+      if (!isValidTimeHHMM(v)) return;
+      const refDate = date || todayIso;
+      if (!isValidIsoDate(refDate)) return;
+      const nextStart = hhmmToDate(refDate, v);
+      if (!nextStart) return;
+      setStartDateTime(nextStart);
+      setStartManuallyEdited(true);
+      if (!endTimeManuallyEdited) {
+        const nextEnd = addMinutes(nextStart, DEFAULT_DURATION_MINUTES);
+        if (nextEnd) setEndDateTime(nextEnd);
+      }
+    },
+    [date, endTimeManuallyEdited, todayIso]
+  );
+
+  const handleEndTimeChange = React.useCallback(
+    (hhmm) => {
+      const v = String(hhmm || '').trim();
+      if (!isValidTimeHHMM(v)) return;
+      const refDate = date || todayIso;
+      if (!isValidIsoDate(refDate)) return;
+      const nextEnd = hhmmToDate(refDate, v);
+      if (!nextEnd) return;
+      setEndDateTime(nextEnd);
+      setEndTimeManuallyEdited(true);
+      if (startDateTime && nextEnd.getTime() <= startDateTime.getTime()) {
+        const nextStart = addMinutes(nextEnd, -DEFAULT_DURATION_MINUTES);
+        if (nextStart) {
+          setStartDateTime(nextStart);
+          setStartManuallyEdited(true);
+        }
+      }
+    },
+    [date, startDateTime, todayIso]
+  );
+
+  const addDuration = React.useCallback(
+    (minutes) => {
+      if (!startDateTime) return;
+      const baseEnd =
+        endDateTime && endDateTime.getTime() > startDateTime.getTime()
+          ? endDateTime
+          : new Date(startDateTime.getTime() + 60 * 60000);
+      setEndDateTime(new Date(baseEnd.getTime() + minutes * 60000));
+      setEndTimeManuallyEdited(true);
+    },
+    [startDateTime, endDateTime]
+  );
 
   const multiCapable = React.useMemo(() => {
     const t = String(title || '').trim();
@@ -662,10 +772,45 @@ export default function DateModal({
   const closeOccurrenceEdit = React.useCallback(() => setOccurrenceEdit({ open: false, iso: '', idx: -1 }), []);
 
   const openOccurrenceEdit = React.useCallback((iso, idx) => {
+    if (activeDropdown) {
+      setActiveDropdown(null);
+      return;
+    }
     const safeIso = isValidIsoDate(iso) ? String(iso) : '';
     if (!safeIso) return;
     setOccurrenceEdit({ open: true, iso: safeIso, idx: Number.isFinite(Number(idx)) ? Number(idx) : -1 });
-  }, []);
+  }, [activeDropdown]);
+
+  // Default / init time: ONLY set here. Never set time from blur, focus, dropdown-state or empty value.
+  React.useEffect(() => {
+    if (!visible) return;
+
+    if (initial?.id) {
+      try {
+        const refDate = initial?.date || todayIso;
+        const st = String(initial?.startTime || '').trim();
+        const et = String(initial?.endTime || '').trim();
+        setStartDateTime(st ? hhmmToDate(refDate, st) : null);
+        setEndDateTime(et ? hhmmToDate(refDate, et) : null);
+        setStartManuallyEdited(false);
+        setEndTimeManuallyEdited(!!et);
+      } catch (_e) {
+        // Invalid initial time data; leave start/end as-is.
+      }
+      return;
+    }
+
+    try {
+      const start = getDefaultStartDateTime();
+      const end = addMinutes(start, 60);
+      if (start) setStartDateTime(start);
+      if (end) setEndDateTime(end);
+      setStartManuallyEdited(false);
+      setEndTimeManuallyEdited(false);
+    } catch (_e) {
+      // Fallback if default time fails (e.g. invalid date); leave start/end as-is.
+    }
+  }, [visible, initial?.id]);
 
   React.useEffect(() => {
     if (!visible) return;
@@ -674,17 +819,12 @@ export default function DateModal({
     const initType = String(initial?.type || '').trim();
     const initDescription = String(initial?.description || '').trim();
     const initDate = String(initial?.date || '').trim();
-    const initStartTime = String(initial?.startTime || '').trim();
-    const initEndTime = String(initial?.endTime || '').trim();
     const initDates = dedupeSortedDates(initial?.dates);
     const initAllowMulti = initDates.length > 1;
     const initBaseNumber = Number(initial?.baseNumber || 1);
 
-    // One main identity field: prefer title, fall back to legacy type.
     setTitle(initTitle || initType);
     setDescription(initDescription);
-    setStartTime(initStartTime);
-    setEndTime(initEndTime);
     setAllowMulti(initAllowMulti);
     setBaseNumber(Number.isFinite(initBaseNumber) ? initBaseNumber : 1);
 
@@ -766,10 +906,14 @@ export default function DateModal({
 
   const openParticipantsEditor = React.useCallback(
     (isoOrNull) => {
+      if (activeDropdown) {
+        setActiveDropdown(null);
+        return;
+      }
       setParticipantsTargetIso(isoOrNull);
       setParticipantsModalOpen(true);
     },
-    []
+    [activeDropdown]
   );
 
   const occurrenceIso = String(occurrenceEdit?.iso || '').trim();
@@ -794,9 +938,9 @@ export default function DateModal({
 
   return (
     <>
-      <Modal visible={!!visible} transparent animationType="fade" onRequestClose={safeOnClose}>
+      <Modal visible={!!visible} transparent animationType="fade" onRequestClose={handleClose}>
         <Pressable
-          onPress={safeOnClose}
+          onPress={handleClose}
           style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
         >
           <Pressable
@@ -815,6 +959,7 @@ export default function DateModal({
               ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
             }}
           >
+            <View pointerEvents="box-none" style={{ flex: 1 }}>
             <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
@@ -830,7 +975,7 @@ export default function DateModal({
                 </View>
 
                 <Pressable
-                  onPress={safeOnClose}
+                  onPress={handleClose}
                   style={({ hovered, pressed }) => ({
                     padding: 6,
                     borderRadius: 8,
@@ -853,6 +998,14 @@ export default function DateModal({
                   backgroundColor: colors.bgMuted,
                 }}
               >
+                {initial?.outlookEventId ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: 'rgba(25, 118, 210, 0.08)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(25, 118, 210, 0.22)' }}>
+                    <Text style={{ fontSize: 14 }} accessibilityLabel="Info">🔄</Text>
+                    <Text style={{ flex: 1, fontSize: 12, fontWeight: fwReg, color: colors.text }}>
+                      Detta möte är kopplat till Outlook. Ändringar skickas som uppdaterad kallelse.
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={{ gap: 6 }}>
                   <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textSubtle }}>Rubrik / ämne</Text>
                   <SubjectComboField
@@ -890,8 +1043,11 @@ export default function DateModal({
                   {!isSeries ? (
                     <Pressable
                       onPress={() => {
+                        if (activeDropdown) {
+                          setActiveDropdown(null);
+                          return;
+                        }
                         if (isProjectInfo && dateLocked) return;
-                        setActiveDropdown(null);
                         setDatePickerOpen(true);
                       }}
                       disabled={isProjectInfo && dateLocked}
@@ -913,7 +1069,10 @@ export default function DateModal({
                   ) : (
                     <Pressable
                       onPress={() => {
-                        setActiveDropdown(null);
+                        if (activeDropdown) {
+                          setActiveDropdown(null);
+                          return;
+                        }
                         setDatePickerOpen(true);
                       }}
                       style={({ hovered, pressed }) => ({
@@ -990,7 +1149,7 @@ export default function DateModal({
                   )}
 
                   {isSeries ? null : (
-                    <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
                       {(isProjectInfo && dateLocked) ? (
                         <>
                           <View style={{ flexGrow: 1, flexBasis: 220, minWidth: 0, gap: 6 }}>
@@ -1012,29 +1171,55 @@ export default function DateModal({
                         </>
                       ) : (
                         <>
-                          <TimeField
-                            label="Starttid"
-                            value={startTime}
-                            onChange={setStartTime}
-                            dropdownKey="startTime"
-                            activeDropdown={activeDropdown}
-                            setActiveDropdown={setActiveDropdown}
-                            colors={colors}
-                            fwReg={fwReg}
-                            fwMed={fwMed}
-                          />
-                          <TimeField
-                            label="Sluttid"
-                            value={endTime}
-                            onChange={setEndTime}
-                            minDropdownMinutes={minEndDropdownMinutes}
-                            dropdownKey="endTime"
-                            activeDropdown={activeDropdown}
-                            setActiveDropdown={setActiveDropdown}
-                            colors={colors}
-                            fwReg={fwReg}
-                            fwMed={fwMed}
-                          />
+                          <View style={{ width: 90 }}>
+                            <TimeField
+                              label="Starttid"
+                              value={startTime}
+                              onChange={handleStartTimeChange}
+                              dropdownKey="startTime"
+                              activeDropdown={activeDropdown}
+                              setActiveDropdown={setActiveDropdown}
+                              colors={colors}
+                              fwReg={fwReg}
+                              fwMed={fwMed}
+                            />
+                          </View>
+                          <View style={{ width: 90 }}>
+                            <TimeField
+                              label="Sluttid"
+                              value={endTime}
+                              onChange={handleEndTimeChange}
+                              minDropdownMinutes={minEndDropdownMinutes}
+                              dropdownKey="endTime"
+                              activeDropdown={activeDropdown}
+                              setActiveDropdown={setActiveDropdown}
+                              colors={colors}
+                              fwReg={fwReg}
+                              fwMed={fwMed}
+                            />
+                          </View>
+                          <Pressable
+                            onPress={() => addDuration(30)}
+                            style={({ hovered, pressed }) => ({
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 8,
+                              backgroundColor: hovered || pressed ? '#155FB5' : '#1976D2',
+                            })}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>+30 min</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => addDuration(60)}
+                            style={({ hovered, pressed }) => ({
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 8,
+                              backgroundColor: hovered || pressed ? '#155FB5' : '#1976D2',
+                            })}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>+60 min</Text>
+                          </Pressable>
                         </>
                       )}
                     </View>
@@ -1314,7 +1499,7 @@ export default function DateModal({
 
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Pressable
-                  onPress={safeOnClose}
+                  onPress={handleClose}
                   style={({ hovered, pressed }) => ({
                     paddingVertical: 8,
                     paddingHorizontal: 12,
@@ -1428,6 +1613,11 @@ export default function DateModal({
                       source: initial?.source || null,
                       sourceKey: initial?.sourceKey || null,
                       projectInfoDateUnlocked: isProjectInfo ? !dateLocked : false,
+
+                      // Outlook (parent uses for updateOutlookEvent when editing linked date)
+                      outlookEventId: initial?.outlookEventId != null ? String(initial.outlookEventId).trim() || null : null,
+                      outlookStatus: initial?.outlookStatus,
+                      outlookInvitationPrepared: !!initial?.outlookInvitationPrepared,
                     };
                     safeOnSave(payload);
                   }}
@@ -1448,6 +1638,7 @@ export default function DateModal({
                   <Text style={{ fontSize: 12, fontWeight: fwMed, color: '#fff' }}>Spara</Text>
                 </Pressable>
               </View>
+            </View>
             </View>
           </Pressable>
         </Pressable>
@@ -1483,12 +1674,17 @@ export default function DateModal({
         }}
         onChangeEndTime={(v) => {
           if (!occurrenceIso) return;
+          const vTrimmed = String(v || '').trim();
           setMultiDrafts((prev) => {
             const prevObj = prev && typeof prev === 'object' ? prev : {};
-            return {
-              ...prevObj,
-              [occurrenceIso]: { ...(prevObj?.[occurrenceIso] || {}), endTime: String(v || '').trim() },
-            };
+            const current = prevObj?.[occurrenceIso] || {};
+            const em = timeToMinutes(vTrimmed);
+            const sm = timeToMinutes(String(current?.startTime || '').trim());
+            const next = { ...current, endTime: vTrimmed };
+            if (em != null && sm != null && em <= sm) {
+              next.startTime = minutesToHHMM(em - 60);
+            }
+            return { ...prevObj, [occurrenceIso]: next };
           });
         }}
         participants={occurrenceParticipants}

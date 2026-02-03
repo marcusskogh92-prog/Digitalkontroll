@@ -33,7 +33,7 @@ const ITEM_COMPONENTS = {
   risker: RiskerView
 };
 
-export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, hidePageHeader = false, onSelectItem = null }) {
+export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, navigationParams, hidePageHeader = false, onSelectItem = null }) {
   const bgEnabledItemIds = new Set([
     'projektinfo',
     'organisation-roller',
@@ -52,7 +52,7 @@ export default function OversiktSection({ projectId, companyId, project, activeI
             projectId={projectId}
             companyId={companyId}
             project={project}
-            onNavigate={(itemId) => onSelectItem?.('oversikt', itemId)}
+            onNavigate={(itemId, params) => onSelectItem?.('oversikt', itemId, params)}
           />
         </ProjectBackgroundWrapper>
       </View>
@@ -77,6 +77,7 @@ export default function OversiktSection({ projectId, companyId, project, activeI
           companyId={companyId}
           project={project}
           hidePageHeader={hidePageHeader}
+          navigationParams={navigationParams}
         />
       </ProjectBackgroundWrapper>
     </View>

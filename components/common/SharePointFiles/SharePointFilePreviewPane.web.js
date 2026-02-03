@@ -307,6 +307,8 @@ export default function SharePointFilePreviewPane({
   numPages = null,
   onPageChange,
   onNumPages,
+
+  commentCountByPage = null,
 }) {
   const name = safeText(item?.name) || '';
   const ext = fileExtFromName(name);
@@ -374,6 +376,7 @@ export default function SharePointFilePreviewPane({
   const [internalZoom, setInternalZoom] = useState(1);
 
   const resolvedZoom = clamp(isZoomControlled ? (zoom || 1) : internalZoom, 0.5, isCompactPdfPreview ? 1 : 4);
+  const officeZoom = kind === 'office' ? clamp(resolvedZoom, 0.5, 1.5) : 1;
   const resolvedNumPages = Number.isFinite(Number(numPages)) ? Number(numPages) : internalNumPages;
   const resolvedPage = resolvedNumPages
     ? clamp(isPageControlled ? (page || 1) : internalPage, 1, resolvedNumPages)
@@ -732,111 +735,136 @@ export default function SharePointFilePreviewPane({
     );
   }
 
+  const isModalVariant = variant === 'modal';
+  const commentCounts = commentCountByPage && typeof commentCountByPage === 'object' ? commentCountByPage : {};
+  const currentPageCommentCount = kind === 'pdf' ? (commentCounts[resolvedPage] || 0) : (commentCounts[page] || commentCounts[1] || 0);
+
   return (
     <View ref={fullscreenTargetRef} style={styles.container}>
-      <View style={[styles.headerSticky, variant === 'panel' ? styles.headerStickyPanel : null]}>
-        <View style={styles.controlRow}>
-          {Platform.OS === 'web' ? (
-            <View style={[styles.controlRowWeb, isFullscreen ? styles.controlRowWebFullscreen : null]}>
-              {!isPdfReview && variant !== 'panel' ? (
-                <>
-                  <Text
-                    style={styles.fileNameText}
-                    numberOfLines={1}
-                    title={name}
-                  >
-                    {name || 'Förhandsvisning'}
+      {isModalVariant ? (
+        kind === 'pdf' ? (
+          <View style={styles.modalToolbar}>
+            <View style={styles.pagePill}>
+              <Text style={styles.pagePillText}>{pageIndicatorText}</Text>
+              {currentPageCommentCount > 0 ? (
+                <View style={styles.commentBadge}>
+                  <Text style={styles.commentBadgeText} title={`${currentPageCommentCount} kommentar${currentPageCommentCount !== 1 ? 'er' : ''} på denna sida`}>
+                    💬 {currentPageCommentCount}
                   </Text>
-
-                  <View style={styles.fileTypePill}>
-                    <Text style={styles.fileTypePillText}>{fileTypeLabel}</Text>
-                  </View>
-                </>
-              ) : null}
-
-              {showPdfControls && isPdfReview ? (
-                <ToolbarButton icon="remove-outline" label="−" onPress={() => onReviewZoomDelta(-0.1)} disabled={!canZoom} />
-              ) : null}
-
-              {showPageIndicator ? (
-                <View style={styles.pagePill}>
-                  <Text style={styles.pagePillText}>{pageIndicatorText}</Text>
                 </View>
               ) : null}
-
-              {showPdfControls && isPdfReview ? (
-                <ToolbarButton icon="add-outline" label="+" onPress={() => onReviewZoomDelta(0.1)} disabled={!canZoom} />
-              ) : null}
-
-              {isCompactPdfPreview ? (
-                <ToolbarButton icon="chevron-back-outline" label="Föreg" onPress={() => scrollToPage(Math.max(1, resolvedPage - 1))} disabled={resolvedPage <= 1} />
-              ) : null}
-              {isCompactPdfPreview ? (
-                <ToolbarButton icon="chevron-forward-outline" label="Nästa" onPress={() => scrollToPage(resolvedPage + 1)} disabled={totalPdfPages ? resolvedPage >= totalPdfPages : false} />
-              ) : null}
-
-              {showPdfControls && !isPdfReview && !isCompactPdfPreview ? (
-                <ToolbarButton icon="remove-outline" label="Zoom −" onPress={() => onZoomDelta(-0.25)} disabled={!canZoom} />
-              ) : null}
-              {showPdfControls && !isPdfReview && !isCompactPdfPreview ? (
-                <ToolbarButton icon="add-outline" label="Zoom +" onPress={() => onZoomDelta(0.25)} disabled={!canZoom} />
-              ) : null}
-              {showPdfControls && !isPdfReview && variant !== 'panel' ? (
-                <ToolbarButton icon="scan-outline" label="Fit to width" onPress={onFitToWidth} disabled={!pdfDoc} />
-              ) : null}
-
-              {kind === 'pdf' ? (
-                <ToolbarButton icon="expand-outline" label="Helskärm" onPress={() => requestFullscreen()} disabled={Platform.OS !== 'web'} />
-              ) : null}
-
-              <ToolbarButton icon="open-outline" label="Öppna i ny flik" onPress={() => onOpenInNewTab?.(externalUrl)} disabled={!safeText(externalUrl)} />
-
-              <Pressable
-                onPress={() => {
-                  if (isFullscreen && Platform.OS === 'web') {
-                    requestFullscreen();
-                    return;
-                  }
-                  onClose?.();
-                }}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 10,
-                  backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                <Ionicons name="close" size={18} color="#64748b" />
-              </Pressable>
             </View>
-          ) : (
-            <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={styles.controlRowNative}>
-              {!isPdfReview && variant !== 'panel' ? (
-                <>
-                  <Text style={styles.fileNameText} numberOfLines={1}>{name || 'Förhandsvisning'}</Text>
-                  <View style={styles.fileTypePill}>
-                    <Text style={styles.fileTypePillText}>{fileTypeLabel}</Text>
+            <ToolbarButton icon="chevron-back-outline" label="Föregående" onPress={() => scrollToPage(Math.max(1, resolvedPage - 1))} disabled={resolvedPage <= 1} />
+            <ToolbarButton icon="chevron-forward-outline" label="Nästa" onPress={() => scrollToPage(resolvedPage + 1)} disabled={totalPdfPages ? resolvedPage >= totalPdfPages : false} />
+            <ToolbarButton icon="remove-outline" label="−" onPress={() => onReviewZoomDelta(-0.1)} disabled={!canZoom} />
+            <ToolbarButton icon="add-outline" label="+" onPress={() => onReviewZoomDelta(0.1)} disabled={!canZoom} />
+          </View>
+        ) : null
+      ) : (
+        <View style={[styles.headerSticky, variant === 'panel' ? styles.headerStickyPanel : null]}>
+          <View style={styles.controlRow}>
+            {Platform.OS === 'web' ? (
+              <View style={[styles.controlRowWeb, isFullscreen ? styles.controlRowWebFullscreen : null]}>
+                {!isPdfReview && variant !== 'panel' ? (
+                  <>
+                    <Text
+                      style={styles.fileNameText}
+                      numberOfLines={1}
+                      title={name}
+                    >
+                      {name || 'Förhandsvisning'}
+                    </Text>
+
+                    <View style={styles.fileTypePill}>
+                      <Text style={styles.fileTypePillText}>{fileTypeLabel}</Text>
+                    </View>
+                  </>
+                ) : null}
+
+                {showPdfControls && isPdfReview ? (
+                  <ToolbarButton icon="remove-outline" label="−" onPress={() => onReviewZoomDelta(-0.1)} disabled={!canZoom} />
+                ) : null}
+
+                {showPageIndicator ? (
+                  <View style={styles.pagePill}>
+                    <Text style={styles.pagePillText}>{pageIndicatorText}</Text>
                   </View>
-                </>
-              ) : null}
+                ) : null}
 
-              {showPageIndicator ? (
-                <View style={styles.pagePill}>
-                  <Text style={styles.pagePillText}>{pageIndicatorText}</Text>
-                </View>
-              ) : null}
+                {showPdfControls && isPdfReview ? (
+                  <ToolbarButton icon="add-outline" label="+" onPress={() => onReviewZoomDelta(0.1)} disabled={!canZoom} />
+                ) : null}
 
-              {showPdfControls && isPdfReview ? (
-                <ToolbarButton icon="remove-outline" label="−" onPress={() => onReviewZoomDelta(-0.1)} disabled={!canZoom} />
-              ) : null}
-              {showPdfControls && isPdfReview ? (
-                <ToolbarButton icon="add-outline" label="+" onPress={() => onReviewZoomDelta(0.1)} disabled={!canZoom} />
-              ) : null}
-            </ScrollView>
-          )}
+                {isCompactPdfPreview ? (
+                  <ToolbarButton icon="chevron-back-outline" label="Föreg" onPress={() => scrollToPage(Math.max(1, resolvedPage - 1))} disabled={resolvedPage <= 1} />
+                ) : null}
+                {isCompactPdfPreview ? (
+                  <ToolbarButton icon="chevron-forward-outline" label="Nästa" onPress={() => scrollToPage(resolvedPage + 1)} disabled={totalPdfPages ? resolvedPage >= totalPdfPages : false} />
+                ) : null}
+
+                {showPdfControls && !isPdfReview && !isCompactPdfPreview ? (
+                  <ToolbarButton icon="remove-outline" label="Zoom −" onPress={() => onZoomDelta(-0.25)} disabled={!canZoom} />
+                ) : null}
+                {showPdfControls && !isPdfReview && !isCompactPdfPreview ? (
+                  <ToolbarButton icon="add-outline" label="Zoom +" onPress={() => onZoomDelta(0.25)} disabled={!canZoom} />
+                ) : null}
+                {showPdfControls && !isPdfReview && variant !== 'panel' ? (
+                  <ToolbarButton icon="scan-outline" label="Fit to width" onPress={onFitToWidth} disabled={!pdfDoc} />
+                ) : null}
+
+                {kind === 'pdf' ? (
+                  <ToolbarButton icon="expand-outline" label="Helskärm" onPress={() => requestFullscreen()} disabled={Platform.OS !== 'web'} />
+                ) : null}
+
+                <ToolbarButton icon="open-outline" label="Öppna i ny flik" onPress={() => onOpenInNewTab?.(externalUrl)} disabled={!safeText(externalUrl)} />
+
+                <Pressable
+                  onPress={() => {
+                    if (isFullscreen && Platform.OS === 'web') {
+                      requestFullscreen();
+                      return;
+                    }
+                    onClose?.();
+                  }}
+                  style={({ hovered, pressed }) => ({
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  })}
+                >
+                  <Ionicons name="close" size={18} color="#64748b" />
+                </Pressable>
+              </View>
+            ) : (
+              <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={styles.controlRowNative}>
+                {!isPdfReview && variant !== 'panel' ? (
+                  <>
+                    <Text style={styles.fileNameText} numberOfLines={1}>{name || 'Förhandsvisning'}</Text>
+                    <View style={styles.fileTypePill}>
+                      <Text style={styles.fileTypePillText}>{fileTypeLabel}</Text>
+                    </View>
+                  </>
+                ) : null}
+
+                {showPageIndicator ? (
+                  <View style={styles.pagePill}>
+                    <Text style={styles.pagePillText}>{pageIndicatorText}</Text>
+                  </View>
+                ) : null}
+
+                {showPdfControls && isPdfReview ? (
+                  <ToolbarButton icon="remove-outline" label="−" onPress={() => onReviewZoomDelta(-0.1)} disabled={!canZoom} />
+                ) : null}
+                {showPdfControls && isPdfReview ? (
+                  <ToolbarButton icon="add-outline" label="+" onPress={() => onReviewZoomDelta(0.1)} disabled={!canZoom} />
+                ) : null}
+              </ScrollView>
+            )}
+          </View>
         </View>
-      </View>
+      )}
 
       <View style={styles.body}>
         {kind === 'pdf' ? (
@@ -968,12 +996,24 @@ export default function SharePointFilePreviewPane({
           )
         ) : kind === 'office' ? (
           safeText(preferredUrl) ? (
-            <iframe
-              title={name || 'Office'}
-              src={buildOfficeViewerUrl(preferredUrl)}
-              style={{ width: '100%', height: '100%', border: 0, background: '#fff' }}
-              allow="fullscreen"
-            />
+            <View style={styles.officeZoomOuter} pointerEvents="box-none">
+              <View
+                style={[
+                  styles.officeZoomInner,
+                  { transform: [{ scale: officeZoom }] },
+                  Platform.OS === 'web' && { transformOrigin: 'center center' },
+                ]}
+              >
+                <View style={styles.officeIframeWrap} pointerEvents="box-none">
+                  <iframe
+                    title={name || 'Office'}
+                    src={buildOfficeViewerUrl(preferredUrl)}
+                    style={{ width: '100%', height: '100%', border: 0, background: '#fff', pointerEvents: 'auto' }}
+                    allow="fullscreen"
+                  />
+                </View>
+              </View>
+            </View>
           ) : (
             <View style={styles.bodyCentered}>
               <Text style={styles.muted}>Kunde inte ladda dokument (saknar länk).</Text>
@@ -1022,6 +1062,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     gap: 6,
+  },
+  modalToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 10,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF2F7',
   },
   headerTopRow: {
     flexDirection: 'row',
@@ -1101,6 +1151,7 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   pagePill: {
+    flexDirection: 'row',
     flexShrink: 0,
     minWidth: 112,
     paddingVertical: 6,
@@ -1111,6 +1162,18 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+  },
+  commentBadge: {
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(25, 118, 210, 0.15)',
+  },
+  commentBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1976D2',
   },
   pagePillText: {
     fontSize: 12,
@@ -1123,6 +1186,24 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     backgroundColor: '#fff',
+  },
+  officeZoomOuter: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'auto',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  officeZoomInner: {
+    width: '100%',
+    height: '100%',
+    flex: 1,
+    minHeight: 0,
+  },
+  officeIframeWrap: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
   },
   bodyCentered: {
     flex: 1,

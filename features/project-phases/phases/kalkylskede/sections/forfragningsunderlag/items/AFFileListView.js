@@ -30,7 +30,6 @@ export default function AFFileListView({ companyId, project, afRelativePath = ''
       title="Administrativa föreskrifter (AF)"
       subtitle="SharePoint (källan till sanning)"
       breadcrumbBaseSegments={[FORFRAGNINGSUNDERLAG_FOLDER, AF_FOLDER]}
-      enableInlinePreview
       iconName="document-text-outline"
       rootPath={rootPath}
       scopeRootPath={scopeRootPath}

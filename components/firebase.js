@@ -1183,6 +1183,325 @@ export function subscribeCompanyActivity(companyIdOverride, { onData, onError, l
   };
 }
 
+// --- File comments (project + file scoped) ---
+// Storage: foretag/{company}/projects/{projectId}/file_comments/{commentId}
+// Document: companyId, projectId, fileId, authorId, authorName, text, createdAt, pageNumber?, anchor?, mentions[], visibility
+// anchor: { pageNumber, type: "page"|"area", coords?: { x, y, width, height } }
+
+export async function createFileComment(companyId, projectId, { fileId, text, pageNumber = null, anchor = null, mentions = null }) {
+  const cid = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : '';
+  const pid = (projectId != null && String(projectId).trim()) ? String(projectId).trim() : '';
+  if (!cid || !pid || !fileId || typeof text !== 'string' || !text.trim()) {
+    throw new Error('companyId, projectId, fileId and non-empty text are required');
+  }
+  const user = auth?.currentUser;
+  const uid = user?.uid || null;
+  if (!uid) {
+    const err = new Error('Du måste vara inloggad för att kommentera');
+    err.code = 'auth/not-authenticated';
+    throw err;
+  }
+  const email = (user?.email && String(user.email).trim()) || '';
+  const authorName = (user?.displayName && String(user.displayName).trim()) || email || uid || 'Användare';
+  const mentionsList = Array.isArray(mentions) ? mentions : [];
+  const pageNum = pageNumber != null && Number.isFinite(Number(pageNumber)) && Number(pageNumber) > 0 ? Number(pageNumber) : null;
+  const anchorCoords = anchor?.coords && typeof anchor.coords === 'object' && [anchor.coords.x, anchor.coords.y, anchor.coords.width, anchor.coords.height].every(Number.isFinite)
+    ? { x: anchor.coords.x, y: anchor.coords.y, width: anchor.coords.width, height: anchor.coords.height }
+    : null;
+  const anchorObj = {
+    pageNumber: (anchor && anchor.pageNumber != null && Number.isFinite(Number(anchor.pageNumber)) ? Number(anchor.pageNumber) : pageNum) ?? null,
+    type: anchor?.type === 'area' ? 'area' : 'page',
+  };
+  if (anchorCoords != null) anchorObj.coords = anchorCoords;
+  const payload = {
+    companyId: cid,
+    projectId: pid,
+    fileId: String(fileId).trim(),
+    authorId: uid,
+    authorName,
+    text: String(text).trim(),
+    createdAt: serverTimestamp(),
+    mentions: mentionsList.map((m) => {
+      if (m?.type === 'user') return { type: 'user', userId: m.userId ?? null, displayName: m.displayName ?? '' };
+      if (m?.type === 'group') return { type: 'group', groupId: m.groupId ?? null, groupName: m.groupName ?? '' };
+      if (m?.type === 'all') return { type: 'all' };
+      if (m?.type === 'contact') return { type: 'contact', contactId: m.contactId ?? null, displayName: m.displayName ?? '', ...(m?.userId ? { userId: m.userId } : {}) };
+      return null;
+    }).filter(Boolean),
+    visibility: 'project',
+    anchor: anchorObj,
+  };
+  if (pageNum != null) payload.pageNumber = pageNum;
+
+  async function attemptWrite(forceTokenRefresh = false) {
+    if (forceTokenRefresh && user?.getIdToken) {
+      try { await user.getIdToken(true); } catch (_e) {}
+    }
+    const ref = collection(db, 'foretag', cid, 'projects', pid, 'file_comments');
+    const docRef = await addDoc(ref, sanitizeForFirestore(payload));
+    return { id: docRef.id, ...payload, createdAt: new Date() };
+  }
+
+  try {
+    return await attemptWrite(false);
+  } catch (e) {
+    const isPermissionDenied = e?.code === 'permission-denied' || (e?.message && String(e.message).toLowerCase().includes('permission'));
+    if (isPermissionDenied) {
+      try {
+        return await attemptWrite(true);
+      } catch (retryErr) {
+        throw retryErr;
+      }
+    }
+    throw e;
+  }
+}
+
+/**
+ * Delete a file comment. Only the comment author may delete (enforced by Firestore rules).
+ */
+export async function deleteFileComment(companyId, projectId, commentId) {
+  const cid = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : '';
+  const pid = (projectId != null && String(projectId).trim()) ? String(projectId).trim() : '';
+  if (!cid || !pid || !commentId) throw new Error('companyId, projectId and commentId are required');
+  const ref = doc(db, 'foretag', cid, 'projects', pid, 'file_comments', String(commentId));
+  await deleteDoc(ref);
+}
+
+/**
+ * Subscribe to file comments for a given project + file.
+ * Returns an unsubscribe function.
+ * onData(list, meta) where list is sorted oldest first (createdAt asc).
+ */
+export function subscribeFileComments(companyId, projectId, fileId, { onData, onError } = {}) {
+  let unsub = null;
+  if (!companyId || !projectId || !fileId) {
+    try { if (typeof onData === 'function') onData([], { companyId, projectId, fileId }); } catch(_e) {}
+    return () => {};
+  }
+  try {
+    const ref = collection(db, 'foretag', companyId, 'projects', projectId, 'file_comments');
+    const q = query(
+      ref,
+      where('fileId', '==', String(fileId).trim()),
+      orderBy('createdAt', 'asc')
+    );
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const out = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          out.push({
+            id: d.id,
+            ...data,
+            createdAt: data.createdAt?.toDate?.() ?? data.createdAt ?? null,
+          });
+        });
+        try {
+          if (typeof onData === 'function') {
+            onData(out, { size: snap.size, companyId, projectId, fileId });
+          }
+        } catch (_e) {}
+      },
+      (err) => {
+        try { if (typeof onError === 'function') onError(err); } catch(_e) {}
+      }
+    );
+  } catch (e) {
+    try { if (typeof onError === 'function') onError(e); } catch(_e) {}
+  }
+  return () => {
+    try { if (typeof unsub === 'function') unsub(); } catch(_e) {}
+  };
+}
+
+/**
+ * Subscribe to all file comments for a project (for badges in file list).
+ * Returns an unsubscribe function.
+ * onData(comments) where each comment has id, fileId, pageNumber?, anchor?, ...
+ */
+export function subscribeProjectFileComments(companyId, projectId, { onData, onError } = {}) {
+  let unsub = null;
+  if (!companyId || !projectId) {
+    try { if (typeof onData === 'function') onData([]); } catch(_e) {}
+    return () => {};
+  }
+  try {
+    const ref = collection(db, 'foretag', String(companyId).trim(), 'projects', String(projectId).trim(), 'file_comments');
+    const q = query(ref, orderBy('createdAt', 'asc'));
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const out = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          out.push({
+            id: d.id,
+            ...data,
+            fileId: data.fileId ?? null,
+            pageNumber: data.pageNumber ?? data.anchor?.pageNumber ?? null,
+            createdAt: data.createdAt?.toDate?.() ?? data.createdAt ?? null,
+          });
+        });
+        try { if (typeof onData === 'function') onData(out); } catch(_e) {}
+      },
+      (err) => { try { if (typeof onError === 'function') onError(err); } catch(_e) {} }
+    );
+  } catch (e) {
+    try { if (typeof onError === 'function') onError(e); } catch(_e) {}
+  }
+  return () => {
+    try { if (typeof unsub === 'function') unsub(); } catch(_e) {}
+  };
+}
+
+/**
+ * Fetch project organisation once (for building mention suggestions / expanding @all and @group).
+ * Returns { groups: [{ id, title, members: [{ source, refId, name, email, ... }] }] }.
+ */
+export async function getProjectOrganisation(companyId, projectId) {
+  if (!companyId || !projectId) return { groups: [] };
+  const ref = doc(db, 'foretag', String(companyId).trim(), 'project_organisation', String(projectId).trim());
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : {};
+  const raw = data?.groups;
+  const groups = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === 'object' ? Object.keys(raw).map((k) => raw[k]) : []);
+  return { groups: groups.map((g) => ({
+    id: g?.id ?? '',
+    title: g?.title ?? 'Grupp',
+    members: Array.isArray(g?.members) ? g.members : [],
+  })) };
+}
+
+/**
+ * Resolve mentions to a deduplicated list of user IDs (Firebase UIDs) for notifications.
+ * - type user: [userId] (including self if author tags themselves)
+ * - type group: all members in that group with source==='user' -> refId
+ * - type all: all members from all groups with source==='user' -> refId
+ */
+function resolveMentionUserIds(mentions, organisation, authorId) {
+  const seen = new Set();
+  const out = [];
+  const groups = organisation?.groups || [];
+
+  const add = (uid) => {
+    const id = uid && String(uid).trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+
+  for (const m of mentions || []) {
+    if (m?.type === 'user' && m?.userId) add(m.userId);
+    if (m?.type === 'contact' && m?.userId) add(m.userId);
+    if (m?.type === 'group' && m?.groupId) {
+      const g = groups.find((gr) => String(gr?.id || '') === String(m.groupId));
+      if (g?.members) for (const mem of g.members) { if (String(mem?.source || '') === 'user' && mem?.refId) add(mem.refId); }
+    }
+    if (m?.type === 'all') {
+      for (const g of groups) {
+        if (g?.members) for (const mem of g.members) { if (String(mem?.source || '') === 'user' && mem?.refId) add(mem.refId); }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Create notifications for users mentioned in a comment.
+ * Collection: foretag/{company}/projects/{projectId}/notifications/{notificationId}
+ * Deduplicates so each user gets at most one notification per comment.
+ */
+export async function createCommentNotifications(companyId, projectId, {
+  commentId,
+  fileId,
+  fileName = null,
+  pageNumber = null,
+  authorId,
+  authorName,
+  textPreview = '',
+  mentions = null,
+}) {
+  if (!companyId || !projectId || !commentId || !fileId || !authorId) return;
+  const cid = String(companyId).trim();
+  const pid = String(projectId).trim();
+  const organisation = await getProjectOrganisation(cid, pid);
+  const userIds = resolveMentionUserIds(mentions || [], organisation, authorId);
+  if (userIds.length === 0) return;
+  const colRef = collection(db, 'foretag', cid, 'projects', pid, 'notifications');
+  const preview = String(textPreview || '').trim().slice(0, 200);
+  for (const userId of userIds) {
+    try {
+      await addDoc(colRef, sanitizeForFirestore({
+        type: 'comment_mention',
+        userId,
+        companyId: cid,
+        projectId: pid,
+        commentId,
+        fileId,
+        fileName: fileName ? String(fileName).trim() : null,
+        pageNumber: pageNumber != null && Number.isFinite(Number(pageNumber)) ? Number(pageNumber) : null,
+        authorId,
+        authorName: String(authorName || '').trim() || 'Användare',
+        textPreview: preview,
+        createdAt: serverTimestamp(),
+        read: false,
+      }));
+    } catch (_e) {}
+  }
+}
+
+/**
+ * Subscribe to notifications for the current user (comment mentions, etc.) across all projects.
+ * Uses collection group query on "notifications" with userId == currentUserId.
+ * Returns unsubscribe function.
+ */
+export function subscribeUserNotifications(companyId, currentUserId, { onData, onError, limitCount = 50 } = {}) {
+  const cid = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : '';
+  const uid = (currentUserId != null && String(currentUserId).trim()) ? String(currentUserId).trim() : '';
+  if (!cid || !uid) {
+    try { if (typeof onData === 'function') onData([]); } catch (_e) {}
+    return () => {};
+  }
+  let unsub = null;
+  try {
+    const colRef = collectionGroup(db, 'notifications');
+    const q = query(
+      colRef,
+      where('userId', '==', uid),
+      where('companyId', '==', cid),
+      orderBy('createdAt', 'desc'),
+      limit(Math.max(1, Math.min(100, Number(limitCount) || 50)))
+    );
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        const out = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          out.push({
+            id: d.id,
+            ...data,
+            createdAt: data.createdAt?.toDate?.() ?? data.createdAt ?? null,
+          });
+        });
+        try { if (typeof onData === 'function') onData(out); } catch (_e) {}
+      },
+      (err) => {
+        try { if (typeof onError === 'function') onError(err); } catch (_e) {}
+      }
+    );
+  } catch (e) {
+    try { if (typeof onError === 'function') onError(e); } catch (_e) {}
+  }
+  return () => {
+    try { if (typeof unsub === 'function') unsub(); } catch (_e) {}
+  };
+}
+
 // Controls persistence helpers
 export async function saveControlToFirestore(control, companyIdOverride) {
   async function attemptWrite({ forceTokenRefresh } = { forceTokenRefresh: false }) {

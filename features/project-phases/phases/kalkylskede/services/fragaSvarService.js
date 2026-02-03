@@ -7,7 +7,10 @@
 
 import {
     collection,
+    deleteDoc,
     doc,
+    getDoc,
+    getDocs,
     onSnapshot,
     orderBy,
     query,
@@ -297,31 +300,65 @@ export async function updateFragaSvarItem(companyId, projectId, id, patch) {
   } catch (_e) {}
 }
 
-export async function deleteFragaSvarItem(companyId, projectId, id, deletedBy) {
-  const colRef = getFragaSvarCollectionRef(companyId, projectId);
-  const ref = doc(colRef, String(id || '').trim());
-
-  const user = auth?.currentUser || null;
-  const deletedByUserId = (deletedBy && typeof deletedBy === 'object')
-    ? (deletedBy.userId || null)
-    : (user?.uid || null);
-  const deletedByName = (deletedBy && typeof deletedBy === 'object')
-    ? (String(deletedBy.displayName || '').trim() || null)
-    : (String(user?.displayName || user?.email || '').trim() || null);
-
-  await updateDoc(ref, {
-    deleted: true,
-    deletedAt: serverTimestamp(),
-    deletedBy: {
-      userId: deletedByUserId,
-      displayName: deletedByName,
-    },
-    updatedAt: serverTimestamp(),
-    updatedByUid: deletedByUserId,
-    updatedByName: deletedByName,
+/**
+ * Fetch all FS items once (for renumbering after delete). Returns non-deleted items sorted by fsSeq.
+ */
+export async function getFragaSvarItemsOnce(companyId, projectId) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const colRef = getFragaSvarCollectionRef(cid, pid);
+  const q = query(colRef, orderBy('createdAt', 'asc'));
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((d) => items.push({ id: d.id, ...(d.data() || {}) }));
+  const visible = items.filter((it) => it?.deleted !== true);
+  visible.sort((a, b) => {
+    const sa = Number(a?.fsSeq) || 0;
+    const sb = Number(b?.fsSeq) || 0;
+    return sa - sb;
   });
+  return visible;
+}
+
+/**
+ * Set the next FS sequence number in meta (used after renumbering to close gaps).
+ */
+export async function setFragaSvarNextFsSeq(companyId, projectId, nextSeq) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const metaRef = getFragaSvarMetaRef(cid, pid);
+  const num = Number(nextSeq);
+  if (!Number.isInteger(num) || num < 1) throw new Error('fragaSvarNextFsSeq must be a positive integer');
+  await updateDoc(metaRef, {
+    fragaSvarNextFsSeq: num,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Permanently delete an FS question (hard delete).
+ * - Deletes the Firestore document. Related data is the document itself (no subcollections).
+ * - Does NOT decrement fragaSvarNextFsSeq (FS numbers are never reused).
+ * - Caller is responsible for: 1) Deleting the SharePoint folder (Frågasvar/FSxx), 2) Excel is
+ *   updated by enqueueFsExcelSync (rebuild excludes this doc).
+ */
+export async function deleteFragaSvarItem(companyId, projectId, id) {
+  const colRef = getFragaSvarCollectionRef(companyId, projectId);
+  const docId = String(id || '').trim();
+  if (!docId) throw new Error('FS-id krävs för radering.');
+  const ref = doc(colRef, docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Frågan finns inte eller är redan raderad.');
+  }
+
+  await deleteDoc(ref);
 
   try {
     enqueueFsExcelSync(companyId, projectId, { reason: 'delete' });
-  } catch (_e) {}
+  } catch (e) {
+    // Log but do not fail the delete; Excel will sync on next change.
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('[FS delete] Excel-synk könades inte:', e?.message || e);
+    }
+  }
 }

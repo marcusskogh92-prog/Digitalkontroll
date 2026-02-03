@@ -4,8 +4,8 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { fetchUserProfile, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../../components/firebase';
+import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../../components/firebase';
 import { getPhaseConfig } from '../../../features/projects/constants';
 import DashboardBanner from './DashboardBanner';
 import { resolveProjectId } from './dashboardUtils';
@@ -22,10 +22,6 @@ const DashboardAllProjects = ({
   authClaims = null,
 }) => {
   const DEBUG_MEMBERSHIP = !!(__DEV__ && Platform?.OS === 'web');
-  const [notifications, setNotifications] = useState([]);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [nameMap, setNameMap] = useState({});
-  const pendingRef = useRef({});
 
   const [memberProjectIds, setMemberProjectIds] = useState(() => new Set());
   const memberProjectIdsRef = useRef(memberProjectIds);
@@ -214,76 +210,7 @@ const DashboardAllProjects = ({
 
     return () => { try { unsub?.(); } catch(_e) {} };
   }, [effectiveCompanyId, currentUserId]);
-  
-  // Subscribe to company activity for notifications
-  useEffect(() => {
-    if (!effectiveCompanyId) return;
-    
-    const unsub = subscribeCompanyActivity(effectiveCompanyId, {
-      onData: (data) => {
-        try {
-          const arr = Array.isArray(data) ? data : [];
-          if (isAdmin) {
-            setNotifications(arr.slice(0, 20));
-            return;
-          }
 
-          if (!memberProjectsReady) {
-            setNotifications([]);
-            return;
-          }
-
-          const allowed = memberProjectIdsRef.current;
-          const filtered = arr.filter((ev) => {
-            const pid = ev?.projectId || ev?.project?.id || ev?.project || null;
-            return pid && allowed.has(String(pid).trim());
-          });
-          setNotifications(filtered.slice(0, 20));
-        } catch (_e) {}
-      },
-      onError: () => {},
-      limitCount: 25,
-    });
-    
-    return () => { try { unsub(); } catch(_e) {} };
-  }, [effectiveCompanyId, isAdmin, memberProjectsReady, memberProjectIds]);
-  
-  // Resolve display names for notification actors
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const uids = Array.from(new Set(
-          notifications.map(it => it && (it.uid || it.userId)).filter(Boolean)
-        ));
-        const toFetch = uids.filter(u => !nameMap[u] && !pendingRef.current[u]);
-        if (toFetch.length === 0) return;
-        for (const uid of toFetch) pendingRef.current[uid] = true;
-        await Promise.all(toFetch.map(async (uid) => {
-          try {
-            const profile = await fetchUserProfile(uid);
-            if (!mounted) return;
-            setNameMap(prev => ({ 
-              ...prev, 
-              [uid]: (profile && (profile.displayName || (profile.name || ''))) || null 
-            }));
-          } catch(_e) {
-            // ignore
-          } finally {
-            try { delete pendingRef.current[uid]; } catch(_e) {}
-          }
-        }));
-      } catch(_e) {}
-    })();
-    return () => { mounted = false; };
-  }, [notifications, nameMap]);
-  
-  // Count unread notifications (for badge)
-  const unreadCount = useMemo(() => {
-    // For now, count all notifications as "unread"
-    // Can be enhanced later with read/unread tracking
-    return notifications.length;
-  }, [notifications]);
   // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {
     // Primary source: canonical Firestore projects collection.
@@ -451,139 +378,7 @@ const DashboardAllProjects = ({
             </TouchableOpacity>
           )}
         </View>
-        
-        {/* Notifications Icon - Right side */}
-        <TouchableOpacity
-          onPress={() => setNotificationsOpen(true)}
-          style={{
-            position: 'relative',
-            padding: 8,
-            borderRadius: 8,
-            backgroundColor: notificationsOpen ? '#E3F2FD' : 'transparent',
-          }}
-        >
-          <Ionicons name="notifications-outline" size={24} color="#1976D2" />
-          {unreadCount > 0 && (
-            <View style={{
-              position: 'absolute',
-              top: 4,
-              right: 4,
-              backgroundColor: '#D32F2F',
-              borderRadius: 10,
-              minWidth: 18,
-              height: 18,
-              paddingHorizontal: 5,
-              justifyContent: 'center',
-              alignItems: 'center',
-              borderWidth: 2,
-              borderColor: '#fff',
-            }}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
       </View>
-      
-      {/* Notifications Modal */}
-      <Modal
-        visible={notificationsOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setNotificationsOpen(false)}
-      >
-        <View style={{ 
-          flex: 1, 
-          backgroundColor: 'rgba(0,0,0,0.5)', 
-          justifyContent: 'flex-end' 
-        }}>
-          <View style={{ 
-            backgroundColor: '#fff', 
-            borderTopLeftRadius: 20, 
-            borderTopRightRadius: 20,
-            maxHeight: '80%',
-            paddingTop: 20,
-            paddingBottom: Platform.OS === 'web' ? 20 : 40,
-          }}>
-            <View style={{ 
-              flexDirection: 'row', 
-              alignItems: 'center', 
-              justifyContent: 'space-between',
-              paddingHorizontal: 20,
-              paddingBottom: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: '#e0e0e0',
-            }}>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: '#222' }}>
-                Notiser
-              </Text>
-              <TouchableOpacity
-                onPress={() => setNotificationsOpen(false)}
-                style={{ padding: 8 }}
-              >
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
-              {notifications.length === 0 ? (
-                <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <Ionicons name="notifications-off-outline" size={48} color="#ccc" />
-                  <Text style={{ color: '#888', fontSize: 15, marginTop: 12 }}>
-                    Inga notiser än
-                  </Text>
-                </View>
-              ) : (
-                notifications.map((notification, index) => {
-                  const actorName = notification.uid ? (nameMap[notification.uid] || 'Användare') : 'System';
-                  const timestamp = notification.timestamp || notification.createdAt || notification.ts || notification.updatedAt;
-                  const timeText = timestamp && formatRelativeTime 
-                    ? formatRelativeTime(timestamp) 
-                    : timestamp 
-                      ? new Date(timestamp).toLocaleDateString('sv-SE', { 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })
-                      : '';
-                  
-                  return (
-                    <View
-                      key={notification.id || index}
-                      style={{
-                        paddingVertical: 12,
-                        paddingHorizontal: 16,
-                        borderBottomWidth: index < notifications.length - 1 ? 1 : 0,
-                        borderBottomColor: '#f0f0f0',
-                      }}
-                    >
-                      <Text style={{ fontSize: 14, color: '#222', fontWeight: '500' }}>
-                        {notification.message || notification.label || notification.eventType || notification.type || 'Ny aktivitet'}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 }}>
-                        <Text style={{ fontSize: 12, color: '#666' }}>
-                          {actorName}
-                        </Text>
-                        {timeText && (
-                          <>
-                            <Text style={{ fontSize: 12, color: '#999' }}>·</Text>
-                            <Text style={{ fontSize: 12, color: '#999' }}>
-                              {timeText}
-                            </Text>
-                          </>
-                        )}
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {/* Contextual guidance text */}
       {membershipLoading ? (

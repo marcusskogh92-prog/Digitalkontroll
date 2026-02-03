@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 function importantDatePresentationForCalendar(item) {
   const it = item && typeof item === 'object' ? item : {};
@@ -79,12 +79,36 @@ function addDays(iso, days) {
 
 function startOfWeekMondayIso(iso) {
   const d = isoToDate(iso) || new Date();
-  // JS: Sunday=0 ... Saturday=6. We want Monday=0.
   const js = d.getDay();
   const mondayIndex = (js + 6) % 7;
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() - mondayIndex);
   return dateToIso(start);
 }
+
+function getISOWeekNumber(iso) {
+  const d = isoToDate(iso);
+  if (!d) return null;
+  const day = d.getDay();
+  const mondayOffset = (day + 6) % 7;
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - mondayOffset);
+  const jan4 = new Date(monday.getFullYear(), 0, 4);
+  const jan4MondayOffset = (jan4.getDay() + 6) % 7;
+  const jan4Monday = new Date(jan4.getFullYear(), 0, 4 - jan4MondayOffset);
+  let week = 1 + Math.floor((monday.getTime() - jan4Monday.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  if (week < 1) {
+    const prevJan4 = new Date(monday.getFullYear() - 1, 0, 4);
+    const prevJan4Monday = new Date(prevJan4.getFullYear(), 0, 4 - (prevJan4.getDay() + 6) % 7);
+    week = 1 + Math.floor((monday.getTime() - prevJan4Monday.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  }
+  if (week > 52) {
+    const nextJan4 = new Date(monday.getFullYear() + 1, 0, 4);
+    const nextJan4Monday = new Date(nextJan4.getFullYear(), 0, 4 - (nextJan4.getDay() + 6) % 7);
+    if (monday.getTime() >= nextJan4Monday.getTime()) week = 1;
+  }
+  return week;
+}
+
+const WEEK_NUM_WIDTH = 28;
 
 function monthStartIso(isoMonthStart) {
   const d = isoToDate(isoMonthStart) || new Date();
@@ -349,32 +373,43 @@ export default function CompactMonthCalendar({
           <Text style={[{ fontSize: 12, color: colors?.textSubtle || '#64748B' }, typography?.viewModeTextStyle]}>Månadsvy</Text>
         </View>
 
-        {/* Weekday header */}
+        {/* Weekday header: week num column + Mån–Sön */}
         <View
           style={{
+            flexDirection: 'row',
             paddingHorizontal: 10,
             paddingTop: 8,
             paddingBottom: 8,
             borderBottomWidth: 1,
             borderBottomColor: '#EEF2F7',
-            ...gridStyles,
+            alignItems: 'center',
           }}
         >
-          {weekDayLabels.map((w) => (
-            <View key={w} style={{ width: '14.2857%' }}>
-              <Text style={[{ fontSize: 11, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.weekdayLabelStyle]}>{w}</Text>
-            </View>
-          ))}
+          <View style={{ width: WEEK_NUM_WIDTH, paddingRight: 6, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[{ fontSize: 10, fontWeight: '600', color: '#94A3B8' }, typography?.weekdayLabelStyle]}>V</Text>
+          </View>
+          <View style={{ flex: 1, flexDirection: 'row' }}>
+            {weekDayLabels.map((w) => (
+              <View key={w} style={{ flex: 1 }}>
+                <Text style={[{ fontSize: 11, fontWeight: '900', color: colors?.textSubtle || '#64748B' }, typography?.weekdayLabelStyle]}>{w}</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
-        {/* Grid body */}
-        <View
-          style={{
-            padding: 7,
-            ...gridStyles,
-          }}
-        >
-          {monthGrid.cells.map((cell) => {
+        {/* Grid body: one row per week, week num + 7 days */}
+        <View style={{ paddingVertical: 7, paddingHorizontal: 10 }}>
+          {[0, 1, 2, 3, 4, 5].map((rowIndex) => {
+            const rowCells = monthGrid.cells.slice(rowIndex * 7, rowIndex * 7 + 7);
+            const weekStartIso = rowCells[0]?.iso;
+            const weekNum = weekStartIso ? getISOWeekNumber(weekStartIso) : null;
+            return (
+              <View key={weekStartIso || rowIndex} style={{ flexDirection: 'row', marginBottom: rowIndex < 5 ? 0 : 0 }}>
+                <View style={{ width: WEEK_NUM_WIDTH, paddingRight: 6, paddingTop: 3, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <Text style={{ fontSize: 10, fontWeight: '500', color: '#94A3B8' }}>{weekNum ?? '—'}</Text>
+                </View>
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  {rowCells.map((cell) => {
             const iso = cell.iso;
             const isToday = isValidIsoDate(iso) && iso === todayIso;
             const isSelected = !!selectedIsoSafe && iso === selectedIsoSafe;
@@ -401,7 +436,7 @@ export default function CompactMonthCalendar({
             const todayPillBorder = 'rgba(25, 118, 210, 0.34)';
 
             const dayTextColor = !cell.inMonth
-              ? '#94A3B8'
+              ? '#64748B'
               : (isToday
                 ? (todayDayNumberUsesAccentText ? (colors?.blue || '#2563EB') : (colors?.text || '#0F172A'))
                 : (colors?.text || '#0F172A'));
@@ -410,7 +445,8 @@ export default function CompactMonthCalendar({
               <View
                 key={iso}
                 style={{
-                  width: '14.2857%',
+                  flex: 1,
+                  minWidth: 0,
                   padding: 3,
                 }}
               >
@@ -420,7 +456,7 @@ export default function CompactMonthCalendar({
                     onPressDay(iso, list);
                   }}
                   style={({ hovered, pressed }) => ({
-                    minHeight: cellMinHeight,
+                    height: cellMinHeight,
                     borderWidth: isSelected ? 2 : (isToday ? 2 : 1),
                     borderColor: isSelected
                       ? (colors?.blue || '#2563EB')
@@ -497,7 +533,12 @@ export default function CompactMonthCalendar({
                     ) : null}
                   </View>
 
-                  <View style={{ flex: 1, minHeight: 0 }}>
+                  <ScrollView
+                    style={{ flex: 1, minHeight: 0 }}
+                    contentContainerStyle={{ paddingBottom: 4 }}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled
+                  >
                     {visible.map((it) => {
                       const s = statusForIso(iso, todayIso);
                       const st = eventStyleForStatus(s, colors);
@@ -569,8 +610,12 @@ export default function CompactMonthCalendar({
                         +{more} till
                       </Text>
                     ) : null}
-                  </View>
+                  </ScrollView>
                 </Pressable>
+              </View>
+            );
+          })}
+                </View>
               </View>
             );
           })}

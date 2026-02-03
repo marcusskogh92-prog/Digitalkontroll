@@ -37,8 +37,6 @@ export default function FFUFileListView({
       subtitle="SharePoint (källan till sanning)"
       breadcrumbBaseSegments={[FORFRAGNINGSUNDERLAG_FOLDER]}
       showCreateFolderButton
-      enableInlinePreview
-      inlinePreviewMode="on-select-only"
       iconName="folder-outline"
       rootPath={rootPath}
       scopeRootPath={rootPath}

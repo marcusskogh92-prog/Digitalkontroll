@@ -6,7 +6,7 @@
  *
  * Data model (doc):
  * - { projectId, customDates: TimelineCustomDate[], siteVisits: TimelineSiteVisit[] }
- * - TimelineCustomDate: { id, title, date, customType, description }
+ * - TimelineCustomDate: { id, title, date, customType, description, outlookEventId?, outlookStatus? }
  * - TimelineSiteVisit: { id, title, dates: string[], description }
  */
 
@@ -20,6 +20,37 @@ const COLLECTION = 'project_timeline';
 
 function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
+
+/** Recursively check for undefined in payload; log and return true if found. */
+function hasUndefinedInPayload(value, path = 'payload') {
+  if (value === undefined) {
+    console.error('[useProjectTimelineDates] Firestore payload contains undefined at:', path);
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item, i) => hasUndefinedInPayload(item, `${path}[${i}]`));
+  }
+  if (value !== null && typeof value === 'object' && value.constructor === Object) {
+    return Object.entries(value).some(([k, v]) => hasUndefinedInPayload(v, `${path}.${k}`));
+  }
+  return false;
+}
+
+/** Strip undefined from a plain object (one level). Used for date/visit items. */
+function stripUndefinedFromObject(obj) {
+  if (obj == null || typeof obj !== 'object') return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) {
+      const cleaned = v.map((x) => (x != null && typeof x === 'object' && !Array.isArray(x) ? stripUndefinedFromObject(x) : x)).filter((x) => x !== undefined);
+      out[k] = cleaned;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function normalizeCustomDates(raw) {
@@ -36,6 +67,10 @@ function normalizeCustomDates(raw) {
       const startTime = String(d?.startTime || '').trim();
       const endTime = String(d?.endTime || '').trim();
       const outlookInvitationPrepared = !!d?.outlookInvitationPrepared;
+      const outlookEventId = d?.outlookEventId != null && String(d.outlookEventId).trim() ? String(d.outlookEventId).trim() : null;
+      const outlookStatus = ['sent', 'updated', 'cancelled'].includes(String(d?.outlookStatus || '').trim())
+        ? String(d.outlookStatus).trim()
+        : undefined;
       const locked = !!d?.locked;
       const source = d?.source != null ? String(d.source) : null;
       const sourceKey = d?.sourceKey != null ? String(d.sourceKey) : null;
@@ -52,6 +87,8 @@ function normalizeCustomDates(raw) {
         endTime,
         participants,
         outlookInvitationPrepared,
+        outlookEventId,
+        outlookStatus,
         locked,
         source,
         sourceKey,
@@ -140,17 +177,33 @@ export function useProjectTimelineDates({ companyId, projectId }) {
         customDates: normalizeCustomDates(nextData?.customDates),
         siteVisits: normalizeSiteVisits(nextData?.siteVisits),
         updatedAt: serverTimestamp(),
-        updatedBy: auth?.currentUser?.uid || null,
+        updatedBy: auth?.currentUser?.uid ?? null,
       };
-      await setDoc(ref, payload, { merge: true });
+      const hasUndefined =
+        payload.updatedBy === undefined ||
+        hasUndefinedInPayload(payload.customDates, 'payload.customDates') ||
+        hasUndefinedInPayload(payload.siteVisits, 'payload.siteVisits');
+      if (hasUndefined) {
+        console.error('[useProjectTimelineDates] Payload had undefined; stripping before write.');
+      }
+      const safePayload = {
+        projectId: payload.projectId,
+        customDates: (payload.customDates || []).map(stripUndefinedFromObject).filter(Boolean),
+        siteVisits: (payload.siteVisits || []).map(stripUndefinedFromObject).filter(Boolean),
+        updatedAt: payload.updatedAt,
+        updatedBy: payload.updatedBy ?? null,
+      };
+      await setDoc(ref, safePayload, { merge: true });
       return true;
     },
     [cid, pid]
   );
 
   const addCustomDate = useCallback(
-    async ({ id, title, date, customType, type, description, participants, startTime, endTime, outlookInvitationPrepared, locked, source, sourceKey } = {}) => {
+    async ({ id, title, date, customType, type, description, participants, startTime, endTime, outlookInvitationPrepared, outlookEventId, outlookStatus, locked, source, sourceKey } = {}) => {
       const current = latestRef.current;
+      const evId = outlookEventId != null && String(outlookEventId).trim() ? String(outlookEventId).trim() : null;
+      const evStatus = ['sent', 'updated', 'cancelled'].includes(String(outlookStatus || '').trim()) ? String(outlookStatus).trim() : undefined;
       const next = {
         ...current,
         customDates: [
@@ -166,6 +219,8 @@ export function useProjectTimelineDates({ companyId, projectId }) {
             startTime: String(startTime || '').trim(),
             endTime: String(endTime || '').trim(),
             outlookInvitationPrepared: !!outlookInvitationPrepared,
+            outlookEventId: evId,
+            outlookStatus: evStatus,
             locked: !!locked,
             source: source != null ? String(source) : null,
             sourceKey: sourceKey != null ? String(sourceKey) : null,
@@ -188,6 +243,10 @@ export function useProjectTimelineDates({ companyId, projectId }) {
         customDates: (current.customDates || []).map((d) => {
           if (String(d?.id || '') !== did) return d;
           const nextDate = p.date != null ? (isValidIsoDate(p.date) ? String(p.date) : '') : d.date;
+          const nextOutlookEventId = p.outlookEventId !== undefined ? (p.outlookEventId != null && String(p.outlookEventId).trim() ? String(p.outlookEventId).trim() : null) : d.outlookEventId;
+          const nextOutlookStatus = p.outlookStatus !== undefined
+            ? (['sent', 'updated', 'cancelled'].includes(String(p.outlookStatus || '').trim()) ? String(p.outlookStatus).trim() : undefined)
+            : d.outlookStatus;
           return {
             ...d,
             title: p.title != null ? (String(p.title || '').trim() || 'Datum') : d.title,
@@ -199,6 +258,8 @@ export function useProjectTimelineDates({ companyId, projectId }) {
             startTime: p.startTime != null ? String(p.startTime || '').trim() : d.startTime,
             endTime: p.endTime != null ? String(p.endTime || '').trim() : d.endTime,
             outlookInvitationPrepared: p.outlookInvitationPrepared != null ? !!p.outlookInvitationPrepared : !!d.outlookInvitationPrepared,
+            outlookEventId: nextOutlookEventId,
+            outlookStatus: nextOutlookStatus,
             locked: p.locked != null ? !!p.locked : !!d.locked,
             source: p.source != null ? String(p.source) : d.source,
             sourceKey: p.sourceKey != null ? String(p.sourceKey) : d.sourceKey,
@@ -261,6 +322,8 @@ export function useProjectTimelineDates({ companyId, projectId }) {
         startTime: patch.startTime,
         endTime: patch.endTime,
         outlookInvitationPrepared: patch.outlookInvitationPrepared,
+        outlookEventId: patch.outlookEventId,
+        outlookStatus: patch.outlookStatus,
         locked: patch.locked,
         source: patch.source,
         sourceKey: patch.sourceKey,
