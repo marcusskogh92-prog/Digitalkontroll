@@ -82,6 +82,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     elevation: 0,
 
-    ...(Platform.OS === 'web' ? { overflow: 'visible' } : null),
+    ...(Platform.OS === 'web' ? { overflow: 'visible' } : {}),
   },
 });

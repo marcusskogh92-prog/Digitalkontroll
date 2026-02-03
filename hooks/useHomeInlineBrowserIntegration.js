@@ -6,7 +6,7 @@ export const useHomeInlineBrowserIntegration = ({
   pendingProjectSwitchRef,
   pendingBreadcrumbNavRef,
   setProjectSelectedAction,
-  setSelectedProject,
+  requestProjectSwitch,
   applyBreadcrumbTarget,
 }) => {
   React.useEffect(() => {
@@ -25,10 +25,19 @@ export const useHomeInlineBrowserIntegration = ({
 
       if (pendingSwitch && pendingSwitch.project) {
         try {
-          setProjectSelectedAction(pendingSwitch.selectedAction ?? null);
-        } catch (_e) {}
-        setSelectedProject({ ...pendingSwitch.project });
-        if (pendingSwitch.clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
+          requestProjectSwitch(pendingSwitch.project, {
+            selectedAction: pendingSwitch.selectedAction ?? null,
+            clearActionAfter: !!pendingSwitch.clearActionAfter,
+            path: null,
+          });
+        } catch (_e) {
+          try {
+            setProjectSelectedAction(pendingSwitch.selectedAction ?? null);
+          } catch (_e2) {}
+          try {
+            requestProjectSwitch(pendingSwitch.project, { selectedAction: pendingSwitch.selectedAction ?? null, path: null });
+          } catch (_e3) {}
+        }
       }
 
       if (pendingBreadcrumb) {
@@ -46,7 +55,7 @@ export const useHomeInlineBrowserIntegration = ({
     pendingProjectSwitchRef,
     pendingBreadcrumbNavRef,
     setProjectSelectedAction,
-    setSelectedProject,
+    requestProjectSwitch,
     applyBreadcrumbTarget,
   ]);
 };

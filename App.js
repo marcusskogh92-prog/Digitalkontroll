@@ -11,6 +11,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
+import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
@@ -306,14 +307,15 @@ export default function App() {
           />
         )}
         <SystemModalProvider>
-          <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
-            <NavigationContainer
-              ref={navigationRef}
-              documentTitle={{ enabled: false }}
-              onReady={ensureWebTitle}
-              onStateChange={handleStateChange}
-            >
-            <Stack.Navigator
+          <UploadManagerProvider>
+            <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
+              <NavigationContainer
+                ref={navigationRef}
+                documentTitle={{ enabled: false }}
+                onReady={ensureWebTitle}
+                onStateChange={handleStateChange}
+              >
+              <Stack.Navigator
             initialRouteName="Login"
             screenOptions={({ route, navigation }) => {
               const isWeb = Platform.OS === 'web';
@@ -695,9 +697,10 @@ export default function App() {
               }}
             />
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
-            </Stack.Navigator>
-            </NavigationContainer>
-          </View>
+              </Stack.Navigator>
+              </NavigationContainer>
+            </View>
+          </UploadManagerProvider>
         </SystemModalProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>

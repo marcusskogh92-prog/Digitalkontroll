@@ -4,17 +4,17 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { Linking, Platform, Text, TouchableOpacity } from 'react-native';
+import { Linking, Platform, Text, View } from 'react-native';
+import { LEFT_NAV } from '../../../constants/leftNavTheme';
+import SidebarItem from '../SidebarItem';
 
 export default function ProjectTreeFile({
   file,
   level = 0,
   isSelected = false,
   compact = false,
+  edgeToEdge = false,
 }) {
-  const [isHovered, setIsHovered] = useState(false);
-
   const handlePress = async () => {
     if (!file.webUrl) {
       console.warn('[ProjectTreeFile] No webUrl available for file:', file.name);
@@ -61,90 +61,46 @@ export default function ProjectTreeFile({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const fileRowStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: compact ? 4 : 6,
-    paddingHorizontal: compact ? 8 : 10,
-    borderRadius: 6,
-    marginVertical: 1,
-    marginLeft: level * 12,
-    backgroundColor: isSelected 
-      ? '#E8F5E9' 
-      : isHovered 
-        ? '#E3F2FD' 
-        : 'transparent',
-    borderWidth: isSelected ? 1 : 0,
-    borderColor: isSelected ? '#1976D2' : 'transparent',
-    ...(Platform.OS === 'web' ? {
-      cursor: 'pointer',
-      transition: 'background-color 0.15s ease, border-color 0.15s ease',
-    } : {}),
-  };
-
-  const fileRowContent = (
-    <>
-      <Ionicons
-        name={getFileIcon()}
-        size={compact ? 16 : 18}
-        color="#666"
-        style={{ marginRight: compact ? 6 : 8 }}
-      />
-      <Text
-        style={{
-          fontSize: compact ? 12 : 14,
-          color: '#222',
-          fontWeight: isSelected ? '600' : '400',
-          flex: 1,
-        }}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
-        {file.name}
-      </Text>
-      {file.size && (
-        <Text
-          style={{
-            fontSize: compact ? 11 : 12,
-            color: '#666',
-            marginLeft: 8,
-          }}
-        >
-          {formatFileSize(file.size)}
-        </Text>
-      )}
-      {file.webUrl && (
+  return (
+    <SidebarItem
+      fullWidth
+      squareCorners={Boolean(edgeToEdge && Platform.OS === 'web')}
+      indentMode={edgeToEdge ? 'padding' : 'margin'}
+      indent={level * 12}
+      active={Boolean(isSelected)}
+      onPress={handlePress}
+      left={(state) => (
         <Ionicons
-          name="open-outline"
-          size={compact ? 14 : 16}
-          color="#1976D2"
-          style={{ marginLeft: 8 }}
+          name={getFileIcon()}
+          size={compact ? 16 : 18}
+          color={state.active || state.hovered ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
         />
       )}
-    </>
-  );
-
-  if (Platform.OS === 'web') {
-    return (
-      <div
-        style={fileRowStyle}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onClick={handlePress}
-        title={`Öppna ${file.name} i SharePoint`}
-      >
-        {fileRowContent}
-      </div>
-    );
-  }
-
-  return (
-    <TouchableOpacity
-      style={fileRowStyle}
-      onPress={handlePress}
-      activeOpacity={0.7}
-    >
-      {fileRowContent}
-    </TouchableOpacity>
+      label={file.name}
+      labelWeight={isSelected ? '600' : '500'}
+      right={() => (
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {file.size ? (
+            <Text
+              style={{
+                fontSize: compact ? 11 : 12,
+                color: LEFT_NAV.textMuted,
+                marginLeft: 8,
+              }}
+            >
+              {formatFileSize(file.size)}
+            </Text>
+          ) : null}
+          {file.webUrl ? (
+            <Ionicons
+              name="open-outline"
+              size={compact ? 14 : 16}
+              color={LEFT_NAV.accent}
+              style={{ marginLeft: 8 }}
+            />
+          ) : null}
+        </View>
+      )}
+    />
   );
 }

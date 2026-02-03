@@ -80,15 +80,38 @@ export function computeControlsToSign(drafts) {
   }
 }
 
-export function countActiveProjectsInHierarchy(hierarchy) {
+// Canonical project identifier used across dashboard membership filtering.
+// Standard: projectId === Firestore project_number_index doc.id (e.g. "1010-10").
+// Do not rely on SharePoint internal ids or projectNumber-derived strings.
+export function resolveProjectId(project) {
+  try {
+    if (!project) return null;
+    if (typeof project === 'string' || typeof project === 'number') {
+      const s = String(project).trim();
+      return s || null;
+    }
+    if (typeof project === 'object') {
+      const pid = String(project.projectId || project.id || '').trim();
+      return pid || null;
+    }
+    return null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+export function countActiveProjectsInHierarchy(hierarchy, allowedProjectIds) {
   try {
     let active = 0;
     for (const main of (hierarchy || [])) {
       for (const sub of (main.children || [])) {
         for (const child of (sub.children || [])) {
           if (child && child.type === 'project') {
-            const status = child.status || 'ongoing';
-            if (status !== 'completed') active++;
+            const pid = resolveProjectId(child);
+            if (allowedProjectIds && pid && !allowedProjectIds.has(pid)) continue;
+            // Status is deprecated; rely on project phase only.
+            const phaseKey = String(child?.phase || '').trim().toLowerCase();
+            if (phaseKey !== 'avslut') active++;
           }
         }
       }

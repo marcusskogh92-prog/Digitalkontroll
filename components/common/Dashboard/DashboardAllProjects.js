@@ -5,9 +5,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { fetchUserProfile, subscribeCompanyActivity } from '../../../components/firebase';
+import { fetchUserProfile, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../../components/firebase';
 import { getPhaseConfig } from '../../../features/projects/constants';
 import DashboardBanner from './DashboardBanner';
+import { resolveProjectId } from './dashboardUtils';
 
 const DashboardAllProjects = ({
   hierarchy = [],
@@ -18,23 +19,226 @@ const DashboardAllProjects = ({
   dashboardLoading = false,
   companyId = null,
   currentUserId = null,
+  authClaims = null,
 }) => {
+  const DEBUG_MEMBERSHIP = !!(__DEV__ && Platform?.OS === 'web');
   const [notifications, setNotifications] = useState([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [nameMap, setNameMap] = useState({});
   const pendingRef = useRef({});
+
+  const [memberProjectIds, setMemberProjectIds] = useState(() => new Set());
+  const memberProjectIdsRef = useRef(memberProjectIds);
+  useEffect(() => {
+    memberProjectIdsRef.current = memberProjectIds;
+  }, [memberProjectIds]);
+  const [memberProjectsReady, setMemberProjectsReady] = useState(false);
+
+  const [companyProjects, setCompanyProjects] = useState([]);
+  const [companyProjectsReady, setCompanyProjectsReady] = useState(false);
+
+  const isAdmin = !!(
+    authClaims?.globalAdmin ||
+    authClaims?.admin === true ||
+    String(authClaims?.role || '').toLowerCase() === 'admin'
+  );
+
+  const effectiveCompanyId = useMemo(() => {
+    const cid = String(companyId || authClaims?.companyId || '').trim();
+    return cid || null;
+  }, [companyId, authClaims?.companyId]);
+
+  const membershipLoading = useMemo(() => {
+    if (isAdmin) return false;
+    const cid = String(effectiveCompanyId || '').trim();
+    const uid = String(currentUserId || '').trim();
+    if (!cid || !uid) return false;
+    return !memberProjectsReady;
+  }, [isAdmin, effectiveCompanyId, currentUserId, memberProjectsReady]);
+
+  const projectsLoading = useMemo(() => {
+    if (isAdmin) return false;
+    const cid = String(effectiveCompanyId || '').trim();
+    if (!cid) return false;
+    return !companyProjectsReady;
+  }, [isAdmin, effectiveCompanyId, companyProjectsReady]);
+
+  useEffect(() => {
+    const cid = String(effectiveCompanyId || '').trim();
+    if (!cid) {
+      setCompanyProjects([]);
+      setCompanyProjectsReady(false);
+      return;
+    }
+
+    setCompanyProjectsReady(false);
+    const unsub = subscribeCompanyProjects(
+      cid,
+      { siteRole: 'projects' },
+      (docs) => {
+        try {
+          setCompanyProjects(Array.isArray(docs) ? docs : []);
+        } catch (_e) {
+          setCompanyProjects([]);
+        }
+        setCompanyProjectsReady(true);
+      },
+      () => {
+        setCompanyProjects([]);
+        setCompanyProjectsReady(true);
+      }
+    );
+
+    return () => {
+      try { unsub?.(); } catch (_e) {}
+    };
+  }, [effectiveCompanyId]);
+
+  useEffect(() => {
+    const cid = String(effectiveCompanyId || '').trim();
+    const uid = String(currentUserId || '').trim();
+
+    if (DEBUG_MEMBERSHIP) {
+      console.log('[dashboardAllProjects][membership] subscribe start', { cid, uid, isAdmin });
+    }
+
+    if (!cid || !uid) {
+      setMemberProjectIds(new Set());
+      setMemberProjectsReady(false);
+      return;
+    }
+
+    setMemberProjectsReady(false);
+    const unsub = subscribeCompanyProjectOrganisation(
+      cid,
+      (docs) => {
+        const next = new Set();
+
+        const normalizeToArray = (value) => {
+          if (Array.isArray(value)) return value;
+          if (value && typeof value === 'object') {
+            try { return Object.values(value); } catch (_e) { return []; }
+          }
+          return [];
+        };
+
+        try {
+          if (DEBUG_MEMBERSHIP) {
+            console.log('[dashboardAllProjects][membership] raw org snapshot', {
+              cid,
+              uid,
+              docsCount: Array.isArray(docs) ? docs.length : 0,
+              sample: Array.isArray(docs) ? docs.slice(0, 3).map((d) => ({ id: d?.id, projectId: d?.projectId, projectNumber: d?.projectNumber })) : [],
+            });
+          }
+
+          let compareCount = 0;
+          for (const d of (docs || [])) {
+            const groups = normalizeToArray(d?.groups);
+            let isMember = false;
+
+            if (DEBUG_MEMBERSHIP) {
+              console.log('[dashboardAllProjects][membership] org doc', {
+                docId: d?.id,
+                projectId: d?.projectId,
+                projectNumber: d?.projectNumber,
+                groupsType: Array.isArray(d?.groups) ? 'array' : (d?.groups && typeof d?.groups === 'object' ? 'object' : typeof d?.groups),
+                groupsCount: Array.isArray(groups) ? groups.length : 0,
+              });
+            }
+
+            for (const g of groups) {
+              const members = normalizeToArray(g?.members);
+
+              if (DEBUG_MEMBERSHIP) {
+                console.log('[dashboardAllProjects][membership] group', {
+                  groupId: g?.id,
+                  groupTitle: g?.title,
+                  membersType: Array.isArray(g?.members) ? 'array' : (g?.members && typeof g?.members === 'object' ? 'object' : typeof g?.members),
+                  membersCount: Array.isArray(members) ? members.length : 0,
+                });
+              }
+
+              for (const m of members) {
+                const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                if (DEBUG_MEMBERSHIP) {
+                  compareCount += 1;
+                  if (compareCount <= 500) {
+                    console.log('[dashboardAllProjects][membership] compare member', {
+                      currentUserId: uid,
+                      memberRefId: refId,
+                      memberSource: m?.source,
+                      memberRole: m?.role,
+                      memberName: m?.name,
+                      match: !!(refId && refId === uid),
+                    });
+                  } else if (compareCount === 501) {
+                    console.log('[dashboardAllProjects][membership] compare member: too many comparisons, truncating logs after 500');
+                  }
+                }
+                if (!refId) continue;
+                if (refId === uid) {
+                  isMember = true;
+                  break;
+                }
+              }
+              if (isMember) break;
+            }
+
+            if (isMember) {
+              const pid = String(d?.projectId || d?.id || '').trim();
+              if (DEBUG_MEMBERSHIP) {
+                console.log('[dashboardAllProjects][membership] member match => allow project', {
+                  docId: d?.id,
+                  projectId: d?.projectId,
+                  projectNumber: d?.projectNumber,
+                  derivedAllowedProjectId: pid,
+                });
+              }
+              if (pid) next.add(pid);
+            }
+          }
+        } catch (_e) {}
+
+        if (DEBUG_MEMBERSHIP) {
+          console.log('[dashboardAllProjects][membership] final memberProjectIds', Array.from(next));
+        }
+        setMemberProjectIds(next);
+        setMemberProjectsReady(true);
+      },
+      () => {
+        setMemberProjectIds(new Set());
+        setMemberProjectsReady(true);
+      }
+    );
+
+    return () => { try { unsub?.(); } catch(_e) {} };
+  }, [effectiveCompanyId, currentUserId]);
   
   // Subscribe to company activity for notifications
   useEffect(() => {
-    if (!companyId) return;
+    if (!effectiveCompanyId) return;
     
-    const unsub = subscribeCompanyActivity(companyId, {
+    const unsub = subscribeCompanyActivity(effectiveCompanyId, {
       onData: (data) => {
         try {
           const arr = Array.isArray(data) ? data : [];
-          // Filter for activities related to projects user is involved in
-          // For now, show all company activities - can be filtered later by project participants
-          setNotifications(arr.slice(0, 20)); // Show last 20 notifications
+          if (isAdmin) {
+            setNotifications(arr.slice(0, 20));
+            return;
+          }
+
+          if (!memberProjectsReady) {
+            setNotifications([]);
+            return;
+          }
+
+          const allowed = memberProjectIdsRef.current;
+          const filtered = arr.filter((ev) => {
+            const pid = ev?.projectId || ev?.project?.id || ev?.project || null;
+            return pid && allowed.has(String(pid).trim());
+          });
+          setNotifications(filtered.slice(0, 20));
         } catch (_e) {}
       },
       onError: () => {},
@@ -42,7 +246,7 @@ const DashboardAllProjects = ({
     });
     
     return () => { try { unsub(); } catch(_e) {} };
-  }, [companyId]);
+  }, [effectiveCompanyId, isAdmin, memberProjectsReady, memberProjectIds]);
   
   // Resolve display names for notification actors
   useEffect(() => {
@@ -82,40 +286,87 @@ const DashboardAllProjects = ({
   }, [notifications]);
   // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {
-    const projects = [];
-    
-    if (!Array.isArray(hierarchy)) return projects;
-    
-    hierarchy.forEach(main => {
-      if (!main.children || !Array.isArray(main.children)) return;
-      
-      main.children.forEach(sub => {
-        if (!sub.children || !Array.isArray(sub.children)) return;
-        
-        sub.children.forEach(child => {
-          if (child.type === 'project') {
-            projects.push({
-              ...child,
-              mainFolder: main.name,
-              subFolder: sub.name,
+    // Primary source: canonical Firestore projects collection.
+    // This avoids depending on SharePoint hierarchy shape (folders/files only).
+    const out = [];
+    try {
+      const list = Array.isArray(companyProjects) ? companyProjects : [];
+      if (list.length > 0) {
+        for (const p of list) {
+          const pid = resolveProjectId(p);
+          if (!pid) continue;
+          const pn = String(p?.projectNumber || p?.number || pid).trim();
+          const name = String(p?.projectName || p?.name || p?.fullName || '').trim();
+          out.push({
+            ...p,
+            id: pid,
+            projectId: pid,
+            number: pn,
+            name: name || pn || pid,
+            fullName: String(p?.fullName || `${pn} ${name}`.trim()).trim(),
+          });
+        }
+      }
+    } catch (_e) {}
+
+    // Fallback: legacy hierarchy adapters that already emit child.type === 'project'.
+    if (out.length === 0 && Array.isArray(hierarchy)) {
+      try {
+        hierarchy.forEach(main => {
+          if (!main.children || !Array.isArray(main.children)) return;
+          main.children.forEach(sub => {
+            if (!sub.children || !Array.isArray(sub.children)) return;
+            sub.children.forEach(child => {
+              if (child.type === 'project') {
+                const pid = resolveProjectId(child);
+                out.push({
+                  ...child,
+                  id: pid || (child?.id != null ? String(child.id).trim() : null),
+                  projectId: pid || (child?.projectId != null ? String(child.projectId).trim() : null),
+                  mainFolder: main.name,
+                  subFolder: sub.name,
+                });
+              }
             });
-          }
+          });
         });
-      });
-    });
-    
-    // Sort by project number/name
-    return projects.sort((a, b) => {
-      const aId = String(a.id || '').toLowerCase();
-      const bId = String(b.id || '').toLowerCase();
+      } catch (_e) {}
+    }
+
+    out.sort((a, b) => {
+      const aId = String(resolveProjectId(a) || '').toLowerCase();
+      const bId = String(resolveProjectId(b) || '').toLowerCase();
       return aId.localeCompare(bId, undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [hierarchy]);
+    return out;
+  }, [hierarchy, companyProjects]);
+
+  useEffect(() => {
+    if (!DEBUG_MEMBERSHIP) return;
+    const allProjectIds = (allProjects || []).map((p) => resolveProjectId(p)).filter(Boolean);
+    console.log('[dashboardAllProjects][filter] pre-filter projects', {
+      memberProjectsReady,
+      companyProjectsReady,
+      memberProjectIds: Array.from(memberProjectIds || []),
+      allProjectIds,
+    });
+  }, [DEBUG_MEMBERSHIP, allProjects, memberProjectsReady, memberProjectIds, companyProjectsReady]);
+
+  const visibleProjects = useMemo(() => {
+    if (isAdmin) return allProjects;
+    if (!memberProjectsReady) return [];
+    const allowed = memberProjectIds;
+    return (allProjects || []).filter((p) => {
+      const pid = resolveProjectId(p);
+      return pid && allowed.has(pid);
+    });
+  }, [allProjects, isAdmin, memberProjectsReady, memberProjectIds]);
 
   const tableHeaderStyle = useMemo(() => ({
     flexDirection: 'row',
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingLeft: 22,
+    paddingRight: 12,
     backgroundColor: '#f5f5f5',
     borderBottomWidth: 2,
     borderBottomColor: '#e0e0e0',
@@ -134,43 +385,18 @@ const DashboardAllProjects = ({
   const tableRowStyle = useMemo(() => ({
     flexDirection: 'row',
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingLeft: 22,
+    paddingRight: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
     backgroundColor: '#fff',
     alignItems: 'center',
   }), []);
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'completed':
-        return '#222';
-      case 'ongoing':
-        return '#43A047';
-      case 'onhold':
-        return '#F57C00';
-      default:
-        return '#43A047';
-    }
-  };
-
-  const getStatusLabel = (status) => {
-    switch (status) {
-      case 'completed':
-        return 'Avslutat';
-      case 'ongoing':
-        return 'Pågående';
-      case 'onhold':
-        return 'Pausad';
-      default:
-        return 'Pågående';
-    }
-  };
-
   // Calculate summary info for single project
   const projectSummary = useMemo(() => {
-    if (allProjects.length !== 1) return null;
-    const project = allProjects[0];
+    if (visibleProjects.length !== 1) return null;
+    const project = visibleProjects[0];
     const lastUpdated = project.updatedAt || project.createdAt || null;
     return {
       project,
@@ -181,7 +407,7 @@ const DashboardAllProjects = ({
           ? new Date(lastUpdated).toLocaleDateString('sv-SE')
           : null,
     };
-  }, [allProjects, formatRelativeTime]);
+  }, [visibleProjects, formatRelativeTime]);
 
   return (
     <>
@@ -189,9 +415,9 @@ const DashboardAllProjects = ({
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         {/* Title removed - no company name or phase name needed */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {allProjects.length > 0 && (
+          {visibleProjects.length > 0 && (
             <Text style={{ fontSize: 14, color: '#888' }}>
-              {allProjects.length} {allProjects.length === 1 ? 'projekt' : 'projekt'}
+              {visibleProjects.length} {visibleProjects.length === 1 ? 'projekt' : 'projekt'}
             </Text>
           )}
           {onCreateProject && (
@@ -360,17 +586,45 @@ const DashboardAllProjects = ({
       </Modal>
 
       {/* Contextual guidance text */}
-      {allProjects.length === 0 ? (
+      {membershipLoading ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#1976D2"
+          title="Läser dina projekt…"
+          message="Hämtar projekt där du är tillagd i Organisation och roller."
+        />
+      ) : projectsLoading ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#1976D2"
+          title="Läser projektregistret…"
+          message="Hämtar projektlistan från systemet."
+        />
+      ) : (companyProjectsReady && allProjects.length === 0) ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#FF9800"
+          title="Inga projekt finns ännu"
+          message="Det finns inga projekt registrerade i systemet för det här företaget."
+        />
+      ) : (!isAdmin && memberProjectsReady && (memberProjectIds?.size || 0) === 0) ? (
         <DashboardBanner
           padding={16}
           accentColor="#1976D2"
           title="Du har inte blivit tilldelad något projekt än"
-          message="Projekt skapas i SharePoint och tilldelas i systemet. Kontakta din administratör för att bli tilldelad ett projekt."
+          message="Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller."
         />
-      ) : allProjects.length === 1 && projectSummary ? (
+      ) : visibleProjects.length === 0 ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#1976D2"
+          title="Inga av dina projekt hittades"
+          message="Du är tilldelad projekt, men inga matchade i projektregistret. Kontrollera att projekten finns registrerade och att projektnumret (t.ex. 1010-10) är korrekt."
+        />
+      ) : visibleProjects.length === 1 && projectSummary ? (
         <DashboardBanner padding={12} accentColor="#43A047" title={null} message={null}>
           <Text style={{ fontSize: 13, color: '#495057' }}>
-            <Text style={{ fontWeight: '600' }}>1 aktivt projekt</Text>
+            <Text style={{ fontWeight: '600' }}>1 projekt</Text>
             {projectSummary.lastUpdatedText ? (
               <Text> · Senast uppdaterat {projectSummary.lastUpdatedText}</Text>
             ) : null}
@@ -384,7 +638,39 @@ const DashboardAllProjects = ({
         </DashboardBanner>
       )}
       
-      {allProjects.length === 0 ? (
+      {membershipLoading ? (
+        <View style={{ 
+          borderWidth: 1, 
+          borderColor: '#e0e0e0', 
+          borderRadius: 12, 
+          padding: 40, 
+          backgroundColor: '#fff',
+          alignItems: 'center' 
+        }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 8 }}>
+            Laddar…
+          </Text>
+          <Text style={{ fontSize: 14, color: '#666', textAlign: 'center', maxWidth: 420, lineHeight: 20 }}>
+            Hämtar din projekttilldelning från Organisation och roller.
+          </Text>
+        </View>
+      ) : projectsLoading ? (
+        <View style={{ 
+          borderWidth: 1, 
+          borderColor: '#e0e0e0', 
+          borderRadius: 12, 
+          padding: 40, 
+          backgroundColor: '#fff',
+          alignItems: 'center' 
+        }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 8 }}>
+            Laddar…
+          </Text>
+          <Text style={{ fontSize: 14, color: '#666', textAlign: 'center', maxWidth: 420, lineHeight: 20 }}>
+            Hämtar projektlistan från systemet.
+          </Text>
+        </View>
+      ) : (companyProjectsReady && allProjects.length === 0) ? (
         <View style={{ 
           borderWidth: 1, 
           borderColor: '#e0e0e0', 
@@ -395,10 +681,44 @@ const DashboardAllProjects = ({
         }}>
           <Ionicons name="folder-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
           <Text style={{ color: '#777', fontSize: 15, textAlign: 'center', marginBottom: 8 }}>
-            Inga projekt hittades
+            Inga projekt finns ännu
           </Text>
           <Text style={{ color: '#999', fontSize: 13, textAlign: 'center' }}>
-            Projekt skapas i SharePoint och tilldelas i systemet. Kontakta din administratör för att bli tilldelad ett projekt.
+            Skapa ett projekt eller synka in projekt så att de syns i projektregistret.
+          </Text>
+        </View>
+      ) : (!isAdmin && memberProjectsReady && (memberProjectIds?.size || 0) === 0) ? (
+        <View style={{ 
+          borderWidth: 1, 
+          borderColor: '#e0e0e0', 
+          borderRadius: 12, 
+          padding: 40, 
+          backgroundColor: '#fff',
+          alignItems: 'center' 
+        }}>
+          <Ionicons name="person-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
+          <Text style={{ color: '#777', fontSize: 15, textAlign: 'center', marginBottom: 8 }}>
+            Du har inte blivit tilldelad något projekt än
+          </Text>
+          <Text style={{ color: '#999', fontSize: 13, textAlign: 'center' }}>
+            Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller.
+          </Text>
+        </View>
+      ) : visibleProjects.length === 0 ? (
+        <View style={{ 
+          borderWidth: 1, 
+          borderColor: '#e0e0e0', 
+          borderRadius: 12, 
+          padding: 40, 
+          backgroundColor: '#fff',
+          alignItems: 'center' 
+        }}>
+          <Ionicons name="folder-outline" size={48} color="#ccc" style={{ marginBottom: 12 }} />
+          <Text style={{ color: '#777', fontSize: 15, textAlign: 'center', marginBottom: 8 }}>
+            Inga av dina projekt hittades
+          </Text>
+          <Text style={{ color: '#999', fontSize: 13, textAlign: 'center' }}>
+            Du är tilldelad projekt, men de saknas i projektregistret. Kontrollera att projektet (t.ex. 1010-10) finns registrerat.
           </Text>
         </View>
       ) : (
@@ -415,10 +735,7 @@ const DashboardAllProjects = ({
               <Text style={tableHeaderTextStyle}>Projektnummer + projektnamn</Text>
             </View>
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text style={tableHeaderTextStyle}>Fas</Text>
-            </View>
-            <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text style={tableHeaderTextStyle}>Status</Text>
+              <Text style={tableHeaderTextStyle}>Skede</Text>
             </View>
             <View style={{ flex: 1.5, paddingRight: 8 }}>
               <Text style={tableHeaderTextStyle}>Senast uppdaterad</Text>
@@ -430,11 +747,9 @@ const DashboardAllProjects = ({
 
           {/* Table Rows */}
           <ScrollView style={{ maxHeight: Platform.OS === 'web' ? 600 : 400 }}>
-            {allProjects.map((project, idx) => {
+            {visibleProjects.map((project, idx) => {
               const projectPhase = project?.phase || 'kalkylskede';
               const phaseConfig = getPhaseConfig(projectPhase);
-              const statusColor = getStatusColor(project.status);
-              const statusLabel = getStatusLabel(project.status);
               const lastUpdated = project.updatedAt || project.createdAt || null;
 
               const renderRowContent = () => (
@@ -484,24 +799,6 @@ const DashboardAllProjects = ({
                         }}
                       >
                         {phaseConfig.name}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Status */}
-                  <View style={{ flex: 1, paddingRight: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: statusColor,
-                          marginRight: 6,
-                        }}
-                      />
-                      <Text style={{ fontSize: 13, color: '#333' }}>
-                        {statusLabel}
                       </Text>
                     </View>
                   </View>
@@ -562,8 +859,9 @@ const DashboardAllProjects = ({
                       display: 'flex',
                       flexDirection: 'row',
                       paddingVertical: 12,
-                      paddingHorizontal: 12,
-                      borderBottomWidth: idx === allProjects.length - 1 ? 0 : 1,
+                      paddingLeft: 18,
+                      paddingRight: 12,
+                      borderBottomWidth: idx === visibleProjects.length - 1 ? 0 : 1,
                       borderBottomStyle: 'solid',
                       borderBottomColor: '#f0f0f0',
                       backgroundColor: '#fff',
@@ -609,7 +907,7 @@ const DashboardAllProjects = ({
                   }}
                   style={[
                     tableRowStyle,
-                    idx === allProjects.length - 1 && { borderBottomWidth: 0 },
+                    idx === visibleProjects.length - 1 && { borderBottomWidth: 0 },
                     Platform.OS === 'web' && {
                       ':hover': { backgroundColor: '#E3F2FD' },
                     },

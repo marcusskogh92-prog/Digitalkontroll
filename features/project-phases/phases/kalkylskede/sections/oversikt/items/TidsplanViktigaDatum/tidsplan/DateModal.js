@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Alert, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
+import ActivityParticipantPickerModal from '../../../../../../../../../components/common/ActivityParticipants/ActivityParticipantPickerModal';
 import IsoDatePickerModal from '../../../../../../../../../components/common/Modals/IsoDatePickerModal';
 
 import TimeField, { isValidTimeHHMM, timeToMinutes } from './TimeField';
@@ -505,9 +506,6 @@ export default function DateModal({
 
   const [participants, setParticipants] = React.useState([]);
   const [participantsModalOpen, setParticipantsModalOpen] = React.useState(false);
-  const [participantDraftName, setParticipantDraftName] = React.useState('');
-  const [participantDraftEmail, setParticipantDraftEmail] = React.useState('');
-  const [participantNameSuggestionsOpen, setParticipantNameSuggestionsOpen] = React.useState(false);
 
   const warningColor = '#D97706';
 
@@ -518,9 +516,6 @@ export default function DateModal({
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   }, []);
-
-  const participantNameInputRef = React.useRef(null);
-  const suppressNextNameBlurRef = React.useRef(false);
 
   const selectedDates = React.useMemo(() => {
     if (!allowMulti) return [];
@@ -724,9 +719,6 @@ export default function DateModal({
 
     setParticipantsTargetIso(null);
     setParticipantsModalOpen(false);
-    setParticipantDraftName('');
-    setParticipantDraftEmail('');
-    setParticipantNameSuggestionsOpen(false);
   }, [visible, initial, closeOccurrenceEdit]);
 
   const participantsValue = React.useMemo(() => {
@@ -761,133 +753,10 @@ export default function DateModal({
 
   const normalizedParticipants = React.useMemo(() => normalizeParticipants(participantsValue), [participantsValue]);
 
-  const orgAutocompletePeople = React.useMemo(() => {
-    const list = Array.isArray(peopleCandidates) ? peopleCandidates : [];
-    return list
-      .filter((c) => String(c?.origin || '').trim() === 'project_org')
-      .map((c) => {
-        const name = String(c?.name || '').trim();
-        const email = normalizeEmail(c?.email);
-        return {
-          name,
-          email,
-          search: normalizeSearch(name),
-        };
-      })
-      .filter((p) => !!p.email);
-  }, [peopleCandidates]);
-
-  const contactAutocompletePeople = React.useMemo(() => {
-    const list = Array.isArray(peopleCandidates) ? peopleCandidates : [];
-    return list
-      .filter((c) => String(c?.origin || '').trim() === 'contact_registry')
-      .map((c) => {
-        const name = String(c?.name || '').trim();
-        const email = normalizeEmail(c?.email);
-        return {
-          name,
-          email,
-          search: normalizeSearch(name),
-        };
-      })
-      .filter((p) => !!p.email);
-  }, [peopleCandidates]);
-
-  const participantNameQuery = React.useMemo(() => normalizeSearch(participantDraftName), [participantDraftName]);
-  const selectedParticipantEmails = React.useMemo(() => {
-    const set = new Set();
-    normalizedParticipants.forEach((p) => {
-      const e = normalizeEmail(p?.email);
-      if (e) set.add(e);
-    });
-    return set;
-  }, [normalizedParticipants]);
-
-  const orgNameMatches = React.useMemo(() => {
-    if (!participantNameQuery) return [];
-    const out = [];
-    for (const p of orgAutocompletePeople) {
-      if (selectedParticipantEmails.has(p.email)) continue;
-      if (!p.search.includes(participantNameQuery)) continue;
-      out.push(p);
-      if (out.length >= 8) break;
-    }
-    return out;
-  }, [orgAutocompletePeople, participantNameQuery, selectedParticipantEmails]);
-
-  const contactNameMatches = React.useMemo(() => {
-    if (!participantNameQuery) return [];
-    const orgEmails = new Set(orgNameMatches.map((x) => x.email));
-    const out = [];
-    for (const p of contactAutocompletePeople) {
-      if (selectedParticipantEmails.has(p.email)) continue;
-      if (orgEmails.has(p.email)) continue;
-      if (!p.search.includes(participantNameQuery)) continue;
-      out.push(p);
-      if (out.length >= 8) break;
-    }
-    return out;
-  }, [contactAutocompletePeople, orgNameMatches, participantNameQuery, selectedParticipantEmails]);
-
-  const addParticipant = React.useCallback(
-    ({ name, email }) => {
-      const nm = String(name || '').trim();
-      const em = normalizeEmail(email);
-      if (!em) return false;
-
-      setParticipantsValue((prev) => {
-        const current = Array.isArray(prev) ? prev : [];
-        const next = current.filter((p) => normalizeEmail(p?.email) !== em);
-        return [...next, { name: nm, email: em }];
-      });
-
-      suppressNextNameBlurRef.current = false;
-      setParticipantDraftName('');
-      setParticipantDraftEmail('');
-      setParticipantNameSuggestionsOpen(false);
-
-      try {
-        participantNameInputRef.current?.focus?.();
-      } catch {
-        // no-op
-      }
-      return true;
-    },
-    [setParticipantsValue]
-  );
-
   const closeParticipantsModal = React.useCallback(() => {
     setParticipantsModalOpen(false);
     setParticipantsTargetIso(null);
-    setParticipantDraftName('');
-    setParticipantDraftEmail('');
-    setParticipantNameSuggestionsOpen(false);
   }, []);
-
-  const onSelectParticipant = React.useCallback(
-    (person) => {
-      console.log('[DateModal] participant added', person);
-      addParticipant({ name: person?.name, email: person?.email });
-    },
-    [addParticipant]
-  );
-
-  const tryAutoAddFromNameEnter = React.useCallback(() => {
-    if (!participantNameQuery) return;
-
-    const combined = [...orgNameMatches, ...contactNameMatches];
-    if (combined.length === 1) {
-      const m = combined[0];
-      onSelectParticipant({ name: m.name, email: m.email });
-      return;
-    }
-
-    // If suggestions are open, treat the first suggestion as the default selection.
-    if (participantNameSuggestionsOpen && combined.length > 0) {
-      const m = combined[0];
-      onSelectParticipant({ name: m.name, email: m.email });
-    }
-  }, [contactNameMatches, onSelectParticipant, orgNameMatches, participantNameQuery, participantNameSuggestionsOpen]);
 
   const canSave = React.useMemo(() => {
     const hasTitle = !!String(title || '').trim();
@@ -898,9 +767,6 @@ export default function DateModal({
   const openParticipantsEditor = React.useCallback(
     (isoOrNull) => {
       setParticipantsTargetIso(isoOrNull);
-      setParticipantDraftName('');
-      setParticipantDraftEmail('');
-      setParticipantNameSuggestionsOpen(false);
       setParticipantsModalOpen(true);
     },
     []
@@ -1706,254 +1572,18 @@ export default function DateModal({
         onClose={() => setDatePickerOpen(false)}
       />
 
-      <Modal visible={participantsModalOpen} transparent animationType="fade" onRequestClose={closeParticipantsModal}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.25)', padding: 16, justifyContent: 'center', position: 'relative' }}>
-          <Pressable onPress={closeParticipantsModal} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0 }} />
-
-          <View
-            style={{
-              width: '100%',
-              maxWidth: 920,
-              maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
-              alignSelf: 'center',
-              backgroundColor: '#fff',
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#E2E8F0',
-              overflow: 'hidden',
-              zIndex: 1,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
-            }}
-          >
-            <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                  <Ionicons name="people-outline" size={18} color={colors.textSubtle} />
-                  <View style={{ minWidth: 0, flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: fwMed, color: colors.text }} numberOfLines={1}>
-                      Deltagare
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.textSubtle }} numberOfLines={1}>
-                      Namn och e-post
-                    </Text>
-                  </View>
-                </View>
-
-                <Pressable
-                  onPress={closeParticipantsModal}
-                  style={({ hovered, pressed }) => ({
-                    padding: 6,
-                    borderRadius: 8,
-                    backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.18)' : 'transparent',
-                  })}
-                >
-                  <Ionicons name="close" size={18} color={colors.textSubtle} />
-                </Pressable>
-              </View>
-            </View>
-
-            <ScrollView contentContainerStyle={{ padding: 14, gap: 12 }} keyboardShouldPersistTaps="handled">
-              <View style={{ gap: 8 }}>
-                <Text style={{ fontSize: 12, color: colors.textSubtle }}>Lägg till deltagare</Text>
-                <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-                  <View style={{ flexGrow: 1, flexBasis: 240, minWidth: 0 }}>
-                    <TextInput
-                      ref={participantNameInputRef}
-                      value={participantDraftName}
-                      onChangeText={(v) => {
-                        const next = String(v || '');
-                        setParticipantDraftName(next);
-                        if (!String(next || '').trim()) {
-                          setParticipantNameSuggestionsOpen(false);
-                          return;
-                        }
-                        setParticipantNameSuggestionsOpen(true);
-                      }}
-                      onFocus={() => {
-                        if (String(participantDraftName || '').trim()) setParticipantNameSuggestionsOpen(true);
-                      }}
-                      onBlur={() => {
-                        if (suppressNextNameBlurRef.current) {
-                          suppressNextNameBlurRef.current = false;
-                          return;
-                        }
-                        setParticipantNameSuggestionsOpen(false);
-                      }}
-                      onSubmitEditing={tryAutoAddFromNameEnter}
-                      onKeyPress={(e) => {
-                        const key = String(e?.nativeEvent?.key || '');
-                        if (key === 'Enter') tryAutoAddFromNameEnter();
-                      }}
-                      placeholder="Namn"
-                      placeholderTextColor="#94A3B8"
-                      style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 10, fontSize: 13, color: colors.text, backgroundColor: '#fff', ...(Platform.OS === 'web' ? { outline: 'none' } : {}) }}
-                    />
-                  </View>
-
-                  <TextInput
-                    value={participantDraftEmail}
-                    onChangeText={(v) => {
-                      setParticipantDraftEmail(v);
-                      if (participantNameSuggestionsOpen) setParticipantNameSuggestionsOpen(false);
-                    }}
-                    onFocus={() => {
-                      if (participantNameSuggestionsOpen) setParticipantNameSuggestionsOpen(false);
-                    }}
-                    placeholder="E-post"
-                    placeholderTextColor="#94A3B8"
-                    autoCapitalize="none"
-                    style={{ flexGrow: 1, flexBasis: 280, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingVertical: 9, paddingHorizontal: 10, fontSize: 13, color: colors.text, backgroundColor: '#fff', ...(Platform.OS === 'web' ? { outline: 'none' } : {}) }}
-                  />
-                </View>
-
-                {!participantNameSuggestionsOpen || !participantNameQuery || (orgNameMatches.length === 0 && contactNameMatches.length === 0) ? null : (
-                  <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, overflow: 'hidden', backgroundColor: '#fff' }}>
-                    <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-                      {[...orgNameMatches, ...contactNameMatches].map((m) => {
-                        const email = String(m?.email || '').trim();
-                        const name = String(m?.name || '').trim();
-
-                        const onPick = () => {
-                          onSelectParticipant({ name, email });
-                        };
-
-                        return (
-                          <Pressable
-                            key={email}
-                            onMouseDown={(e) => {
-                              // Web: run selection on mouse down to beat TextInput blur/unmount.
-                              // Also prevent default to keep the interaction predictable.
-                              suppressNextNameBlurRef.current = true;
-                              if (Platform.OS === 'web') {
-                                e?.preventDefault?.();
-                                onPick();
-                              }
-                            }}
-                            onPressIn={() => {
-                              // Keep Name input from closing suggestions on blur.
-                              suppressNextNameBlurRef.current = true;
-                            }}
-                            onPress={() => {
-                              if (Platform.OS !== 'web') onPick();
-                            }}
-                            style={({ hovered, pressed }) => ({
-                              paddingVertical: 9,
-                              paddingHorizontal: 10,
-                              borderBottomWidth: 1,
-                              borderBottomColor: '#EEF2F7',
-                              backgroundColor: hovered || pressed ? colors.rowHover : '#fff',
-                            })}
-                          >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                              <Text style={{ flex: 1.2, fontSize: 13, fontWeight: fwReg, color: colors.text }} numberOfLines={1}>
-                                {name || '—'}
-                              </Text>
-                              <Text style={{ flex: 1.4, fontSize: 13, color: colors.textMuted }} numberOfLines={1}>
-                                {email}
-                              </Text>
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
-
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <Pressable
-                    onPress={() => {
-                      const name = String(participantDraftName || '').trim();
-                      const emailRaw = String(participantDraftEmail || '').trim();
-                      if (!isValidEmailLight(emailRaw)) {
-                        Alert.alert('Ogiltig e-post', 'Ange en giltig e-postadress (måste innehålla @).');
-                        return;
-                      }
-                      const email = normalizeEmail(emailRaw);
-                      if (!email) return;
-
-                      onSelectParticipant({ name, email });
-                    }}
-                    style={({ hovered, pressed }) => ({
-                      paddingVertical: 8,
-                      paddingHorizontal: 12,
-                      borderRadius: 10,
-                      backgroundColor: hovered || pressed ? colors.blueHover : colors.blue,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 8,
-                    })}
-                  >
-                    <Ionicons name="add-outline" size={16} color="#fff" />
-                    <Text style={{ fontSize: 12, fontWeight: fwMed, color: '#fff' }}>Lägg till</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <View style={{ gap: 8 }}>
-                <Text style={{ fontSize: 12, color: colors.textSubtle }}>Valda ({normalizedParticipants.length})</Text>
-
-                <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', overflow: 'hidden' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, backgroundColor: colors.bgMuted, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-                    <Text style={{ flex: 1.2, fontSize: 11, fontWeight: fwMed, color: colors.textSubtle }}>Namn</Text>
-                    <Text style={{ flex: 1.4, fontSize: 11, fontWeight: fwMed, color: colors.textSubtle }}>E-post</Text>
-                    <Text style={{ width: 34, fontSize: 11, fontWeight: fwMed, color: colors.textSubtle, textAlign: 'right' }} />
-                  </View>
-
-                  {normalizedParticipants.length === 0 ? (
-                    <View style={{ paddingVertical: 10, paddingHorizontal: 10 }}>
-                      <Text style={{ fontSize: 13, color: colors.textSubtle }}>Inga deltagare valda.</Text>
-                    </View>
-                  ) : (
-                    normalizedParticipants.map((p) => {
-                      const name = String(p?.name || '').trim();
-                      const email = String(p?.email || '').trim();
-                      return (
-                        <View key={email} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7', gap: 10 }}>
-                          <Text style={{ flex: 1.2, fontSize: 13, fontWeight: fwReg, color: colors.text }} numberOfLines={1}>
-                            {name || '—'}
-                          </Text>
-                          <Text style={{ flex: 1.4, fontSize: 13, color: colors.textMuted }} numberOfLines={1}>
-                            {email}
-                          </Text>
-                          <Pressable
-                            onPress={() => {
-                              const target = normalizeEmail(email);
-                              setParticipantsValue((prev) => (Array.isArray(prev) ? prev : []).filter((x) => normalizeEmail(x?.email) !== target));
-                            }}
-                            style={({ hovered, pressed }) => ({
-                              width: 34,
-                              alignItems: 'flex-end',
-                              opacity: hovered || pressed ? 0.9 : 1,
-                            })}
-                          >
-                            <Ionicons name="trash-outline" size={16} color={colors.textSubtle} />
-                          </Pressable>
-                        </View>
-                      );
-                    })
-                  )}
-                </View>
-              </View>
-            </ScrollView>
-
-            <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', justifyContent: 'flex-end' }}>
-              <Pressable
-                onPress={closeParticipantsModal}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#CBD5E1',
-                  backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
-                })}
-              >
-                <Text style={{ fontSize: 12, fontWeight: fwMed, color: colors.textMuted }}>Klar</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <ActivityParticipantPickerModal
+        visible={participantsModalOpen}
+        onClose={closeParticipantsModal}
+        title="Lägg till deltagare"
+        subtitle="Välj deltagare för denna aktivitet / detta datum."
+        helpTextEmptySelection="Välj deltagare för denna aktivitet / detta datum."
+        peopleCandidates={peopleCandidates}
+        peopleLoading={peopleLoading}
+        peopleError={peopleError}
+        participants={participantsValue}
+        onConfirmParticipants={(next) => setParticipantsValue(next)}
+      />
     </>
   );
 }

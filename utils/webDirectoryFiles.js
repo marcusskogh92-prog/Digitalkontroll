@@ -48,6 +48,45 @@ function fileFromFileEntry(fileEntry) {
   });
 }
 
+async function walkHandle(handle, prefix) {
+  if (!handle) return [];
+
+  const kind = safeText(handle?.kind);
+  const name = safeText(handle?.name);
+
+  if (kind === 'file') {
+    try {
+      const file = typeof handle?.getFile === 'function' ? await handle.getFile() : null;
+      if (!file) return [];
+      return [{ file, relativePath: joinRelPath(prefix, name || safeText(file?.name)) }];
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  if (kind === 'directory') {
+    const dirPrefix = joinRelPath(prefix, name);
+    const out = [];
+
+    try {
+      const values = typeof handle?.values === 'function' ? handle.values() : null;
+      if (!values || typeof values[Symbol.asyncIterator] !== 'function') return [];
+
+      // eslint-disable-next-line no-restricted-syntax
+      for await (const child of values) {
+        // eslint-disable-next-line no-await-in-loop
+        out.push(...(await walkHandle(child, dirPrefix)));
+      }
+    } catch (_e) {
+      return [];
+    }
+
+    return out;
+  }
+
+  return [];
+}
+
 async function walkEntry(entry, prefix) {
   if (!entry) return [];
 
@@ -85,6 +124,30 @@ export async function filesFromDataTransfer(dataTransfer) {
   if (!dt) return [];
 
   const items = Array.from(dt.items || []);
+  const hasHandles = items.some((it) => typeof it?.getAsFileSystemHandle === 'function');
+  if (hasHandles) {
+    const out = [];
+
+    for (const it of items) {
+      const getHandle = it?.getAsFileSystemHandle;
+      if (typeof getHandle !== 'function') continue;
+
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const handle = await getHandle.call(it);
+        if (!handle) continue;
+        // eslint-disable-next-line no-await-in-loop
+        out.push(...(await walkHandle(handle, '')));
+      } catch (_e) {
+        // Ignore and fall back to other strategies below.
+      }
+    }
+
+    if (out.length > 0) {
+      return out.filter((x) => x?.file);
+    }
+  }
+
   const hasEntries = items.some((it) => typeof it?.webkitGetAsEntry === 'function');
 
   if (!hasEntries) {

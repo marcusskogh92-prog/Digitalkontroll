@@ -12,6 +12,7 @@ import WebMainPane from './WebMainPane';
  */
 export function HomeMainPaneContainer(props) {
   const {
+    authClaims,
     webPaneHeight,
     rightPaneScrollRef,
     activityScrollRef,
@@ -30,6 +31,7 @@ export function HomeMainPaneContainer(props) {
     setHierarchy,
     resetProjectFields,
     requestProjectSwitch,
+    openProject,
     selectedProjectPath,
     setCreatingProject,
     setCreatingProjectInline,
@@ -103,6 +105,7 @@ export function HomeMainPaneContainer(props) {
     <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
       {isWeb ? (
         <WebMainPane
+          authClaims={authClaims}
           webPaneHeight={webPaneHeight}
           rightPaneScrollRef={rightPaneScrollRef}
           activityScrollRef={activityScrollRef}
@@ -121,6 +124,7 @@ export function HomeMainPaneContainer(props) {
           setHierarchy={setHierarchy}
           resetProjectFields={resetProjectFields}
           requestProjectSwitch={requestProjectSwitch}
+          openProject={openProject}
           selectedProjectPath={selectedProjectPath}
           setCreatingProject={setCreatingProject}
           setCreatingProjectInline={setCreatingProjectInline}
@@ -223,6 +227,7 @@ export function HomeMainPaneContainer(props) {
           dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
           webPaneHeight={webPaneHeight}
           requestProjectSwitch={requestProjectSwitch}
+          openProject={openProject}
           toggleDashboardFocus={toggleDashboardFocus}
           setDashboardHoveredStatKey={setDashboardHoveredStatKey}
           formatRelativeTime={formatRelativeTime}

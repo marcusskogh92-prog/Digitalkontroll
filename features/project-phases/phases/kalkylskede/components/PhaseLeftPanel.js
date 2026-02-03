@@ -6,12 +6,17 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import SidebarItem from '../../../../../components/common/SidebarItem';
+import { AnimatedChevron, MicroPulse } from '../../../../../components/common/leftNavMicroAnimations';
 import { auth } from '../../../../../components/firebase';
 import { LEFT_NAV } from '../../../../../constants/leftNavTheme';
+import { useProjectOrganisation } from '../../../../../hooks/useProjectOrganisation';
+import { useProjectTimelineDates } from '../../../../../hooks/useProjectTimelineDates';
 import { ensureFolderPath } from '../../../../../services/azure/fileService';
 import { loadFolderChildren } from '../../../../../services/azure/hierarchyService';
 import { getAppVersion } from '../../../../../utils/appVersion';
 import { stripNumberPrefixForDisplay } from '../../../../../utils/labelUtils';
+import { listenFragaSvarItems } from '../services/fragaSvarService';
 import { addItem, addSection, removeItem, removeSection } from '../services/navigationService';
 
 const appVersion = getAppVersion();
@@ -29,6 +34,10 @@ export default function PhaseLeftPanel({
   saveNavigation
 }) {
   const isWeb = Platform.OS === 'web';
+  // Dashboard uses square-corner hover/active highlights; match that inside projects.
+  const squareRowStyle = isWeb ? { borderRadius: 0, borderLeftWidth: 0 } : null;
+  const squareCorners = Boolean(isWeb);
+  const rowIndentMode = isWeb ? 'padding' : 'margin';
   const [canEdit, setCanEdit] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
   const [expandedNestedItems, setExpandedNestedItems] = useState({});
@@ -42,6 +51,14 @@ export default function PhaseLeftPanel({
   const [saving, setSaving] = useState(false);
 
   const [sharePointTree, setSharePointTree] = useState([]);
+  const [spToggleTickByPath, setSpToggleTickByPath] = useState({});
+
+  const projectId = String(project?.id || project?.projectId || '').trim();
+
+  // Content signals (common hasContent/isPopulated map)
+  const [fragaSvarCount, setFragaSvarCount] = useState(0);
+  const timeline = useProjectTimelineDates({ companyId, projectId });
+  const organisation = useProjectOrganisation({ companyId, projectId });
 
   const projectBasePathRaw =
     project?.path ||
@@ -52,6 +69,111 @@ export default function PhaseLeftPanel({
     '';
 
   const hasSharePointContext = Boolean(companyId && String(projectBasePathRaw || '').trim());
+
+  const hasOrganisationMembers = React.useMemo(() => {
+    const groups = Array.isArray(organisation?.organisation?.groups)
+      ? organisation.organisation.groups
+      : Array.isArray(organisation?.groups)
+        ? organisation.groups
+        : [];
+    return groups.some((g) => Array.isArray(g?.members) && g.members.length > 0);
+  }, [organisation]);
+
+  useEffect(() => {
+    if (!companyId || !projectId) {
+      setFragaSvarCount(0);
+      return;
+    }
+    let unsub = null;
+    try {
+      unsub = listenFragaSvarItems(
+        companyId,
+        projectId,
+        (items) => setFragaSvarCount(Array.isArray(items) ? items.length : 0),
+        (_err) => setFragaSvarCount(0),
+        { includeDeleted: false },
+      );
+    } catch (_e) {
+      setFragaSvarCount(0);
+      unsub = null;
+    }
+
+    return () => {
+      try { unsub?.(); } catch (_e) {}
+    };
+  }, [companyId, projectId]);
+
+  const hasProjectInfoContent = React.useMemo(() => {
+    const p = project && typeof project === 'object' ? project : {};
+    const nonEmpty = (v) => {
+      if (v === null || v === undefined) return false;
+      if (typeof v === 'string') return v.trim().length > 0;
+      if (typeof v === 'number') return Number.isFinite(v);
+      if (typeof v === 'boolean') return v === true;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === 'object') return Object.keys(v).length > 0;
+      return false;
+    };
+
+    // Heuristics: treat commonly edited project-info fields as content.
+    const fields = [
+      'ansvarig',
+      'ansvarigId',
+      'bestallare',
+      'beställare',
+      'entreprenadform',
+      'adress',
+      'projektadress',
+      'projectAddress',
+      'kommun',
+      'ort',
+      'projektTyp',
+      'projekttyp',
+
+      // Important dates synced from Projektinformation
+      'lastQuestionDate',
+      'tenderSubmissionDate',
+      'plannedConstructionStart',
+      'readyForInspectionDate',
+      // Legacy Swedish mirrors
+      'sistaDagForFragor',
+      'anbudsinlamning',
+      'planeradByggstart',
+      'klartForBesiktning',
+      'anbudstid',
+      'byggstart',
+      'fardigstallning',
+    ];
+
+    return fields.some((k) => nonEmpty(p?.[k]));
+  }, [project]);
+
+  const hasTimelineContent = React.useMemo(() => {
+    const d = timeline?.data;
+    const customDates = Array.isArray(d?.customDates) ? d.customDates : [];
+    const siteVisits = Array.isArray(d?.siteVisits) ? d.siteVisits : [];
+    return customDates.length > 0 || siteVisits.length > 0;
+  }, [timeline?.data]);
+
+  const nodeHasContent = React.useCallback(
+    (sectionId, itemId = null) => {
+      const sec = String(sectionId || '').trim();
+      const it = itemId != null ? String(itemId).trim() : '';
+
+      // Oversikt items (known saved-data sources)
+      if (sec === 'oversikt' && it === 'projektinfo') return hasProjectInfoContent;
+      if (sec === 'oversikt' && it === 'organisation-roller') return hasOrganisationMembers;
+      if (sec === 'oversikt' && it === 'tidsplan-viktiga-datum') return hasTimelineContent;
+      if (sec === 'oversikt' && it === 'status-beslut') return Number(fragaSvarCount || 0) > 0;
+
+      if (sec === 'oversikt' && !it) {
+        return Boolean(hasProjectInfoContent || hasOrganisationMembers || hasTimelineContent || Number(fragaSvarCount || 0) > 0);
+      }
+
+      return false;
+    },
+    [fragaSvarCount, hasOrganisationMembers, hasProjectInfoContent, hasTimelineContent],
+  );
 
   const normalizePath = (path) => {
     if (!path || typeof path !== 'string') return '';
@@ -94,13 +216,10 @@ export default function PhaseLeftPanel({
     const normalizedPath = normalizePath(folderPath);
     if (!normalizedPath) return;
 
-    // Keep phase navigation in sync when user clicks top-level section folders.
-    if (sectionId && onSelectSection) {
-      onSelectSection(sectionId);
-      if (onSelectItem) {
-        onSelectItem(sectionId, null);
-      }
-    }
+    // Micro-feedback: bump chevron/icon animation once per click.
+    setSpToggleTickByPath((prev) => ({ ...(prev || {}), [normalizedPath]: (prev?.[normalizedPath] || 0) + 1 }));
+
+    // NOTE: structure handling must never trigger navigation (separation of concerns).
 
     let willExpand = false;
     let shouldLoad = false;
@@ -212,6 +331,112 @@ export default function PhaseLeftPanel({
     }
   };
 
+  const collapseSharePointSubtreeByPath = React.useCallback((nodes, targetPath) => {
+    const t = normalizePath(targetPath);
+    const deepCollapse = (n) => {
+      if (!n || typeof n !== 'object') return n;
+      return {
+        ...n,
+        expanded: false,
+        children: Array.isArray(n.children) ? n.children.map(deepCollapse) : [],
+      };
+    };
+
+    const walk = (list) =>
+      (Array.isArray(list) ? list : []).map((n) => {
+        if (!n) return n;
+        const p = normalizePath(n.path);
+        if (p === t) return deepCollapse(n);
+        if (Array.isArray(n.children) && n.children.length > 0) {
+          return { ...n, children: walk(n.children) };
+        }
+        return n;
+      });
+
+    return walk(nodes);
+  }, []);
+
+  const handleSharePointStructureToggle = React.useCallback(async (folderPath) => {
+    const normalizedPath = normalizePath(folderPath);
+    if (!normalizedPath) return;
+
+    let willExpand = false;
+    let shouldLoad = false;
+
+    // Micro-feedback: bump chevron/icon animation once per structure action.
+    setSpToggleTickByPath((prev) => ({ ...(prev || {}), [normalizedPath]: (prev?.[normalizedPath] || 0) + 1 }));
+
+    setSharePointTree((prev) => {
+      const snapshot = findNodeByPath(prev, normalizedPath);
+      if (!snapshot) return prev;
+
+      willExpand = !snapshot.expanded;
+      shouldLoad = Boolean(willExpand && !snapshot.childrenLoaded);
+
+      if (!willExpand) {
+        // Collapsing: close subtree recursively.
+        return collapseSharePointSubtreeByPath(prev, normalizedPath);
+      }
+
+      return updateTreeByPath(prev, normalizedPath, (node) => ({
+        ...node,
+        expanded: true,
+      }));
+    });
+
+    if (!willExpand) return;
+    if (!shouldLoad) return;
+
+    // Expand + lazy-load
+    try {
+      setSharePointTree((prev) =>
+        updateTreeByPath(prev, normalizedPath, (node) => ({
+          ...node,
+          loading: true,
+          error: null,
+        }))
+      );
+
+      await ensureFolderPath(normalizedPath, companyId, null, { siteRole: 'projects', strict: false });
+      const children = await loadFolderChildren(companyId, normalizedPath);
+      const folders = (Array.isArray(children) ? children : [])
+        .filter((c) => c && (c.type === 'folder' || !c.type))
+        .map((c) => ({
+          id: String(c.id || c.name || ''),
+          name: String(c.name || 'Mapp'),
+          type: 'folder',
+          path: normalizePath(String(c.path || `${normalizedPath}/${c.name || ''}`)),
+          sectionId: null,
+          expanded: false,
+          loading: false,
+          error: null,
+          childrenLoaded: false,
+          children: [],
+        }))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }));
+
+      setSharePointTree((prev) =>
+        updateTreeByPath(prev, normalizedPath, (node) => ({
+          ...node,
+          loading: false,
+          error: null,
+          childrenLoaded: true,
+          children: folders,
+        }))
+      );
+    } catch (e) {
+      setSharePointTree((prev) =>
+        updateTreeByPath(prev, normalizedPath, (node) => ({
+          ...node,
+          loading: false,
+          error: e?.message || 'Kunde inte ladda undermappar',
+          childrenLoaded: true,
+          children: Array.isArray(node.children) ? node.children : [],
+        }))
+      );
+    }
+  }, [collapseSharePointSubtreeByPath, companyId, findNodeByPath, loadFolderChildren, normalizePath, updateTreeByPath]);
+
   useEffect(() => {
     if (!hasSharePointContext || !navigation?.sections?.length) {
       setSharePointTree([]);
@@ -245,39 +470,65 @@ export default function PhaseLeftPanel({
   }, [hasSharePointContext, project?.path, navigation]);
 
   const renderSharePointNode = (node, level = 0) => {
-    const marginLeft = 12 + level * 14;
+    const treeIndent = 12 + level * 14;
     const isExpanded = Boolean(node?.expanded);
     const hasChildren = Array.isArray(node?.children) && node.children.length > 0;
     const rowKey = `sp:${node?.path || node?.id || String(level)}`;
     const isHovered = isWeb && hoveredKey === rowKey;
     const iconColor = isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted;
     const textColor = isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault;
+    const pulseTrigger = spToggleTickByPath?.[node?.path] || 0;
 
     return (
-      <View key={node.path || node.id} style={{ marginLeft, marginTop: 2 }}>
-        <TouchableOpacity
-          style={[styles.spRow, isHovered ? styles.rowHover : null]}
-          onPress={() => handleToggleSharePointFolder(node.path, node.sectionId || null)}
-          onMouseEnter={isWeb ? () => setHoveredKey(rowKey) : undefined}
-          onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
-        >
-          <Ionicons
-            name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
-            size={14}
-            color={iconColor}
-            style={{ marginRight: 6 }}
-          />
-          <Ionicons
-            name="folder-outline"
-            size={16}
-            color={iconColor}
-            style={{ marginRight: 8 }}
-          />
-          <Text style={[styles.spName, isHovered ? { color: textColor } : null]} numberOfLines={1}>{node.name}</Text>
-          {Boolean(node.loading) && (
-            <Text style={styles.spMeta}>Laddar…</Text>
+      <View key={node.path || node.id} style={{ marginTop: 2 }}>
+        <SidebarItem
+          squareCorners={squareCorners}
+          indentMode={rowIndentMode}
+          fullWidth
+          indent={isWeb ? treeIndent : 0}
+          style={squareRowStyle}
+          onPress={() => {
+            // Single click: navigation ONLY
+            if (node?.sectionId && onSelectSection) {
+              onSelectSection(node.sectionId);
+              if (onSelectItem) onSelectItem(node.sectionId, null);
+            }
+          }}
+          onDoubleClick={
+            () => {
+              // Structure handling (no navigation)
+              handleSharePointStructureToggle(node.path);
+            }
+          }
+          onHoverIn={isWeb ? () => setHoveredKey(rowKey) : undefined}
+          onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
+          hovered={isHovered}
+          left={() => (
+            <>
+              <TouchableOpacity
+                onPress={(e) => {
+                  try { e?.stopPropagation?.(); } catch (_e) {}
+                  handleSharePointStructureToggle(node.path);
+                }}
+                style={{ marginRight: 6, padding: 2 }}
+              >
+                <AnimatedChevron expanded={isExpanded} outline size={14} color={iconColor} />
+              </TouchableOpacity>
+              <MicroPulse trigger={pulseTrigger}>
+                <Ionicons
+                  name="folder-outline"
+                  size={16}
+                  color={iconColor}
+                  style={{ marginRight: 8 }}
+                />
+              </MicroPulse>
+            </>
           )}
-        </TouchableOpacity>
+          label={node.name}
+          labelWeight={nodeHasContent(node.sectionId || '', null) ? '700' : undefined}
+          labelStyle={isHovered ? { color: textColor } : null}
+          right={() => (Boolean(node.loading) ? <Text style={styles.spMeta}>Laddar…</Text> : null)}
+        />
 
         {isExpanded && Boolean(node.error) && (
           <View style={{ marginLeft: 28, marginTop: 2 }}>
@@ -347,6 +598,42 @@ export default function PhaseLeftPanel({
       [sectionId]: !prev[sectionId]
     }));
   };
+
+  const toggleSectionStructure = React.useCallback((sectionId) => {
+    const sid = String(sectionId || '').trim();
+    if (!sid) return;
+
+    const wasExpanded = Boolean(expandedSections?.[sid]);
+
+    setExpandedSections((prev) => {
+      const cur = Boolean(prev?.[sid]);
+      const next = { ...(prev || {}), [sid]: !cur };
+      return next;
+    });
+
+    // If collapsing: recursively close nested items under this section.
+    if (wasExpanded) {
+      setExpandedNestedItems((prev) => {
+        const next = { ...(prev || {}) };
+        Object.keys(next).forEach((k) => {
+          if (String(k).startsWith(`${sid}.`)) next[k] = false;
+        });
+        return next;
+      });
+    }
+  }, [expandedSections]);
+
+  const toggleNestedStructure = React.useCallback((sectionId, itemId) => {
+    const sid = String(sectionId || '').trim();
+    const iid = String(itemId || '').trim();
+    if (!sid || !iid) return;
+    const key = `${sid}.${iid}`;
+
+    setExpandedNestedItems((prev) => ({
+      ...(prev || {}),
+      [key]: !prev?.[key],
+    }));
+  }, []);
 
   const handleAddSection = async () => {
     if (!newSectionName.trim() || !companyId || !loadNavigation) return;
@@ -517,11 +804,10 @@ export default function PhaseLeftPanel({
         ) : (
           <>
             {navigation.sections.map(section => {
-          // All sections start collapsed (expanded: false)
           const isExpanded = expandedSections[section.id] ?? false;
-          // Only show as active if section is expanded AND matches activeSection
-          const isActive = isExpanded && activeSection === section.id;
+          const isActive = activeSection === section.id;
           const hasItems = section.items && section.items.length > 0;
+          const sectionHasContent = nodeHasContent(section.id, null);
           const sectionHoverKey = `sec:${section.id}`;
           const isHovered = isWeb && hoveredKey === sectionHoverKey;
           const sectionIconColor = isActive
@@ -534,81 +820,81 @@ export default function PhaseLeftPanel({
           return (
             <View key={section.id} style={styles.sectionContainer}>
               {/* Section header */}
-              <TouchableOpacity
-                style={[
-                  styles.sectionHeader,
-                  isHovered && !isActive ? styles.rowHover : null,
-                  isActive && styles.sectionHeaderActive,
-                ]}
+              <SidebarItem
+                squareCorners={squareCorners}
+                indentMode={rowIndentMode}
+                fullWidth
+                style={squareRowStyle}
+                hovered={isHovered}
+                active={isActive}
                 onPress={() => {
-                  const willBeExpanded = !expandedSections[section.id];
-                  // Always allow toggling, even if no items
-                  toggleSection(section.id);
-                  
-                  if (willBeExpanded) {
-                    // Opening section - set as active
-                    if (onSelectSection) {
-                      onSelectSection(section.id);
-                      // Clear active item when selecting section to show summary
-                      if (onSelectItem) {
-                        onSelectItem(section.id, null);
-                      }
-                    }
-                  } else {
-                    // Closing section - clear active if this was the active section
-                    if (activeSection === section.id && onSelectSection) {
-                      onSelectSection(null);
-                      if (onSelectItem) {
-                        onSelectItem(null, null);
-                      }
-                    }
+                  // Single click: navigation ONLY
+                  if (onSelectSection) {
+                    onSelectSection(section.id);
+                    if (onSelectItem) onSelectItem(section.id, null);
                   }
                 }}
-                onMouseEnter={isWeb ? () => setHoveredKey(sectionHoverKey) : undefined}
-                onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
-              >
-                {/* Always show chevron for all sections */}
-                <Ionicons
-                  name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                  size={14}
-                  color={sectionIconColor}
-                  style={styles.chevron}
-                />
-                <Ionicons
-                  name={section.icon || 'folder-outline'}
-                  size={16}
-                  color={sectionIconColor}
-                  style={styles.sectionIcon}
-                />
-                <Text style={[styles.sectionName, isActive && styles.sectionNameActive, !isActive && isHovered ? { color: sectionTextColor } : null]}>
-                  {stripNumberPrefixForDisplay(section.name)}
-                </Text>
-                {canEdit && (
-                  <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        setTargetSectionIdForItem(section.id);
-                        setTargetParentItemIdForItem(null);
-                        setNewItemName('');
-                        setShowAddItemModal(true);
-                      }}
-                      style={{ padding: 4 }}
-                    >
-                      <Ionicons name="add-circle-outline" size={18} color={LEFT_NAV.accent} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleRemoveSection(section.id);
-                      }}
-                      style={{ padding: 4 }}
-                    >
-                      <Ionicons name="close-circle-outline" size={18} color="#D32F2F" />
-                    </TouchableOpacity>
-                  </View>
+                onDoubleClick={hasItems ? () => toggleSectionStructure(section.id) : undefined}
+                onHoverIn={isWeb ? () => setHoveredKey(sectionHoverKey) : undefined}
+                onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
+                left={() => (
+                  <>
+                    {hasItems ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          try { e?.stopPropagation?.(); } catch (_e) {}
+                          toggleSectionStructure(section.id);
+                        }}
+                        style={{ padding: 2, marginRight: 6 }}
+                      >
+                        <Ionicons
+                          name={isExpanded ? 'chevron-down-outline' : 'chevron-forward-outline'}
+                          size={14}
+                          color={sectionIconColor}
+                        />
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={{ width: 18, marginRight: 6 }} />
+                    )}
+                    <Ionicons
+                      name={section.icon || 'folder-outline'}
+                      size={16}
+                      color={sectionIconColor}
+                      style={{ marginRight: 8 }}
+                    />
+                  </>
                 )}
-              </TouchableOpacity>
+                label={stripNumberPrefixForDisplay(section.name)}
+                labelWeight={sectionHasContent ? '700' : undefined}
+                labelStyle={isActive ? { color: LEFT_NAV.accent } : isHovered ? { color: sectionTextColor } : null}
+                right={() =>
+                  canEdit ? (
+                    <View style={{ flexDirection: 'row', marginLeft: 8, gap: 4 }}>
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          try { e?.stopPropagation?.(); } catch (_e) {}
+                          setTargetSectionIdForItem(section.id);
+                          setTargetParentItemIdForItem(null);
+                          setNewItemName('');
+                          setShowAddItemModal(true);
+                        }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="add-circle-outline" size={18} color={LEFT_NAV.accent} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          try { e?.stopPropagation?.(); } catch (_e) {}
+                          handleRemoveSection(section.id);
+                        }}
+                        style={{ padding: 4 }}
+                      >
+                        <Ionicons name="close-circle-outline" size={18} color="#D32F2F" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null
+                }
+              />
 
               {/* Section items */}
               {isExpanded && hasItems && (
@@ -630,90 +916,77 @@ export default function PhaseLeftPanel({
                     return (
                       <View key={item.id}>
                         {/* Item */}
-                        <TouchableOpacity
-                          style={[
-                            styles.item,
-                            isItemHovered && !isItemActive ? styles.rowHover : null,
-                            isItemActive && styles.itemActive,
-                          ]}
+                        <SidebarItem
+                          squareCorners={squareCorners}
+                          indentMode={rowIndentMode}
+                          fullWidth
+                          style={squareRowStyle}
+                          hovered={isItemHovered}
+                          active={isItemActive}
+                          indent={isWeb ? 24 : 8}
                           onPress={() => {
-                            if (hasNestedItems) {
-                              const willBeExpanded = !expandedNestedItems[nestedKey];
-                              setExpandedNestedItems(prev => ({
-                                ...prev,
-                                [nestedKey]: !prev[nestedKey]
-                              }));
-                              
-                              if (willBeExpanded) {
-                                // Opening nested items - set as active
-                                if (onSelectItem) {
-                                  onSelectItem(section.id, item.id);
-                                }
-                              } else {
-                                // Closing nested items - clear active if this was the active item
-                                if (activeSection === section.id && activeItem === item.id && onSelectItem) {
-                                  onSelectItem(section.id, null);
-                                }
-                              }
-                            } else {
-                              // Item without nested items - just select it
-                              console.log('[PhaseLeftPanel] Clicking item:', item.id, 'in section:', section.id);
-                              
-                              // Ensure section is expanded when clicking an item
-                              if (!expandedSections[section.id]) {
-                                toggleSection(section.id);
-                              }
-                              
-                              if (onSelectItem) {
-                                onSelectItem(section.id, item.id);
-                              } else {
-                                console.warn('[PhaseLeftPanel] onSelectItem is not defined!');
-                              }
-                            }
+                            // Single click: navigation ONLY
+                            if (onSelectItem) onSelectItem(section.id, item.id);
                           }}
-                          onMouseEnter={isWeb ? () => setHoveredKey(itemHoverKey) : undefined}
-                          onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
-                        >
-                          <Text style={[styles.itemText, isItemActive && styles.itemTextActive, !isItemActive && isItemHovered ? { color: itemTextColor } : null]}>
-                            • {stripNumberPrefixForDisplay(item.name)}
-                          </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                            {canEdit && (
-                              <>
-                                {hasNestedItems && (
+                          onDoubleClick={hasNestedItems ? () => toggleNestedStructure(section.id, item.id) : undefined}
+                          onHoverIn={isWeb ? () => setHoveredKey(itemHoverKey) : undefined}
+                          onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
+                          label={`• ${stripNumberPrefixForDisplay(item.name)}`}
+                          labelWeight={nodeHasContent(section.id, item.id) ? '700' : undefined}
+                          labelStyle={
+                            isItemActive
+                              ? { color: LEFT_NAV.accent }
+                              : isItemHovered
+                                ? { color: itemTextColor }
+                                : null
+                          }
+                          right={() => (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                              {canEdit && (
+                                <>
+                                  {hasNestedItems && (
+                                    <TouchableOpacity
+                                      onPress={(e) => {
+                                        try { e?.stopPropagation?.(); } catch (_e) {}
+                                        setTargetSectionIdForItem(section.id);
+                                        setTargetParentItemIdForItem(item.id);
+                                        setNewItemName('');
+                                        setShowAddItemModal(true);
+                                      }}
+                                      style={{ padding: 2 }}
+                                    >
+                                      <Ionicons name="add-circle-outline" size={16} color={LEFT_NAV.accent} />
+                                    </TouchableOpacity>
+                                  )}
                                   <TouchableOpacity
                                     onPress={(e) => {
-                                      e.stopPropagation();
-                                      setTargetSectionIdForItem(section.id);
-                                      setTargetParentItemIdForItem(item.id);
-                                      setNewItemName('');
-                                      setShowAddItemModal(true);
+                                      try { e?.stopPropagation?.(); } catch (_e) {}
+                                      handleRemoveItem(section.id, item.id);
                                     }}
                                     style={{ padding: 2 }}
                                   >
-                                    <Ionicons name="add-circle-outline" size={16} color={LEFT_NAV.accent} />
+                                    <Ionicons name="close-circle-outline" size={16} color="#D32F2F" />
                                   </TouchableOpacity>
-                                )}
+                                </>
+                              )}
+                              {hasNestedItems && (
                                 <TouchableOpacity
                                   onPress={(e) => {
-                                    e.stopPropagation();
-                                    handleRemoveItem(section.id, item.id);
+                                    try { e?.stopPropagation?.(); } catch (_e) {}
+                                    toggleNestedStructure(section.id, item.id);
                                   }}
                                   style={{ padding: 2 }}
                                 >
-                                  <Ionicons name="close-circle-outline" size={16} color="#D32F2F" />
+                                  <Ionicons
+                                    name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
+                                    size={14}
+                                    color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
+                                  />
                                 </TouchableOpacity>
-                              </>
-                            )}
-                            {hasNestedItems && (
-                              <Ionicons
-                                name={expandedNestedItems[`${section.id}.${item.id}`] ? 'chevron-down-outline' : 'chevron-forward-outline'}
-                                size={14}
-                                color={isItemActive ? LEFT_NAV.accent : (isItemHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
-                              />
-                            )}
-                          </View>
-                        </TouchableOpacity>
+                              )}
+                            </View>
+                          )}
+                        />
 
                         {/* Nested items (e.g., under Ritningar) */}
                         {hasNestedItems && expandedNestedItems[`${section.id}.${item.id}`] && (
@@ -729,42 +1002,46 @@ export default function PhaseLeftPanel({
                                 : (isSubHovered ? LEFT_NAV.hoverText : LEFT_NAV.textMuted);
 
                               return (
-                                <TouchableOpacity
+                                <SidebarItem
+                                  squareCorners={squareCorners}
+                                  indentMode={rowIndentMode}
+                                  fullWidth
+                                  style={squareRowStyle}
                                   key={subItem.id}
-                                  style={[
-                                    styles.nestedItem,
-                                    isSubHovered && !isSubItemActive ? styles.rowHover : null,
-                                    isSubItemActive && styles.nestedItemActive,
-                                  ]}
+                                  hovered={isSubHovered}
+                                  active={isSubItemActive}
+                                  indent={isWeb ? 56 : 24}
                                   onPress={() => {
                                     if (onSelectItem) {
                                       onSelectItem(section.id, `${item.id}.${subItem.id}`);
                                     }
                                   }}
-                                  onMouseEnter={isWeb ? () => setHoveredKey(subHoverKey) : undefined}
-                                  onMouseLeave={isWeb ? () => setHoveredKey(null) : undefined}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.nestedItemText,
-                                      isSubItemActive && styles.nestedItemTextActive,
-                                      !isSubItemActive && isSubHovered ? { color: subTextColor } : null,
-                                    ]}
-                                  >
-                                    – {stripNumberPrefixForDisplay(subItem.name)}
-                                  </Text>
-                                  {canEdit && (
-                                    <TouchableOpacity
-                                      onPress={(e) => {
-                                        e.stopPropagation();
-                                        handleRemoveItem(section.id, subItem.id, item.id);
-                                      }}
-                                      style={{ padding: 2, marginLeft: 4 }}
-                                    >
-                                      <Ionicons name="close-circle-outline" size={14} color="#D32F2F" />
-                                    </TouchableOpacity>
-                                  )}
-                                </TouchableOpacity>
+                                  onHoverIn={isWeb ? () => setHoveredKey(subHoverKey) : undefined}
+                                  onHoverOut={isWeb ? () => setHoveredKey(null) : undefined}
+                                  label={`– ${stripNumberPrefixForDisplay(subItem.name)}`}
+                                  muted
+                                  labelWeight={isSubItemActive ? '700' : '500'}
+                                  labelStyle={
+                                    isSubItemActive
+                                      ? { color: LEFT_NAV.accent }
+                                      : isSubHovered
+                                        ? { color: subTextColor }
+                                        : null
+                                  }
+                                  right={() =>
+                                    canEdit ? (
+                                      <TouchableOpacity
+                                        onPress={(e) => {
+                                          try { e?.stopPropagation?.(); } catch (_e) {}
+                                          handleRemoveItem(section.id, subItem.id, item.id);
+                                        }}
+                                        style={{ padding: 2, marginLeft: 4 }}
+                                      >
+                                        <Ionicons name="close-circle-outline" size={14} color="#D32F2F" />
+                                      </TouchableOpacity>
+                                    ) : null
+                                  }
+                                />
                               );
                             })}
                           </View>
@@ -1127,27 +1404,40 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     flexDirection: 'column',
-    backgroundColor: 'transparent',
-    padding: 12,
+    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : 'transparent',
+    padding: Platform.OS === 'web' ? 0 : 12,
     height: '100%',
-    ...(Platform.OS === 'web' ? { maxHeight: '100%', overflow: 'hidden', display: 'flex' } : {})
+    ...(Platform.OS === 'web'
+      ? {
+          maxHeight: '100%',
+          overflow: 'hidden',
+          display: 'flex',
+          width: 320,
+          minWidth: 280,
+          flexShrink: 0,
+        }
+      : {}),
   },
   panelCard: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e6e6e6',
+    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : '#fff',
+    borderRadius: Platform.OS === 'web' ? 0 : 12,
+    borderWidth: Platform.OS === 'web' ? 0 : 1,
+    borderColor: Platform.OS === 'web' ? 'transparent' : '#e6e6e6',
     overflow: 'hidden',
     ...(Platform.OS === 'web'
-      ? { boxShadow: '0 6px 20px rgba(17, 24, 39, 0.08)' }
+      ? {
+          boxShadow: 'none',
+          borderRightWidth: 1,
+          borderRightColor: '#ddd',
+        }
       : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 2 }),
   },
   projectHeader: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e6e6e6',
-    backgroundColor: '#fff',
+    borderBottomColor: Platform.OS === 'web' ? '#e0e0e0' : '#e6e6e6',
+    backgroundColor: Platform.OS === 'web' ? '#f7f7f7' : '#fff',
     flexShrink: 0, // Prevent header from shrinking
   },
   projectName: {
@@ -1261,8 +1551,8 @@ const styles = StyleSheet.create({
     color: LEFT_NAV.accent,
   },
   itemsContainer: {
-    backgroundColor: '#fafafa',
-    paddingLeft: 16
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : '#fafafa',
+    paddingLeft: Platform.OS === 'web' ? 0 : 16
   },
   item: {
     flexDirection: 'row',
@@ -1288,8 +1578,8 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   nestedItemsContainer: {
-    paddingLeft: 16,
-    backgroundColor: '#f5f5f5'
+    paddingLeft: Platform.OS === 'web' ? 0 : 16,
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : '#f5f5f5'
   },
   nestedItem: {
     paddingVertical: 4,

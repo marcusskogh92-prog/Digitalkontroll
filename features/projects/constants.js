@@ -23,7 +23,7 @@ export const PROJECT_PHASES = [
     id: 'phase-avslut',
     key: 'avslut',
     name: 'Avslut', 
-    color: '#616161', 
+    color: '#111', 
     icon: 'checkmark-circle-outline',
     order: 3
   },

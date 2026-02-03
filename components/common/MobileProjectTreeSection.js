@@ -12,7 +12,6 @@ export default function MobileProjectTreeSection({
   isWeb,
   navigation,
   companyId,
-  projectStatusFilter,
   handleSelectFunction,
   handleToggleMainFolder,
   handleToggleSubFolder,
@@ -103,7 +102,6 @@ export default function MobileProjectTreeSection({
                         adress: project.adress || '',
                         fastighetsbeteckning: project.fastighetsbeteckning || '',
                         client: project.client || '',
-                        status: project.status || 'ongoing',
                         createdAt: project.createdAt || '',
                         createdBy: project.createdBy || '',
                       },
@@ -114,7 +112,6 @@ export default function MobileProjectTreeSection({
                 onSelectFunction={handleSelectFunction}
                 navigation={navigation}
                 companyId={companyId}
-                projectStatusFilter={projectStatusFilter}
               />
             );
           }
@@ -144,7 +141,6 @@ export default function MobileProjectTreeSection({
                       adress: project.adress || '',
                       fastighetsbeteckning: project.fastighetsbeteckning || '',
                       client: project.client || '',
-                      status: project.status || 'ongoing',
                       createdAt: project.createdAt || '',
                       createdBy: project.createdBy || '',
                     },
@@ -155,7 +151,6 @@ export default function MobileProjectTreeSection({
               onSelectFunction={handleSelectFunction}
               navigation={navigation}
               companyId={companyId}
-              projectStatusFilter={projectStatusFilter}
               onToggleMainFolder={handleToggleMainFolder}
               onToggleSubFolder={handleToggleSubFolder}
               onAddSubFolder={(mainId) => {

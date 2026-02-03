@@ -10,8 +10,10 @@ import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFo
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
 import { archiveCompanyProject, auth, fetchSharePointProjectMetadataMap, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
+import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
+import SidebarItem from './SidebarItem';
 
 function isHiddenSystemRootFolderName(name) {
   const n = String(name || '').trim().toLowerCase();
@@ -28,6 +30,8 @@ function RecursiveFolderView({
   level = 0,
   expandedSubs,
   spinSubs,
+  lockedSubs,
+  lockTickSubs,
   onToggle,
   companyId,
   hierarchy,
@@ -47,7 +51,7 @@ function RecursiveFolderView({
   const safeName = folder.name || folder.id || '';
   const marginLeft = 12 + level * 8;
   const folderSpin = spinSubs?.[folder.id] || 0;
-  const folderChevronAngle = folderSpin * 360;
+  const isExpanded = expandedSubs?.[folder.id] === true;
   const visibleChildren = Array.isArray(folder.children)
     ? folder.children
         .filter(child => child && (child.type === 'folder' || !child.type))
@@ -59,6 +63,10 @@ function RecursiveFolderView({
   
   // Check if this folder is a project (if not already determined)
   const folderIsProject = isProject || isProjectFolder(folder);
+
+  const folderLocked = !folderIsProject && ((lockedSubs?.[folder.id] === true) || (folder?.childrenLoaded === true && visibleChildren.length === 0));
+  const lockTrigger = lockTickSubs?.[folder.id] || 0;
+  const showChevron = !folderIsProject && !folderLocked && (!folder?.childrenLoaded || visibleChildren.length > 0);
 
   const extractedMeta = folderIsProject ? extractProjectMetadata(folder) : null;
   const projectPath = extractedMeta?.path || folder.path || folder.name || '';
@@ -149,20 +157,32 @@ function RecursiveFolderView({
             transition: 'background-color 0.15s ease',
           }}
         >
-          {!folderIsProject && (
-            <Ionicons
-              name={expandedSubs?.[folder.id] ? 'chevron-down' : 'chevron-forward'}
-              size={Math.max(12, 16 - level)}
-              color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-              style={{
-                marginRight: 6,
-                transform: [{ rotate: `${folderChevronAngle}deg` }],
-                transitionProperty: 'transform',
-                transitionDuration: '0.4s',
-                transitionTimingFunction: 'ease',
-              }}
-            />
+          {showChevron ? (
+            <View style={{ marginRight: 6 }}>
+              <AnimatedChevron
+                expanded={isExpanded}
+                spinTrigger={folderSpin}
+                size={Math.max(12, 16 - level)}
+                color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+              />
+            </View>
+          ) : (
+            <div style={{ width: Math.max(12, 16 - level), marginRight: 6 }} />
           )}
+
+          {!folderIsProject && (
+            <MicroShake trigger={lockTrigger}>
+              <MicroPulse trigger={folderSpin}>
+                <Ionicons
+                  name={'folder-outline'}
+                  size={Math.max(12, 16 - level)}
+                  color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                  style={{ marginRight: 6 }}
+                />
+              </MicroPulse>
+            </MicroShake>
+          )}
+
           {folderIsProject && (
             <div
               style={{
@@ -176,6 +196,7 @@ function RecursiveFolderView({
               }}
             />
           )}
+
           <span
             style={{
               fontSize: 14,
@@ -188,7 +209,7 @@ function RecursiveFolderView({
           </span>
         </div>
 
-        {!folderIsProject && expandedSubs?.[folder.id] && visibleChildren.length > 0 && (
+        {!folderIsProject && showChevron && isExpanded && visibleChildren.length > 0 && (
           <div style={{ marginLeft: 8, marginTop: 2 }}>
             {visibleChildren.map(child => {
               const childIsProject = isProjectFolder(child);
@@ -199,6 +220,8 @@ function RecursiveFolderView({
                   level={level + 1}
                   expandedSubs={expandedSubs}
                   spinSubs={spinSubs}
+                  lockedSubs={lockedSubs}
+                  lockTickSubs={lockTickSubs}
                   onToggle={onToggle}
                   companyId={companyId}
                   hierarchy={hierarchy}
@@ -215,7 +238,8 @@ function RecursiveFolderView({
             })}
           </div>
         )}
-        {!folderIsProject && expandedSubs?.[folder.id] && visibleChildren.length === 0 && (
+
+        {!folderIsProject && showChevron && isExpanded && visibleChildren.length === 0 && (folder?.loading || folder?.error) && (
           <div style={{ marginLeft: 20, marginTop: 2 }}>
             <span
               style={{
@@ -224,7 +248,7 @@ function RecursiveFolderView({
                 fontStyle: 'italic',
               }}
             >
-                {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : (hasFiles ? 'Inga undermappar' : 'Mappen är tom')}
+              {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : ''}
             </span>
           </div>
         )}
@@ -254,41 +278,59 @@ function RecursiveFolderView({
           } catch (_e) {}
         } : undefined}
       >
-        {!folderIsProject && (
-          <Ionicons
-            name={expandedSubs?.[folder.id] ? 'chevron-down' : 'chevron-forward'}
-            size={Math.max(12, 16 - level)}
-            color={LEFT_NAV.iconDefault}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {showChevron ? (
+            <View style={{ marginRight: 4 }}>
+              <AnimatedChevron
+                expanded={isExpanded}
+                spinTrigger={folderSpin}
+                size={Math.max(12, 16 - level)}
+                color={LEFT_NAV.iconDefault}
+              />
+            </View>
+          ) : (
+            <View style={{ width: Math.max(12, 16 - level), marginRight: 4 }} />
+          )}
+
+          {!folderIsProject && (
+            <MicroShake trigger={lockTrigger}>
+              <MicroPulse trigger={folderSpin}>
+                <Ionicons
+                  name={'folder-outline'}
+                  size={Math.max(12, 16 - level)}
+                  color={LEFT_NAV.iconDefault}
+                  style={{ marginRight: 6 }}
+                />
+              </MicroPulse>
+            </MicroShake>
+          )}
+
+          {folderIsProject && (
+            <View
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: indicatorColor,
+                marginRight: 6,
+                borderWidth: 1,
+                borderColor: '#bbb',
+              }}
+            />
+          )}
+
+          <Text
             style={{
-              marginRight: 4,
-              transform: [{ rotate: `${folderChevronAngle}deg` }],
+              fontSize: 14,
+              color: LEFT_NAV.textDefault,
+              fontWeight: '500',
             }}
-          />
-        )}
-        {folderIsProject && (
-          <View
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 5,
-              backgroundColor: indicatorColor,
-              marginRight: 6,
-              borderWidth: 1,
-              borderColor: '#bbb',
-            }}
-          />
-        )}
-        <Text
-          style={{
-            fontSize: 14,
-            color: LEFT_NAV.textDefault,
-            fontWeight: '500',
-          }}
-        >
-          {safeName}
-        </Text>
+          >
+            {safeName}
+          </Text>
+        </View>
       </TouchableOpacity>
-      {!folderIsProject && expandedSubs?.[folder.id] && visibleChildren.length > 0 && (
+      {!folderIsProject && showChevron && isExpanded && visibleChildren.length > 0 && (
         <View style={{ marginLeft: 8, marginTop: 2 }}>
           {visibleChildren.map(child => {
             const childIsProject = isProjectFolder(child);
@@ -299,6 +341,8 @@ function RecursiveFolderView({
                 level={level + 1}
                 expandedSubs={expandedSubs}
                 spinSubs={spinSubs}
+                lockedSubs={lockedSubs}
+                lockTickSubs={lockTickSubs}
                 onToggle={onToggle}
                 companyId={companyId}
                 hierarchy={hierarchy}
@@ -315,7 +359,8 @@ function RecursiveFolderView({
           })}
         </View>
       )}
-      {!folderIsProject && expandedSubs?.[folder.id] && visibleChildren.length === 0 && (
+
+      {!folderIsProject && showChevron && isExpanded && visibleChildren.length === 0 && (folder?.loading || folder?.error) && (
         <Text
           style={{
             fontSize: 12,
@@ -325,7 +370,7 @@ function RecursiveFolderView({
             paddingLeft: 4,
           }}
         >
-          {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : (hasFiles ? 'Inga undermappar' : 'Mappen är tom')}
+          {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : ''}
         </Text>
       )}
     </View>
@@ -387,6 +432,7 @@ export function SharePointLeftPanel({
   const [expandedSites, setExpandedSites] = useState({}); // siteId -> boolean
   const [spinSites, setSpinSites] = useState({}); // siteId -> spin counter for chevron animation
   const [expandedSiteSections, setExpandedSiteSections] = useState({}); // `${siteId}|projects|folders` -> boolean (false = collapsed)
+    const [siteSectionToggleTick, setSiteSectionToggleTick] = useState({}); // `${siteId}|projects|folders` -> number
   const [projectMetadataMap, setProjectMetadataMap] = useState(null);
   const [firestoreProjects, setFirestoreProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
@@ -395,6 +441,8 @@ export function SharePointLeftPanel({
   const [hoveredSectionKey, setHoveredSectionKey] = useState(null);
   const [spExpandedFolders, setSpExpandedFolders] = useState({});
   const [spSpinFolders, setSpSpinFolders] = useState({});
+  const [spLockedFolders, setSpLockedFolders] = useState({}); // folderId -> true (leaf)
+  const [spLockedTick, setSpLockedTick] = useState({}); // folderId -> number (shake trigger)
   const [canArchiveProjects, setCanArchiveProjects] = useState(false);
   const [archivingProjectId, setArchivingProjectId] = useState(null);
   const [authUid, setAuthUid] = useState(null);
@@ -470,6 +518,9 @@ export function SharePointLeftPanel({
       ...prev,
       [k]: prev[k] === false,
     }));
+
+    // Micro-feedback trigger (once per click)
+    setSiteSectionToggleTick((prev) => ({ ...(prev || {}), [k]: (prev?.[k] || 0) + 1 }));
   };
 
   const openProjectContextMenu = (event, target) => {
@@ -721,13 +772,40 @@ export function SharePointLeftPanel({
     const fpath = String(folder?.path || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
     if (!fid) return;
 
-    setSpExpandedFolders((prev) => ({ ...prev, [fid]: !(prev?.[fid] === true) }));
+    const bumpLocked = () => {
+      setSpLockedFolders((prev) => ({ ...(prev || {}), [fid]: true }));
+      setSpLockedTick((prev) => ({ ...(prev || {}), [fid]: (prev?.[fid] || 0) + 1 }));
+    };
+
+    const currentlyExpanded = spExpandedFolders?.[fid] === true;
     setSpSpinFolders((prev) => ({ ...prev, [fid]: (prev?.[fid] || 0) + 1 }));
 
-    const willExpand = !(spExpandedFolders?.[fid] === true);
-    if (!willExpand) return;
+    // If we already know it's a leaf, don't expand - just shake/lock.
+    if (spLockedFolders?.[fid] === true || (folder?.childrenLoaded === true && Array.isArray(folder?.children) && folder.children.length === 0)) {
+      setSpExpandedFolders((prev) => ({ ...prev, [fid]: false }));
+      bumpLocked();
+      return;
+    }
+
+    if (currentlyExpanded) {
+      setSpExpandedFolders((prev) => ({ ...prev, [fid]: false }));
+      return;
+    }
+
+    // Attempt to expand
     if (!sid || !fpath) return;
-    if (folder?.childrenLoaded === true) return;
+    setSpExpandedFolders((prev) => ({ ...prev, [fid]: true }));
+
+    // If children are already loaded, we can decide immediately.
+    if (folder?.childrenLoaded === true) {
+      const folderChildren = Array.isArray(folder?.children) ? folder.children : [];
+      const childFolders = folderChildren.filter((c) => c && (c.type === 'folder' || !c.type));
+      if (childFolders.length === 0) {
+        setSpExpandedFolders((prev) => ({ ...prev, [fid]: false }));
+        bumpLocked();
+      }
+      return;
+    }
 
     setFolderStateInFilteredHierarchy(sid, fpath, { loading: true, error: null });
     try {
@@ -754,6 +832,12 @@ export function SharePointLeftPanel({
         .filter(Boolean);
 
       upsertFolderChildrenInFilteredHierarchy(sid, fpath, childrenNodes);
+
+      // Leaf folder: don't show chevron/empty area; shake to indicate "locked".
+      if (childrenNodes.length === 0) {
+        setSpExpandedFolders((prev) => ({ ...prev, [fid]: false }));
+        bumpLocked();
+      }
     } catch (e) {
       const msg = e?.message || 'Kunde inte ladda undermappar';
       setFolderStateInFilteredHierarchy(sid, fpath, { loading: false, error: msg, childrenLoaded: false });
@@ -1364,6 +1448,17 @@ export function SharePointLeftPanel({
 
       const section = sectionByPrefix || null;
       if (section?.id) {
+        // FFU: clicking the section itself should always show the root view in the middle panel
+        // (never remember last visited subfolder).
+        if (String(section.id) === 'forfragningsunderlag') {
+          if (typeof onAfRelativePathChange === 'function') {
+            onAfRelativePathChange('');
+          }
+          if (typeof onAfSelectedItemIdChange === 'function') {
+            onAfSelectedItemIdChange(null);
+          }
+        }
+
         onOpenPhaseItem(section.id, null, {
           folderNode,
           activeNode: buildActiveNode(section.id, null, folderNode),
@@ -1675,7 +1770,7 @@ export function SharePointLeftPanel({
             return {
               ...n,
               expanded: nextExpanded,
-              ...(shouldLoad ? { loading: true, error: null } : null),
+              ...(shouldLoad ? { loading: true, error: null } : {}),
             };
           }
           if (Array.isArray(n.children) && n.children.length > 0) {
@@ -2031,6 +2126,36 @@ export function SharePointLeftPanel({
     }
   };
 
+  const collapseProjectFolderSubtree = (folderId) => {
+    if (!folderId) return;
+
+    setProjectFolderTree((prev) => {
+      const collapseAll = (n) => {
+        if (!n) return n;
+        const children = Array.isArray(n.children) ? n.children : [];
+        return {
+          ...n,
+          expanded: false,
+          children: children.map(collapseAll),
+        };
+      };
+
+      const walk = (nodes) =>
+        (nodes || []).map((n) => {
+          if (!n) return n;
+          if (n.id === folderId) {
+            return collapseAll(n);
+          }
+          if (Array.isArray(n.children) && n.children.length > 0) {
+            return { ...n, children: walk(n.children) };
+          }
+          return n;
+        });
+
+      return walk(prev);
+    });
+  };
+
   // Load navigation config and build hierarchy from enabled sites
   useEffect(() => {
     let mounted = true;
@@ -2113,7 +2238,9 @@ export function SharePointLeftPanel({
       <View
         style={{
           width: leftWidth,
-          padding: 8,
+          // Web: when a project is open, the left panel must be edge-to-edge.
+          // Any outer padding makes every row highlight look inset/pill-like.
+          padding: isWeb && selectedProject ? 0 : 8,
           borderRightWidth: 0,
           borderColor: '#e6e6e6',
           backgroundColor: '#f5f6f7',
@@ -2274,6 +2401,7 @@ export function SharePointLeftPanel({
                     compact={isWeb}
                     hideFolderIcons
                     staticRootHeader
+                    edgeToEdge={Boolean(isWeb && selectedProject)}
                     activePhaseSection={phaseActiveSection}
                     activeOverviewPrefix={activeOverviewPrefix}
                     activePhaseSectionPrefix={activePhaseSectionPrefix}
@@ -2289,6 +2417,7 @@ export function SharePointLeftPanel({
                       refreshNonce: afMirrorRefreshNonce,
                     }}
                     onToggleSubFolder={handleToggleProjectFolder}
+                    onCollapseSubtree={collapseProjectFolderSubtree}
                     onPressFolder={openPhaseNavigationFromFolder}
                     onSelectProject={project => {
                       if (isWeb) {
@@ -2530,7 +2659,6 @@ export function SharePointLeftPanel({
                   if (siteItem.type === 'site') {
                     const isExpanded = expandedSites[siteItem.siteId] !== false; // default: expanded
                     const siteSpin = spinSites[siteItem.siteId] || 0;
-                    const siteChevronAngle = siteSpin * 360;
                     const isSiteHovered = hoveredSiteId === siteItem.siteId;
 
                     const toggleSiteExpanded = () => {
@@ -2547,98 +2675,40 @@ export function SharePointLeftPanel({
                     return (
                       <View key={siteItem.id} style={{ marginBottom: 8 }}>
                         {/* Site header */}
-                        {isWeb ? (
-                          <div
-                            onClick={toggleSiteExpanded}
-                            onContextMenu={(e) => {
-                              try { openSpContextMenu(e, siteItem); } catch (_e) {}
-                            }}
-                            onMouseEnter={() => setHoveredSiteId(siteItem.siteId)}
-                            onMouseLeave={() => setHoveredSiteId(null)}
-                            style={{
-                              display: 'flex',
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              padding: '8px 8px',
-                              backgroundColor: isSiteHovered ? LEFT_NAV.hoverBg : 'transparent',
-                              borderRadius: 4,
-                              marginBottom: 4,
-                              cursor: 'pointer',
-                              transition: 'background-color 0.15s ease',
-                            }}
-                          >
-                            <Ionicons
-                              name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-                              size={16}
-                              color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-                              style={{
-                                marginRight: 4,
-                                transform: [{ rotate: `${siteChevronAngle}deg` }],
-                                transitionProperty: 'transform',
-                                transitionDuration: '0.4s',
-                                transitionTimingFunction: 'ease',
-                              }}
-                            />
-                            <SharePointSiteIcon size={18} color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault} style={{ marginRight: 6 }} />
-                            <span
-                              style={{
-                                fontSize: 14,
-                                fontWeight: isSiteHovered ? '600' : '500',
-                                color: isSiteHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
-                                flex: 1,
-                                fontFamily: LEFT_NAV.webFontFamily,
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {stripNumberPrefixForDisplay(siteItem.name)}
-                            </span>
-                          </div>
-                        ) : (
-                          <TouchableOpacity
-                            onPress={toggleSiteExpanded}
-                            onLongPress={(e) => {
-                              try { openSpContextMenu(e, siteItem); } catch (_e) {}
-                            }}
-                            onContextMenu={Platform.OS === 'web' ? (e) => {
-                              try { openSpContextMenu(e, siteItem); } catch (_e) {}
-                            } : undefined}
-                            activeOpacity={0.8}
-                            style={{ 
-                              flexDirection: 'row', 
-                              alignItems: 'center', 
-                              paddingVertical: 8,
-                              paddingHorizontal: 8,
-                              backgroundColor: 'transparent',
-                              borderRadius: 4,
-                              marginBottom: 4,
-                              ...(isWeb ? { cursor: 'pointer' } : {}),
-                            }}
-                          >
-                            <Ionicons
-                              name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-                              size={16}
-                              color={LEFT_NAV.iconDefault}
-                              style={{
-                                marginRight: 4,
-                                transform: [{ rotate: `${siteChevronAngle}deg` }],
-                                transitionProperty: 'transform',
-                                transitionDuration: '0.4s',
-                                transitionTimingFunction: 'ease',
-                              }}
-                            />
-                            <SharePointSiteIcon size={18} color={LEFT_NAV.iconDefault} style={{ marginRight: 6 }} />
-                            <Text style={{ 
-                              fontSize: 14, 
-                              fontWeight: '500', 
-                              color: LEFT_NAV.textDefault,
-                              flex: 1,
-                            }}>
-                              {stripNumberPrefixForDisplay(siteItem.name)}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
+                        <SidebarItem
+                          onPress={toggleSiteExpanded}
+                          onLongPress={(e) => {
+                            try { openSpContextMenu(e, siteItem); } catch (_e) {}
+                          }}
+                          onContextMenu={(e) => {
+                            try { openSpContextMenu(e, siteItem); } catch (_e) {}
+                          }}
+                          onHoverIn={() => setHoveredSiteId(siteItem.siteId)}
+                          onHoverOut={() => setHoveredSiteId(null)}
+                          hovered={isSiteHovered}
+                          style={{ marginBottom: 4 }}
+                          left={() => (
+                            <>
+                              <View style={{ marginRight: 4 }}>
+                                <AnimatedChevron
+                                  expanded={isExpanded}
+                                  spinTrigger={siteSpin}
+                                  size={16}
+                                  color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                                />
+                              </View>
+                              <MicroPulse trigger={siteSpin}>
+                                <SharePointSiteIcon
+                                  size={18}
+                                  color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                                  style={{ marginRight: 6 }}
+                                />
+                              </MicroPulse>
+                            </>
+                          )}
+                          label={stripNumberPrefixForDisplay(siteItem.name)}
+                          labelWeight={isSiteHovered ? '600' : '500'}
+                        />
                         
                         {/* Site folders */}
                         {isExpanded && (
@@ -2660,59 +2730,43 @@ export function SharePointLeftPanel({
                               const foldersExpanded = isSiteSectionExpanded(sid, 'folders');
 
                               const renderSectionHeader = (sectionKey, label, count, expanded) => {
-                                const chevron = expanded ? 'chevron-down' : 'chevron-forward';
                                 const sectionIcon = sectionKey === 'projects' ? 'briefcase-outline' : 'folder-outline';
                                 const hoverKey = `${sid}|${sectionKey}`;
                                 const isHovered = hoveredSectionKey === hoverKey;
-                                if (isWeb) {
-                                  return (
-                                    <div
-                                      key={`${sid}|hdr|${sectionKey}`}
-                                      onClick={() => toggleSiteSectionExpanded(sid, sectionKey)}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        padding: '4px 8px',
-                                        marginTop: 4,
-                                        borderRadius: 4,
-                                        cursor: 'pointer',
-                                        userSelect: 'none',
-                                        background: 'transparent',
-                                      }}
-                                      onMouseEnter={() => setHoveredSectionKey(hoverKey)}
-                                      onMouseLeave={() => setHoveredSectionKey(null)}
-                                    >
-                                      <Ionicons name={chevron} size={16} color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted} style={{ marginRight: 6 }} />
-                                      <Ionicons name={sectionIcon} size={16} color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted} style={{ marginRight: 6 }} />
-                                      <span
-                                        style={{
-                                          fontSize: 14,
-                                          fontWeight: 600,
-                                          color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textMuted,
-                                          fontFamily: LEFT_NAV.webFontFamily,
-                                        }}
-                                      >
-                                        {label}
-                                      </span>
-                                      <span style={{ marginLeft: 8, fontSize: 14, color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textMuted, fontWeight: 600 }}>
-                                        {`(${count})`}
-                                      </span>
-                                    </div>
-                                  );
-                                }
-
+                                const pulseTrigger = siteSectionToggleTick?.[hoverKey] || 0;
                                 return (
-                                  <TouchableOpacity
+                                  <SidebarItem
                                     key={`${sid}|hdr|${sectionKey}`}
                                     onPress={() => toggleSiteSectionExpanded(sid, sectionKey)}
-                                    activeOpacity={0.85}
-                                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, marginTop: 4 }}
-                                  >
-                                    <Ionicons name={chevron} size={16} color={LEFT_NAV.iconMuted} style={{ marginRight: 6 }} />
-                                    <Ionicons name={sectionIcon} size={16} color={LEFT_NAV.iconMuted} style={{ marginRight: 6 }} />
-                                    <Text style={{ fontSize: 14, color: LEFT_NAV.textMuted, fontWeight: '600' }}>{label}</Text>
-                                    <Text style={{ marginLeft: 8, fontSize: 14, color: LEFT_NAV.textMuted, fontWeight: '600' }}>{`(${count})`}</Text>
-                                  </TouchableOpacity>
+                                    onHoverIn={() => setHoveredSectionKey(hoverKey)}
+                                    onHoverOut={() => setHoveredSectionKey(null)}
+                                    hovered={isHovered}
+                                    muted
+                                    style={{ marginTop: 4 }}
+                                    left={() => (
+                                      <>
+                                        <View style={{ marginRight: 6 }}>
+                                          <AnimatedChevron
+                                            expanded={expanded}
+                                            spinTrigger={pulseTrigger}
+                                            size={16}
+                                            color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                                          />
+                                        </View>
+                                        <MicroPulse trigger={pulseTrigger}>
+                                          <Ionicons
+                                            name={sectionIcon}
+                                            size={16}
+                                            color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                                            style={{ marginRight: 6 }}
+                                          />
+                                        </MicroPulse>
+                                      </>
+                                    )}
+                                    label={label}
+                                    labelWeight={'700'}
+                                    count={count}
+                                  />
                                 );
                               };
 
@@ -2783,70 +2837,57 @@ export function SharePointLeftPanel({
                                         const selectedId = String(selectedProject?.id || selectedProject?.projectNumber || selectedProject?.number || '').trim();
                                         const isActive = !!selectedId && String(selectedId) === String(number || p?.id || '').trim();
                                         return (
-                                          <div
+                                          <SidebarItem
                                             key={number || p?.id || rowKey}
-                                            onClick={isDisabled ? undefined : onSelect}
+                                            onPress={isDisabled ? undefined : onSelect}
                                             onContextMenu={isDisabled ? undefined : onOpenMenu}
-                                            onMouseEnter={() => setHoveredProjectKey(rowKey)}
-                                            onMouseLeave={() => setHoveredProjectKey(null)}
-                                            style={{
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              padding: '4px 8px',
-                                              cursor: isDisabled ? 'default' : 'pointer',
-                                              borderRadius: 4,
-                                              opacity: isDisabled ? 0.6 : 1,
-                                              pointerEvents: isDisabled ? 'none' : 'auto',
-                                              backgroundColor: isActive ? LEFT_NAV.activeBg : isHovered ? LEFT_NAV.hoverBg : 'transparent',
-                                              borderLeft: isActive ? `2px solid ${LEFT_NAV.activeBorder}` : '2px solid transparent',
-                                              transition: 'background-color 0.15s ease',
-                                            }}
-                                          >
-                                            <div style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: indicatorColor, marginRight: 8, border: '1px solid #bbb', display: 'inline-block' }} />
-                                            <span
-                                              style={{
-                                                fontSize: 14,
-                                                fontWeight: isActive ? '600' : '500',
-                                                color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
-                                                fontFamily: LEFT_NAV.webFontFamily,
-                                                flex: 1,
-                                                whiteSpace: 'nowrap',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                              }}
-                                            >
-                                              {fullName || number}
-                                            </span>
-                                          </div>
+                                            onHoverIn={() => setHoveredProjectKey(rowKey)}
+                                            onHoverOut={() => setHoveredProjectKey(null)}
+                                            hovered={isHovered}
+                                            active={isActive}
+                                            disabled={isDisabled}
+                                            left={() => (
+                                              <View
+                                                style={{
+                                                  width: 10,
+                                                  height: 10,
+                                                  borderRadius: 5,
+                                                  backgroundColor: indicatorColor,
+                                                  marginRight: 8,
+                                                  borderWidth: 1,
+                                                  borderColor: '#bbb',
+                                                }}
+                                              />
+                                            )}
+                                            label={fullName || number}
+                                          />
                                         );
                                       }
 
                                       const selectedId = String(selectedProject?.id || selectedProject?.projectNumber || selectedProject?.number || '').trim();
                                       const isActive = !!selectedId && String(selectedId) === String(number || p?.id || '').trim();
                                       return (
-                                        <TouchableOpacity
+                                        <SidebarItem
                                           key={number || p?.id || rowKey}
                                           onPress={onSelect}
                                           onLongPress={onOpenMenu}
-                                          activeOpacity={0.85}
                                           disabled={isDisabled}
-                                          style={{
-                                            flexDirection: 'row',
-                                            alignItems: 'center',
-                                            paddingVertical: 4,
-                                            paddingHorizontal: 8,
-                                            borderRadius: 4,
-                                            opacity: isDisabled ? 0.6 : 1,
-                                            backgroundColor: isActive ? LEFT_NAV.activeBg : 'transparent',
-                                            borderLeftWidth: 2,
-                                            borderLeftColor: isActive ? LEFT_NAV.activeBorder : 'transparent',
-                                          }}
-                                        >
-                                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: indicatorColor, marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                                          <Text style={{ fontSize: 14, color: LEFT_NAV.textDefault, fontWeight: '500', flex: 1 }} numberOfLines={1}>
-                                            {fullName || number}
-                                          </Text>
-                                        </TouchableOpacity>
+                                          active={isActive}
+                                          left={() => (
+                                            <View
+                                              style={{
+                                                width: 10,
+                                                height: 10,
+                                                borderRadius: 5,
+                                                backgroundColor: indicatorColor,
+                                                marginRight: 8,
+                                                borderWidth: 1,
+                                                borderColor: '#bbb',
+                                              }}
+                                            />
+                                          )}
+                                          label={fullName || number}
+                                        />
                                       );
                                     })}
                                           </View>
@@ -2874,6 +2915,8 @@ export function SharePointLeftPanel({
                                       level={0}
                                       expandedSubs={spExpandedFolders}
                                       spinSubs={spSpinFolders}
+                                      lockedSubs={spLockedFolders}
+                                      lockTickSubs={spLockedTick}
                                       onToggle={toggleSpFolder}
                                       companyId={companyId}
                                       hierarchy={hierarchy}
@@ -2913,6 +2956,8 @@ export function SharePointLeftPanel({
                       level={0}
                       expandedSubs={spExpandedFolders}
                       spinSubs={spSpinFolders}
+                      lockedSubs={spLockedFolders}
+                      lockTickSubs={spLockedTick}
                       onToggle={toggleSpFolder}
                       companyId={companyId}
                       hierarchy={hierarchy}

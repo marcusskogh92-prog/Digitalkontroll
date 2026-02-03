@@ -7,6 +7,7 @@ import ContextMenu from '../ContextMenu';
 import HeaderDisplayName from '../HeaderDisplayName';
 import HeaderUserMenu from '../HeaderUserMenu';
 import { formatPersonName } from '../formatPersonName';
+import { UploadPanelTrigger } from './uploads/UploadPanel';
 
 export function HomeHeader({
   headerHeight,
@@ -313,6 +314,7 @@ export function HomeHeader({
           gap: 8,
         }}
       >
+        <UploadPanelTrigger />
         <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
           {sharePointStatus.checking ? (
             <Animated.View

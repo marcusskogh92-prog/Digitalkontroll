@@ -438,7 +438,7 @@ export function HomeSidebar({
             return {
               ...n,
               expanded: nextExpanded,
-              ...(shouldLoad ? { loading: true, error: null } : null),
+              ...(shouldLoad ? { loading: true, error: null } : {}),
             };
           }
           if (Array.isArray(n.children) && n.children.length > 0) {

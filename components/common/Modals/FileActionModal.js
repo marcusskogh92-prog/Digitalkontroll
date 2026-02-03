@@ -152,7 +152,7 @@ export default function FileActionModal({
                 borderWidth: 1,
                 borderColor: '#E2E8F0',
                 backgroundColor: hovered || pressed ? '#F8FAFC' : '#fff',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
               })}
             >
               <Text style={{ fontSize: 12, fontWeight: '600', color: '#111' }}>{secondaryLabel}</Text>
@@ -169,7 +169,7 @@ export default function FileActionModal({
                   paddingHorizontal: 14,
                   borderRadius: 10,
                   backgroundColor: primaryDisabled ? '#94A3B8' : (hovered || pressed ? '#155FB5' : '#1976D2'),
-                  ...(Platform.OS === 'web' ? { cursor: primaryDisabled ? 'not-allowed' : 'pointer' } : null),
+                  ...(Platform.OS === 'web' ? { cursor: primaryDisabled ? 'not-allowed' : 'pointer' } : {}),
                 })}
               >
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#fff' }}>{primaryLabel}</Text>

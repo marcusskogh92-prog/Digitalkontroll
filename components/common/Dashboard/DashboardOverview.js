@@ -46,8 +46,7 @@ const DashboardOverview = ({
         onLayout={Platform.OS === 'web' ? (e) => { dashboardCardLayoutRef.current.overview = e?.nativeEvent?.layout || null; } : undefined}
       >
         {[
-          { key: 'activeProjects', label: 'Pågående projekt', color: '#43A047', value: dashboardOverview?.activeProjects || 0, focus: 'activeProjects' },
-          { key: 'completedProjects', label: 'Avslutade projekt', color: '#222', value: (_countProjectStatus ? _countProjectStatus(hierarchy).completed : 0), focus: 'completedProjects' },
+          { key: 'activeProjects', label: 'Projekt', color: '#1976D2', value: dashboardOverview?.activeProjects || 0, focus: 'activeProjects' },
           { key: 'controlsToSign', label: 'Kontroller att signera', color: '#D32F2F', value: dashboardOverview?.controlsToSign || 0, focus: 'controlsToSign' },
           { key: 'drafts', label: 'Sparade utkast', color: '#888', value: dashboardOverview?.drafts || 0, focus: 'drafts' },
         ].map((row, ridx) => {

@@ -84,6 +84,16 @@ Innehåll i RULES.md
 
 ⸻
 
+7. Utforskaren (vänsterträdet) – Golden Rule
+	•	Alla mappar ska alltid visa mapp-ikon + namn på samma rad.
+	•	Chevron får bara visas om noden faktiskt kan expandera (har/kan ha undermappar).
+	•	Bladmappar (utan undermappar) ska inte expandera.
+	•	Klick på en blad-mapp ska ge kort “shake/vibration” som feedback.
+	•	Shake gäller bara mapp-ikonen (inte chevron eller text).
+	•	Shake får bara triggas av klick (aldrig på mount/remount vid expand).
+
+⸻
+
 Slut
 
 Detta dokument är en del av systemets arkitektur och ska följas i all vidare utveckling.

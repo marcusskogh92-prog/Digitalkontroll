@@ -98,18 +98,17 @@ export function useBreadcrumbNavigation({
 
       try { setInlineControlEditor(null); } catch (_e) {}
       try { setProjectSelectedAction(null); } catch (_e) {}
+
+      // Always open project through the shared switch function.
+      // Do not carry any remembered folder path between project openings.
       try {
-        setSelectedProjectPath({
-          mainId: String(path.main?.id || ''),
-          subId: String(path.sub?.id || ''),
-          mainName: String(path.main?.name || ''),
-          subName: String(path.sub?.name || ''),
-          projectId,
-        });
-      } catch (_e) {}
-      try { setSelectedProject({ ...path.project }); } catch (_e) {}
+        requestProjectSwitch({ ...path.project }, { selectedAction: null, path: null });
+      } catch (_e) {
+        try { setSelectedProjectPath(null); } catch (_e2) {}
+        try { setSelectedProject({ ...path.project }); } catch (_e3) {}
+      }
     }
-  }, [findProjectPathById, setHierarchy, setSelectedProject, setSelectedProjectPath, setInlineControlEditor, setProjectSelectedAction]);
+  }, [findProjectPathById, requestProjectSwitch, setHierarchy, setSelectedProject, setSelectedProjectPath, setInlineControlEditor, setProjectSelectedAction]);
 
   const navigateViaBreadcrumb = useCallback((target) => {
     // If an inline form is open/locked, route through exit-confirm first.

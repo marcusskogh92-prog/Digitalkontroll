@@ -2,6 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { LEFT_NAV } from '../../../constants/leftNavTheme';
+import { AnimatedChevron, MicroPulse, MicroShake } from '../leftNavMicroAnimations';
+import SidebarItem from '../SidebarItem';
+
 import { ensureFolderPath } from '../../../services/azure/fileService';
 import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
@@ -48,6 +52,13 @@ function buildAncestorPaths(relativePath) {
   return out;
 }
 
+function buildAncestorPathsExcludingLeaf(relativePath) {
+  const rel = safeText(relativePath);
+  const parts = rel.split('/').filter(Boolean);
+  if (parts.length === 0) return [''];
+  return buildAncestorPaths(parts.slice(0, -1).join('/'));
+}
+
 export default function SharePointFolderHierarchyTree({
   indentLevel = 0,
   compact = false,
@@ -60,6 +71,10 @@ export default function SharePointFolderHierarchyTree({
   onSelectedItemIdChange,
   refreshNonce = 0,
 
+  // When rendered inside the project-mode left panel, rows should be edge-to-edge
+  // (no margin-based indentation that makes hover/active look inset/pill-like).
+  edgeToEdge = false,
+
   // Optional (FFU): ensure/pin a system folder in the root.
   systemFolderName = null,
   ensureSystemFolder = false,
@@ -71,6 +86,8 @@ export default function SharePointFolderHierarchyTree({
 
   const [siteId, setSiteId] = useState('');
   const [expandedByPath, setExpandedByPath] = useState({ '': true });
+  const [toggleTickByPath, setToggleTickByPath] = useState({});
+  const [nudgeTickByPath, setNudgeTickByPath] = useState({});
   const [childrenByPath, setChildrenByPath] = useState({});
   const [fileCountByPath, setFileCountByPath] = useState({});
   const [loadingByPath, setLoadingByPath] = useState({});
@@ -102,7 +119,8 @@ export default function SharePointFolderHierarchyTree({
 
   // Keep tree expanded to the current active folder path.
   useEffect(() => {
-    const chain = buildAncestorPaths(relativePath);
+    // Only expand ancestors (not the leaf) so single-click navigation never expands/collapses.
+    const chain = buildAncestorPathsExcludingLeaf(relativePath);
     setExpandedByPath((prev) => {
       const next = { ...prev };
       chain.forEach((p) => {
@@ -194,8 +212,54 @@ export default function SharePointFolderHierarchyTree({
 
   const toggleExpanded = (folderRelPath) => {
     const key = safeText(folderRelPath);
-    setExpandedByPath((prev) => ({ ...prev, [key]: !prev?.[key] }));
+    setExpandedByPath((prev) => ({ ...prev, [key]: !prev?.[key], '': true }));
+    setToggleTickByPath((prev) => ({ ...(prev || {}), [key]: (prev?.[key] || 0) + 1 }));
   };
+
+  const toggleExpandedOrCollapseSubtree = (folderRelPath) => {
+    const key = safeText(folderRelPath);
+    if (!key) return;
+
+    const isExpandedNow = Boolean(expandedByPath?.[key]);
+    if (isExpandedNow) {
+      collapseSubtree(key);
+      setToggleTickByPath((prev) => ({ ...(prev || {}), [key]: (prev?.[key] || 0) + 1 }));
+      return;
+    }
+
+    toggleExpanded(key);
+  };
+
+  const collapseSubtree = (folderRelPath) => {
+    const root = safeText(folderRelPath);
+    if (!root || root === '') return;
+    setExpandedByPath((prev) => {
+      const next = { ...(prev || {}) };
+      Object.keys(next).forEach((k) => {
+        if (k === root || k.startsWith(`${root}/`)) {
+          next[k] = false;
+        }
+      });
+      next[''] = true;
+      return next;
+    });
+  };
+
+  // If a folder ends up having no subfolders, collapse it so we never render an "empty" row.
+  useEffect(() => {
+    setExpandedByPath((prev) => {
+      const next = { ...(prev || {}) };
+      Object.keys(next).forEach((k) => {
+        if (k === '') return;
+        if (!next[k]) return;
+        if (!Object.prototype.hasOwnProperty.call(childrenByPath || {}, k)) return;
+        const folders = childrenByPath?.[k];
+        const hasSubfolders = Array.isArray(folders) && folders.length > 0;
+        if (!hasSubfolders) next[k] = false;
+      });
+      return next;
+    });
+  }, [childrenByPath]);
 
   const renderLevel = (parentRelPath, level) => {
     const key = safeText(parentRelPath);
@@ -204,16 +268,18 @@ export default function SharePointFolderHierarchyTree({
     const error = safeText(errorByPath?.[key]);
     const loading = Boolean(loadingByPath?.[key]);
     const items = childrenByPath?.[key];
-    const fileCount = Number(fileCountByPath?.[key] || 0);
 
     if (error) {
+      const messageIndent = baseIndent + level * 12 + 24;
       rows.push(
         <Text
           key={`${key}.__error__`}
           style={{
-            color: '#B91C1C',
+            color: LEFT_NAV.errorText,
             fontSize: compact ? 11 : 12,
-            marginLeft: baseIndent + level * 12 + 26,
+            ...(edgeToEdge
+              ? { marginLeft: 0, paddingLeft: LEFT_NAV.rowPaddingHorizontal + messageIndent }
+              : { marginLeft: messageIndent }),
             marginTop: 4,
           }}
           numberOfLines={2}
@@ -224,35 +290,21 @@ export default function SharePointFolderHierarchyTree({
     }
 
     if (loading) {
+      const messageIndent = baseIndent + level * 12 + 24;
       rows.push(
         <Text
           key={`${key}.__loading__`}
           style={{
-            color: '#94A3B8',
+            color: LEFT_NAV.subtleText,
             fontSize: compact ? 11 : 12,
-            marginLeft: baseIndent + level * 12 + 26,
+            ...(edgeToEdge
+              ? { marginLeft: 0, paddingLeft: LEFT_NAV.rowPaddingHorizontal + messageIndent }
+              : { marginLeft: messageIndent }),
             marginTop: 4,
             fontStyle: 'italic',
           }}
         >
           Laddar…
-        </Text>,
-      );
-    }
-
-    if (Array.isArray(items) && items.length === 0 && !loading && !error) {
-      rows.push(
-        <Text
-          key={`${key}.__empty__`}
-          style={{
-            color: '#CBD5E1',
-            fontSize: compact ? 11 : 12,
-            marginLeft: baseIndent + level * 12 + 26,
-            marginTop: 4,
-            fontStyle: 'italic',
-          }}
-        >
-          {fileCount > 0 ? 'Inga undermappar' : 'Mappen är tom'}
         </Text>,
       );
     }
@@ -267,89 +319,102 @@ export default function SharePointFolderHierarchyTree({
 
       const folderRelPath = isFolder ? joinPath(key, name) : '';
       const isActiveFolder = isFolder && safeText(relativePath) === folderRelPath;
-      const isInActiveChain = isFolder && safeText(relativePath).startsWith(folderRelPath ? `${folderRelPath}/` : '');
       const isSelectedFile = !isFolder && selectedItemId && String(selectedItemId) === String(it?.id);
 
       const isExpanded = isFolder ? Boolean(expandedByPath?.[folderRelPath]) : false;
 
+      const knownChildren = Object.prototype.hasOwnProperty.call(childrenByPath || {}, folderRelPath);
+      const childFolders = knownChildren ? childrenByPath?.[folderRelPath] : undefined;
+      const hasSubfolders = Array.isArray(childFolders) && childFolders.length > 0;
+      const hasFiles = Number(fileCountByPath?.[folderRelPath] || 0) > 0;
+      const hasContent = Boolean(hasFiles || hasSubfolders);
+      const canExpand = Boolean(!knownChildren || hasSubfolders);
+      const isLeafNoSubfolders = Boolean(knownChildren && !hasSubfolders);
+
       const typeMeta = isFolder ? { icon: 'folder-outline' } : classifyFileType(name);
       const iconName = typeMeta?.icon || (isFolder ? 'folder-outline' : 'document-outline');
 
+      const isRowActive = Boolean(isActiveFolder || isSelectedFile);
+
       rows.push(
-        <Pressable
+        <SidebarItem
           key={id}
+          fullWidth={Boolean(edgeToEdge)}
+          squareCorners={Boolean(edgeToEdge)}
+          indentMode={edgeToEdge ? 'padding' : 'margin'}
+          indent={rowIndent}
+          active={isRowActive}
           onPress={async () => {
             if (isFolder) {
               if (typeof onSelectedItemIdChange === 'function') onSelectedItemIdChange(null);
               if (typeof onRelativePathChange === 'function') onRelativePathChange(folderRelPath);
-              setExpandedByPath((prev) => ({ ...prev, [folderRelPath]: true, '': true }));
+              // Single click must ONLY navigate; never expand/collapse.
+              if (isLeafNoSubfolders) {
+                setNudgeTickByPath((prev) => ({ ...(prev || {}), [folderRelPath]: (prev?.[folderRelPath] || 0) + 1 }));
+              }
               return;
             }
 
             if (typeof onSelectedItemIdChange === 'function') onSelectedItemIdChange(it?.id || null);
           }}
-          style={({ hovered, pressed }) => ({
-            marginLeft: rowIndent,
-            paddingVertical: compact ? 4 : 6,
-            paddingHorizontal: compact ? 6 : 8,
-            borderRadius: 8,
-            marginVertical: 1,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            backgroundColor: isActiveFolder || isSelectedFile
-              ? 'rgba(25, 118, 210, 0.12)'
-              : hovered || pressed
-                ? 'rgba(0,0,0,0.04)'
-                : 'transparent',
-            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
-          })}
-        >
-          {isFolder ? (
-            <Pressable
-              onPress={(e) => {
-                try { e.stopPropagation?.(); } catch (_e) {}
-                toggleExpanded(folderRelPath);
-              }}
-              style={({ hovered, pressed }) => ({
-                width: compact ? 18 : 20,
-                height: compact ? 18 : 20,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 6,
-                backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
-              })}
-            >
-              <Ionicons
-                name={isExpanded ? 'chevron-down' : 'chevron-forward'}
-                size={compact ? 14 : 16}
-                color={isInActiveChain || isActiveFolder ? '#475569' : '#94A3B8'}
-              />
-            </Pressable>
-          ) : (
-            <View style={{ width: compact ? 18 : 20 }} />
+          onDoubleClick={
+            isFolder && canExpand
+              ? () => {
+                  toggleExpandedOrCollapseSubtree(folderRelPath);
+                }
+              : undefined
+          }
+          left={(state) => (
+            <>
+              {isFolder ? (
+                canExpand ? (
+                  <Pressable
+                    onPress={(e) => {
+                      try {
+                        e?.stopPropagation?.();
+                      } catch (_e) {}
+                      toggleExpandedOrCollapseSubtree(folderRelPath);
+                    }}
+                    style={({ hovered, pressed }) => [
+                      {
+                        width: compact ? 18 : 20,
+                        height: compact ? 18 : 20,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRadius: 6,
+                      },
+                      Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                      (hovered || pressed) ? { opacity: 0.9 } : null,
+                    ]}
+                  >
+                    <AnimatedChevron
+                      expanded={isExpanded}
+                      size={compact ? 14 : 16}
+                      color={(state.active || state.hovered) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
+                      style={null}
+                    />
+                  </Pressable>
+                ) : (
+                  <View style={{ width: compact ? 18 : 20 }} />
+                )
+              ) : (
+                <View style={{ width: compact ? 18 : 20 }} />
+              )}
+
+              <MicroShake trigger={nudgeTickByPath?.[folderRelPath] || 0} durationMs={90} amplitude={3}>
+                <MicroPulse trigger={toggleTickByPath?.[folderRelPath] || 0}>
+                  <Ionicons
+                    name={iconName}
+                    size={compact ? 16 : 18}
+                    color={(state.active || state.hovered) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
+                  />
+                </MicroPulse>
+              </MicroShake>
+            </>
           )}
-
-          <Ionicons
-            name={iconName}
-            size={compact ? 16 : 18}
-            color={isFolder ? (isInActiveChain || isActiveFolder ? '#475569' : '#64748b') : '#94A3B8'}
-          />
-
-          <Text
-            style={{
-              fontSize: compact ? 12 : 13,
-              fontWeight: '400',
-              color: isActiveFolder || isSelectedFile ? '#0F172A' : '#111827',
-              flex: 1,
-              minWidth: 0,
-            }}
-            numberOfLines={1}
-          >
-            {name}
-          </Text>
-        </Pressable>,
+          label={name}
+          labelWeight={isRowActive ? '600' : (hasContent ? '600' : '500')}
+        />,
       );
 
       if (isFolder && isExpanded) {
@@ -380,7 +445,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   mutedText: {
-    color: '#94A3B8',
+    color: LEFT_NAV.subtleText,
     fontSize: 12,
     fontWeight: '400',
     marginLeft: 14,

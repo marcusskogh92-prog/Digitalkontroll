@@ -281,7 +281,7 @@ function ToolbarButton({ icon, label, onPress, disabled = false }) {
         gap: 6,
         opacity: disabled ? 0.45 : 1,
         backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-        ...(Platform.OS === 'web' ? { cursor: disabled ? 'default' : 'pointer' } : null),
+        ...(Platform.OS === 'web' ? { cursor: disabled ? 'default' : 'pointer' } : {}),
       })}
     >
       <Ionicons name={icon} size={16} color={label === 'Öppna i ny flik' ? '#1976D2' : '#334155'} />
@@ -804,7 +804,7 @@ export default function SharePointFilePreviewPane({
                   paddingHorizontal: 10,
                   borderRadius: 10,
                   backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
                 <Ionicons name="close" size={18} color="#64748b" />
@@ -1059,7 +1059,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0F172A',
     maxWidth: 320,
-    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : null),
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
   },
   fileNameSecondary: {
     fontSize: 12,
@@ -1077,7 +1077,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#334155',
-    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : null),
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
   },
   title: {
     fontSize: 13,
@@ -1117,7 +1117,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: '#334155',
     flexShrink: 0,
-    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : null),
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
   },
   body: {
     flex: 1,

@@ -263,8 +263,14 @@ export function convertSharePointToHierarchy(sharePointTree, phaseKey) {
                     ? projectMatch[2].trim() 
                     : projectFolder.name;
 
+                  // Canonical project id used throughout the app:
+                  // projectId === project_number_index doc.id (e.g. "1010-10").
+                  // Never use SharePoint internal driveItem ids as project ids.
+                  const canonicalProjectId = String(projectNumber || '').trim();
+
                   const projectItem = {
-                    id: `P-${projectFolder.id}`,
+                    id: canonicalProjectId,
+                    projectId: canonicalProjectId,
                     name: projectName,
                     number: projectNumber,
                     type: 'project',

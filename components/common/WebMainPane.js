@@ -7,6 +7,7 @@ import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
 
 export default function WebMainPane(props) {
   const {
+    authClaims,
     webPaneHeight,
     rightPaneScrollRef,
     activityScrollRef,
@@ -25,6 +26,7 @@ export default function WebMainPane(props) {
     setHierarchy,
     resetProjectFields,
     requestProjectSwitch,
+    openProject,
     selectedProjectPath,
     setCreatingProject,
     setCreatingProjectInline,
@@ -189,6 +191,7 @@ export default function WebMainPane(props) {
         ) : null}
 
         <Dashboard
+          authClaims={authClaims}
           dashboardLoading={dashboardLoading}
           dashboardOverview={dashboardOverview}
           dashboardRecentProjects={dashboardRecentProjects}
@@ -210,9 +213,11 @@ export default function WebMainPane(props) {
           dashboardCardLayoutRef={dashboardCardLayoutRef}
           dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
           webPaneHeight={webPaneHeight}
-          onProjectSelect={(project) => requestProjectSwitch(project, { selectedAction: null })}
+          onProjectSelect={(project) => {
+            openProject(project, { selectedAction: null });
+          }}
           onDraftSelect={(project, draft) => {
-            requestProjectSwitch(project, {
+            openProject(project, {
               selectedAction: {
                 id: `openDraft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 kind: 'openDraft',
@@ -226,7 +231,7 @@ export default function WebMainPane(props) {
             setDashboardHoveredStatKey(null);
           }}
           onControlToSignSelect={(project, control) => {
-            requestProjectSwitch(project, {
+            openProject(project, {
               selectedAction: {
                 id: `openControl-${control?.id || Date.now()}`,
                 kind: 'openControlDetails',
@@ -239,7 +244,7 @@ export default function WebMainPane(props) {
             setDashboardHoveredStatKey(null);
           }}
           onDeviationSelect={(project, entry) => {
-            requestProjectSwitch(project, {
+            openProject(project, {
               selectedAction: {
                 id: `openControl-${entry?.control?.id || Date.now()}`,
                 kind: 'openControlDetails',
@@ -252,7 +257,7 @@ export default function WebMainPane(props) {
             setDashboardHoveredStatKey(null);
           }}
           onSkyddsrondSelect={(project) => {
-            requestProjectSwitch(project, { selectedAction: null });
+            openProject(project, { selectedAction: null });
             setDashboardFocus(null);
             setDashboardDropdownTop(null);
             setDashboardHoveredStatKey(null);

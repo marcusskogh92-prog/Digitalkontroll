@@ -102,7 +102,16 @@ function makeGraphHttpError(prefix, response, errorText) {
  * @param {string} [options.phaseKey] - Phase key ('kalkylskede', 'produktion', 'avslut', 'eftermarknad') - if provided, uses phase-specific SharePoint site
  * @returns {Promise<string>} File URL (webUrl from SharePoint)
  */
-export async function uploadFile({ file, path, companyId, siteId = null, phaseKey = null, siteRole = null, strictEnsure = false }) {
+export async function uploadFile({
+  file,
+  path,
+  companyId,
+  siteId = null,
+  phaseKey = null,
+  siteRole = null,
+  strictEnsure = false,
+  onProgress = null,
+}) {
   if (!file) throw new Error('File is required');
   if (!path) throw new Error('Path is required');
   
@@ -171,9 +180,9 @@ export async function uploadFile({ file, path, companyId, siteId = null, phaseKe
   const maxSimpleUploadSize = 4 * 1024 * 1024; // 4MB
   
   if (fileSize > 0 && fileSize < maxSimpleUploadSize) {
-    return await uploadFileSimple(accessToken, sharePointSiteId, normalizedPath, file, config);
+    return await uploadFileSimple(accessToken, sharePointSiteId, normalizedPath, file, config, onProgress);
   } else {
-    return await uploadFileResumable(accessToken, sharePointSiteId, normalizedPath, file, config);
+    return await uploadFileResumable(accessToken, sharePointSiteId, normalizedPath, file, config, onProgress);
   }
 }
 
@@ -186,7 +195,7 @@ export async function uploadFile({ file, path, companyId, siteId = null, phaseKe
  * @param {Object} config - Azure configuration
  * @returns {Promise<string>} File URL
  */
-async function uploadFileSimple(accessToken, siteId, path, file, config) {
+async function uploadFileSimple(accessToken, siteId, path, file, config, onProgress) {
   // If siteId is provided, use it directly
   // Otherwise, we need to find the site using the site URL
   let endpoint;
@@ -220,7 +229,75 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
     fileData = file;
   }
   
-  // Upload file
+  const size = Number(file?.size || 0);
+
+  if (
+    Platform.OS === 'web' &&
+    typeof XMLHttpRequest !== 'undefined' &&
+    typeof onProgress === 'function' &&
+    (fileData instanceof Blob || fileData instanceof File)
+  ) {
+    try {
+      onProgress({ loaded: 0, total: size });
+    } catch (_e) {}
+
+    const url = endpoint + '/content';
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': (file && file.type) ? file.type : 'application/octet-stream',
+    };
+
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url, true);
+      Object.entries(headers).forEach(([k, v]) => {
+        try {
+          xhr.setRequestHeader(k, v);
+        } catch (_e) {}
+      });
+
+      try {
+        xhr.upload.onprogress = (evt) => {
+          try {
+            const total = evt?.total || size;
+            const loaded = evt?.loaded || 0;
+            onProgress({ loaded, total });
+          } catch (_e) {}
+        };
+      } catch (_e) {}
+
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState !== 4) return;
+        const ok = xhr.status >= 200 && xhr.status < 300;
+
+        if (!ok) {
+          const errorText = xhr.responseText || '';
+          reject(new Error(`File upload failed: ${xhr.status} ${xhr.statusText}${errorText ? ` - ${errorText}` : ''}`));
+          return;
+        }
+
+        try {
+          onProgress({ loaded: size || (xhr.responseText ? (size || 0) : 0), total: size });
+        } catch (_e) {}
+
+        try {
+          const parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          resolve(parsed?.webUrl || parsed?.downloadUrl || parsed?.url || '');
+        } catch (e) {
+          // Graph usually returns JSON; if parsing fails, still resolve.
+          resolve('');
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('File upload failed (network error).'));
+      };
+
+      xhr.send(fileData);
+    });
+  }
+
+  // Upload file (fallback)
   const response = await fetch(endpoint + '/content', {
     method: 'PUT',
     headers: {
@@ -229,13 +306,18 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
     },
     body: fileData,
   });
-  
+
   if (!response.ok) {
     const errorText = await response.text();
     throw makeGraphHttpError('File upload failed', response, errorText);
   }
-  
+
   const result = await response.json();
+  if (typeof onProgress === 'function' && size > 0) {
+    try {
+      onProgress({ loaded: size, total: size });
+    } catch (_e) {}
+  }
   return result.webUrl || result.downloadUrl || result.url;
 }
 
@@ -248,7 +330,7 @@ async function uploadFileSimple(accessToken, siteId, path, file, config) {
  * @param {Object} config - Azure configuration
  * @returns {Promise<string>} File URL
  */
-async function uploadFileResumable(accessToken, siteId, path, file, config) {
+async function uploadFileResumable(accessToken, siteId, path, file, config, onProgress) {
   // Create upload session
   let endpoint;
   const encodedPath = encodeGraphPathSegments(path);
@@ -294,6 +376,12 @@ async function uploadFileResumable(accessToken, siteId, path, file, config) {
   const chunkSize = 320 * 1024; // 320KB
   const fileSize = file.size || 0;
   let offset = 0;
+
+  if (typeof onProgress === 'function' && fileSize > 0) {
+    try {
+      onProgress({ loaded: 0, total: fileSize });
+    } catch (_e) {}
+  }
   
   while (offset < fileSize) {
     const chunkEnd = Math.min(offset + chunkSize, fileSize);
@@ -316,10 +404,21 @@ async function uploadFileResumable(accessToken, siteId, path, file, config) {
     // If this is the last chunk, the response will contain the file metadata
     if (chunkEnd >= fileSize) {
       const result = await chunkResponse.json();
+      if (typeof onProgress === 'function' && fileSize > 0) {
+        try {
+          onProgress({ loaded: fileSize, total: fileSize });
+        } catch (_e) {}
+      }
       return result.webUrl || result.downloadUrl || result.url;
     }
     
     offset = chunkEnd;
+
+    if (typeof onProgress === 'function' && fileSize > 0) {
+      try {
+        onProgress({ loaded: offset, total: fileSize });
+      } catch (_e) {}
+    }
   }
   
   throw new Error('File upload completed but no file URL returned');

@@ -5,6 +5,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
@@ -20,6 +21,8 @@ function isValidIsoDate(value) {
 }
 
 export default function OversiktSummary({ projectId, companyId, project }) {
+  const navigation = useNavigation();
+
   // Track if there are unsaved changes per card
   const [hasChangesInfo, setHasChangesInfo] = useState(false);
   const [hasChangesKund, setHasChangesKund] = useState(false);
@@ -127,12 +130,27 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   })();
   const [projectName, setProjectName] = useState(initialProjectName);
   const [phaseKey, setPhaseKey] = useState(project?.phase || project?.phaseKey || 'kalkylskede');
+  const [status, setStatus] = useState(project?.status || 'ongoing');
 
   // Use ref to track previous project values to avoid unnecessary state updates
   const prevProjectRef = React.useRef(null);
+  const prevProjectIdRef = React.useRef(null);
   
   // Update state when project values actually change (not just object reference)
   useEffect(() => {
+    const nextPid = String(projectId || project?.id || '').trim();
+    const prevPid = String(prevProjectIdRef.current || '').trim();
+    const projectChanged = !!nextPid && !!prevPid && nextPid !== prevPid;
+
+    // If user has unsaved edits, do NOT reset the entire card state due to background project updates.
+    // Exception: if switching to a different project, always reset.
+    const hasAnyUnsavedNow = Boolean(
+      hasChangesInfo || hasChangesKund || hasChangesAdress || hasChangesTider || hasChangesAnteckningar
+    );
+    if (!projectChanged && hasAnyUnsavedNow) {
+      return;
+    }
+
     // Extract project values as a string for comparison
     const projectKey = project ? JSON.stringify({
       id: project.id,
@@ -169,6 +187,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     }
     
     prevProjectRef.current = projectKey;
+    prevProjectIdRef.current = nextPid || project?.id || null;
 
     const rawProjectNumber = project?.projectNumber || project?.number || project?.id || '';
     const rawProjectName = project?.projectName || project?.name || '';
@@ -237,11 +256,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setHasChangesAdress(false);
     setHasChangesTider(false);
     setHasChangesAnteckningar(false);
-  }, [project]);
+  }, [project, projectId, hasChangesInfo, hasChangesKund, hasChangesAdress, hasChangesTider, hasChangesAnteckningar]);
 
   const [projectType, setProjectType] = useState(project?.projectType || '');
   const [upphandlingsform, setUpphandlingsform] = useState(project?.upphandlingsform || '');
-  const [status, setStatus] = useState(project?.status || 'ongoing');
 
   // Kund & Beställare state
   const [kund, setKund] = useState(project?.kund || project?.client || '');
@@ -483,6 +501,155 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     }
   }, [hasChangesInfoComputed, hasChangesKundComputed, hasChangesAdressComputed, hasChangesTiderComputed, hasChangesAnteckningarComputed]);
 
+  const hasAnyUnsavedChanges = Boolean(
+    hasChangesInfoComputed ||
+    hasChangesKundComputed ||
+    hasChangesAdressComputed ||
+    hasChangesTiderComputed ||
+    hasChangesAnteckningarComputed
+  );
+  const hasAnyUnsavedChangesRef = React.useRef(false);
+  useEffect(() => {
+    hasAnyUnsavedChangesRef.current = hasAnyUnsavedChanges;
+  }, [hasAnyUnsavedChanges]);
+
+  const resetInfoCardState = React.useCallback(() => {
+    setProjectNumber(originalValues.projectNumber || '');
+    setProjectName(originalValues.projectName || '');
+    setPhaseKey(originalValues.phaseKey || 'kalkylskede');
+    setProjectType(originalValues.projectType || '');
+    setUpphandlingsform(originalValues.upphandlingsform || '');
+    setStatus(originalValues.status || 'ongoing');
+
+    setPhaseDropdownVisible(false);
+    setUpphandlingsformDropdownVisible(false);
+    setEntreprenadformDropdownVisible(false);
+
+    setHasChangesInfo(false);
+  }, [
+    originalValues.projectNumber,
+    originalValues.projectName,
+    originalValues.phaseKey,
+    originalValues.projectType,
+    originalValues.upphandlingsform,
+    originalValues.status,
+  ]);
+
+  const resetKundCardState = React.useCallback(() => {
+    setKund(originalValues.kund || '');
+    setOrganisationsnummer(originalValues.organisationsnummer || '');
+    setKontaktperson(originalValues.kontaktperson || null);
+    setTelefon(originalValues.telefon || '');
+    setEpost(originalValues.epost || '');
+    setKontaktpersonSelectorVisible(false);
+    setHasChangesKund(false);
+  }, [
+    originalValues.kund,
+    originalValues.organisationsnummer,
+    originalValues.kontaktperson,
+    originalValues.telefon,
+    originalValues.epost,
+  ]);
+
+  const resetAdressCardState = React.useCallback(() => {
+    setAdress(originalValues.adress || '');
+    setKommun(originalValues.kommun || '');
+    setRegion(originalValues.region || '');
+    setFastighetsbeteckning(originalValues.fastighetsbeteckning || '');
+    setHasChangesAdress(false);
+  }, [
+    originalValues.adress,
+    originalValues.kommun,
+    originalValues.region,
+    originalValues.fastighetsbeteckning,
+  ]);
+
+  const resetTiderCardState = React.useCallback(() => {
+    setSistaDagForFragor(originalValues.sistaDagForFragor || '');
+    setAnbudsinlamning(originalValues.anbudsinlamning || '');
+    setPlaneradByggstart(originalValues.planeradByggstart || '');
+    setKlartForBesiktning(originalValues.klartForBesiktning || '');
+    setDatePickerVisible(false);
+    setDatePickerField(null);
+    setHasChangesTider(false);
+  }, [
+    originalValues.sistaDagForFragor,
+    originalValues.anbudsinlamning,
+    originalValues.planeradByggstart,
+    originalValues.klartForBesiktning,
+  ]);
+
+  const resetAnteckningarCardState = React.useCallback(() => {
+    setAnteckningar(originalValues.anteckningar || '');
+    setHasChangesAnteckningar(false);
+  }, [originalValues.anteckningar]);
+
+  const resetAllDraftState = React.useCallback(() => {
+    resetInfoCardState();
+    resetKundCardState();
+    resetAdressCardState();
+    resetTiderCardState();
+    resetAnteckningarCardState();
+    setInfoTooltipVisible(false);
+    setInfoTooltipText('');
+  }, [
+    resetInfoCardState,
+    resetKundCardState,
+    resetAdressCardState,
+    resetTiderCardState,
+    resetAnteckningarCardState,
+  ]);
+
+  // Block navigation away if there are unsaved edits (bonus requirement).
+  useEffect(() => {
+    if (!navigation || typeof navigation.addListener !== 'function') return;
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!hasAnyUnsavedChangesRef.current) return;
+      e.preventDefault();
+
+      const message = 'Du har osparade ändringar. Om du lämnar sidan nu kommer ändringarna att försvinna.';
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        const ok = window.confirm(message);
+        if (ok) {
+          resetAllDraftState();
+          navigation.dispatch(e.data.action);
+        }
+        return;
+      }
+
+      Alert.alert(
+        'Osparade ändringar',
+        message,
+        [
+          { text: 'Stanna kvar', style: 'cancel' },
+          {
+            text: 'Lämna utan att spara',
+            style: 'destructive',
+            onPress: () => {
+              resetAllDraftState();
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ],
+      );
+    });
+    return unsubscribe;
+  }, [navigation, resetAllDraftState]);
+
+  // Web: warn on tab close/refresh.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      if (!hasAnyUnsavedChangesRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
+
   // Memoized onChange handlers to prevent InfoRow re-renders
   const handleProjectNumberChange = useCallback((val) => {
     setProjectNumber(val);
@@ -624,7 +791,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       />
       <ScrollView style={styles.container}>
         <View style={styles.content}>
-        {/* 1. Projektinfo and Kund & Best e4llare - Row 1 */}
+        {/* 1. Projektinfo and Kund & Beställare - Row 1 */}
         <View style={[styles.twoColumnRow, projectInfoDropdownOpen ? styles.twoColumnRowLifted : null]}>
           <View style={styles.columnCard}>
         <InfoCard
@@ -658,7 +825,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               }
             }
 
-            // Confirm phase change (project status) before saving
+            // Confirm skede change before saving
             const ok = await confirmPhaseChangeIfNeeded();
             if (!ok) return;
             
@@ -682,7 +849,6 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 phase: phaseKey,
                 projectType: projectType.trim(),
                 upphandlingsform: upphandlingsform.trim(),
-                status
               };
 
               console.log('[OversiktSummary] Starting save of project info:', updates);
@@ -710,13 +876,11 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
                 // companyIdOverride can be empty here; firebase helpers will resolve via claims/storage.
                 if (siteId && projectPath) {
-                  const metaStatus = phaseKey === 'avslut' ? 'completed' : 'ongoing';
                   const metaResult = await patchSharePointProjectMetadata(companyId || null, {
                     companyId: companyId || undefined,
                     siteId,
                     projectPath,
                     phaseKey,
-                    status: metaStatus,
                     projectNumber: projectNumber.trim(),
                     projectName: projectName.trim(),
                   });
@@ -726,7 +890,6 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                     key: `${siteId}|${projectPath}`,
                     docId: metaResult?.id || null,
                     phaseKey,
-                    status: metaStatus,
                   });
 
                   // Kick SharePointLeftPanel/HomeScreen to reload metadata so the color updates immediately.
@@ -761,10 +924,10 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                   const msg = String(metaErr?.message || '').toLowerCase();
                   const isPermission = msg.includes('permission') || msg.includes('denied');
                   Alert.alert(
-                    'Kunde inte spara projektstatus',
+                    'Kunde inte spara skede',
                     isPermission
-                      ? 'Saknar behörighet att spara projektstatus i databasen. Testa att logga ut/in och kontrollera att du är i rätt företag.'
-                      : 'Projektstatus kunde inte sparas i databasen. Dashboard/vänsterpanelen kan därför visa fel färg tills detta är löst.'
+                      ? 'Saknar behörighet att spara skede i databasen. Testa att logga ut/in och kontrollera att du är i rätt företag.'
+                      : 'Skede kunde inte sparas i databasen. Dashboard/vänsterpanelen kan därför visa fel färg tills detta är löst.'
                   );
                 } catch (_e) {}
               }
@@ -795,7 +958,6 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 phaseKey: phaseKey,
                 projectType: projectType.trim(),
                 upphandlingsform: upphandlingsform.trim(),
-                status
               }));
               setHasChangesInfo(false);
               showSaveSuccessFeedback('Projektinformation har uppdaterats');
@@ -807,16 +969,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               setSaving(false);
             }
           }}
-          onCancel={() => {
-            // Reset to original values
-            setProjectNumber(originalValues.projectNumber || '');
-            setProjectName(originalValues.projectName || '');
-            setPhaseKey(originalValues.phaseKey || 'kalkylskede');
-            setProjectType(originalValues.projectType || '');
-            setUpphandlingsform(originalValues.upphandlingsform || '');
-            setStatus(originalValues.status || 'ongoing');
-            setHasChangesInfo(false);
-          }}
+          onCancel={resetInfoCardState}
         >
           <InfoRow
             key="projektnummer"
@@ -835,7 +988,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.projectName || ''}
           />
           <SelectRow
-            label="Projektstatus"
+            label="Skede"
             value={phaseKey}
             options={phaseOptions}
             onSelect={(val) => {
@@ -924,14 +1077,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               setSaving(false);
             }
           }}
-          onCancel={() => {
-            setKund(originalValues.kund || '');
-            setOrganisationsnummer(originalValues.organisationsnummer || '');
-            setKontaktperson(originalValues.kontaktperson || null);
-            setTelefon(originalValues.telefon || '');
-            setEpost(originalValues.epost || '');
-            setHasChangesKund(false);
-          }}
+          onCancel={resetKundCardState}
         >
           <InfoRow
             key="kund"
@@ -1020,13 +1166,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               setSaving(false);
             }
           }}
-          onCancel={() => {
-            setAdress(originalValues.adress || '');
-            setKommun(originalValues.kommun || '');
-            setRegion(originalValues.region || '');
-            setFastighetsbeteckning(originalValues.fastighetsbeteckning || '');
-            setHasChangesAdress(false);
-          }}
+          onCancel={resetAdressCardState}
         >
           <InfoRow
             key="adress"
@@ -1146,13 +1286,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               setSaving(false);
             }
           }}
-          onCancel={() => {
-            setSistaDagForFragor(originalValues.sistaDagForFragor || '');
-            setAnbudsinlamning(originalValues.anbudsinlamning || '');
-            setPlaneradByggstart(originalValues.planeradByggstart || '');
-            setKlartForBesiktning(originalValues.klartForBesiktning || '');
-            setHasChangesTider(false);
-          }}
+          onCancel={resetTiderCardState}
         >
           <DateRow
             key="sistaDagForFragor"
@@ -1222,10 +1356,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
               setSaving(false);
             }
           }}
-          onCancel={() => {
-            setAnteckningar(originalValues.anteckningar || '');
-            setHasChangesAnteckningar(false);
-          }}
+          onCancel={resetAnteckningarCardState}
         >
           <AnteckningarInput
             value={anteckningar}

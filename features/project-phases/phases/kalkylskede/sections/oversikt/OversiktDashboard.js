@@ -266,13 +266,13 @@ export default function OversiktDashboard({ companyId, projectId, project, onNav
 
       <View style={styles.grid}>
         <Card
-          title="Projektstatus"
+          title="Skede"
           icon="information-circle-outline"
           onPress={() => onNavigate?.('projektinfo')}
         >
           <Row label="Projektnummer" value={projectNumber} />
           <Row label="Projektnamn" value={projectName} />
-          <Row label="Status" value={phaseLabel} />
+          <Row label="Skede" value={phaseLabel} />
           <Row label="Kontaktperson" value={kontaktpersonName} tone="muted" />
         </Card>
 

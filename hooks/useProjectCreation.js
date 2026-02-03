@@ -314,7 +314,6 @@ export function useProjectCreation({
                         id: projectId,
                         name: projectName,
                         type: 'project',
-                        status: 'ongoing',
                         phase: selectedPhase || DEFAULT_PHASE,
                         createdAt: new Date().toISOString(),
                         createdBy: auth?.currentUser?.email || '',

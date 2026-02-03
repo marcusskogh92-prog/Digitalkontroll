@@ -3,20 +3,20 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { Animated, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { LEFT_NAV } from '../../../constants/leftNavTheme';
 import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
+import { AnimatedChevron } from '../leftNavMicroAnimations';
+import SidebarItem from '../SidebarItem';
 import { DEFAULT_FOLDER_COLOR, getFolderColor } from './folderColors';
-
-const PRIMARY_BLUE = '#1976D2';
-const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
-const ACTIVE_BG = 'rgba(25, 118, 210, 0.14)';
 
 export default function ProjectTreeFolder({
   folder,
   level = 0, // 0 = main, 1 = sub
   isExpanded,
   onToggle,
+  onCollapseSubtree,
   onPress,
   onLongPress,
   onPressIn,
@@ -27,10 +27,32 @@ export default function ProjectTreeFolder({
   compact = false,
   hideFolderIcon = false,
   reserveChevronSpace = false,
+  forceChevron = false,
   staticHeader = false,
   isActive = false,
+  // When rendered in the project-mode left panel, rows should be edge-to-edge.
+  // That means: no rounded row backgrounds, no margin-based indentation.
+  edgeToEdge = false,
 }) {
-  const canToggle = typeof onToggle === 'function' && !staticHeader;
+  const [chevronSpinTick, setChevronSpinTick] = useState(0);
+  const clickTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const childNodes = Array.isArray(folder?.children) ? folder.children : [];
+  const hasKnownContainerChildren = childNodes.some((c) => {
+    const t = c?.type;
+    return t === 'folder' || t === 'sub' || t === 'main' || t === 'project' || t === 'projectFunction' || !t;
+  });
+  const hasPotentialChildren = folder?.childrenLoaded === false || folder?.loading === true;
+  const canToggle = typeof onToggle === 'function' && !staticHeader && (forceChevron || hasKnownContainerChildren || hasPotentialChildren);
   const canPress = canToggle || typeof onPress === 'function';
   const isMainFolder = level === 0;
   const displayName = stripNumberPrefixForDisplay(folder?.name);
@@ -48,10 +70,10 @@ export default function ProjectTreeFolder({
     : DEFAULT_FOLDER_COLOR;
 
   // Render folder icon with spin animation if provided
-  const renderFolderIcon = () => {
+  const renderFolderIcon = ({ hovered = false, active = false } = {}) => {
     if (hideFolderIcon) return null;
 
-    const iconColor = (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : folderColor.color;
+    const iconColor = (isActive || active || ((hovered || isHovered) && canPress)) ? LEFT_NAV.accent : folderColor.color;
 
     const iconElement = (
       <Ionicons
@@ -59,6 +81,27 @@ export default function ProjectTreeFolder({
         size={iconSize}
         color={iconColor}
       />
+    );
+
+    const wrappedIcon = canToggle ? (
+      <Pressable
+        onPress={(e) => {
+          try {
+            e?.stopPropagation?.();
+          } catch (_e) {}
+          handleStructureToggle();
+        }}
+        style={({ hovered, pressed }) => [
+          Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+          (hovered || pressed) ? { opacity: 0.9 } : null,
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={isExpanded ? 'Kollapsa' : 'Expandera'}
+      >
+        {iconElement}
+      </Pressable>
+    ) : (
+      iconElement
     );
 
     if (spinAnim) {
@@ -75,14 +118,14 @@ export default function ProjectTreeFolder({
             }]
           }}
         >
-          {iconElement}
+          {wrappedIcon}
         </Animated.View>
       );
     }
 
     return (
       <View style={{ marginRight: 8, minWidth: iconSize }}>
-        {iconElement}
+        {wrappedIcon}
       </View>
     );
   };
@@ -112,10 +155,11 @@ export default function ProjectTreeFolder({
           alignItems: 'center',
         }}
       >
-        <Ionicons
-          name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+        <AnimatedChevron
+          expanded={Boolean(isExpanded)}
+          spinTrigger={chevronSpinTick}
           size={chevronSize}
-          color={(isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#666'}
+          color={(isActive || (isHovered && canPress)) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
         />
       </View>
     );
@@ -124,34 +168,167 @@ export default function ProjectTreeFolder({
   const [isHovered, setIsHovered] = useState(false);
 
   const handleToggle = () => {
+    // Backwards-compat alias
+    handleStructureToggle();
+  };
+
+  const handleStructureToggle = () => {
     if (!canToggle) return;
+    setChevronSpinTick((t) => t + 1);
+
+    // Expand when collapsed; collapse subtree when expanded.
+    if (isExpanded) {
+      if (typeof onCollapseSubtree === 'function') {
+        onCollapseSubtree(folder.id);
+      } else {
+        onToggle(folder.id);
+      }
+      return;
+    }
+
     onToggle(folder.id);
   };
 
   const handlePress = () => {
-    if (canToggle) {
-      handleToggle();
-      if (typeof onPress === 'function') {
-        onPress(folder);
-      }
-      return;
-    }
+    // Single click must ONLY navigate; never expand/collapse.
     if (typeof onPress === 'function') {
       onPress(folder);
     }
   };
 
+  const canDoubleClickStructure = Platform.OS === 'web' && canToggle;
+
+  const scheduleClick = (fn) => {
+    if (!canDoubleClickStructure) {
+      fn();
+      return;
+    }
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+    clickTimeoutRef.current = setTimeout(() => {
+      clickTimeoutRef.current = null;
+      fn();
+    }, 200);
+  };
+
+  const handleDoubleClick = (e) => {
+    if (!canDoubleClickStructure) return;
+    try {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+    } catch (_e) {}
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+    // Double click mirrors chevron behavior (structure action only).
+    handleStructureToggle();
+  };
+
+  if (edgeToEdge) {
+    const indent = isMainFolder ? 0 : 12 * Math.max(1, level);
+    const labelWeight = staticHeader
+      ? (isMainFolder ? '700' : '600')
+      : hasFilesDeep
+        ? (isMainFolder ? '700' : '600')
+        : '500';
+
+    return (
+      <SidebarItem
+        fullWidth
+        squareCorners={Boolean(Platform.OS === 'web')}
+        indentMode="padding"
+        indent={indent}
+        active={Boolean(isActive)}
+        disabled={!canPress}
+        onPress={canPress ? handlePress : undefined}
+        onDoubleClick={canDoubleClickStructure ? handleDoubleClick : undefined}
+        onLongPress={canToggle ? onLongPress : undefined}
+        left={(state) => (
+          <>
+            {hideFolderIcon ? (
+              canToggle ? (
+                <Pressable
+                  onPress={(e) => {
+                    try {
+                      e?.stopPropagation?.();
+                    } catch (_e) {}
+                    handleToggle();
+                  }}
+                  style={({ hovered, pressed }) => [
+                    {
+                      marginRight: 6,
+                      minWidth: chevronSize,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: canToggle ? 1 : 0.5,
+                    },
+                    Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                    (hovered || pressed) ? { opacity: 0.9 } : null,
+                  ]}
+                >
+                  <AnimatedChevron
+                    expanded={Boolean(isExpanded)}
+                    spinTrigger={chevronSpinTick}
+                    size={chevronSize}
+                    color={(state.active || state.hovered) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
+                  />
+                </Pressable>
+              ) : reserveChevronSpace ? (
+                <View
+                  style={{
+                    marginRight: 6,
+                    minWidth: chevronSize,
+                    alignItems: 'center',
+                  }}
+                />
+              ) : null
+            ) : null}
+            {!hideFolderIcon ? renderFolderIcon(state) : null}
+          </>
+        )}
+        label={displayName}
+        labelWeight={labelWeight}
+        right={() =>
+          isExpanded && showAddButton && onAddChild ? (
+            <Pressable
+              onPress={(e) => {
+                try {
+                  e?.stopPropagation?.();
+                } catch (_e) {}
+                onAddChild?.();
+              }}
+              style={({ hovered, pressed }) => [
+                { padding: 4, marginLeft: 8 },
+                Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                (hovered || pressed) ? { opacity: 0.85 } : null,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Lägg till"
+            >
+              <Ionicons name="add-circle" size={22} color={LEFT_NAV.accent} />
+            </Pressable>
+          ) : null
+        }
+      />
+    );
+  }
+
   // Main folder has different styling
   if (isMainFolder) {
+    const leftPadding = edgeToEdge ? 12 : 8;
     const folderRowStyle = {
       display: 'flex',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingVertical: compact ? 5 : 8,
-      paddingHorizontal: 8,
-      borderRadius: 8,
-      backgroundColor: isActive ? ACTIVE_BG : (canPress && isHovered ? HOVER_BG : 'transparent'),
+      paddingHorizontal: leftPadding,
+      borderRadius: edgeToEdge ? 0 : 8,
+      width: edgeToEdge ? '100%' : undefined,
+      backgroundColor: isActive ? LEFT_NAV.activeBg : (canPress && isHovered ? LEFT_NAV.hoverBg : 'transparent'),
       ...(Platform.OS === 'web' ? {
         cursor: canPress ? 'pointer' : 'default',
         transition: 'background-color 0.15s ease',
@@ -177,7 +354,8 @@ export default function ProjectTreeFolder({
               flex: 1,
               cursor: canPress ? 'pointer' : 'default',
             }}
-            onClick={canPress ? handlePress : undefined}
+            onClick={canPress ? () => scheduleClick(handlePress) : undefined}
+            onDoubleClick={canDoubleClickStructure ? handleDoubleClick : undefined}
             onContextMenu={
               canToggle
                 ? (e) => {
@@ -191,14 +369,14 @@ export default function ProjectTreeFolder({
           >
             {renderChevron()}
             {/* Folder icon with color */}
-            {renderFolderIcon()}
+            {renderFolderIcon({ hovered: isHovered, active: isActive })}
             <Text
               numberOfLines={compact ? 1 : undefined}
               ellipsizeMode="tail"
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#222',
+                color: (isActive || (isHovered && canPress)) ? LEFT_NAV.accent : LEFT_NAV.textDefault,
               }}
             >
               {displayName}
@@ -210,7 +388,7 @@ export default function ProjectTreeFolder({
               style={{ marginLeft: 8, padding: 4 }}
               onPress={onAddChild}
             >
-              <Ionicons name="add-circle" size={22} color="#1976D2" />
+              <Ionicons name="add-circle" size={22} color={LEFT_NAV.accent} />
             </TouchableOpacity>
           )}
         </div>
@@ -230,14 +408,14 @@ export default function ProjectTreeFolder({
             activeOpacity={0.7}
           >
             {renderChevron()}
-            {renderFolderIcon()}
+            {renderFolderIcon({ hovered: isHovered, active: isActive })}
             <Text
               numberOfLines={compact ? 1 : undefined}
               ellipsizeMode="tail"
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: '#222',
+                color: LEFT_NAV.textDefault,
               }}
             >
               {displayName}
@@ -246,14 +424,14 @@ export default function ProjectTreeFolder({
         ) : (
           <View style={[folderRowStyle, { flex: 1 }]}>
             {renderChevron()}
-            {renderFolderIcon()}
+            {renderFolderIcon({ hovered: isHovered, active: isActive })}
             <Text
               numberOfLines={compact ? 1 : undefined}
               ellipsizeMode="tail"
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: '#222',
+                color: LEFT_NAV.textDefault,
               }}
             >
               {displayName}
@@ -266,7 +444,7 @@ export default function ProjectTreeFolder({
             style={{ marginLeft: 8, padding: 4 }}
             onPress={onAddChild}
           >
-            <Ionicons name="add-circle" size={22} color="#1976D2" />
+            <Ionicons name="add-circle" size={22} color={LEFT_NAV.accent} />
           </TouchableOpacity>
         )}
       </View>
@@ -274,15 +452,20 @@ export default function ProjectTreeFolder({
   }
 
   // Sub folder styling
+  const baseRowPadding = edgeToEdge ? 12 : 8;
+  const effectivePaddingLeft = edgeToEdge ? (baseRowPadding + paddingLeft) : undefined;
+
   const subFolderRowStyle = {
     display: 'flex',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: compact ? 4 : 6,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    backgroundColor: isActive ? ACTIVE_BG : (canPress && isHovered ? HOVER_BG : 'transparent'),
+    paddingHorizontal: baseRowPadding,
+    ...(edgeToEdge ? { paddingLeft: effectivePaddingLeft } : {}),
+    borderRadius: edgeToEdge ? 0 : 8,
+    width: edgeToEdge ? '100%' : undefined,
+    backgroundColor: isActive ? LEFT_NAV.activeBg : (canPress && isHovered ? LEFT_NAV.hoverBg : 'transparent'),
     ...(Platform.OS === 'web' ? {
       cursor: canPress ? 'pointer' : 'default',
       transition: 'background-color 0.15s ease',
@@ -292,7 +475,7 @@ export default function ProjectTreeFolder({
   if (Platform.OS === 'web') {
     return (
       <div
-        style={{ marginTop: 1, marginBottom: 1, marginLeft: paddingLeft }}
+        style={{ marginTop: 1, marginBottom: 1, marginLeft: edgeToEdge ? 0 : paddingLeft }}
         onMouseEnter={() => {
           if (canPress) setIsHovered(true);
         }}
@@ -309,7 +492,8 @@ export default function ProjectTreeFolder({
               flex: 1,
               cursor: canPress ? 'pointer' : 'default',
             }}
-            onClick={canPress ? handlePress : undefined}
+            onClick={canPress ? () => scheduleClick(handlePress) : undefined}
+            onDoubleClick={canDoubleClickStructure ? handleDoubleClick : undefined}
             onContextMenu={
               canToggle
                 ? (e) => {
@@ -330,7 +514,7 @@ export default function ProjectTreeFolder({
               style={{
                 fontSize,
                 fontWeight: displayFontWeight,
-                color: (isActive || (isHovered && canPress)) ? PRIMARY_BLUE : '#222',
+                color: (isActive || (isHovered && canPress)) ? LEFT_NAV.accent : LEFT_NAV.textDefault,
               }}
             >
               {displayName}
@@ -342,7 +526,7 @@ export default function ProjectTreeFolder({
               style={{ padding: 4 }}
               onPress={onAddChild}
             >
-              <Ionicons name="add-circle" size={22} color="#1976D2" />
+              <Ionicons name="add-circle" size={22} color={LEFT_NAV.accent} />
             </TouchableOpacity>
           )}
         </div>
@@ -351,7 +535,13 @@ export default function ProjectTreeFolder({
   }
 
   return (
-    <View style={{ backgroundColor: '#fff', borderRadius: 12, marginVertical: 1, marginLeft: paddingLeft, padding: 5 }}>
+    <View
+      style={
+        edgeToEdge
+          ? { backgroundColor: 'transparent', borderRadius: 0, marginVertical: 1, marginLeft: 0, padding: 0 }
+          : { backgroundColor: '#fff', borderRadius: 12, marginVertical: 1, marginLeft: paddingLeft, padding: 5 }
+      }
+    >
       <TouchableOpacity
         style={subFolderRowStyle}
         onPress={handlePress}
@@ -361,7 +551,7 @@ export default function ProjectTreeFolder({
       >
         {renderChevron()}
         {/* Folder icon with color */}
-        {renderFolderIcon()}
+        {renderFolderIcon({ hovered: isHovered, active: isActive })}
         <Text
           numberOfLines={compact ? 1 : undefined}
           ellipsizeMode="tail"

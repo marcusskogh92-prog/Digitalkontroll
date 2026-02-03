@@ -11,8 +11,9 @@ import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDire
 import ContextMenu from '../../ContextMenu';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
+import { useUploadManager } from '../uploads/UploadManagerContext';
 import SharePointFilePreviewPane from './SharePointFilePreviewPane';
-import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
+import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
 
 function joinPath(a, b) {
   const left = safeText(a).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -146,6 +147,11 @@ export default function SharePointFolderFileArea({
 
   const [siteId, setSiteId] = useState('');
   const [siteError, setSiteError] = useState('');
+  const sharePointNotLinked = useMemo(() => {
+    // Only treat this as "not linked" when we explicitly know the identifier is missing.
+    const msg = safeText(siteError).toLowerCase();
+    return Boolean(hasContext && !safeText(siteId) && msg.includes('saknas'));
+  }, [hasContext, siteError, siteId]);
 
   const [internalRelativePath, setInternalRelativePath] = useState('');
   const relativePath = (relativePathProp !== null && relativePathProp !== undefined)
@@ -215,14 +221,22 @@ export default function SharePointFolderFileArea({
   const [previewPage, setPreviewPage] = useState(1);
   const [previewNumPages, setPreviewNumPages] = useState(null);
 
-  const [dragOver, setDragOver] = useState(false);
+  // Web drag/drop state (single source of truth)
+  const [isDragging, setIsDragging] = useState(false);
+  const [activeDropFolder, setActiveDropFolder] = useState(null); // relativePath | null
+  const [tableHeaderHeight, setTableHeaderHeight] = useState(44);
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const lastWebClickRef = useRef({ id: '', t: 0 });
+  const tableDragDepthRef = useRef(0);
+  const tableRootRef = useRef(null);
+  const isDraggingRef = useRef(false);
+  const activeDropFolderRef = useRef('');
+  const uploadEntriesWithPathsRef = useRef(null);
 
-  const [uploadState, setUploadState] = useState({ busy: false, total: 0, done: 0, current: '', errors: 0 });
-  const uploadBusy = Boolean(uploadState?.busy);
+  const uploadManager = useUploadManager();
+  const [dragOverBreadcrumbRelPath, setDragOverBreadcrumbRelPath] = useState('');
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
@@ -248,7 +262,30 @@ export default function SharePointFolderFileArea({
   const [folderLoading, setFolderLoading] = useState({});
   const [moveError, setMoveError] = useState('');
 
+  const dndTipText = 'Du kan dra och släppa filer och mappar direkt i listan';
+  const enableWebDnD = Platform.OS === 'web';
+
   const isListEmpty = useMemo(() => !loading && Array.isArray(items) && items.length === 0, [loading, items]);
+
+  const setIsDraggingSafe = useCallback((next) => {
+    const v = Boolean(next);
+    isDraggingRef.current = v;
+    setIsDragging(v);
+  }, []);
+
+  const setActiveDropFolderSafe = useCallback((nextRelPathOrNull) => {
+    const v = safeText(nextRelPathOrNull);
+    activeDropFolderRef.current = v;
+    setActiveDropFolder(v ? v : null);
+  }, []);
+
+  const resetDragState = useCallback(() => {
+    tableDragDepthRef.current = 0;
+    setIsDraggingSafe(false);
+    setActiveDropFolderSafe(null);
+  }, [setIsDraggingSafe, setActiveDropFolderSafe]);
+
+  const isTableDragActive = Platform.OS === 'web' && enableWebDnD && isDragging && !safeText(activeDropFolder);
 
   const isWidePreviewLayout = useMemo(() => {
     const w = Dimensions.get('window')?.width || 1200;
@@ -354,6 +391,169 @@ export default function SharePointFolderFileArea({
     isSystemFolder,
   ]);
 
+  const resolveDropTargetRelativePath = useCallback((dropTarget) => {
+    if (dropTarget?.type === 'folder-row') return safeText(dropTarget?.relativePath);
+    return safeText(relativePath);
+  }, [relativePath]);
+
+  const handleWebDropToDropTarget = useCallback((e, dropTarget) => {
+    if (Platform.OS !== 'web') return;
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_e) {}
+
+    // Safe: if SharePoint isn't linked yet, ignore drops without showing a red error banner.
+    if (!safeText(siteId)) {
+      return;
+    }
+
+    const targetRel = resolveDropTargetRelativePath(dropTarget);
+    const uploader = uploadEntriesWithPathsRef.current;
+    if (typeof uploader !== 'function') {
+      // Uploader not ready yet (should be rare, but avoids TDZ / race issues)
+      return;
+    }
+
+    (async () => {
+      try {
+        const dt = e?.dataTransfer;
+        const entries = await filesFromDataTransfer(dt);
+        if (entries.length > 0) {
+          await uploader(entries, targetRel);
+          return;
+        }
+
+        const list = Array.from(dt?.files || []);
+        if (list.length > 0) {
+          const fileEntries = list.map((file) => ({ file, relativePath: safeText(file?.name) }));
+          await uploader(fileEntries, targetRel);
+          return;
+        }
+
+        setError(
+          'Inga filer hittades i droppen. Om du försöker släppa en mapp: använd knappen ”Välj mapp” (rekommenderas), eller prova en webbläsare som stöder mapp-drop (t.ex. Chrome/Edge).',
+        );
+      } catch (err) {
+        setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
+      }
+    })();
+  }, [resolveDropTargetRelativePath, siteId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!enableWebDnD) return;
+    if (typeof document === 'undefined') return;
+
+    const isFileDrag = (evt) => {
+      const dt = evt?.dataTransfer;
+      if (!dt) return false;
+
+      try {
+        const types = Array.from(dt.types || []);
+        if (types.includes('Files')) return true;
+      } catch (_e) {}
+
+      try {
+        const items = Array.from(dt.items || []);
+        return items.some((it) => safeText(it?.kind) === 'file');
+      } catch (_e) {}
+
+      return false;
+    };
+
+    const isInsideTable = (evt) => {
+      const root = tableRootRef.current;
+      const target = evt?.target;
+      if (!root || !target) return false;
+      try {
+        return root === target || (typeof root.contains === 'function' && root.contains(target));
+      } catch (_e) {
+        return false;
+      }
+    };
+
+    const onDocDragOver = (evt) => {
+      if (!isFileDrag(evt)) return;
+      try {
+        evt.preventDefault();
+      } catch (_e) {}
+
+      const inside = isInsideTable(evt);
+      if (inside) {
+        setIsDraggingSafe(true);
+      } else {
+        // If you leave the app/window (or drag outside the table), make sure we never get stuck.
+        resetDragState();
+      }
+    };
+
+    const onDocDrop = (evt) => {
+      if (!isFileDrag(evt)) return;
+      try {
+        evt.preventDefault();
+      } catch (_e) {}
+
+      // Important: don't clear folder-hover state when dropping inside the table,
+      // otherwise the drop target can be lost before component onDrop runs.
+      if (!isInsideTable(evt)) {
+        resetDragState();
+        setError('Släpp filerna i tabellen för att ladda upp.');
+      }
+    };
+
+    document.addEventListener('dragenter', onDocDragOver, true);
+    document.addEventListener('dragover', onDocDragOver, true);
+    document.addEventListener('drop', onDocDrop, true);
+
+    return () => {
+      document.removeEventListener('dragenter', onDocDragOver, true);
+      document.removeEventListener('dragover', onDocDragOver, true);
+      document.removeEventListener('drop', onDocDrop, true);
+    };
+  }, [enableWebDnD, resetDragState, setIsDraggingSafe]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!enableWebDnD) return;
+    if (typeof window === 'undefined') return;
+
+    const doc = typeof document !== 'undefined' ? document : null;
+
+    const onWinDragEnd = () => {
+      resetDragState();
+    };
+
+    const onWinDrop = () => {
+      resetDragState();
+    };
+
+    const onWinBlur = () => {
+      resetDragState();
+    };
+
+    const onVisibilityChange = () => {
+      // If the tab becomes hidden while dragging, make sure we never get stuck.
+      try {
+        if (doc && doc.hidden) resetDragState();
+      } catch (_e) {
+        resetDragState();
+      }
+    };
+
+    window.addEventListener('dragend', onWinDragEnd);
+    window.addEventListener('drop', onWinDrop);
+    window.addEventListener('blur', onWinBlur);
+    if (doc) doc.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('dragend', onWinDragEnd);
+      window.removeEventListener('drop', onWinDrop);
+      window.removeEventListener('blur', onWinBlur);
+      if (doc) doc.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [enableWebDnD, resetDragState]);
+
   useEffect(() => {
     if (!hasContext) {
       setSiteId('');
@@ -419,6 +619,17 @@ export default function SharePointFolderFileArea({
     return set;
   }, [items]);
 
+  const existingFolderNamesLower = useMemo(() => {
+    const set = new Set();
+    (Array.isArray(items) ? items : []).forEach((it) => {
+      if (it?.type !== 'folder') return;
+      const name = safeText(it?.name);
+      if (!name) return;
+      set.add(name.toLowerCase());
+    });
+    return set;
+  }, [items]);
+
   const openUrl = async (url) => {
     const u = safeText(url);
     if (!u) return;
@@ -435,17 +646,11 @@ export default function SharePointFolderFileArea({
     } catch (_e) {}
   };
 
-  const uploadEntriesWithPaths = useCallback(async (entries) => {
+  const uploadEntriesWithPaths = useCallback(async (entries, targetRelativePath) => {
     const arr = Array.isArray(entries) ? entries : [];
     if (arr.length === 0) return;
 
-    if (uploadBusy) {
-      Alert.alert('Uppladdning pågår', 'Vänta tills uppladdningen är klar innan du startar en ny.');
-      return;
-    }
-
     if (!hasContext || !safeText(siteId)) {
-      setError('Saknar SharePoint-koppling (siteId).');
       return;
     }
 
@@ -478,13 +683,33 @@ export default function SharePointFolderFileArea({
       };
     });
 
-    setUploadState({ busy: true, total: tasks.length, done: 0, current: '', errors: 0 });
+    const baseRel = safeText(targetRelativePath) !== '' || targetRelativePath === ''
+      ? safeText(targetRelativePath)
+      : safeText(relativePath);
+    const baseAbsPath = joinPath(rootPath, baseRel);
+    const seedExistingFiles = baseRel === safeText(relativePath)
+      ? existingFileNamesLower
+      : [];
+    const seedExistingFolders = baseRel === safeText(relativePath)
+      ? existingFolderNamesLower
+      : [];
+
+    const { batchId, itemIds } = uploadManager.createBatch({
+      title: 'SharePoint-uppladdning',
+      message: 'Startar…',
+      items: tasks.map((t) => ({
+        name: safeText(t?.originalName) || safeText(t?.file?.name) || 'Fil',
+        total: Number(t?.file?.size || 0) || 0,
+      })),
+    });
 
     const failures = [];
-    const existingNamesCache = new Map(); // absFolderPath -> Set(lowercase names)
+    const existingNamesCache = new Map(); // absFolderPath -> Set(lowercase file names)
+    const existingFolderNamesCache = new Map(); // absFolderPath -> Set(lowercase folder names)
 
     // Seed the current folder cache from already loaded list.
-    existingNamesCache.set(currentPath, new Set(existingFileNamesLower));
+    existingNamesCache.set(baseAbsPath, new Set(seedExistingFiles));
+    existingFolderNamesCache.set(baseAbsPath, new Set(seedExistingFolders));
 
     const getExistingNamesForFolder = async (absFolderPath) => {
       const key = safeText(absFolderPath);
@@ -507,9 +732,64 @@ export default function SharePointFolderFileArea({
       }
     };
 
+    const getExistingFolderNamesForFolder = async (absFolderPath) => {
+      const key = safeText(absFolderPath);
+      if (existingFolderNamesCache.has(key)) return existingFolderNamesCache.get(key);
+
+      try {
+        const list = await getSharePointFolderItems(siteId, `/${key}`);
+        const set = new Set();
+        (Array.isArray(list) ? list : []).forEach((it) => {
+          if (it?.type !== 'folder') return;
+          const nm = safeText(it?.name);
+          if (nm) set.add(nm.toLowerCase());
+        });
+        existingFolderNamesCache.set(key, set);
+        return set;
+      } catch (_e) {
+        const set = new Set();
+        existingFolderNamesCache.set(key, set);
+        return set;
+      }
+    };
+
+    const folderRemapCache = new Map(); // `${parentAbs}|${origLower}` -> deduped actual name
+
+    const resolveRelativeDirWithDedupe = async (originalRelDir) => {
+      const raw = sanitizeSharePointRelativePath(originalRelDir);
+      if (!raw) return '';
+
+      const parts = raw.split('/').filter(Boolean).map((seg) => sanitizeSharePointFolderSegment(seg)).filter(Boolean);
+      if (parts.length === 0) return '';
+
+      let resolved = '';
+      let parentAbs = baseAbsPath;
+
+      for (const seg of parts) {
+        const segLower = safeText(seg).toLowerCase();
+        const key = `${safeText(parentAbs)}|${segLower}`;
+
+        let actual = folderRemapCache.get(key);
+        if (!actual) {
+          // Dedupe against existing folder names in this parent folder.
+          // eslint-disable-next-line no-await-in-loop
+          const existingFolders = await getExistingFolderNamesForFolder(parentAbs);
+          actual = dedupeFolderName(seg, existingFolders);
+          existingFolders.add(safeText(actual).toLowerCase());
+          folderRemapCache.set(key, actual);
+        }
+
+        resolved = resolved ? `${resolved}/${actual}` : actual;
+        parentAbs = joinPath(baseAbsPath, resolved);
+      }
+
+      return resolved;
+    };
+
     try {
       // Ensure base folder exists.
-      await ensureFolderPath(currentPath, cid, siteId, { siteRole: 'projects', strict: true });
+      uploadManager.setBatchMessage(batchId, 'Förbereder mappar…');
+      await ensureFolderPath(baseAbsPath, cid, siteId, { siteRole: 'projects', strict: true });
 
       // Ensure all subfolders exist (depth-first).
       const folderSet = new Set();
@@ -519,26 +799,41 @@ export default function SharePointFolderFileArea({
         folderSet.add(relDir);
       });
 
-      const foldersToEnsure = Array.from(folderSet)
+      const foldersToEnsureRaw = Array.from(folderSet)
         .map((p) => sanitizeSharePointRelativePath(p))
         .filter(Boolean)
         .sort((a, b) => a.split('/').length - b.split('/').length);
 
-      for (const relDir of foldersToEnsure) {
-        await ensureFolderPath(joinPath(currentPath, relDir), cid, siteId, { siteRole: 'projects', strict: true });
+      // Resolve and dedupe folder names per parent folder to avoid collisions.
+      const resolvedRelDirMap = new Map();
+      for (const relDir of foldersToEnsureRaw) {
+        // eslint-disable-next-line no-await-in-loop
+        const resolved = await resolveRelativeDirWithDedupe(relDir);
+        resolvedRelDirMap.set(relDir, resolved);
       }
+
+      const foldersToEnsure = Array.from(new Set(Array.from(resolvedRelDirMap.values()).filter(Boolean)))
+        .sort((a, b) => a.split('/').length - b.split('/').length);
+
+      for (const relDir of foldersToEnsure) {
+        uploadManager.setBatchMessage(batchId, `Skapar mapp: ${relDir}`);
+        await ensureFolderPath(joinPath(baseAbsPath, relDir), cid, siteId, { siteRole: 'projects', strict: true });
+      }
+
+      uploadManager.setBatchMessage(batchId, 'Laddar upp filer…');
 
       const refreshEvery = 8;
       let uploadedSinceRefresh = 0;
 
-      const worker = async (t) => {
-        const relDir = safeText(t.relativeDir);
-        const absFolderPath = relDir ? joinPath(currentPath, relDir) : currentPath;
+      const worker = async (t, idx) => {
+        const itemId = safeText(itemIds?.[idx]);
+        const rawRelDir = sanitizeSharePointRelativePath(safeText(t.relativeDir));
+        const relDir = rawRelDir ? (resolvedRelDirMap.get(rawRelDir) || rawRelDir) : '';
+        const absFolderPath = relDir ? joinPath(baseAbsPath, relDir) : baseAbsPath;
 
-        setUploadState((prev) => ({
-          ...prev,
-          current: relDir ? `${relDir}/${safeText(t.originalName)}` : safeText(t.originalName),
-        }));
+        if (itemId) {
+          uploadManager.setItemUploading(batchId, itemId);
+        }
 
         try {
           const existing = await getExistingNamesForFolder(absFolderPath);
@@ -547,6 +842,10 @@ export default function SharePointFolderFileArea({
 
           const path = joinPath(absFolderPath, targetName);
 
+          if (itemId) {
+            uploadManager.setItemNameAndPath(batchId, itemId, targetName, path);
+          }
+
           await uploadFile({
             file: t.file,
             path,
@@ -554,7 +853,19 @@ export default function SharePointFolderFileArea({
             siteId,
             siteRole: 'projects',
             strictEnsure: true,
+            onProgress: (p) => {
+              if (!itemId) return;
+              const total = Number(p?.total || t?.file?.size || 0);
+              const loaded = Number(p?.loaded || 0);
+              uploadManager.setItemProgress(batchId, itemId, loaded, total || 0);
+            },
           });
+
+          if (itemId) {
+            const size = Number(t?.file?.size || 0);
+            if (size > 0) uploadManager.setItemProgress(batchId, itemId, size, size);
+            uploadManager.setItemSuccess(batchId, itemId);
+          }
 
           uploadedSinceRefresh += 1;
           if (uploadedSinceRefresh >= refreshEvery) {
@@ -566,9 +877,12 @@ export default function SharePointFolderFileArea({
             name: safeText(t.originalName) || 'fil',
             error: String(e?.message || e || 'Fel vid uppladdning'),
           });
-          setUploadState((prev) => ({ ...prev, errors: Number(prev?.errors || 0) + 1 }));
+
+          if (itemId) {
+            uploadManager.setItemError(batchId, itemId, e?.message || e);
+          }
         } finally {
-          setUploadState((prev) => ({ ...prev, done: Number(prev?.done || 0) + 1 }));
+          // No local progress state; global panel shows status.
         }
       };
 
@@ -576,17 +890,21 @@ export default function SharePointFolderFileArea({
       await runWithConcurrency(tasks, 2, worker);
 
       if (failures.length > 0) {
-        const preview = failures.slice(0, 3).map((f) => `${safeText(f.name)} (${safeText(f.error)})`).join(' · ');
-        setError(`Kunde inte ladda upp ${failures.length} fil(er). ${preview}${failures.length > 3 ? ' …' : ''}`);
+        uploadManager.setBatchMessage(batchId, `Klart (med fel: ${failures.length})`);
+      } else {
+        uploadManager.setBatchMessage(batchId, 'Klart');
       }
     } finally {
-      setUploadState((prev) => ({ ...prev, busy: false, current: '' }));
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
       } catch (_e) {}
     }
-  }, [uploadBusy, hasContext, siteId, currentPath, cid, refresh, existingFileNamesLower, onDidMutate]);
+  }, [uploadManager, hasContext, siteId, rootPath, relativePath, cid, refresh, existingFileNamesLower, onDidMutate]);
+
+  useEffect(() => {
+    uploadEntriesWithPathsRef.current = uploadEntriesWithPaths;
+  }, [uploadEntriesWithPaths]);
 
   const uploadFiles = useCallback(async (files) => {
     const arr = Array.isArray(files) ? files : [];
@@ -605,10 +923,6 @@ export default function SharePointFolderFileArea({
   };
 
   const openFolder = (name) => {
-    if (uploadBusy) {
-      Alert.alert('Uppladdning pågår', 'Vänta tills uppladdningen är klar innan du byter mapp.');
-      return;
-    }
     const n = safeText(name);
     if (!n) return;
     const next = joinPath(relativePath, n);
@@ -919,7 +1233,7 @@ export default function SharePointFolderFileArea({
             backgroundColor: (moveSelectedPath === p)
               ? 'rgba(25, 118, 210, 0.12)'
               : (hovered || pressed ? 'rgba(0,0,0,0.03)' : 'transparent'),
-            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
           })}
         >
           <Pressable
@@ -933,7 +1247,7 @@ export default function SharePointFolderFileArea({
               marginRight: 8,
               marginLeft: level * 14,
               backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
             })}
           >
             <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} color="#64748b" />
@@ -1009,7 +1323,7 @@ export default function SharePointFolderFileArea({
 
       <View style={enableInlinePreview ? styles.contentCard : null}>
 
-      {siteError ? (
+      {siteError && !sharePointNotLinked ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{siteError}</Text>
         </View>
@@ -1021,158 +1335,139 @@ export default function SharePointFolderFileArea({
         </View>
       ) : null}
 
-      {/* Drop zone (web: drag & drop + click to upload) */}
-      <Pressable
-        onPress={() => {
-          if (Platform.OS !== 'web') {
-            Alert.alert('Lägg till filer', 'Uppladdning är tillgängligt i webbläget (drag & drop).');
-            return;
-          }
-          if (uploadBusy) return;
-          // Prefer folder picker on click; keep file picker available via the button.
-          try { folderInputRef.current?.click?.(); } catch (_e) { try { fileInputRef.current?.click?.(); } catch (_e2) {} }
-        }}
-        style={({ hovered, pressed }) => ([
-          styles.dropZone,
-          isListEmpty ? styles.dropZoneEmpty : styles.dropZoneSubtle,
-          dragOver ? styles.dropZoneActive : null,
-          hovered || pressed ? styles.dropZoneHover : null,
-          ...(Platform.OS === 'web' ? [{ cursor: 'pointer' }] : []),
-        ])}
-        onDragOver={(e) => {
-          if (Platform.OS !== 'web') return;
-          try {
-            e.preventDefault();
-            e.stopPropagation();
-          } catch (_e) {}
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          if (Platform.OS !== 'web') return;
-          try {
-            e.preventDefault();
-            e.stopPropagation();
-          } catch (_e) {}
-
-          setDragOver(false);
-
-          if (uploadBusy) return;
-
-          (async () => {
-            try {
-              const dt = e?.dataTransfer;
-              const entries = await filesFromDataTransfer(dt);
-              if (entries.length > 0) {
-                await uploadEntriesWithPaths(entries);
-                return;
-              }
-              const list = Array.from(dt?.files || []);
-              await uploadFiles(list);
-            } catch (err) {
-              setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
-            }
-          })();
-        }}
-      >
-        <Ionicons
-          name="cloud-upload-outline"
-          size={22}
-          color={dragOver ? '#1976D2' : '#1976D2'}
-          style={{ marginRight: 12 }}
-        />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[styles.dropZoneText, dragOver ? styles.dropZoneTextActive : null]} numberOfLines={2}>
-            Dra och släpp filer eller mappar här, eller klicka för att ladda upp
-          </Text>
-          <Text style={[styles.dropZoneHint, !isListEmpty ? styles.dropZoneHintSubtle : null]} numberOfLines={1}>
-            Tillåtna filer: PDF, Word, Excel, DWG, IFC, bilder, ZIP
-          </Text>
-
-          {uploadBusy ? (
-            <Text style={[styles.dropZoneHint, { marginTop: 6 }]} numberOfLines={2}>
-              Laddar upp {Number(uploadState?.done || 0)}/{Number(uploadState?.total || 0)}
-              {safeText(uploadState?.current) ? ` · ${safeText(uploadState?.current)}` : ''}
-            </Text>
-          ) : null}
-        </View>
-
-        {Platform.OS !== 'web' ? null : (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Pressable
-              onPress={(ev) => {
-                try { ev?.stopPropagation?.(); } catch (_e) {}
-                if (uploadBusy) return;
-                try { fileInputRef.current?.click?.(); } catch (_e) {}
-              }}
-              style={({ hovered, pressed }) => ({
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                borderRadius: 10,
-                backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
-                opacity: uploadBusy ? 0.6 : 1,
-              })}
-            >
-              <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj filer</Text>
-            </Pressable>
-            <Pressable
-              onPress={(ev) => {
-                try { ev?.stopPropagation?.(); } catch (_e) {}
-                if (uploadBusy) return;
-                try { folderInputRef.current?.click?.(); } catch (_e) {}
-              }}
-              style={({ hovered, pressed }) => ({
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                borderRadius: 10,
-                backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
-                opacity: uploadBusy ? 0.6 : 1,
-              })}
-            >
-              <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj mapp</Text>
-            </Pressable>
-          </View>
-        )}
-      </Pressable>
-
       {Array.isArray(breadcrumbParts) && breadcrumbParts.length > 0 ? (
         <View style={styles.breadcrumbRow}>
-          {breadcrumbParts.map((part, idx) => {
-            const isLast = idx === breadcrumbParts.length - 1;
-            const isActive = safeText(relativePath) === safeText(part.relativePath);
-            const canNavigate = !isLast || !isActive;
+          <View style={styles.breadcrumbCrumbs}>
+            {breadcrumbParts.map((part, idx) => {
+              const isLast = idx === breadcrumbParts.length - 1;
+              const isActive = safeText(relativePath) === safeText(part.relativePath);
+              const canNavigate = !isLast || !isActive;
+              const rel = safeText(part.relativePath);
+              const isDragOver = Platform.OS === 'web' && rel === safeText(dragOverBreadcrumbRelPath);
 
-            return (
-              <View key={`${idx}-${part.label}`} style={styles.breadcrumbPart}>
-                <Pressable
-                  disabled={!canNavigate || uploadBusy}
-                  onPress={() => {
-                    if (uploadBusy) {
-                      Alert.alert('Uppladdning pågår', 'Vänta tills uppladdningen är klar innan du byter mapp.');
-                      return;
-                    }
-                    setSelectedItemId(null);
-                    setRelativePath(part.relativePath || '');
-                  }}
-                  style={({ hovered, pressed }) => ({
-                    paddingVertical: 2,
-                    paddingHorizontal: 4,
-                    borderRadius: 8,
-                    backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                    ...(Platform.OS === 'web' ? { cursor: canNavigate && !uploadBusy ? 'pointer' : 'default' } : null),
-                  })}
-                >
-                  <Text style={[styles.breadcrumbText, isLast ? styles.breadcrumbTextActive : null]} numberOfLines={1}>
-                    {part.label}
-                  </Text>
-                </Pressable>
+              return (
+                <View key={`${idx}-${part.label}`} style={styles.breadcrumbPart}>
+                  <Pressable
+                    onPress={() => {
+                      if (!canNavigate) return;
+                      setSelectedItemId(null);
+                      setRelativePath(part.relativePath || '');
+                    }}
+                    onDragOver={enableWebDnD ? ((e) => {
+                      try {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      } catch (_e) {}
+                      setDragOverBreadcrumbRelPath(rel);
+                    }) : undefined}
+                    onDragLeave={enableWebDnD ? (() => {
+                      setDragOverBreadcrumbRelPath('');
+                    }) : undefined}
+                    onDrop={enableWebDnD ? ((e) => {
+                      try {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      } catch (_e) {}
+                      setDragOverBreadcrumbRelPath('');
 
-                {!isLast ? <Text style={styles.breadcrumbSep}>/</Text> : null}
-              </View>
-            );
-          })}
+                      (async () => {
+                        try {
+                          const dt = e?.dataTransfer;
+                          const entries = await filesFromDataTransfer(dt);
+                          if (entries.length > 0) {
+                            await uploadEntriesWithPaths(entries, rel);
+                            return;
+                          }
+                          const list = Array.from(dt?.files || []);
+                          if (list.length > 0) {
+                            const fileEntries = list.map((file) => ({ file, relativePath: safeText(file?.name) }));
+                            await uploadEntriesWithPaths(fileEntries, rel);
+                          }
+                        } catch (err) {
+                          setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
+                        }
+                      })();
+                    }) : undefined}
+                    style={({ hovered, pressed }) => ({
+                      paddingVertical: 2,
+                      paddingHorizontal: 4,
+                      borderRadius: 8,
+                      backgroundColor: isDragOver
+                        ? 'rgba(25, 118, 210, 0.14)'
+                        : (hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent'),
+                      ...(Platform.OS === 'web' ? { cursor: canNavigate ? 'pointer' : 'default' } : {}),
+                    })}
+                    {...(Platform.OS === 'web'
+                      ? { title: `Ladda upp till ${safeText(part.label) || 'mapp'}` }
+                      : {})}
+                  >
+                    <Text style={[styles.breadcrumbText, isLast ? styles.breadcrumbTextActive : null]} numberOfLines={1}>
+                      {part.label}
+                    </Text>
+                  </Pressable>
+
+                  {!isLast ? <Text style={styles.breadcrumbSep}>/</Text> : null}
+                </View>
+              );
+            })}
+          </View>
+
+          {Platform.OS === 'web' ? (
+            <View style={styles.breadcrumbActions}>
+              <Pressable
+                onPress={() => {
+                  setNewFolderName('');
+                  setCreateFolderOpen(true);
+                }}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 6,
+                  paddingHorizontal: 10,
+                  borderRadius: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                })}
+                accessibilityRole="button"
+              >
+                <Ionicons name="folder-outline" size={14} color="#1976D2" />
+                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Ny mapp</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  try { fileInputRef.current?.click?.(); } catch (_e) {}
+                }}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 6,
+                  paddingHorizontal: 10,
+                  borderRadius: 10,
+                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                })}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj filer</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  try { folderInputRef.current?.click?.(); } catch (_e) {}
+                }}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 6,
+                  paddingHorizontal: 10,
+                  borderRadius: 10,
+                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                })}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj mapp</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
 
@@ -1207,7 +1502,7 @@ export default function SharePointFolderFileArea({
                 : (hovered || pressed ? 'rgba(25, 118, 210, 0.92)' : '#1976D2'),
               borderWidth: 1,
               borderColor: isInlinePreviewVisible ? 'rgba(148,163,184,0.6)' : '#1976D2',
-              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
             })}
           >
             <Ionicons
@@ -1224,9 +1519,76 @@ export default function SharePointFolderFileArea({
 
       <View style={[styles.splitRow, !enableInlinePreview ? styles.splitRowSingle : null]}>
         <View style={[styles.listPane, styles.paneStretch, enableInlinePreview && isWidePreviewLayout ? { flex: 1 } : null]}>
+          {sharePointNotLinked ? (
+            <Text style={styles.inlineSharePointNotLinked}>
+              Uppladdning är inte tillgänglig – SharePoint är inte kopplat ännu
+            </Text>
+          ) : null}
+
           {/* Table */}
-          <View style={styles.table}>
-            <View style={[styles.tableScrollWrap, Platform.OS === 'web' ? { overflowX: 'auto' } : null]}>
+          <View
+            ref={tableRootRef}
+            style={[
+              styles.table,
+              isTableDragActive ? styles.tableDropActive : null,
+            ]}
+            pointerEvents="auto"
+            {...(enableWebDnD
+              ? {
+                onDragEnter: (e) => {
+                  try { e.preventDefault(); } catch (_e) {}
+                  tableDragDepthRef.current = Math.max(0, Number(tableDragDepthRef.current || 0)) + 1;
+                  setIsDraggingSafe(true);
+                },
+                onDragOver: (e) => {
+                  try { e.preventDefault(); } catch (_e) {}
+                  if (!isDraggingRef.current) setIsDraggingSafe(true);
+                },
+                onDragLeave: (e) => {
+                  try { e.preventDefault(); } catch (_e) {}
+                  tableDragDepthRef.current = Math.max(0, Number(tableDragDepthRef.current || 0) - 1);
+                  if (tableDragDepthRef.current === 0) {
+                    resetDragState();
+                  }
+                },
+                onDragEnd: () => {
+                  resetDragState();
+                },
+                onDrop: (e) => {
+                  try {
+                    e.preventDefault();
+                    e.stopPropagation?.();
+                  } catch (_e) {}
+
+                  try {
+                    const dt = e?.dataTransfer;
+                    const filesLen = Number(dt?.files?.length || 0);
+                    const itemsLen = Number(dt?.items?.length || 0);
+
+                    // Defensive: nothing to upload -> reset and exit.
+                    if ((!dt || filesLen === 0) && itemsLen === 0) {
+                      return;
+                    }
+
+                    const activeFolder = safeText(activeDropFolderRef.current);
+
+                    if (activeFolder) {
+                      handleWebDropToDropTarget(e, { type: 'folder-row', relativePath: activeFolder });
+                    } else {
+                      handleWebDropToDropTarget(e, { type: 'current-folder' });
+                    }
+                  } finally {
+                    // Required: always reset drag state (even on error).
+                    resetDragState();
+                  }
+                },
+              }
+              : {})}
+          >
+            <View
+              style={[styles.tableScrollWrap, Platform.OS === 'web' ? { overflowX: 'auto' } : null]}
+              pointerEvents="auto"
+            >
               <View
                 style={[
                   styles.tableInner,
@@ -1234,8 +1596,20 @@ export default function SharePointFolderFileArea({
                     ? { minWidth: isCompactTable ? 520 : 980 }
                     : null,
                 ]}
+                pointerEvents="auto"
               >
-                <View style={styles.tableHeader}>
+                <View
+                  style={[styles.tableHeader, isTableDragActive ? styles.tableHeaderDimmed : null]}
+                  onLayout={(e) => {
+                    try {
+                      const h = Number(e?.nativeEvent?.layout?.height || 0);
+                      if (Number.isFinite(h) && h > 0) setTableHeaderHeight(h);
+                    } catch (_e) {}
+                  }}
+                  {...(Platform.OS === 'web'
+                    ? { title: dndTipText }
+                    : {})}
+                >
                   <Text style={[styles.th, styles.colName]} numberOfLines={1}>Filnamn</Text>
                   <Text style={[styles.th, styles.colType]} numberOfLines={1}>Typ</Text>
                   {!isCompactTable ? (
@@ -1250,18 +1624,49 @@ export default function SharePointFolderFileArea({
                   <Text style={[styles.th, styles.colMenu, { width: COL_MENU_W }]} numberOfLines={1}>⋮</Text>
                 </View>
 
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }}>
+                {isTableDragActive ? (
+                  <View style={[styles.tableDropHint, { top: tableHeaderHeight }]} pointerEvents="none">
+                    <View style={styles.tableDropHintPlate}>
+                      <Text style={styles.tableDropHintText}>
+                        Släpp filer för att ladda upp till aktuell mapp
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
+                  pointerEvents="auto"
+                >
               {loading ? (
                 <Text style={{ padding: 12, fontSize: 12, color: '#64748b' }}>Laddar…</Text>
               ) : null}
 
               {!loading && Array.isArray(items) && items.length === 0 ? (
-                <Text style={{ padding: 12, fontSize: 12, color: '#64748b' }}>Inga filer eller mappar ännu.</Text>
+                <View style={styles.tableHelpRow} pointerEvents="none">
+                  <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+                    <Ionicons name="cloud-upload-outline" size={16} color="#94A3B8" />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.tableHelpRowTitle} numberOfLines={1}>Inga filer eller mappar ännu.</Text>
+                      <Text style={styles.tableHelpRowHint} numberOfLines={1}>{dndTipText}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.colType} />
+                  {!isCompactTable ? <View style={styles.colUploadedBy} /> : null}
+                  {!isCompactTable ? <View style={[styles.colCreated, { width: COL_DATE_W }]} /> : null}
+                  {!isCompactTable ? <View style={[styles.colModified, { width: COL_DATE_W }]} /> : null}
+                  <View style={[styles.colMenu, { width: COL_MENU_W }]} />
+                </View>
               ) : null}
 
               {(Array.isArray(items) ? items : []).map((it) => {
             const name = safeText(it?.name) || (it?.type === 'folder' ? 'Mapp' : 'Fil');
             const isFolder = it?.type === 'folder';
+            const rowRelPath = isFolder ? joinPath(relativePath, name) : '';
+            const isRowDragOver = enableWebDnD && isFolder && safeText(activeDropFolder) === safeText(rowRelPath);
+
             const isSelected = !isFolder && safeText(it?.id) && safeText(selectedItemId) === safeText(it?.id);
             const isPreviewing = isInlinePreviewVisible && !isFolder && safeText(previewItemId) && safeText(previewItemId) === safeText(it?.id);
             const ext = fileExtFromName(name);
@@ -1272,6 +1677,65 @@ export default function SharePointFolderFileArea({
             return (
               <Pressable
                 key={safeText(it?.id) || name}
+                {...(enableWebDnD && isFolder
+                  ? {
+                    onDragEnter: (e) => {
+                      try { e.preventDefault(); } catch (_e) {}
+                      setIsDraggingSafe(true);
+                      setActiveDropFolderSafe(rowRelPath);
+                    },
+                    onDragOver: (e) => {
+                      // Required: allow drop
+                      try { e.preventDefault(); } catch (_e) {}
+
+                      setIsDraggingSafe(true);
+                      if (safeText(activeDropFolderRef.current) !== safeText(rowRelPath)) {
+                        setActiveDropFolderSafe(rowRelPath);
+                      }
+                    },
+                    onDragLeave: (e) => {
+                      try { e.preventDefault(); } catch (_e) {}
+
+                      // Avoid flicker when moving between child elements inside the same row.
+                      try {
+                        const current = e?.currentTarget;
+                        const related = e?.relatedTarget;
+                        if (current && related && typeof current.contains === 'function' && current.contains(related)) {
+                          return;
+                        }
+                      } catch (_e2) {}
+
+                      if (safeText(activeDropFolderRef.current) === safeText(rowRelPath)) {
+                        setActiveDropFolderSafe(null);
+                      }
+                    },
+                    onDragEnd: () => {
+                      resetDragState();
+                    },
+                    onDrop: (e) => {
+                      try {
+                        e.preventDefault();
+                        e.stopPropagation?.();
+                      } catch (_e) {}
+
+                      try {
+                        const dt = e?.dataTransfer;
+                        const filesLen = Number(dt?.files?.length || 0);
+                        const itemsLen = Number(dt?.items?.length || 0);
+
+                        // Defensive: nothing to upload -> reset and exit.
+                        if ((!dt || filesLen === 0) && itemsLen === 0) {
+                          return;
+                        }
+
+                        handleWebDropToDropTarget(e, { type: 'folder-row', relativePath: rowRelPath });
+                      } finally {
+                        // Required: always reset drag state (even on error).
+                        resetDragState();
+                      }
+                    },
+                  }
+                  : {})}
                 onPress={() => {
                   if (isFolder) {
                     setSelectedItemId(null);
@@ -1318,6 +1782,7 @@ export default function SharePointFolderFileArea({
                   openUrl(it?.webUrl);
                 }}
                 style={({ hovered, pressed }) => ({
+                  position: 'relative',
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 14,
@@ -1325,6 +1790,13 @@ export default function SharePointFolderFileArea({
                   paddingHorizontal: 12,
                   borderBottomWidth: 1,
                   borderBottomColor: '#EEF2F7',
+                  ...(isRowDragOver
+                    ? {
+                      backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      borderLeftWidth: 3,
+                      borderLeftColor: 'rgba(25, 118, 210, 0.55)',
+                    }
+                    : null),
                   backgroundColor: isPreviewing
                     ? 'rgba(25, 118, 210, 0.12)'
                     : isSelected
@@ -1332,9 +1804,17 @@ export default function SharePointFolderFileArea({
                       : (hovered || pressed ? '#F8FAFC' : '#fff'),
                   borderLeftWidth: isPreviewing ? 3 : 0,
                   borderLeftColor: isPreviewing ? '#1976D2' : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
+                {Platform.OS === 'web' && isRowDragOver ? (
+                  <View style={styles.folderRowDropHint} pointerEvents="none">
+                    <Text style={styles.folderRowDropHintText} numberOfLines={1}>
+                      Släpp här för att ladda upp i denna mapp
+                    </Text>
+                  </View>
+                ) : null}
+
                 <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
                   <Ionicons name={typeMeta.icon} size={16} color={isFolder ? '#475569' : '#64748b'} />
                   <Text style={styles.tdName} numberOfLines={1}>{name}</Text>
@@ -1378,7 +1858,7 @@ export default function SharePointFolderFileArea({
                     paddingVertical: 6,
                     borderRadius: 10,
                     backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                   })}
                 >
                   <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
@@ -1651,61 +2131,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  dropZone: {
-    marginTop: 2,
-    minHeight: 92,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: 'rgba(25, 118, 210, 0.45)',
-    backgroundColor: 'rgba(25, 118, 210, 0.06)',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-
-  dropZoneHover: {
-    backgroundColor: 'rgba(25, 118, 210, 0.08)',
-  },
-
-  dropZoneText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-
-  dropZoneTextActive: {
-    color: '#1976D2',
-  },
-
-  dropZoneHint: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#334155',
-    fontWeight: '400',
-  },
-
-  dropZoneHintSubtle: {
-    color: '#334155',
-    opacity: 0.9,
-  },
-
-  dropZoneSubtle: {
-    borderColor: 'rgba(25, 118, 210, 0.30)',
-  },
-
-  dropZoneEmpty: {
-    backgroundColor: 'rgba(25, 118, 210, 0.06)',
-    borderColor: 'rgba(25, 118, 210, 0.45)',
-  },
-
-  dropZoneActive: {
-    borderColor: '#1976D2',
-    backgroundColor: 'rgba(25, 118, 210, 0.06)',
-  },
-
   typeBadge: {
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -1729,6 +2154,63 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     marginTop: 12,
+  },
+
+  tableDropActive: {
+    borderColor: 'rgba(25, 118, 210, 0.75)',
+    backgroundColor: 'rgba(25, 118, 210, 0.03)',
+    // RN-web only (safe no-op elsewhere)
+    outlineStyle: 'solid',
+    outlineWidth: 2,
+    outlineColor: 'rgba(25, 118, 210, 0.35)',
+  },
+
+  inlineSharePointNotLinked: {
+    marginTop: 12,
+    marginBottom: -4,
+    fontSize: 12,
+    color: '#64748b',
+  },
+
+  tableDropHint: {
+    position: 'absolute',
+    top: 6,
+    left: 12,
+    right: 12,
+    zIndex: 2,
+    alignItems: 'center',
+  },
+
+  tableDropHintText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(25, 118, 210, 0.95)',
+    backgroundColor: 'rgba(25, 118, 210, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(25, 118, 210, 0.22)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+  },
+
+  folderRowDropHint: {
+    position: 'absolute',
+    right: 10,
+    top: 8,
+    zIndex: 2,
+    maxWidth: 260,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(25, 118, 210, 0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(25, 118, 210, 0.22)',
+  },
+
+  folderRowDropHintText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(25, 118, 210, 0.95)',
   },
 
   tableScrollWrap: {
@@ -1769,12 +2251,39 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E2E8F0',
   },
 
+  tableHeaderDimmed: {
+    opacity: 0.68,
+  },
+
+  tableHelpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF2F7',
+    backgroundColor: '#fff',
+  },
+
+  tableHelpRowTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+
+  tableHelpRowHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+
   colName: {
     flexGrow: 4,
     flexShrink: 1,
     flexBasis: 0,
     minWidth: 0,
   },
+
   colType: {
     flexGrow: 1,
     flexShrink: 1,
@@ -1782,6 +2291,24 @@ const styles = StyleSheet.create({
     minWidth: 74,
     maxWidth: 140,
   },
+
+  tableDropHintPlate: {
+    maxWidth: 520,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    borderRadius: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    ...(Platform.OS === 'web'
+      ? {
+        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.10)',
+        backdropFilter: 'blur(6px)',
+      }
+      : {}),
+  },
+
   colUploadedBy: {
     flexGrow: 2,
     flexShrink: 1,
@@ -1828,9 +2355,22 @@ const styles = StyleSheet.create({
   breadcrumbRow: {
     marginTop: 10,
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    minWidth: 0,
+  },
+  breadcrumbCrumbs: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
+    flex: 1,
+    minWidth: 0,
+  },
+  breadcrumbActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   breadcrumbPart: {
     flexDirection: 'row',
@@ -1947,7 +2487,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111',
     backgroundColor: '#fff',
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
 
   renameRow: {

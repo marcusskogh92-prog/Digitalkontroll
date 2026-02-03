@@ -19,12 +19,14 @@ export function useHomeWebNavigation({
   isInlineLocked,
   pendingBreadcrumbNavRef,
   requestProjectSwitch,
+  openProject,
   setSelectedProject,
   setSelectedProjectPath,
   setInlineControlEditor,
   setProjectSelectedAction,
   findProjectById,
 }) {
+  const didApplyInitialUrlRef = React.useRef(false);
   // Hitta projektets main/sub-path utifrån ID (använder hierarki-ref för alltid färsk data)
   const findProjectPathById = React.useCallback((projectId) => {
     if (!projectId) return null;
@@ -180,20 +182,21 @@ export function useHomeWebNavigation({
       try {
         const st = e?.state || window.history.state || {};
         if (st && st.dkView === 'project' && st.projectId) {
+          if (typeof openProject === 'function') {
+            openProject(String(st.projectId), { selectedAction: null });
+            return;
+          }
+
           const proj = findProjectById(st.projectId);
-          setProjectSelectedAction(null);
-          try { setSelectedProjectPath(null); } catch (_e) {}
-          if (proj) setSelectedProject({ ...proj });
-          else setSelectedProject(null);
+          requestProjectSwitch(proj || { id: String(st.projectId), name: String(st.projectId) }, {
+            selectedAction: null,
+            path: null,
+          });
         } else {
-          setProjectSelectedAction(null);
-          try { setSelectedProjectPath(null); } catch (_e) {}
-          setSelectedProject(null);
+          requestProjectSwitch(null, { selectedAction: null, path: null });
         }
       } catch(_e) {
-        setProjectSelectedAction(null);
-        try { setSelectedProjectPath(null); } catch (_e2) {}
-        setSelectedProject(null);
+        requestProjectSwitch(null, { selectedAction: null, path: null });
       }
     };
 
@@ -201,7 +204,29 @@ export function useHomeWebNavigation({
     return () => {
       try { window.removeEventListener('popstate', onPopState); } catch(_e) {}
     };
-  }, [findProjectById, setSelectedProject, setSelectedProjectPath, setProjectSelectedAction]);
+  }, [findProjectById, openProject, requestProjectSwitch]);
+
+  // Web: support direct URL opens (best-effort)
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    if (didApplyInitialUrlRef.current) return;
+    if (typeof openProject !== 'function') return;
+
+    didApplyInitialUrlRef.current = true;
+
+    try {
+      const url = new URL(window.location.href);
+      const qp = url.searchParams;
+      const fromQuery = String(qp.get('projectId') || qp.get('project') || qp.get('pid') || '').trim();
+      const m = String(url.pathname || '').match(/\/project\/(.+)$/);
+      const fromPath = m && m[1] ? String(decodeURIComponent(m[1])).trim() : '';
+      const projectId = fromQuery || fromPath;
+      if (!projectId) return;
+
+      openProject(projectId, { selectedAction: null });
+    } catch (_e) {}
+  }, [openProject]);
 
   // Web: pusha nytt state när selectedProject ändras
   React.useEffect(() => {

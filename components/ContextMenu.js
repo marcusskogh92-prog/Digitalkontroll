@@ -1,40 +1,154 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Platform, Pressable, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 
 // Cross-platform safe context menu.
 // Designed primarily for web usage (right-click) but won't break native.
-export default function ContextMenu({ visible, x, y, items = [], onSelect, onClose }) {
+export default function ContextMenu({
+  visible,
+  x,
+  y,
+  items = [],
+  onSelect,
+  onClose,
+  align = 'left',
+  direction = 'down',
+  offsetX = 0,
+  offsetY = 0,
+}) {
   if (!visible) return null;
+
+  const dims = useWindowDimensions();
+  const menuRef = React.useRef(null);
+  const [menuSize, setMenuSize] = React.useState({ width: 0, height: 0 });
+  const [pos, setPos] = React.useState({ left: 20, top: 64 });
 
   const safeX = Number.isFinite(Number(x)) ? Number(x) : 20;
   const safeY = Number.isFinite(Number(y)) ? Number(y) : 64;
 
-  // Keep menu within viewport on web (prevents it rendering off-screen near edges).
-  // Best-effort sizing; avoids measuring/layout complexity.
-  const clampToViewport = () => {
-    try {
-      if (typeof window === 'undefined') return { left: safeX, top: safeY };
-      const vw = Number(window?.innerWidth || 0);
-      const vh = Number(window?.innerHeight || 0);
-      if (!vw || !vh) return { left: safeX, top: safeY };
+  const clamp = React.useCallback((nextLeft, nextTop) => {
+    const vw = Number((typeof window !== 'undefined' ? window?.innerWidth : null) || dims?.width || 0);
+    const vh = Number((typeof window !== 'undefined' ? window?.innerHeight : null) || dims?.height || 0);
+    const padding = 12;
 
-      const padding = 12;
-      const menuWidth = 190;
-      const hasAnySubtitle = Array.isArray(items) && items.some((it) => !!String(it?.subtitle || '').trim());
-      const rowHeight = hasAnySubtitle ? 52 : 40;
-      const chrome = 12;
-      const menuHeight = Math.max(1, Array.isArray(items) ? items.length : 0) * rowHeight + chrome;
+    const width = Math.max(1, Number(menuSize?.width || 0));
+    const height = Math.max(1, Number(menuSize?.height || 0));
 
-      const left = Math.max(padding, Math.min(safeX, vw - menuWidth - padding));
-      const top = Math.max(padding, Math.min(safeY, vh - menuHeight - padding));
-      return { left, top };
-    } catch {
-      return { left: safeX, top: safeY };
+    if (!vw || !vh || !Number.isFinite(width) || !Number.isFinite(height)) {
+      return { left: nextLeft, top: nextTop };
     }
-  };
 
-  const { left, top } = clampToViewport();
+    const left = Math.max(padding, Math.min(nextLeft, vw - width - padding));
+    const top = Math.max(padding, Math.min(nextTop, vh - height - padding));
+    return { left, top };
+  }, [dims?.width, dims?.height, menuSize?.width, menuSize?.height]);
+
+  const computePosition = React.useCallback(() => {
+    const baseX = safeX + Number(offsetX || 0);
+    const baseY = safeY + Number(offsetY || 0);
+
+    const width = Number(menuSize?.width || 0);
+    const height = Number(menuSize?.height || 0);
+
+    // If we don't know menu size yet, place at the anchor and let onLayout re-run.
+    if (!width || !height) {
+      return clamp(baseX, baseY);
+    }
+
+    const wantRight = String(align || 'left').toLowerCase() === 'right';
+    const wantUp = String(direction || 'down').toLowerCase() === 'up';
+
+    const leftAligned = baseX;
+    const rightAligned = baseX - width;
+    const downTop = baseY;
+    const upTop = baseY - height;
+
+    const vw = Number((typeof window !== 'undefined' ? window?.innerWidth : null) || dims?.width || 0);
+    const vh = Number((typeof window !== 'undefined' ? window?.innerHeight : null) || dims?.height || 0);
+    const padding = 12;
+
+    let left = wantRight ? rightAligned : leftAligned;
+    if (vw) {
+      const overRight = left + width + padding > vw;
+      const overLeft = left < padding;
+
+      if (overRight) {
+        // Try flipping alignment first (right <-> left), then clamp.
+        const flipped = wantRight ? leftAligned : rightAligned;
+        if (flipped >= padding && flipped + width + padding <= vw) {
+          left = flipped;
+        } else {
+          left = vw - width - padding;
+        }
+      } else if (overLeft) {
+        const flipped = wantRight ? leftAligned : rightAligned;
+        if (flipped >= padding && flipped + width + padding <= vw) {
+          left = flipped;
+        } else {
+          left = padding;
+        }
+      }
+    }
+
+    let top = wantUp ? upTop : downTop;
+    if (vh) {
+      const overBottom = top + height + padding > vh;
+      const overTop = top < padding;
+
+      if (overBottom) {
+        const flipped = wantUp ? downTop : upTop;
+        if (flipped >= padding && flipped + height + padding <= vh) {
+          top = flipped;
+        } else {
+          top = vh - height - padding;
+        }
+      } else if (overTop) {
+        const flipped = wantUp ? downTop : upTop;
+        if (flipped >= padding && flipped + height + padding <= vh) {
+          top = flipped;
+        } else {
+          top = padding;
+        }
+      }
+    }
+
+    return clamp(left, top);
+  }, [safeX, safeY, offsetX, offsetY, align, direction, menuSize?.width, menuSize?.height, dims?.width, dims?.height, clamp]);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    const next = computePosition();
+    setPos((prev) => {
+      const pl = Number(prev?.left || 0);
+      const pt = Number(prev?.top || 0);
+      if (Math.abs(pl - next.left) < 0.5 && Math.abs(pt - next.top) < 0.5) return prev;
+      return next;
+    });
+  }, [visible, computePosition]);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    if (Platform.OS !== 'web') return;
+    const onResize = () => {
+      try {
+        const next = computePosition();
+        setPos(next);
+      } catch (_e) {}
+    };
+    try {
+      window.addEventListener('resize', onResize);
+      window.addEventListener('scroll', onResize, true);
+    } catch (_e) {}
+    return () => {
+      try {
+        window.removeEventListener('resize', onResize);
+        window.removeEventListener('scroll', onResize, true);
+      } catch (_e) {}
+    };
+  }, [visible, computePosition]);
+
+  const left = Number(pos?.left || safeX);
+  const top = Number(pos?.top || safeY);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -45,6 +159,21 @@ export default function ContextMenu({ visible, x, y, items = [], onSelect, onClo
         />
 
         <View
+          ref={menuRef}
+          onLayout={(e) => {
+            try {
+              const w = Number(e?.nativeEvent?.layout?.width || 0);
+              const h = Number(e?.nativeEvent?.layout?.height || 0);
+              if (w > 0 && h > 0) {
+                setMenuSize((prev) => {
+                  const pw = Number(prev?.width || 0);
+                  const ph = Number(prev?.height || 0);
+                  if (Math.abs(pw - w) < 0.5 && Math.abs(ph - h) < 0.5) return prev;
+                  return { width: w, height: h };
+                });
+              }
+            } catch (_e) {}
+          }}
           style={{
             position: 'absolute',
             left,

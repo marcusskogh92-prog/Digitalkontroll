@@ -8,6 +8,7 @@ import { Platform, View } from 'react-native';
 import DashboardAllProjects from './DashboardAllProjects';
 
 const Dashboard = ({
+  authClaims,
   // State
   dashboardLoading,
   dashboardOverview,
@@ -67,6 +68,7 @@ const Dashboard = ({
             dashboardLoading={dashboardLoading}
             companyId={companyId}
             currentUserId={currentUserId}
+            authClaims={authClaims}
           />
         </View>
       )}

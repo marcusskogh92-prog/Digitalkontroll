@@ -9,6 +9,7 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { v4 as uuidv4 } from 'uuid';
 import CompactMonthCalendar from '../../../../../../../../components/common/CompactMonthCalendar';
+import { deriveEventType, extractProjectNumberAndName, formatExternalCalendarSubject } from '../../../../../../../../components/common/calendarEventTitle';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import { fetchCompanyContacts, updateProjectInfoImportantDateFromTimeline } from '../../../../../../../../components/firebase';
@@ -522,6 +523,8 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     });
   }, [todayIso]);
 
+  const projectSubjectMeta = React.useMemo(() => extractProjectNumberAndName(project), [project]);
+
   const prepareOutlookInvitation = React.useCallback((it) => {
     // IMPORTANT LIMITATIONS (user-driven status):
     // - DigitalKontroll generates a local .ics file only (no backend / no Outlook integration).
@@ -532,7 +535,12 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     const iso = isValidIsoDate(it?.date) ? String(it.date) : '';
     if (!id || !iso) return;
 
-    const title = String(it?.title || it?.type || 'Möte').trim();
+    const eventType = deriveEventType(it);
+    const title = formatExternalCalendarSubject({
+      projectNumber: projectSubjectMeta?.projectNumber,
+      projectName: projectSubjectMeta?.projectName,
+      eventType,
+    });
     const startTime = String(it?.startTime || '').trim();
     const endTime = String(it?.endTime || '').trim();
 
@@ -564,7 +572,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     // Web: download an .ics file. The OS/browser decides whether Outlook opens automatically
     // or if the user must open the downloaded invite manually.
     if (Platform.OS === 'web') {
-      const safe = title.replace(/[^a-z0-9\- _]/gi, '').trim() || 'mote';
+      const safe = String(eventType || 'mote').replace(/[^a-z0-9\- _]/gi, '').trim() || 'mote';
       const filename = `${iso}_${safe}.ics`;
       downloadIcsOnWeb(filename, ics);
     }
@@ -573,7 +581,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     try {
       timeline.updateCustomDate(id, { outlookInvitationPrepared: true });
     } catch (_e) {}
-  }, [timeline]);
+  }, [timeline, projectSubjectMeta]);
 
   const closeModal = React.useCallback(() => {
     setModalState({ open: false, initial: null });

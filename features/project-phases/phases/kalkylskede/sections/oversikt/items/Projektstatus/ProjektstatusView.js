@@ -1,40 +1,75 @@
 /**
- * Projektstatus View - Project status component
+ * Skede View - Project lifecycle is driven only by skede (phase)
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
+import { patchCompanyProject, patchSharePointProjectMetadata } from '../../../../../../../../components/firebase';
+import { getPhaseConfig } from '../../../../../../../projects/constants';
 
 export default function ProjektstatusView({ projectId, companyId, project, hidePageHeader = false }) {
-  const [status, setStatus] = useState(project?.status || 'ongoing');
+  const [phaseKey, setPhaseKey] = useState(project?.phase || project?.phaseKey || 'kalkylskede');
   const [isSaving, setIsSaving] = useState(false);
 
-  const statusOptions = [
-    { key: 'ongoing', label: 'Pågående', color: '#1976D2', icon: 'play-circle-outline' },
-    { key: 'on-hold', label: 'Pausad', color: '#FF9800', icon: 'pause-circle-outline' },
-    { key: 'completed', label: 'Avslutad', color: '#4CAF50', icon: 'checkmark-circle-outline' },
-    { key: 'cancelled', label: 'Inställd', color: '#F44336', icon: 'close-circle-outline' }
+  const phaseOptions = [
+    { key: 'kalkylskede', label: 'Kalkylskede', color: getPhaseConfig('kalkylskede')?.color || '#1976D2', icon: 'calculator-outline' },
+    { key: 'produktion', label: 'Produktion', color: getPhaseConfig('produktion')?.color || '#43A047', icon: 'construct-outline' },
+    { key: 'avslut', label: 'Avslut', color: getPhaseConfig('avslut')?.color || '#111', icon: 'checkmark-circle-outline' },
+    { key: 'eftermarknad', label: 'Eftermarknad', color: getPhaseConfig('eftermarknad')?.color || '#7B1FA2', icon: 'time-outline' },
   ];
 
-  const handleStatusChange = async (newStatus) => {
-    setStatus(newStatus);
+  const handlePhaseChange = async (newPhaseKey) => {
+    setPhaseKey(newPhaseKey);
     setIsSaving(true);
 
     try {
-      // Update in Firestore (you'll need to implement this)
-      // await updateProjectStatus(companyId, projectId, newStatus);
+      const cid = String(companyId || '').trim();
+      const pid = String(projectId || project?.id || '').trim();
+      if (cid && pid) {
+        await patchCompanyProject(cid, pid, { phase: newPhaseKey });
 
-      // Digitalkontroll no longer uses completion/progress percentages.
+        // Best-effort: keep SharePoint metadata in sync so left panel/dots update instantly.
+        try {
+          const siteId = String(
+            project?.siteId ||
+            project?.siteID ||
+            project?.sharePointSiteId ||
+            project?.site?.id ||
+            project?.site?.siteId ||
+            project?.folder?.siteId ||
+            project?.folder?.siteID ||
+            ''
+          ).trim();
+          const projectPath = String(
+            project?.projectPath ||
+            project?.path ||
+            project?.sharePointPath ||
+            project?.folder?.path ||
+            ''
+          ).trim();
+          if (siteId && projectPath) {
+            await patchSharePointProjectMetadata(cid, {
+              companyId: cid,
+              siteId,
+              projectPath,
+              phaseKey: newPhaseKey,
+            });
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              try { window.dispatchEvent(new Event('dkSharePointMetaUpdated')); } catch (_e) {}
+            }
+          }
+        } catch (_e) {}
+      }
     } catch (error) {
-      console.error('[ProjektstatusView] Error updating status:', error);
+      console.error('[SkedeView] Error updating phase:', error);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const currentStatus = statusOptions.find(s => s.key === status) || statusOptions[0];
+  const current = phaseOptions.find(s => s.key === phaseKey) || phaseOptions[0];
 
   return (
     <ScrollView style={styles.container}>
@@ -42,42 +77,42 @@ export default function ProjektstatusView({ projectId, companyId, project, hideP
         <View style={styles.mainContent}>
           {!hidePageHeader ? (
             <View style={styles.header}>
-              <Text style={PROJECT_TYPOGRAPHY.viewTitle}>Projektstatus</Text>
-              <Text style={PROJECT_TYPOGRAPHY.viewSubtitle}>Hantera projektets status och översikt</Text>
+              <Text style={PROJECT_TYPOGRAPHY.viewTitle}>Skede</Text>
+              <Text style={PROJECT_TYPOGRAPHY.viewSubtitle}>Projektets livscykel styrs av skede</Text>
             </View>
           ) : null}
 
           <View style={styles.content}>
-            <Text style={styles.label}>Nuvarande status:</Text>
-            <View style={[styles.statusBadge, { backgroundColor: currentStatus.color + '20' }]}>
-              <Ionicons name={currentStatus.icon} size={20} color={currentStatus.color} />
-              <Text style={[styles.statusText, { color: currentStatus.color }]}>
-                {currentStatus.label}
+            <Text style={styles.label}>Nuvarande skede:</Text>
+            <View style={[styles.statusBadge, { backgroundColor: current.color + '20' }]}>
+              <Ionicons name={current.icon} size={20} color={current.color} />
+              <Text style={[styles.statusText, { color: current.color }]}>
+                {current.label}
               </Text>
             </View>
 
-            <Text style={[styles.label, { marginTop: 24 }]}>Ändra status:</Text>
+            <Text style={[styles.label, { marginTop: 24 }]}>Ändra skede:</Text>
             <View style={styles.optionsContainer}>
-              {statusOptions.map(option => (
+              {phaseOptions.map(option => (
                 <TouchableOpacity
                   key={option.key}
                   style={[
                     styles.option,
-                    status === option.key && styles.optionActive,
+                    phaseKey === option.key && styles.optionActive,
                     { borderColor: option.color }
                   ]}
-                  onPress={() => handleStatusChange(option.key)}
+                  onPress={() => handlePhaseChange(option.key)}
                   disabled={isSaving}
                 >
                   <Ionicons
                     name={option.icon}
                     size={24}
-                    color={status === option.key ? option.color : '#666'}
+                    color={phaseKey === option.key ? option.color : '#666'}
                   />
                   <Text
                     style={[
                       styles.optionText,
-                      status === option.key && { color: option.color, fontWeight: '600' }
+                      phaseKey === option.key && { color: option.color, fontWeight: '600' }
                     ]}
                   >
                     {option.label}

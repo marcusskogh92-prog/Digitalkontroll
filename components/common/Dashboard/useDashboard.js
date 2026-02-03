@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-import { storage, subscribeCompanyActivity } from '../../firebase';
-import { computeControlsToSign, computeOpenDeviationsCount, countActiveProjectsInHierarchy, countOpenDeviationsForControl, formatRelativeTime, toTsMs } from './dashboardUtils';
+import { storage, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../firebase';
+import { computeControlsToSign, computeOpenDeviationsCount, countActiveProjectsInHierarchy, countOpenDeviationsForControl, formatRelativeTime, resolveProjectId, toTsMs } from './dashboardUtils';
 
 /**
  * Shared dashboard hook for HomeScreen and other containers.
@@ -13,12 +13,14 @@ export function useDashboard({
   companyId,
   routeCompanyId,
   authClaims,
+  currentUserId,
   hierarchy,
   hierarchyRef,
   selectedProject,
   syncStatus,
   findProjectById,
 }) {
+  const DEBUG_MEMBERSHIP = !!(__DEV__ && Platform?.OS === 'web');
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardOverview, setDashboardOverview] = useState({
     activeProjects: 0,
@@ -48,8 +50,182 @@ export function useDashboard({
   const [dashboardBtn1Failed, setDashboardBtn1Failed] = useState(false);
   const [dashboardBtn2Failed, setDashboardBtn2Failed] = useState(false);
 
+  const [memberProjectIds, setMemberProjectIds] = useState(() => new Set());
+  const memberProjectIdsRef = useRef(memberProjectIds);
+  useEffect(() => {
+    memberProjectIdsRef.current = memberProjectIds;
+  }, [memberProjectIds]);
+  const [memberProjectsReady, setMemberProjectsReady] = useState(false);
+
+  const [companyProjects, setCompanyProjects] = useState([]);
+  const companyProjectsRef = useRef(companyProjects);
+  useEffect(() => {
+    companyProjectsRef.current = companyProjects;
+  }, [companyProjects]);
+  const [companyProjectsReady, setCompanyProjectsReady] = useState(false);
+
   const dashboardCardLayoutRef = useRef({ overview: null, reminders: null });
   const dashboardStatRowLayoutRef = useRef({});
+
+  const isAdmin = !!(
+    authClaims?.globalAdmin ||
+    authClaims?.admin === true ||
+    String(authClaims?.role || '').toLowerCase() === 'admin'
+  );
+
+  useEffect(() => {
+    const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+    const uid = String(currentUserId || '').trim();
+
+    if (DEBUG_MEMBERSHIP) {
+      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin: !!(
+        authClaims?.globalAdmin || authClaims?.admin === true || String(authClaims?.role || '').toLowerCase() === 'admin'
+      ) });
+    }
+
+    if (!cid || !uid) {
+      setMemberProjectIds(new Set());
+      setMemberProjectsReady(false);
+      return;
+    }
+
+    setMemberProjectsReady(false);
+    const unsub = subscribeCompanyProjectOrganisation(
+      cid,
+      (docs) => {
+        const next = new Set();
+
+        if (DEBUG_MEMBERSHIP) {
+          console.log('[dashboard][membership] raw org snapshot', {
+            cid,
+            uid,
+            docsCount: Array.isArray(docs) ? docs.length : 0,
+            sample: Array.isArray(docs) ? docs.slice(0, 3).map((d) => ({ id: d?.id, projectId: d?.projectId, projectNumber: d?.projectNumber })) : [],
+          });
+        }
+
+        const normalizeToArray = (value) => {
+          if (Array.isArray(value)) return value;
+          if (value && typeof value === 'object') {
+            try { return Object.values(value); } catch (_e) { return []; }
+          }
+          return [];
+        };
+
+        try {
+          let compareCount = 0;
+          for (const d of (docs || [])) {
+            const groups = normalizeToArray(d?.groups);
+            let isMember = false;
+
+            if (DEBUG_MEMBERSHIP) {
+              console.log('[dashboard][membership] org doc', {
+                docId: d?.id,
+                projectId: d?.projectId,
+                projectNumber: d?.projectNumber,
+                groupsType: Array.isArray(d?.groups) ? 'array' : (d?.groups && typeof d?.groups === 'object' ? 'object' : typeof d?.groups),
+                groupsCount: Array.isArray(groups) ? groups.length : 0,
+              });
+            }
+
+            for (const g of groups) {
+              const members = normalizeToArray(g?.members);
+
+              if (DEBUG_MEMBERSHIP) {
+                console.log('[dashboard][membership] group', {
+                  groupId: g?.id,
+                  groupTitle: g?.title,
+                  membersType: Array.isArray(g?.members) ? 'array' : (g?.members && typeof g?.members === 'object' ? 'object' : typeof g?.members),
+                  membersCount: Array.isArray(members) ? members.length : 0,
+                });
+              }
+
+              for (const m of members) {
+                const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                if (DEBUG_MEMBERSHIP) {
+                  compareCount += 1;
+                  if (compareCount <= 500) {
+                    console.log('[dashboard][membership] compare member', {
+                      currentUserId: uid,
+                      memberRefId: refId,
+                      memberSource: m?.source,
+                      memberRole: m?.role,
+                      memberName: m?.name,
+                      match: !!(refId && refId === uid),
+                    });
+                  } else if (compareCount === 501) {
+                    console.log('[dashboard][membership] compare member: too many comparisons, truncating logs after 500');
+                  }
+                }
+                if (!refId) continue;
+                if (refId === uid) {
+                  isMember = true;
+                  break;
+                }
+              }
+              if (isMember) break;
+            }
+
+            if (isMember) {
+              const pid = String(d?.projectId || d?.id || '').trim();
+              if (DEBUG_MEMBERSHIP) {
+                console.log('[dashboard][membership] member match => allow project', {
+                  docId: d?.id,
+                  projectId: d?.projectId,
+                  projectNumber: d?.projectNumber,
+                  derivedAllowedProjectId: pid,
+                });
+              }
+              if (pid) next.add(pid);
+            }
+          }
+        } catch (_e) {}
+
+        if (DEBUG_MEMBERSHIP) {
+          console.log('[dashboard][membership] final memberProjectIds', Array.from(next));
+        }
+        setMemberProjectIds(next);
+        setMemberProjectsReady(true);
+      },
+      () => {
+        setMemberProjectIds(new Set());
+        setMemberProjectsReady(true);
+      }
+    );
+
+    return () => {
+      try { unsub?.(); } catch (_e) {}
+    };
+  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId]);
+
+  // Canonical project source for dashboard rendering:
+  // Firestore collection foretag/{companyId}/projects (not SharePoint folder hierarchy).
+  useEffect(() => {
+    const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+    if (!cid) {
+      setCompanyProjects([]);
+      setCompanyProjectsReady(false);
+      return;
+    }
+
+    setCompanyProjectsReady(false);
+    const unsub = subscribeCompanyProjects(
+      cid,
+      { siteRole: 'projects' },
+      (docs) => {
+        try { setCompanyProjects(Array.isArray(docs) ? docs : []); } catch (_e) { setCompanyProjects([]); }
+        setCompanyProjectsReady(true);
+      },
+      () => {
+        setCompanyProjects([]);
+        setCompanyProjectsReady(true);
+      }
+    );
+
+    return () => {
+      try { unsub?.(); } catch (_e) {}
+    };
+  }, [companyId, routeCompanyId, authClaims?.companyId]);
 
   const loadDashboard = useCallback(async () => {
     setDashboardLoading(true);
@@ -62,24 +238,71 @@ export function useDashboard({
       const completed = completedRaw ? (JSON.parse(completedRaw) || []) : [];
 
       const allowedProjectIds = new Set();
-      try {
-        const findAllProjects = (nodes) => {
-          if (!Array.isArray(nodes)) return;
-          nodes.forEach(node => {
-            if (node && node.type === 'project' && node.id) {
-              allowedProjectIds.add(String(node.id));
+      if (isAdmin) {
+        try {
+          const list = companyProjectsRef.current;
+          if (Array.isArray(list) && list.length > 0) {
+            for (const p of list) {
+              const pid = resolveProjectId(p);
+              if (pid) allowedProjectIds.add(pid);
             }
-            if (node && node.children && Array.isArray(node.children)) {
-              findAllProjects(node.children);
+          } else {
+            const findAllProjects = (nodes) => {
+              if (!Array.isArray(nodes)) return;
+              nodes.forEach(node => {
+                if (node && node.type === 'project') {
+                  const pid = resolveProjectId(node);
+                  if (pid) allowedProjectIds.add(pid);
+                }
+                if (node && node.children && Array.isArray(node.children)) {
+                  findAllProjects(node.children);
+                }
+              });
+            };
+            findAllProjects(hierarchyRef?.current || hierarchy || []);
+          }
+        } catch (_e) {}
+      } else if (memberProjectsReady) {
+        try {
+          const s = memberProjectIdsRef.current;
+          if (s && typeof s.forEach === 'function') {
+            s.forEach((pid) => {
+              const norm = String(pid || '').trim();
+              if (norm) allowedProjectIds.add(norm);
+            });
+          }
+        } catch (_e) {}
+      }
+
+      if (DEBUG_MEMBERSHIP) {
+        const allProjectIds = [];
+        try {
+          const list = companyProjectsRef.current;
+          if (Array.isArray(list)) {
+            for (const p of list) {
+              const pid = resolveProjectId(p);
+              if (pid) allProjectIds.push(pid);
             }
-          });
-        };
-        findAllProjects(hierarchyRef?.current || hierarchy || []);
-      } catch (_e) {}
+          }
+        } catch (_e) {}
+
+        console.log('[dashboard][filter] pre-filter projects', {
+          memberProjectsReady,
+          memberProjectIdsCount: memberProjectIdsRef?.current?.size || 0,
+          allowedProjectIds: Array.from(allowedProjectIds),
+          allProjectIds,
+        });
+      }
 
       const pickProjectId = (item) => {
         const pid = item?.project?.id || item?.projectId || item?.project || null;
-        return pid ? String(pid) : null;
+        return pid ? String(pid).trim() : null;
+      };
+
+      const isProjectCompleted = (project) => {
+        // Status is deprecated; treat phase "Avslut" as closed.
+        const phaseKey = String(project?.phase || '').trim().toLowerCase();
+        return phaseKey === 'avslut';
       };
 
       const filteredDrafts = (drafts || []).filter((d) => {
@@ -95,15 +318,21 @@ export function useDashboard({
 
       try {
         const activeList = [];
-        const tree = hierarchyRef?.current || hierarchy || [];
-        for (const main of tree) {
-          for (const sub of (main.children || [])) {
-            for (const child of (sub.children || [])) {
-              if (!child || child.type !== 'project') continue;
-              const status = child.status || 'ongoing';
-              if (status === 'completed') continue;
-              activeList.push(child);
-            }
+        const list = companyProjectsRef.current;
+        if (Array.isArray(list)) {
+          for (const p of list) {
+            const pid = resolveProjectId(p);
+            if (!pid) continue;
+            if (!allowedProjectIds.has(pid)) continue;
+            if (isProjectCompleted(p)) continue;
+            activeList.push({
+              ...p,
+              id: pid,
+              projectId: pid,
+              name: p?.projectName || p?.name || p?.fullName || pid,
+              number: p?.projectNumber || p?.number || pid,
+              type: 'project',
+            });
           }
         }
         setDashboardActiveProjectsList(activeList);
@@ -124,7 +353,24 @@ export function useDashboard({
         try { setDashboardControlsToSignItems([]); } catch (_e2) {}
       }
 
-      const activeProjects = countActiveProjectsInHierarchy(hierarchyRef?.current || hierarchy || []);
+      // Prefer canonical project source; fallback to hierarchy for legacy adapters.
+      const activeProjects = (() => {
+        try {
+          const list = companyProjectsRef.current;
+          if (Array.isArray(list) && list.length > 0) {
+            let n = 0;
+            for (const p of list) {
+              const pid = resolveProjectId(p);
+              if (!pid) continue;
+              if (!allowedProjectIds.has(pid)) continue;
+              if (isProjectCompleted(p)) continue;
+              n += 1;
+            }
+            return n;
+          }
+        } catch (_e) {}
+        return countActiveProjectsInHierarchy(hierarchyRef?.current || hierarchy || [], allowedProjectIds);
+      })();
       const openDeviations = computeOpenDeviationsCount(filteredCompleted);
       const controlsToSign = computeControlsToSign(filteredDrafts);
 
@@ -148,39 +394,37 @@ export function useDashboard({
       let skyddsrondDueSoon = 0;
       const upcomingSkyddsrond = [];
       try {
-        const tree = hierarchyRef?.current || hierarchy || [];
-        for (const main of tree) {
-          for (const sub of (main.children || [])) {
-            for (const child of (sub.children || [])) {
-              if (!child || child.type !== 'project' || !child.id) continue;
-              const status = child.status || 'ongoing';
-              if (status === 'completed') continue;
+        const list = companyProjectsRef.current;
+        if (Array.isArray(list)) {
+          for (const p0 of list) {
+            const pid = resolveProjectId(p0);
+            if (!pid) continue;
+            if (!allowedProjectIds.has(pid)) continue;
+            if (isProjectCompleted(p0)) continue;
 
-              const pid = String(child.id);
-              const enabled = child.skyddsrondEnabled !== false;
-              if (!enabled) continue;
+            const enabled = p0.skyddsrondEnabled !== false;
+            if (!enabled) continue;
 
-              const intervalWeeksRaw = Number(child.skyddsrondIntervalWeeks);
-              const intervalDaysRaw = Number(child.skyddsrondIntervalDays);
+            const intervalWeeksRaw = Number(p0.skyddsrondIntervalWeeks);
+            const intervalDaysRaw = Number(p0.skyddsrondIntervalDays);
               const intervalDays = (Number.isFinite(intervalWeeksRaw) && intervalWeeksRaw > 0)
                 ? (intervalWeeksRaw * 7)
                 : (Number.isFinite(intervalDaysRaw) && intervalDaysRaw > 0 ? intervalDaysRaw : 14);
 
               const lastMs = lastSkyddsrondByProject.get(pid) || 0;
-              const firstDueMs = toTsMs(child.skyddsrondFirstDueDate || null);
-              const baselineMs = lastMs || toTsMs(child.createdAt || null) || NOW;
+              const firstDueMs = toTsMs(p0.skyddsrondFirstDueDate || null);
+              const baselineMs = lastMs || toTsMs(p0.createdAt || null) || NOW;
               const nextDueMs = lastMs
                 ? (baselineMs + intervalDays * MS_DAY)
                 : (firstDueMs || (baselineMs + intervalDays * MS_DAY));
 
               if (NOW > nextDueMs) {
                 skyddsrondOverdue += 1;
-                upcomingSkyddsrond.push({ project: child, nextDueMs, state: 'overdue' });
+                upcomingSkyddsrond.push({ project: { ...p0, id: pid, projectId: pid, type: 'project' }, nextDueMs, state: 'overdue' });
               } else if ((nextDueMs - NOW) <= (SOON_THRESHOLD_DAYS * MS_DAY)) {
                 skyddsrondDueSoon += 1;
-                upcomingSkyddsrond.push({ project: child, nextDueMs, state: 'dueSoon' });
+                upcomingSkyddsrond.push({ project: { ...p0, id: pid, projectId: pid, type: 'project' }, nextDueMs, state: 'dueSoon' });
               }
-            }
           }
         }
       } catch (_e) {}
@@ -353,7 +597,25 @@ export function useDashboard({
       }
       const recentProjects = Array.from(projMap.entries())
         .map(([projectId, meta]) => {
-          const p = findProjectById(projectId);
+          const p = findProjectById(projectId) || (() => {
+            try {
+              const list = companyProjectsRef.current;
+              if (!Array.isArray(list)) return null;
+              const pid = String(projectId || '').trim();
+              const hit = list.find((x) => String(resolveProjectId(x) || '').trim() === pid);
+              if (!hit) return null;
+              return {
+                ...hit,
+                id: pid,
+                projectId: pid,
+                type: 'project',
+                name: hit?.projectName || hit?.name || hit?.fullName || pid,
+                number: hit?.projectNumber || hit?.number || pid,
+              };
+            } catch (_e) {
+              return null;
+            }
+          })();
           return p ? { project: p, projectId: String(projectId), ts: meta.ts } : null;
         })
         .filter(Boolean)
@@ -377,7 +639,7 @@ export function useDashboard({
     } finally {
       setDashboardLoading(false);
     }
-  }, [companyActivity, findProjectById, hierarchy, hierarchyRef]);
+  }, [companyActivity, findProjectById, hierarchy, hierarchyRef, isAdmin, memberProjectsReady, companyProjectsReady]);
 
   const toggleDashboardFocus = (key, anchor, top) => {
     if (!key) return;
@@ -397,7 +659,7 @@ export function useDashboard({
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (!selectedProject) loadDashboard();
-  }, [selectedProject, syncStatus, hierarchy, companyActivity, loadDashboard]);
+  }, [selectedProject, syncStatus, hierarchy, companyActivity, memberProjectIds, memberProjectsReady, companyProjects, companyProjectsReady, loadDashboard]);
 
   useEffect(() => {
     const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();

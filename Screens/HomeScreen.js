@@ -35,6 +35,7 @@ import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
+import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 
 // Web-only: lazily resolve ReactDOM.createPortal at runtime so the file
 // still works in native bundles where react-dom is not available.
@@ -420,6 +421,299 @@ export default function HomeScreen({ navigation, route }) {
   const [afSelectedItemId, setAfSelectedItemId] = useState(null);
   const [afMirrorRefreshNonce, setAfMirrorRefreshNonce] = useState(0);
 
+  const derivePhaseKeyFromProjectRootPath = React.useCallback((rootPath) => {
+    const p = String(rootPath || '').trim().replace(/^\/+/, '');
+    const seg = p.split('/')[0] ? String(p.split('/')[0]).trim().toLowerCase() : '';
+    if (!seg) return DEFAULT_PHASE;
+    if (seg === 'kalkylskede') return 'kalkylskede';
+    if (seg === 'produktion') return 'produktion';
+    if (seg === 'avslut') return 'avslut';
+    if (seg === 'eftermarknad') return 'eftermarknad';
+    return DEFAULT_PHASE;
+  }, []);
+
+  const openProjectTokenRef = React.useRef(0);
+
+  // Single project entrypoint: always goes through requestProjectSwitch,
+  // always resets UI state (Översikt/root), and best-effort hydrates
+  // SharePoint root folder path + phase for consistent left panel loading.
+  const openProject = React.useCallback(async (projectOrId, opts = {}) => {
+    const token = (openProjectTokenRef.current || 0) + 1;
+    openProjectTokenRef.current = token;
+
+    const selectedActionProvided = Object.prototype.hasOwnProperty.call(opts, 'selectedAction');
+    const clearActionAfter = !!opts.clearActionAfter;
+    const selectedAction = selectedActionProvided ? opts.selectedAction : null;
+
+    const resolveBase = () => {
+      if (!projectOrId) return null;
+      if (typeof projectOrId === 'string' || typeof projectOrId === 'number') {
+        const pid = String(projectOrId).trim();
+        if (!pid) return null;
+        return { id: pid, name: pid, projectNumber: pid };
+      }
+      if (typeof projectOrId === 'object') return projectOrId;
+      return null;
+    };
+
+    const base = resolveBase();
+    const pid = String(base?.id || base?.projectId || '').trim();
+    if (!pid) return;
+
+    // If an inline editor is locked, requestProjectSwitch will defer the switch
+    // until the user confirms. In that case, avoid resetting UI state early.
+    const shouldResetNow = !(Platform.OS === 'web' && isInlineLocked);
+
+    if (shouldResetNow) {
+      try {
+        setPhaseActiveSection(null);
+        setPhaseActiveItem(null);
+        setPhaseActiveNode(null);
+      } catch (_e) {}
+
+      try {
+        setAfRelativePath('');
+        setAfSelectedItemId(null);
+        setAfMirrorRefreshNonce((n) => n + 1);
+      } catch (_e) {}
+    }
+
+    const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+
+    // Best-effort: ensure we have canonical Firestore project fields.
+    let project = { ...base, id: pid };
+    try {
+      if (cid && (!project?.name || !String(project.name).trim() || !project?.projectName)) {
+        const { fetchCompanyProject } = await import('../components/firebase');
+        const fetched = await fetchCompanyProject(cid, pid).catch(() => null);
+        if (fetched) project = { ...fetched, ...project, id: pid };
+      }
+    } catch (_e) {}
+
+    const safeText = (v) => String(v || '').trim();
+    let existingPath = safeText(project?.rootFolderPath || project?.sharePointRootPath || project?.projectPath || project?.path);
+    let existingSiteId = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
+
+    // Prefer SharePoint hierarchy-derived path (same source as left panel).
+    // This avoids brittle Graph search and makes dashboard opens behave like left panel opens.
+    if (cid) {
+      try {
+        const tree = hierarchyRef?.current || [];
+        const target = safeText(project?.projectNumber || project?.number || pid) || pid;
+        let match = null;
+        const walk = (nodes) => {
+          if (!Array.isArray(nodes) || match) return;
+          for (const n of nodes) {
+            if (!n || match) continue;
+
+            const folderLike = String(n?.type || '').toLowerCase() === 'folder' || Array.isArray(n?.children);
+            if (folderLike && isProjectFolder(n)) {
+              const meta = extractProjectMetadata(n);
+              const metaId = safeText(meta?.id || meta?.number);
+              if (metaId && (metaId === target || metaId === pid || String(n?.name || '').trim().startsWith(String(target)))) {
+                match = { node: n, meta };
+                break;
+              }
+            }
+
+            if (Array.isArray(n?.children) && n.children.length > 0) {
+              walk(n.children);
+            }
+          }
+        };
+        walk(tree);
+
+        const hierarchyPath = safeText(match?.meta?.path || match?.node?.path || match?.node?.name);
+        if (hierarchyPath) {
+          const derivedPhase = derivePhaseKeyFromProjectRootPath(hierarchyPath);
+          project = {
+            ...project,
+            id: pid,
+            name: safeText(match?.meta?.name) || project?.name || project?.projectName || pid,
+            projectName: safeText(match?.meta?.name) || project?.projectName || project?.name || '',
+            fullName: safeText(match?.meta?.fullName) || project?.fullName || '',
+            projectNumber: safeText(match?.meta?.number) || project?.projectNumber || project?.number || pid,
+            number: safeText(match?.meta?.number) || project?.number || project?.projectNumber || pid,
+            path: hierarchyPath,
+            projectPath: hierarchyPath,
+            rootFolderPath: hierarchyPath,
+            phase: derivedPhase || project?.phase || DEFAULT_PHASE,
+          };
+          existingPath = hierarchyPath;
+        }
+      } catch (_e) {}
+    }
+
+    const ensureSiteId = async () => {
+      if (existingSiteId) return existingSiteId;
+      if (!cid) return null;
+      try {
+        const { getCompanySharePointSiteId } = await import('../components/firebase');
+        const sid = await getCompanySharePointSiteId(cid).catch(() => null);
+        existingSiteId = safeText(sid);
+        return existingSiteId || null;
+      } catch (_e) {
+        return null;
+      }
+    };
+
+    const resolveRootPathViaDriveTraversal = async () => {
+      const sid = await ensureSiteId();
+      if (!sid) return null;
+
+      try {
+        const { getDriveItems } = await import('../services/azure/hierarchyService');
+
+        const phaseCandidates = [
+          { key: 'kalkylskede', folder: 'Kalkylskede' },
+          { key: 'produktion', folder: 'Produktion' },
+          { key: 'eftermarknad', folder: 'Eftermarknad' },
+          { key: 'avslut', folder: 'Avslut' },
+        ];
+
+        const target = safeText(project?.projectNumber || project?.number || pid) || pid;
+        const matchProjectFolder = (folderName) => {
+          const name = safeText(folderName);
+          if (!name) return false;
+          const nameMatch = name.match(/^([A-Z]?[0-9]+(?:-[0-9]+)?)/);
+          const nameId = nameMatch ? safeText(nameMatch[1]) : null;
+          return nameId === target || name === target;
+        };
+
+        const walk = async (currentPath, depthLeft) => {
+          if (depthLeft < 0) return null;
+          if (openProjectTokenRef.current !== token) return null;
+
+          const items = await getDriveItems(sid, currentPath).catch(() => []);
+          for (const item of Array.isArray(items) ? items : []) {
+            if (!item?.folder) continue;
+            if (matchProjectFolder(item.name)) {
+              const fullPath = currentPath ? `${currentPath}/${item.name}` : item.name;
+              return safeText(fullPath);
+            }
+          }
+
+          if (depthLeft === 0) return null;
+          for (const item of Array.isArray(items) ? items : []) {
+            if (!item?.folder) continue;
+            const childPath = currentPath ? `${currentPath}/${item.name}` : item.name;
+            const found = await walk(childPath, depthLeft - 1);
+            if (found) return found;
+          }
+          return null;
+        };
+
+        for (const ph of phaseCandidates) {
+          const found = await walk(ph.folder, 6);
+          if (found) {
+            return { path: found, phaseKey: ph.key };
+          }
+        }
+      } catch (_e) {}
+
+      return null;
+    };
+
+    // Hydrate SharePoint root folder path so folder loading becomes deterministic.
+    // Order of preference:
+    // 1) hierarchy-derived path (above)
+    // 2) deterministic drive traversal (no Graph search endpoint)
+    // 3) legacy searchDriveItems resolver
+    if (!existingPath && cid) {
+      try {
+        const found = await resolveRootPathViaDriveTraversal();
+        if (found?.path) {
+          const derivedPhase = found.phaseKey || derivePhaseKeyFromProjectRootPath(found.path);
+          project = {
+            ...project,
+            id: pid,
+            siteId: existingSiteId || undefined,
+            sharePointSiteId: existingSiteId || undefined,
+            path: found.path,
+            projectPath: found.path,
+            rootFolderPath: found.path,
+            phase: derivedPhase || project?.phase || DEFAULT_PHASE,
+          };
+          existingPath = safeText(found.path);
+        }
+      } catch (_e) {}
+    }
+
+    if (!existingPath && cid) {
+      try {
+        const siteId = existingSiteId || (await ensureSiteId());
+        if (siteId) {
+          const { resolveProjectRootFolderPath } = await import('../services/azure/fileService');
+          const rootFolderPath = await resolveProjectRootFolderPath({
+            siteId,
+            projectNumber: safeText(project?.projectNumber || project?.number || project?.id || pid),
+            projectName: safeText(project?.projectName || project?.name),
+            fullName: safeText(project?.fullName),
+          }).catch(() => null);
+
+          if (rootFolderPath) {
+            const derivedPhase = derivePhaseKeyFromProjectRootPath(rootFolderPath);
+            project = {
+              ...project,
+              id: pid,
+              siteId,
+              sharePointSiteId: siteId,
+              path: rootFolderPath,
+              projectPath: rootFolderPath,
+              rootFolderPath,
+              phase: derivedPhase || project?.phase || DEFAULT_PHASE,
+            };
+          }
+        }
+      } catch (_e) {}
+    } else if (existingPath) {
+      try {
+        const derivedPhase = derivePhaseKeyFromProjectRootPath(existingPath);
+        project = {
+          ...project,
+          id: pid,
+          phase: derivedPhase || project?.phase || DEFAULT_PHASE,
+        };
+      } catch (_e) {}
+    }
+
+    // Drop stale async results if user clicked another project.
+    if (openProjectTokenRef.current !== token) return;
+
+    requestProjectSwitch(project, {
+      selectedAction,
+      clearActionAfter,
+      path: null,
+    });
+  }, [authClaims?.companyId, companyId, derivePhaseKeyFromProjectRootPath, hierarchyRef, isInlineLocked, requestProjectSwitch, routeCompanyId]);
+
+  // Critical UX: never carry UI state (tab/folder) between projects.
+  const prevSelectedProjectIdRef = React.useRef(null);
+  React.useEffect(() => {
+    const nextId = selectedProject?.id != null ? String(selectedProject.id) : null;
+    const prevId = prevSelectedProjectIdRef.current;
+    if (prevId === nextId) return;
+    prevSelectedProjectIdRef.current = nextId;
+
+    try {
+      setPhaseActiveSection(null);
+      setPhaseActiveItem(null);
+      setPhaseActiveNode(null);
+    } catch (_e) {}
+
+    try {
+      setAfRelativePath('');
+      setAfSelectedItemId(null);
+      setAfMirrorRefreshNonce((n) => n + 1);
+    } catch (_e) {}
+
+    try {
+      setProjectSelectedAction(null);
+      setInlineControlEditor(null);
+      setProjectInlineViewLabel(null);
+    } catch (_e) {}
+  }, [selectedProject?.id, setProjectSelectedAction, setInlineControlEditor, setProjectInlineViewLabel]);
+
   React.useEffect(() => {
     // Only keep explorer state while AF is the active node.
     if (String(phaseActiveNode?.key || '') !== 'AF') {
@@ -700,6 +994,7 @@ export default function HomeScreen({ navigation, route }) {
     isInlineLocked,
     pendingBreadcrumbNavRef,
     requestProjectSwitch,
+    openProject,
     setSelectedProject,
     setSelectedProjectPath,
     setInlineControlEditor,
@@ -711,7 +1006,7 @@ export default function HomeScreen({ navigation, route }) {
     pendingProjectSwitchRef,
     pendingBreadcrumbNavRef,
     setProjectSelectedAction,
-    setSelectedProject,
+    requestProjectSwitch,
     applyBreadcrumbTarget,
   });
 
@@ -787,6 +1082,7 @@ export default function HomeScreen({ navigation, route }) {
     companyId,
     routeCompanyId,
     authClaims,
+    currentUserId: auth?.currentUser?.uid || null,
     hierarchy,
     hierarchyRef,
     selectedProject,
@@ -1305,19 +1601,7 @@ export default function HomeScreen({ navigation, route }) {
                           ...projectData,
                         };
 
-                        if (requestProjectSwitch) {
-                          requestProjectSwitch(project, {
-                            selectedAction: null,
-                            path: {
-                              mainId: '',
-                              subId: '',
-                              mainName: '',
-                              subName: '',
-                            },
-                          });
-                        } else {
-                          console.warn('[HomeScreen] requestProjectSwitch not available');
-                        }
+                        openProject(project, { selectedAction: null });
                       } catch (error) {
                         console.error('[HomeScreen] Error in onSelectProject callback:', error);
                       }
@@ -1367,6 +1651,7 @@ export default function HomeScreen({ navigation, route }) {
                     setHierarchy={setHierarchy}
                     resetProjectFields={resetProjectFields}
                     requestProjectSwitch={requestProjectSwitch}
+                    openProject={openProject}
                     selectedProjectPath={selectedProjectPath}
                     setCreatingProject={setCreatingProject}
                     setCreatingProjectInline={setCreatingProjectInline}
@@ -1536,19 +1821,7 @@ export default function HomeScreen({ navigation, route }) {
                     ...projectData,
                   };
                   
-                  if (requestProjectSwitch) {
-                    requestProjectSwitch(project, {
-                      selectedAction: null,
-                      path: {
-                        mainId: '',
-                        subId: '',
-                        mainName: '',
-                        subName: '',
-                      },
-                    });
-                  } else {
-                    console.warn('[HomeScreen] requestProjectSwitch not available');
-                  }
+                  openProject(project, { selectedAction: null });
                 } catch (error) {
                   console.error('[HomeScreen] Error in onSelectProject callback:', error);
                 }
@@ -1577,6 +1850,7 @@ export default function HomeScreen({ navigation, route }) {
             />
 
             <HomeMainPaneContainer
+                    authClaims={authClaims}
               webPaneHeight={webPaneHeight}
               rightPaneScrollRef={rightPaneScrollRef}
               activityScrollRef={activityScrollRef}
@@ -1597,6 +1871,7 @@ export default function HomeScreen({ navigation, route }) {
               setHierarchy={setHierarchy}
               resetProjectFields={resetProjectFields}
               requestProjectSwitch={requestProjectSwitch}
+              openProject={openProject}
               selectedProjectPath={selectedProjectPath}
               setCreatingProject={setCreatingProject}
               setCreatingProjectInline={setCreatingProjectInline}

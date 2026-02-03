@@ -218,7 +218,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
 
           // Versioned default structure:
           // v2 => Kalkyl late (between Möten and Anbud). Existing projects remain v1.
-          ...(initialPhaseKey === 'kalkylskede' ? { kalkylskedeStructureVersion: 'v2' } : null),
+          ...(initialPhaseKey === 'kalkylskede' ? { kalkylskedeStructureVersion: 'v2' } : {}),
         });
       } catch (projErr) {
         // Non-fatal: SharePoint folder was created, but project won't appear in left panel until Firestore write succeeds.
@@ -243,7 +243,6 @@ export function useCreateSharePointProjectModal({ companyId }) {
           structureType === 'system' && systemPhase
             ? String(systemPhase || '').trim() || 'kalkylskede'
             : 'free';
-        const statusForMeta = phaseKeyForMeta === 'avslut' ? 'completed' : 'ongoing';
         await saveSharePointProjectMetadata(companyId, {
           siteId,
           projectPath,
@@ -251,8 +250,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
           projectName: String(projectName),
           phaseKey: phaseKeyForMeta,
           structureType: String(structureType || '').trim() || null,
-          status: statusForMeta,
-          ...(phaseKeyForMeta === 'kalkylskede' ? { structureVersion: 'v2' } : null),
+          ...(phaseKeyForMeta === 'kalkylskede' ? { structureVersion: 'v2' } : {}),
         });
       } catch (metaError) {
         // eslint-disable-next-line no-console

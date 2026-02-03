@@ -70,6 +70,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#E6E8EC',
-    ...(Platform.OS === 'web' ? { position: 'sticky', top: 0, zIndex: 5 } : null),
+    ...(Platform.OS === 'web' ? { position: 'sticky', top: 0, zIndex: 5 } : {}),
   },
 });

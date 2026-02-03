@@ -678,38 +678,37 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
               >
                 <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={COLORS.neutral} />
 
-                <View style={{ minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <TextInput
-                    defaultValue={String(group?.title || '')}
-                    placeholder="Gruppens rubrik"
-                    placeholderTextColor="#94A3B8"
-                    onFocus={() => setEditingGroupId(gid)}
-                    onBlur={(e) => {
-                      setEditingGroupId(null);
-                      if (isLockedGroup) return;
-                      const next = String(e?.nativeEvent?.text ?? group?.title ?? '').trim();
-                      if (next !== String(group?.title || '').trim()) updateGroupTitle(gid, next);
-                    }}
-                    editable={!isLockedGroup}
-                    style={{
-                      minWidth: 180,
-                      maxWidth: Platform.OS === 'web' ? 520 : 260,
-                      flexShrink: 1,
-                      fontSize: 13,
-                      color: COLORS.groupTitle,
-                      fontWeight: '500',
-                      paddingVertical: 2,
-                      paddingHorizontal: 0,
-                      backgroundColor: 'transparent',
-                      ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
-                    }}
-                  />
-                  {isLockedGroup ? (
-                    <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 999, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#C7D2FE' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#3730A3' }}>Systemstyrd – kan inte raderas</Text>
-                    </View>
-                  ) : null}
-                  <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: '600' }}>({participantCount})</Text>
+                <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  {/* Left: group title + participant count as one unit */}
+                  <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TextInput
+                      defaultValue={String(group?.title || '')}
+                      placeholder="Gruppens rubrik"
+                      placeholderTextColor="#94A3B8"
+                      onFocus={() => setEditingGroupId(gid)}
+                      onBlur={(e) => {
+                        setEditingGroupId(null);
+                        if (isLockedGroup) return;
+                        const next = String(e?.nativeEvent?.text ?? group?.title ?? '').trim();
+                        if (next !== String(group?.title || '').trim()) updateGroupTitle(gid, next);
+                      }}
+                      editable={!isLockedGroup}
+                      style={{
+                        minWidth: 180,
+                        maxWidth: Platform.OS === 'web' ? 520 : 260,
+                        flexShrink: 1,
+                        fontSize: 13,
+                        color: COLORS.groupTitle,
+                        fontWeight: '500',
+                        paddingVertical: 2,
+                        paddingHorizontal: 0,
+                        backgroundColor: 'transparent',
+                        ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                      }}
+                    />
+                    <Text style={{ fontSize: 13, color: COLORS.textSubtle, fontWeight: '600' }}>({participantCount})</Text>
+                  </View>
+
                 </View>
               </Pressable>
 

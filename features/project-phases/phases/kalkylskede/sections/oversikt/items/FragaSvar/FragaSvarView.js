@@ -6,17 +6,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Linking,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    Text,
+    TextInput,
+    View
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,10 +32,10 @@ import { ensureFolderPath, getDriveItemByPath, resolveProjectRootFolderPath as r
 import { getSiteByUrl } from '../../../../../../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../../../../../../services/sharepoint/sharePointStructureService';
 import {
-  createFragaSvarItem,
-  deleteFragaSvarItem,
-  listenFragaSvarItems,
-  updateFragaSvarItem,
+    createFragaSvarItem,
+    deleteFragaSvarItem,
+    listenFragaSvarItems,
+    updateFragaSvarItem,
 } from '../../../../services/fragaSvarService';
 
 import { subscribeFsExcelSyncState } from '../../../../services/fragaSvarExcelSyncQueue';
@@ -2433,7 +2433,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               </View>
               <Pressable
                 onPress={() => setSharePointError('')}
-                style={({ pressed }) => ({ padding: 6, opacity: pressed ? 0.8 : 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null) })}
+                style={({ pressed }) => ({ padding: 6, opacity: pressed ? 0.8 : 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}
               >
                 <Ionicons name="close" size={18} color="#991B1B" />
               </Pressable>
@@ -2488,7 +2488,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               alignItems: 'center',
               justifyContent: 'flex-end',
               gap: 8,
-              ...(Platform.OS === 'web' ? { flexShrink: 0 } : null),
+              ...(Platform.OS === 'web' ? { flexShrink: 0 } : {}),
             }}>
               {Platform.OS === 'web' ? (
                 <Pressable
@@ -2672,7 +2672,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                       fontSize: 14,
                       color: COLORS.text,
                       backgroundColor: 'transparent',
-                      ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+                      ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                     }}
                   />
                 </View>
@@ -2815,7 +2815,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   fontSize: 14,
                   color: COLORS.text,
                   backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                 }}
               />
             </View>
@@ -3158,8 +3158,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   flex: 1,
                   flexDirection: 'row',
                   backgroundColor: pressed ? 'rgba(25,118,210,0.04)' : tone.bg,
-                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : null),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : {}),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
                 <View style={{ ...tableColStyles.byggdel, paddingVertical: 10, paddingHorizontal: 10 }}>
@@ -3211,8 +3211,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   alignItems: 'center',
                   justifyContent: 'flex-start',
                   gap: 8,
-                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : null),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                  ...(Platform.OS === 'web' && hovered ? { filter: 'brightness(0.99)' } : {}),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
                 <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: tone.statusBorder, backgroundColor: tone.statusBg, flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
@@ -3237,7 +3237,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'flex-start',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
               >
                 <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: '#fff' }}>
@@ -3598,7 +3598,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               borderWidth: 1,
               borderColor: COLORS.border,
               overflow: 'hidden',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.22)', maxHeight: '85vh' } : null),
+              ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.22)', maxHeight: '85vh' } : {}),
             }}
           >
             <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -3916,7 +3916,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
       <Modal visible={externalPersonModalVisible} transparent animationType="fade" onRequestClose={() => setExternalPersonModalVisible(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', padding: 18, justifyContent: 'center' }}>
           <Pressable onPress={() => setExternalPersonModalVisible(false)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-          <View style={{ width: '100%', maxWidth: 620, alignSelf: 'center', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : null) }}>
+          <View style={{ width: '100%', maxWidth: 620, alignSelf: 'center', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : {}) }}>
             <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: 'rgba(25,118,210,0.12)', borderWidth: 1, borderColor: 'rgba(25,118,210,0.25)', alignItems: 'center', justifyContent: 'center' }}>
@@ -4241,7 +4241,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                         fontSize: 14,
                         color: COLORS.text,
                         backgroundColor: 'transparent',
-                        ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+                        ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
                       }}
                     />
                   </View>
@@ -4339,7 +4339,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   onChangeText={setFormTitle}
                   placeholder="Rubrik (t.ex. 'Brandklass dörrar')"
                   placeholderTextColor={COLORS.textSubtle}
-                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, backgroundColor: '#fff', padding: 10, minHeight: 44, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) }}
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, backgroundColor: '#fff', padding: 10, minHeight: 44, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
                 />
 
                 <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 6, marginTop: 12 }}>Fråga / Beskrivning *</Text>

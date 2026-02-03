@@ -2,13 +2,11 @@
  * ProjectTreeNode - Renders a single project with its functions
  */
 
-import { useState } from 'react';
-import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { View } from 'react-native';
+import { LEFT_NAV } from '../../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getProjectPhase } from '../../../features/projects/constants';
 import { isWeb } from '../../../utils/platform';
-
-const PRIMARY_BLUE = '#1976D2';
-const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
+import SidebarItem from '../SidebarItem';
 
 export default function ProjectTreeNode({
   project,
@@ -21,6 +19,7 @@ export default function ProjectTreeNode({
   isSelected = false,
   selectedPhase = null,
   compact = false,
+  edgeToEdge = false,
 }) {
   // Check if project is in kalkylskede - these should NEVER have functions or expand
   const projectPhase = getProjectPhase(project);
@@ -99,107 +98,44 @@ export default function ProjectTreeNode({
 
   const effectivePhaseKey = project?.phase || (selectedPhase && selectedPhase !== 'all' ? selectedPhase : DEFAULT_PHASE);
   const phase = getProjectPhase({ ...project, phase: effectivePhaseKey });
-  const [isHovered, setIsHovered] = useState(false);
-
-  const projectRowStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: compact ? 5 : 8,
-    paddingHorizontal: compact ? 8 : 10,
-    borderRadius: 8,
-    marginVertical: 2,
-    backgroundColor: isSelected 
-      ? '#E8F5E9' 
-      : isHovered 
-        ? HOVER_BG 
-        : 'transparent',
-    borderWidth: isSelected ? 1 : 0,
-    borderColor: isSelected ? (phase?.color || '#43A047') : 'transparent',
-    ...(Platform.OS === 'web' ? {
-      cursor: 'pointer',
-      transition: 'background-color 0.15s ease, border-color 0.15s ease',
-    } : {}),
-  };
-
-  const projectRowContent = (
-    <>
-      {/* Projects are no longer expandable - chevron removed */}
-      {/* All projects navigate directly to project view */}
-      
-      {/* Phase indicator (5 states) */}
-      <View
-        style={{
-          width: compact ? 10 : 14,
-          height: compact ? 10 : 14,
-          borderRadius: compact ? 5 : 7,
-          backgroundColor: phase?.color || '#43A047',
-          marginRight: compact ? 6 : 8,
-          borderWidth: 1,
-          borderColor: '#bbb'
-        }}
-      />
-      
-      {/* Project name */}
-      <Text
-        style={{
-          fontSize: compact ? 13 : 15,
-          color: !isSelected && isHovered ? PRIMARY_BLUE : '#222',
-          fontWeight: isSelected ? '700' : '400',
-          flexShrink: 1
-        }}
-        numberOfLines={1}
-        ellipsizeMode="tail"
-      >
-        {project.id} — {project.name}
-      </Text>
-    </>
-  );
 
   // Functions are no longer shown in the sidebar - they will be shown inside the project view
   const functionsList = null;
 
-  if (Platform.OS === 'web') {
-    return (
-      <View style={{ marginLeft: 14 }}>
-        <div
-          style={projectRowStyle}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
-          onClick={handlePress}
-          onContextMenu={(e) => {
-            try { e.preventDefault(); } catch (_) {}
-            const projectPhase = getProjectPhase(project);
-            const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
-            if (isKalkylskede) {
-              handleSelect();
-            }
-          }}
-        >
-          {projectRowContent}
-        </div>
-        {functionsList}
-      </View>
-    );
-  }
-
   return (
-    <View style={{ marginLeft: 14 }}>
-      {/* Project row for native */}
-      <TouchableOpacity
-        style={projectRowStyle}
+    <View>
+      <SidebarItem
+        fullWidth
+        squareCorners={Boolean(edgeToEdge && isWeb)}
+        indentMode={edgeToEdge ? 'padding' : 'margin'}
+        indent={14}
+        active={Boolean(isSelected)}
         onPress={handlePress}
-        onLongPress={() => {
-          // On long press, always navigate (for kalkylskede projects)
+        onContextMenu={(e) => {
+          try {
+            e?.preventDefault?.();
+          } catch (_) {}
           const projectPhase = getProjectPhase(project);
           const isKalkylskede = projectPhase.key === 'kalkylskede' || (!project?.phase && DEFAULT_PHASE === 'kalkylskede');
           if (isKalkylskede) {
             handleSelect();
           }
         }}
-        activeOpacity={0.7}
-      >
-        {projectRowContent}
-      </TouchableOpacity>
+        left={() => (
+          <View
+            style={{
+              width: compact ? 10 : 14,
+              height: compact ? 10 : 14,
+              borderRadius: compact ? 5 : 7,
+              backgroundColor: phase?.color || LEFT_NAV.phaseDotFallback,
+              borderWidth: 1,
+              borderColor: LEFT_NAV.phaseDotBorder,
+            }}
+          />
+        )}
+        label={`${project.id} — ${project.name}`}
+        labelWeight={isSelected ? '700' : '500'}
+      />
       {functionsList}
     </View>
   );

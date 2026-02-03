@@ -3551,6 +3551,40 @@ export function subscribeCompanyProjects(companyId, { siteRole = 'projects' } = 
 }
 
 /**
+ * Realtime subscription to a company's project organisation documents.
+ * Collection: foretag/{companyId}/project_organisation
+ *
+ * Note: This intentionally subscribes to the full collection and lets callers
+ * filter client-side (robust for legacy docs without dedicated index fields).
+ */
+export function subscribeCompanyProjectOrganisation(companyId, onNext, onError) {
+  const cid = String(companyId || '').trim();
+  if (!cid) {
+    try { onNext?.([]); } catch (_e) {}
+    return () => {};
+  }
+
+  const colRef = collection(db, 'foretag', cid, 'project_organisation');
+  const q = query(colRef);
+  return onSnapshot(
+    q,
+    (snap) => {
+      const out = [];
+      snap.forEach((docSnap) => {
+        try {
+          const d = docSnap.data() || {};
+          out.push({ id: docSnap.id, ...d });
+        } catch (_e) {}
+      });
+      try { onNext?.(out); } catch (_e) {}
+    },
+    (err) => {
+      try { onError?.(err); } catch (_e) {}
+    }
+  );
+}
+
+/**
  * Save SharePoint navigation configuration for a company
  * @param {string} companyIdOverride - Optional explicit company ID
  * @param {Object} config - Navigation configuration

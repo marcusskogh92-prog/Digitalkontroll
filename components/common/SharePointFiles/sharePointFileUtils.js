@@ -81,3 +81,18 @@ export function dedupeFileName(originalName, existingNamesLowerSet) {
 
   return `${Date.now()}_${raw}`;
 }
+
+export function dedupeFolderName(originalName, existingNamesLowerSet) {
+  const raw = safeText(originalName) || `mapp_${Date.now()}`;
+  const existing = existingNamesLowerSet instanceof Set ? existingNamesLowerSet : new Set();
+
+  const lower = raw.toLowerCase();
+  if (!existing.has(lower)) return raw;
+
+  for (let i = 1; i < 1000; i += 1) {
+    const candidate = `${raw} (${i})`;
+    if (!existing.has(candidate.toLowerCase())) return candidate;
+  }
+
+  return `${Date.now()}_${raw}`;
+}

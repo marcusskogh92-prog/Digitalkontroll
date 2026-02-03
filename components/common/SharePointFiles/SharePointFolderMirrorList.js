@@ -182,7 +182,7 @@ export default function SharePointFolderMirrorList({
           : hovered || pressed
             ? 'rgba(0,0,0,0.04)'
             : 'transparent',
-        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
       })}
     >
       <Ionicons name={iconName} size={compact ? 16 : 18} color={iconColor} />
@@ -318,7 +318,7 @@ export default function SharePointFolderMirrorList({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 6,
-            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
           })}
         >
           <Ionicons name="arrow-up-outline" size={14} color="#64748b" />
@@ -372,7 +372,7 @@ export default function SharePointFolderMirrorList({
                 : hovered || pressed
                   ? 'rgba(0,0,0,0.04)'
                   : 'transparent',
-              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
             })}
           >
             <Ionicons

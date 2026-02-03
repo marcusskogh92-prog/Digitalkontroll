@@ -76,7 +76,7 @@ export default function DashboardBanner({
                   pressed || (Platform.OS === 'web' && hovered)
                     ? 'rgba(0,0,0,0.05)'
                     : 'transparent',
-                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
               })}
               hitSlop={10}
               accessibilityLabel="Stäng"

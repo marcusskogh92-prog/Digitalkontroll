@@ -2,6 +2,50 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 
+function importantDatePresentationForCalendar(item) {
+  const it = item && typeof item === 'object' ? item : {};
+  const source = String(it?.source || '').trim();
+  const sourceKey = String(it?.sourceKey || '').trim();
+  if (source !== 'projectinfo') return null;
+
+  // NOTE: This mapping is intentionally ONLY for the month calendar view.
+  // It should not affect list view, project information fields, forms, or Outlook invites.
+  if (sourceKey === 'sista-dag-for-fragor') {
+    return {
+      label: 'Sista dag för frågor',
+      accent: '#F59E0B',
+      bg: 'rgba(245, 158, 11, 0.14)',
+      border: 'rgba(245, 158, 11, 0.45)',
+    };
+  }
+  if (sourceKey === 'anbudsinlamning') {
+    return {
+      label: 'Anbudsinlämning',
+      accent: '#DC2626',
+      bg: 'rgba(220, 38, 38, 0.12)',
+      border: 'rgba(220, 38, 38, 0.45)',
+    };
+  }
+  if (sourceKey === 'planerad-byggstart') {
+    return {
+      label: 'Planerad byggstart',
+      accent: '#16A34A',
+      bg: 'rgba(22, 163, 74, 0.12)',
+      border: 'rgba(22, 163, 74, 0.40)',
+    };
+  }
+  if (sourceKey === 'klart-for-besiktning') {
+    return {
+      label: 'Klart för besiktning',
+      accent: '#16A34A',
+      bg: 'rgba(22, 163, 74, 0.12)',
+      border: 'rgba(22, 163, 74, 0.40)',
+    };
+  }
+
+  return null;
+}
+
 function isValidIsoDate(iso) {
   return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso);
 }
@@ -457,8 +501,12 @@ export default function CompactMonthCalendar({
                     {visible.map((it) => {
                       const s = statusForIso(iso, todayIso);
                       const st = eventStyleForStatus(s, colors);
-                      const eventTitleColor = neutralEventText ? (colors?.text || '#0F172A') : st.text;
-                      const eventTypeColor = neutralEventText ? (colors?.textSubtle || '#64748B') : st.type;
+                      const important = importantDatePresentationForCalendar(it);
+
+                      const eventTitleColor = important
+                        ? important.accent
+                        : (neutralEventText ? (colors?.text || '#0F172A') : st.text);
+
                       const title = String(it?.title || it?.type || '—');
                       const type = String(it?.type || '').trim();
                       const timeLabel = showTimeInEventCell
@@ -466,13 +514,15 @@ export default function CompactMonthCalendar({
                         : '';
 
                       const primaryText = (() => {
-                        if (timeLabel) return `${timeLabel} ${type || title}`.trim();
-                        return title;
+                        const baseLabel = important?.label || title;
+                        if (timeLabel) return `${timeLabel} ${baseLabel}`.trim();
+                        return String(baseLabel || '—');
                       })();
 
                       const secondaryText = (() => {
+                        if (important) return '';
                         if (timeLabel) {
-                          // If we already showed type, show title as secondary when it adds info.
+                          // If we already showed type (or title) next to time, show the other as secondary when it adds info.
                           if (type && title && title.trim() !== type.trim()) return title;
                           return '';
                         }
@@ -481,7 +531,7 @@ export default function CompactMonthCalendar({
 
                       return (
                         <Pressable
-                          key={String(it?.id || title)}
+                          key={String(it?.id || primaryText)}
                           onPress={(e) => {
                             e?.stopPropagation?.();
                             onPressItem && onPressItem(it);
@@ -491,8 +541,8 @@ export default function CompactMonthCalendar({
                             paddingHorizontal: 4,
                             borderRadius: 5,
                             borderWidth: 1,
-                            borderColor: st.border,
-                            backgroundColor: pressed || hovered ? st.bg : st.bg,
+                            borderColor: important?.border || st.border,
+                            backgroundColor: pressed || hovered ? (important?.bg || st.bg) : (important?.bg || st.bg),
                             marginBottom: 3,
                           })}
                         >
@@ -500,7 +550,13 @@ export default function CompactMonthCalendar({
                             {primaryText}
                           </Text>
                           {!secondaryText ? null : (
-                            <Text style={[{ fontSize: 8, fontWeight: '800', color: eventTypeColor }, typography?.eventTypeStyle]} numberOfLines={1}>
+                            <Text
+                              style={[
+                                { fontSize: 8, fontWeight: '800', color: neutralEventText ? (colors?.textSubtle || '#64748B') : st.type },
+                                typography?.eventTypeStyle,
+                              ]}
+                              numberOfLines={1}
+                            >
                               {secondaryText}
                             </Text>
                           )}

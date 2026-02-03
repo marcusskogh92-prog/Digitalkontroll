@@ -80,7 +80,7 @@ export default function SharePointFilePreviewPane({
             alignItems: 'center',
             gap: 6,
             backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-            ...(Platform.OS === 'web' ? { cursor: safeText(externalUrl) ? 'pointer' : 'default' } : null),
+            ...(Platform.OS === 'web' ? { cursor: safeText(externalUrl) ? 'pointer' : 'default' } : {}),
           })}
         >
           <Ionicons name="open-outline" size={16} color="#1976D2" />
@@ -94,7 +94,7 @@ export default function SharePointFilePreviewPane({
             paddingHorizontal: 10,
             borderRadius: 10,
             backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : null),
+            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
           })}
         >
           <Ionicons name="close" size={18} color="#64748b" />

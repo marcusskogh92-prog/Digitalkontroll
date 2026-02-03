@@ -13,7 +13,6 @@
  *   onSelectFunction={handleSelectFunction}
  *   navigation={navigation}
  *   companyId={companyId}
- *   projectStatusFilter="all"
  *   onToggleMainFolder={handleToggleMainFolder}
  *   onToggleSubFolder={handleToggleSubFolder}
  *   onAddSubFolder={handleAddSubFolder}
@@ -34,9 +33,9 @@ export default function ProjectTree({
   onSelectFunction,
   navigation,
   companyId,
-  projectStatusFilter = 'all',
   onToggleMainFolder,
   onToggleSubFolder,
+  onCollapseSubtree,
   onPressFolder,
   onAddSubFolder,
   onAddProject,
@@ -56,6 +55,9 @@ export default function ProjectTree({
   activeOverviewPrefix = null,
   activePhaseSectionPrefix = null,
   afMirror = null,
+  // When used inside the project-mode left panel, the tree should be flat/edge-to-edge
+  // (no white rounded cards or indentation wrappers that make hover/active look inset).
+  edgeToEdge = false,
 }) {
   const {
     hierarchy: hierarchyWithFunctions,
@@ -175,8 +177,19 @@ export default function ProjectTree({
           return (
             <View
               key={folder.id}
-              style={
-                compact
+              style={(() => {
+                if (edgeToEdge && compact) {
+                  return {
+                    backgroundColor: 'transparent',
+                    borderRadius: 0,
+                    borderWidth: 0,
+                    borderColor: 'transparent',
+                    marginBottom: 0,
+                    paddingVertical: 0,
+                    paddingHorizontal: 0,
+                  };
+                }
+                return compact
                   ? {
                       backgroundColor: '#fff',
                       borderRadius: 8,
@@ -199,8 +212,8 @@ export default function ProjectTree({
                       shadowOpacity: 0.1,
                       shadowRadius: 6,
                       elevation: 2,
-                    }
-              }
+                    };
+              })()}
             >
               {/* Folder (can be phase folder or any SharePoint folder) */}
               <ProjectTreeFolder
@@ -210,6 +223,8 @@ export default function ProjectTree({
                 compact={compact}
                 hideFolderIcon={hideFolderIcons}
                 staticHeader={isProjectRootHeader}
+                edgeToEdge={edgeToEdge && compact}
+                onCollapseSubtree={onCollapseSubtree}
                 onToggle={isProjectRootHeader ? undefined : handleToggleMain}
                 onLongPress={() => {
                   if (onEditMainFolder) {
@@ -331,6 +346,7 @@ export default function ProjectTree({
                               isSelected={selectedProject && selectedProject.id === node.id}
                               selectedPhase={selectedPhase}
                               compact={compact}
+                              edgeToEdge={edgeToEdge && compact}
                             />
                           );
                         }
@@ -395,7 +411,10 @@ export default function ProjectTree({
                               compact={compact}
                               hideFolderIcon={hideFolderIcons}
                               reserveChevronSpace={isOverviewPage}
+                              forceChevron={Boolean(isPhaseSectionFolder)}
                               isActive={isActiveOverviewPage || isActivePhaseSectionFolder}
+                              edgeToEdge={edgeToEdge && compact}
+                              onCollapseSubtree={onCollapseSubtree}
                               onPress={handlePressFolder}
                               onToggle={
                                 isOverviewPage
@@ -430,6 +449,7 @@ export default function ProjectTree({
                                 <SharePointFolderHierarchyTree
                                   indentLevel={level + 1}
                                   compact={compact}
+                                  edgeToEdge={Boolean(edgeToEdge && compact)}
                                   companyId={afMirror.companyId}
                                   project={afMirror.project}
                                   rootPath={afMirror.rootPath}
@@ -466,20 +486,7 @@ export default function ProjectTree({
                                 >
                                   Fel: {folderNode.error}
                                 </Text>
-                              ) : !folderNode.children || folderNode.children.length === 0 ? (
-                                <Text
-                                  style={{
-                                    color: '#888',
-                                    fontSize: compact ? 12 : 13,
-                                    marginLeft: hideFolderIcons
-                                      ? (compact ? 10 : 12) + 12 * Math.max(1, level + 1) + 8 + (compact ? 22 : 26)
-                                      : (compact ? 14 : 18),
-                                    marginTop: 4,
-                                  }}
-                                >
-                                  Tom mapp
-                                </Text>
-                              ) : (() => {
+                              ) : !folderNode.children || folderNode.children.length === 0 ? null : (() => {
                                 const children = Array.isArray(folderNode.children) ? folderNode.children : [];
                                 const hasFolderChildren = children.some((c) => {
                                   const t = c?.type;
@@ -487,25 +494,10 @@ export default function ProjectTree({
                                 });
                                 const hasFileChildren = children.some((c) => c?.type === 'file');
 
-                                if (!hasFolderChildren && hasFileChildren) {
-                                  return (
-                                    <Text
-                                      style={{
-                                        color: '#888',
-                                        fontSize: compact ? 12 : 13,
-                                        marginLeft: hideFolderIcons
-                                          ? (compact ? 10 : 12) + 12 * Math.max(1, level + 1) + 8 + (compact ? 22 : 26)
-                                          : (compact ? 14 : 18),
-                                        marginTop: 4,
-                                      }}
-                                    >
-                                      Inga undermappar
-                                    </Text>
-                                  );
-                                }
+                                if (!hasFolderChildren && hasFileChildren) return null;
 
                                 return (
-                                  <View style={{ marginLeft: compact ? 10 : 12, marginTop: 4 }}>
+                                  <View style={{ marginLeft: edgeToEdge && compact ? 0 : (compact ? 10 : 12), marginTop: 4 }}>
                                     {renderNodes(children, level + 1, folderNode, parentNode)}
                                   </View>
                                 );
@@ -534,22 +526,7 @@ export default function ProjectTree({
                     </Text>
                   );
                 }
-                if (!folder.children || folder.children.length === 0) {
-                  return (
-                    <Text
-                      style={{
-                        color: '#888',
-                        fontSize: compact ? 12 : 14,
-                        marginLeft: hideFolderIcons
-                          ? 12 + 8 + (compact ? 22 : 26)
-                          : (compact ? 14 : 18),
-                        marginTop: compact ? 6 : 8,
-                      }}
-                    >
-                      Tom mapp
-                    </Text>
-                  );
-                }
+                if (!folder.children || folder.children.length === 0) return null;
                 {
                   const children = Array.isArray(folder.children) ? folder.children : [];
                   const hasFolderChildren = children.some((c) => {
@@ -558,22 +535,7 @@ export default function ProjectTree({
                   });
                   const hasFileChildren = children.some((c) => c?.type === 'file');
 
-                  if (!hasFolderChildren && hasFileChildren) {
-                    return (
-                      <Text
-                        style={{
-                          color: '#888',
-                          fontSize: compact ? 12 : 14,
-                          marginLeft: hideFolderIcons
-                            ? 12 + 8 + (compact ? 22 : 26)
-                            : (compact ? 14 : 18),
-                          marginTop: compact ? 6 : 8,
-                        }}
-                      >
-                        Inga undermappar
-                      </Text>
-                    );
-                  }
+                  if (!hasFolderChildren && hasFileChildren) return null;
 
                   return <View style={{ marginTop: compact ? 6 : 8 }}>{renderNodes(children, 1, folder, null)}</View>;
                 }

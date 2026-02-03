@@ -40,6 +40,7 @@ export default function NativeMainPane({
   dashboardStatRowLayoutRef,
   webPaneHeight,
   requestProjectSwitch,
+  openProject,
   toggleDashboardFocus,
   setDashboardHoveredStatKey,
   formatRelativeTime,
@@ -127,11 +128,11 @@ export default function NativeMainPane({
             dashboardCardLayoutRef={dashboardCardLayoutRef}
             dashboardStatRowLayoutRef={dashboardStatRowLayoutRef}
             webPaneHeight={webPaneHeight}
-            onProjectSelect={(project) =>
-              requestProjectSwitch(project, { selectedAction: null })
-            }
+            onProjectSelect={(project) => {
+              openProject(project, { selectedAction: null });
+            }}
             onDraftSelect={(project, draft) => {
-              requestProjectSwitch(project, {
+              openProject(project, {
                 selectedAction: {
                   id: `openDraft-${Date.now()}-${Math.random()
                     .toString(36)
@@ -146,7 +147,7 @@ export default function NativeMainPane({
               setDashboardHoveredStatKey(null);
             }}
             onControlToSignSelect={(project, control) => {
-              requestProjectSwitch(project, {
+              openProject(project, {
                 selectedAction: {
                   id: `openControl-${control?.id || Date.now()}`,
                   kind: 'openControlDetails',
@@ -158,7 +159,7 @@ export default function NativeMainPane({
               setDashboardHoveredStatKey(null);
             }}
             onDeviationSelect={(project, entry) => {
-              requestProjectSwitch(project, {
+              openProject(project, {
                 selectedAction: {
                   id: `openControl-${entry?.control?.id || Date.now()}`,
                   kind: 'openControlDetails',
@@ -170,7 +171,7 @@ export default function NativeMainPane({
               setDashboardHoveredStatKey(null);
             }}
             onSkyddsrondSelect={(project) => {
-              requestProjectSwitch(project, { selectedAction: null });
+              openProject(project, { selectedAction: null });
               toggleDashboardFocus(null);
               setDashboardHoveredStatKey(null);
             }}

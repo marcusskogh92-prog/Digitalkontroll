@@ -65,7 +65,7 @@ function cloneNavigationWithPhase(source, phaseKey) {
           const nestedItems = Array.isArray(item?.items) ? item.items : null;
           return {
             ...item,
-            ...(nestedItems ? { items: nestedItems.map((sub) => ({ ...sub })) } : null),
+            ...(nestedItems ? { items: nestedItems.map((sub) => ({ ...sub })) } : {}),
           };
         }),
       };
