@@ -78,7 +78,6 @@ export default function WebMainPane(props) {
     routeCompanyId,
     rightWidth,
     panResponderRight,
-    projectPhaseKey,
     phaseActiveSection,
     phaseActiveItem,
     phaseActiveNode,

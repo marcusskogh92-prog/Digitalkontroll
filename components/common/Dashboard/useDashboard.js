@@ -78,9 +78,7 @@ export function useDashboard({
     const uid = String(currentUserId || '').trim();
 
     if (DEBUG_MEMBERSHIP) {
-      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin: !!(
-        authClaims?.globalAdmin || authClaims?.admin === true || String(authClaims?.role || '').toLowerCase() === 'admin'
-      ) });
+      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin });
     }
 
     if (!cid || !uid) {
@@ -196,7 +194,7 @@ export function useDashboard({
     return () => {
       try { unsub?.(); } catch (_e) {}
     };
-  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId]);
+  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Canonical project source for dashboard rendering:
   // Firestore collection foretag/{companyId}/projects (not SharePoint folder hierarchy).
@@ -639,7 +637,7 @@ export function useDashboard({
     } finally {
       setDashboardLoading(false);
     }
-  }, [companyActivity, findProjectById, hierarchy, hierarchyRef, isAdmin, memberProjectsReady, companyProjectsReady]);
+  }, [companyActivity, findProjectById, hierarchy, hierarchyRef, isAdmin, memberProjectsReady, DEBUG_MEMBERSHIP]);
 
   const toggleDashboardFocus = (key, anchor, top) => {
     if (!key) return;

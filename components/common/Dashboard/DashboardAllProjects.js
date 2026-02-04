@@ -209,7 +209,7 @@ const DashboardAllProjects = ({
     );
 
     return () => { try { unsub?.(); } catch(_e) {} };
-  }, [effectiveCompanyId, currentUserId]);
+  }, [effectiveCompanyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {

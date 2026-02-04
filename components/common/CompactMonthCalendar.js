@@ -278,14 +278,6 @@ export default function CompactMonthCalendar({
     []
   );
 
-  // NOTE: Avoid CSS grid for RN-web inside ScrollView.
-  // In some layouts, RN-web's ScrollView content measurement can undercount grid height,
-  // making it impossible to scroll to the very bottom.
-  const gridStyles = {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  };
-
   const cellMinHeight = Platform.OS === 'web' ? 80 : 76;
 
   const todayDayNumberUsesAccentText = options?.todayDayNumberUsesAccentText !== false;

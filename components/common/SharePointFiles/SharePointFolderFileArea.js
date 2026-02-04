@@ -306,8 +306,6 @@ export default function SharePointFolderFileArea({
   const dndTipText = 'Du kan dra och släppa filer och mappar direkt i listan';
   const enableWebDnD = Platform.OS === 'web';
 
-  const isListEmpty = useMemo(() => !loading && Array.isArray(items) && items.length === 0, [loading, items]);
-
   const setIsDraggingSafe = useCallback((next) => {
     const v = Boolean(next);
     isDraggingRef.current = v;
@@ -415,6 +413,7 @@ export default function SharePointFolderFileArea({
     relativePath,
     rootPath,
     pinSystemFolderLast,
+    lockSystemFolder,
     isSystemFolder,
   ]);
 
@@ -633,7 +632,7 @@ export default function SharePointFolderFileArea({
       document.removeEventListener('dragover', onDocDragOver, true);
       document.removeEventListener('drop', onDocDrop, true);
     };
-  }, [enableWebDnD, resetDragState, setIsDraggingSafe, setActiveDropFolderSafe]);
+  }, [enableWebDnD, resetDragState, setIsDraggingSafe, setActiveDropFolderSafe, relativePath]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -920,7 +919,6 @@ export default function SharePointFolderFileArea({
         let actual = folderRemapCache.get(key);
         if (!actual) {
           // Dedupe against existing folder names in this parent folder.
-          // eslint-disable-next-line no-await-in-loop
           const existingFolders = await getExistingFolderNamesForFolder(parentAbs);
           actual = dedupeFolderName(seg, existingFolders);
           existingFolders.add(safeText(actual).toLowerCase());
@@ -955,7 +953,6 @@ export default function SharePointFolderFileArea({
       // Resolve and dedupe folder names per parent folder to avoid collisions.
       const resolvedRelDirMap = new Map();
       for (const relDir of foldersToEnsureRaw) {
-        // eslint-disable-next-line no-await-in-loop
         const resolved = await resolveRelativeDirWithDedupe(relDir);
         resolvedRelDirMap.set(relDir, resolved);
       }
@@ -1048,7 +1045,7 @@ export default function SharePointFolderFileArea({
         if (typeof onDidMutate === 'function') onDidMutate();
       } catch (_e) {}
     }
-  }, [uploadManager, hasContext, siteId, rootPath, relativePath, cid, refresh, existingFileNamesLower, onDidMutate]);
+  }, [uploadManager, hasContext, siteId, rootPath, relativePath, cid, refresh, existingFileNamesLower, existingFolderNamesLower, onDidMutate]);
 
   useEffect(() => {
     uploadEntriesWithPathsRef.current = uploadEntriesWithPaths;
@@ -1074,7 +1071,7 @@ export default function SharePointFolderFileArea({
     const n = safeText(name);
     if (!n) return;
     const next = joinPath(relativePath, n);
-    setSelectedItemId(null);
+    if (selectedItemId !== null) setSelectedItemId(null);
     setRelativePath(next);
   };
 
@@ -1542,7 +1539,7 @@ export default function SharePointFolderFileArea({
                   <Pressable
                     onPress={() => {
                       if (!canNavigate) return;
-                      setSelectedItemId(null);
+                      if (selectedItemId !== null) setSelectedItemId(null);
                       setRelativePath(part.relativePath || '');
                     }}
                     onDragOver={enableWebDnD ? ((e) => {
@@ -1964,7 +1961,7 @@ export default function SharePointFolderFileArea({
                   : {})}
                 onPress={() => {
                   if (isFolder) {
-                    setSelectedItemId(null);
+                    if (selectedItemId !== null) setSelectedItemId(null);
                     closePreview();
                     openFolder(name);
                     return;
@@ -1972,7 +1969,7 @@ export default function SharePointFolderFileArea({
                   const id = safeText(it?.id) || null;
                   // Keep a non-visual "focus" id for possible external consumers,
                   // but do not use it for row marking (selection is checkbox-only).
-                  setSelectedItemId(id);
+                  if (id !== selectedItemId) setSelectedItemId(id);
                   // Single click on file: open floating preview modal (no side-by-side pane).
                   if (id) {
                     setPreviewItemId(id);

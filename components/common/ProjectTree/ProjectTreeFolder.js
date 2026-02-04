@@ -168,11 +168,6 @@ export default function ProjectTreeFolder({
 
   const [isHovered, setIsHovered] = useState(false);
 
-  const handleToggle = () => {
-    // Backwards-compat alias
-    handleStructureToggle();
-  };
-
   const handleStructureToggle = () => {
     if (!canToggle) return;
     setChevronSpinTick((t) => t + 1);

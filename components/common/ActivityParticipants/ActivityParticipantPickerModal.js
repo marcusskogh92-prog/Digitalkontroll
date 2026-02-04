@@ -124,7 +124,11 @@ export default function ActivityParticipantPickerModal({
   const { openSystemModal, closeSystemModal } = useSystemModal();
   const modalIdRef = useRef(null);
 
-  const safeOnClose = typeof onClose === 'function' ? onClose : () => {};
+  const safeOnClose = useCallback((...args) => {
+    if (typeof onClose === 'function') {
+      onClose(...args);
+    }
+  }, [onClose]);
 
   useEffect(() => {
     if (visible && !modalIdRef.current) {

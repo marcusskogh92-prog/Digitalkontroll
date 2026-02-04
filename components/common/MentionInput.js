@@ -6,19 +6,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from 'react-native';
-
-function safeText(v) {
-  if (v == null) return '';
-  return String(v).trim();
-}
 
 function getDisplayName(suggestion) {
   if (suggestion?.type === 'all') return suggestion.displayName || 'Alla';
@@ -46,7 +41,6 @@ export default function MentionInput({
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownAbove, setDropdownAbove] = useState(false);
   const [atStart, setAtStart] = useState(0);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [filterQuery, setFilterQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef(null);
@@ -99,7 +93,6 @@ export default function MentionInput({
   const handleChangeText = useCallback((newValue) => {
     onChangeText?.(newValue);
     if (!editable) return;
-    const prev = value;
     const lastAt = newValue.lastIndexOf('@');
     const segmentAfterAt = lastAt === -1 ? '' : (newValue.slice(lastAt + 1).split(/\s/)[0] || '');
     const hasSpaceAfterAt = lastAt !== -1 && /\s/.test(newValue.slice(lastAt + 1));
@@ -114,12 +107,7 @@ export default function MentionInput({
     if (showDropdown && hasSpaceAfterAt) {
       setShowDropdown(false);
     }
-  }, [onChangeText, editable, value, showDropdown, atStart, openDropdown]);
-
-  const handleSelectionChange = useCallback((e) => {
-    const { start, end } = e?.nativeEvent?.selection ?? {};
-    setSelection({ start: start ?? 0, end: end ?? 0 });
-  }, []);
+  }, [onChangeText, editable, showDropdown, openDropdown]);
 
   const handleSelectSuggestion = useCallback((s) => {
     const displayName = getDisplayName(s);
@@ -180,7 +168,6 @@ export default function MentionInput({
         ref={inputRef}
         value={value}
         onChangeText={handleChangeText}
-        onSelectionChange={handleSelectionChange}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         placeholderTextColor="#94A3B8"

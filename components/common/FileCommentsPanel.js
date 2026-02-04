@@ -97,7 +97,6 @@ function splitCommentWithMentions(text, mentions) {
       remaining = remaining.slice(end).trimStart();
       segments.push({ type: 'text', value: name ? `@${name}${remaining.length ? ' ' : ''}` : '@' });
     } else {
-      const consumed = remaining.slice(0, bestLen);
       remaining = remaining.slice(bestLen).replace(/^\s*/, '');
       segments.push({ type: 'mention', displayName: bestMatch.displayName, mention: bestMatch.mention });
     }
@@ -152,7 +151,7 @@ export default function FileCommentsPanel({
   const pid = (projectId != null && String(projectId).trim()) ? String(projectId).trim() : '';
   const fid = (fileId != null && String(fileId).trim()) ? String(fileId).trim() : '';
 
-  const { organisation, groups } = useProjectOrganisation({ companyId: cid || undefined, projectId: pid || undefined });
+  const { groups } = useProjectOrganisation({ companyId: cid || undefined, projectId: pid || undefined });
 
   const currentUserUid = auth?.currentUser?.uid ?? null;
   const currentUserEmail = (auth?.currentUser?.email && String(auth.currentUser.email).trim().toLowerCase()) || '';

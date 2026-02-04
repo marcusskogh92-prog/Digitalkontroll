@@ -57,9 +57,6 @@ function RecursiveFolderView({
         .filter(child => child && (child.type === 'folder' || !child.type))
         .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }))
     : [];
-  const hasFiles = Array.isArray(folder?.children)
-    ? folder.children.some((child) => child && child.type === 'file')
-    : false;
   
   // Check if this folder is a project (if not already determined)
   const folderIsProject = isProject || isProjectFolder(folder);
