@@ -10,9 +10,13 @@ import {
     deleteCompanyContact,
     fetchAllCompanyContacts,
     fetchCompanyContacts,
+    fetchCompanyCustomers,
     fetchCompanyProfile,
+    fetchCompanySuppliers,
     updateCompanyContact,
 } from '../components/firebase';
+import { linkExistingContactToSupplier } from '../modules/leverantorer/leverantorerService';
+import { linkExistingContactToCustomer } from '../modules/kunder/kunderService';
 import MainLayout from '../components/MainLayout';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
@@ -465,13 +469,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
   }, [companyId, allCompaniesMode]);
 
   const handleSave = async () => {
-    // Require a company to be selected (no allCompaniesMode for creating/editing)
     const cid = String(companyId || '').trim();
-    if (!cid) {
-      setError('Välj ett företag i listan till vänster först.');
-      return;
-    }
-
     const n = String(name || '').trim();
     if (!n) {
       setError('Namn är obligatoriskt.');
@@ -487,6 +485,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
         role: String(role || '').trim(),
         phone: String(phone || '').trim(),
         email: String(email || '').trim(),
+        companyId: null,
+        customerId: null,
+        companyType: null,
       };
 
       const payload = editingId
@@ -500,9 +501,25 @@ export default function ContactRegistryScreen({ navigation, route }) {
         };
 
       if (editingId) {
-        await updateCompanyContact({ id: editingId, patch: payload }, cid);
+        await updateCompanyContact({ id: editingId, patch: payload }, cid || undefined);
       } else {
-        await createCompanyContact(payload, cid);
+        const newId = await createCompanyContact(payload, cid || undefined);
+        const match = await resolveCompanyMatch(payload.contactCompanyName);
+        if (match?.type === 'supplier') {
+          await linkExistingContactToSupplier(cid || undefined, match.supplier.id, newId, {
+            role: payload.role,
+            phone: payload.phone,
+            email: payload.email,
+            contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
+          });
+        } else if (match?.type === 'customer') {
+          await linkExistingContactToCustomer(cid || undefined, match.customer, newId, {
+            role: payload.role,
+            phone: payload.phone,
+            email: payload.email,
+            contactCompanyName: match.customer.name || payload.contactCompanyName,
+          });
+        }
       }
 
       await loadContacts();
@@ -516,21 +533,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
     }
   };
 
-  const getContactInitials = (contact) => {
-    try {
-      const name = String(contact?.name || '').trim();
-      if (!name) return '?';
-      const parts = name.replace(/\s+/g, ' ').split(' ').filter(Boolean);
-      if (parts.length === 1) {
-        // Only one name - return first letter
-        return parts[0].slice(0, 1).toUpperCase();
-      }
-      // Multiple names - return first letter of first and last name
-      return (parts[0].slice(0, 1) + parts[parts.length - 1].slice(0, 1)).toUpperCase();
-    } catch (_e) {
-      return '?';
-    }
-  };
+  // (initials avatar removed for consistent table look)
 
   const handleSort = (column) => {
     if (sortColumn === column) {
@@ -543,13 +546,29 @@ export default function ContactRegistryScreen({ navigation, route }) {
     }
   };
 
+  const normalizeName = (value) => String(value || '').trim().toLowerCase();
+
+  const resolveCompanyMatch = async (companyNameInput) => {
+    const name = normalizeName(companyNameInput);
+    if (!name) return null;
+    try {
+      const cid = String(companyId || '').trim() || undefined;
+      const suppliers = await fetchCompanySuppliers(cid);
+      const supplier = (suppliers || []).find(
+        (s) => normalizeName(s?.companyName) === name
+      );
+      if (supplier) return { type: 'supplier', supplier };
+      const customers = await fetchCompanyCustomers(cid);
+      const customer = (customers || []).find(
+        (c) => normalizeName(c?.name) === name
+      );
+      if (customer) return { type: 'customer', customer };
+    } catch (_e) {}
+    return null;
+  };
+
   const handleInlineSave = async () => {
     const cid = String(companyId || '').trim();
-    if (!cid) {
-      setError('Välj ett företag i listan till vänster först.');
-      return;
-    }
-
     const n = String(inlineName || '').trim();
     if (!n) {
       // Don't save if name is empty
@@ -566,9 +585,28 @@ export default function ContactRegistryScreen({ navigation, route }) {
         phone: String(inlinePhone || '').trim(),
         email: String(inlineEmail || '').trim(),
         companyName: String(companyName || '').trim() || cid,
+        companyId: null,
+        customerId: null,
+        companyType: null,
       };
 
-      await createCompanyContact(payload, cid);
+      const newId = await createCompanyContact(payload, cid || undefined);
+      const match = await resolveCompanyMatch(payload.contactCompanyName);
+      if (match?.type === 'supplier') {
+        await linkExistingContactToSupplier(cid || undefined, match.supplier.id, newId, {
+          role: payload.role,
+          phone: payload.phone,
+          email: payload.email,
+          contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
+        });
+      } else if (match?.type === 'customer') {
+        await linkExistingContactToCustomer(cid || undefined, match.customer, newId, {
+          role: payload.role,
+          phone: payload.phone,
+          email: payload.email,
+          contactCompanyName: match.customer.name || payload.contactCompanyName,
+        });
+      }
       await loadContacts();
       
       // Clear inline form
@@ -673,18 +711,18 @@ export default function ContactRegistryScreen({ navigation, route }) {
   if (!isWeb) {
     return (
       <View style={{ flex: 1, padding: 16 }}>
-        <Text style={{ fontSize: 18, fontWeight: '700' }}>Kontaktregister</Text>
+        <Text style={{ fontSize: 18, fontWeight: '500' }}>Kontaktregister</Text>
         <Text style={{ marginTop: 8, color: '#555' }}>Kontaktregister är just nu optimerat för webbläget.</Text>
       </View>
     );
   }
 
-  const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
+  const dashboardContainerStyle = { width: '100%', backgroundColor: 'transparent' };
   const dashboardCardStyle = { 
     borderWidth: 1, 
     borderColor: '#E6E8EC', 
-    borderRadius: 18, 
-    padding: 20, 
+    borderRadius: 14, 
+    padding: 14, 
     backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -705,8 +743,8 @@ export default function ContactRegistryScreen({ navigation, route }) {
         const target = e.target;
         if (target && target.tagName !== 'TEXTAREA') {
           e.preventDefault();
-          // Check if form is valid and not saving - require company to be selected
-          const canSave = !saving && name.trim() && String(companyId || '').trim();
+          // Check if form is valid and not saving
+          const canSave = !saving && name.trim();
           if (canSave) {
             handleSave();
           }
@@ -723,7 +761,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
 
   // Keyboard event handler for Enter to save inline row (web only)
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !hasSelectedCompany) return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     
     const handleKeyDown = (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -734,7 +772,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
           // If in last field (E-post), save
           if (target.placeholder === 'E-post') {
             e.preventDefault();
-            if (!inlineSaving && inlineName.trim() && String(companyId || '').trim()) {
+            if (!inlineSaving && inlineName.trim()) {
               handleInlineSave();
             }
           }
@@ -747,7 +785,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
       window.removeEventListener('keydown', handleKeyDown);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSelectedCompany, inlineSaving, inlineName, companyId]);
+  }, [inlineSaving, inlineName, companyId]);
 
   const ContactModalComponent = (
     <Modal
@@ -795,7 +833,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name={editingId ? "create-outline" : "person-add-outline"} size={20} color="#1976D2" />
               </View>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111' }}>{editingId ? 'Redigera kontakt' : 'Lägg till kontakt'}</Text>
+              <Text style={{ fontSize: 16, fontWeight: '500', color: '#111' }}>{editingId ? 'Redigera kontakt' : 'Lägg till kontakt'}</Text>
             </View>
             <TouchableOpacity
               style={{ position: 'absolute', right: 12, top: 10, padding: 6 }}
@@ -811,7 +849,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
           </View>
 
           <ScrollView style={{ maxHeight: 600 }} contentContainerStyle={{ padding: 20 }}>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 6 }}>Namn *</Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Namn *</Text>
       <TextInput
         value={name}
         onChangeText={setName}
@@ -833,7 +871,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               }}
             />
 
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 6 }}>Företag</Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Företag</Text>
             <TextInput
               value={contactCompanyName}
               onChangeText={setContactCompanyName}
@@ -871,7 +909,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               Företag som kontakten jobbar på (kan vara extern kund/leverantör)
             </Text>
 
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 6 }}>Roll</Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Roll</Text>
       <TextInput
         value={role}
         onChangeText={setRole}
@@ -906,7 +944,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               }}
             />
 
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 6 }}>Telefonnummer</Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Telefonnummer</Text>
       <TextInput
         value={phone}
         onChangeText={(t) => setPhone(formatSwedishMobilePhone(t))}
@@ -941,7 +979,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               }}
             />
 
-            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 6 }}>E-post</Text>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>E-post</Text>
       <TextInput
         value={email}
         onChangeText={setEmail}
@@ -985,7 +1023,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 gap: 8,
               }}>
                 <Ionicons name="warning" size={16} color="#DC2626" />
-                <Text style={{ fontSize: 13, color: '#DC2626', fontWeight: '600' }}>{error}</Text>
+                <Text style={{ fontSize: 13, color: '#DC2626', fontWeight: '500' }}>{error}</Text>
         </View>
       ) : null}
 
@@ -1006,21 +1044,21 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={{ color: '#111', fontWeight: '700', fontSize: 13 }}>Avbryt</Text>
+                <Text style={{ color: '#111', fontWeight: '500', fontSize: 13 }}>Avbryt</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           onPress={handleSave}
-                disabled={saving || (!hasSelectedCompany && !allCompaniesMode) || (allCompaniesMode && !editingId) || !name.trim()}
+                disabled={saving || !name.trim()}
           style={{
                   paddingVertical: 11,
                   paddingHorizontal: 20,
             borderRadius: 10,
-                  backgroundColor: (saving || (!hasSelectedCompany && !allCompaniesMode) || (allCompaniesMode && !editingId) || !name.trim()) ? '#94A3B8' : '#1976D2',
+                  backgroundColor: (saving || !name.trim()) ? '#94A3B8' : '#1976D2',
             flexDirection: 'row',
             alignItems: 'center',
             gap: 8,
-                  ...(Platform.OS === 'web' && !(saving || !hasSelectedCompany || !name.trim()) ? {
+                  ...(Platform.OS === 'web' && !(saving || !name.trim()) ? {
                     transition: 'background-color 0.2s, transform 0.1s',
                     cursor: 'pointer',
                   } : {}),
@@ -1028,7 +1066,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 activeOpacity={0.85}
         >
                 <Ionicons name="save-outline" size={16} color="#fff" />
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{saving ? 'Sparar…' : 'Spara'}</Text>
+                <Text style={{ color: '#fff', fontWeight: '500', fontSize: 13 }}>{saving ? 'Sparar…' : 'Spara'}</Text>
         </TouchableOpacity>
       </View>
           </ScrollView>
@@ -1041,6 +1079,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
     <MainLayout
       adminMode={true}
       adminCurrentScreen="contact_registry"
+      contentFullWidth
+      contentPadding={24}
+      adminHideCompanyBanner
       adminOnSelectCompany={(payload) => {
         try {
           const cid = String(payload?.companyId || payload?.id || '').trim();
@@ -1088,26 +1129,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
       rightPanel={null}
     >
         <View style={dashboardContainerStyle}>
-          <View style={[dashboardCardStyle, { alignSelf: 'flex-start', width: 1200, maxWidth: '100%' }]}>
-            {!hasSelectedCompany ? (
-              <View style={{ 
-                paddingVertical: 16, 
-                paddingHorizontal: 18, 
-                borderRadius: 12, 
-                backgroundColor: '#FEF2F2', 
-                borderWidth: 2, 
-                borderColor: '#DC2626', 
-                marginBottom: 20,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-              }}>
-                <Ionicons name="alert-circle" size={24} color="#DC2626" />
-                <Text style={{ fontSize: 14, color: '#DC2626', fontWeight: '700' }}>
-                  Du måste välja ett företag på vänstersidan för att se och hantera kontakter.
-                </Text>
-              </View>
-            ) : null}
+          <View style={dashboardCardStyle}>
 
             {error ? (
               <View style={{ 
@@ -1123,7 +1145,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 gap: 10,
               }}>
                 <Ionicons name="warning" size={20} color="#DC2626" />
-                <Text style={{ fontSize: 13, color: '#DC2626', fontWeight: '600' }}>{error}</Text>
+                <Text style={{ fontSize: 13, color: '#DC2626', fontWeight: '500' }}>{error}</Text>
               </View>
             ) : null}
 
@@ -1141,12 +1163,12 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 gap: 10,
               }}>
                 <Ionicons name="checkmark-circle" size={20} color="#059669" />
-                <Text style={{ fontSize: 13, color: '#059669', fontWeight: '700' }}>{notice}</Text>
+                <Text style={{ fontSize: 13, color: '#059669', fontWeight: '500' }}>{notice}</Text>
               </View>
             ) : null}
 
-            <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 16, overflow: 'hidden', backgroundColor: '#fff' }}>
-              <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
+            <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 14, overflow: 'hidden', backgroundColor: '#fff' }}>
+              <View style={{ padding: 14, backgroundColor: '#F1F5F9', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     {companyName ? (
@@ -1158,9 +1180,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
                     <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
                       <Ionicons name="book-outline" size={20} color="#1976D2" />
                     </View>
-                    <Text style={{ fontSize: 15, fontWeight: '700', color: '#111' }}>Kontaktregister</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '500', color: '#111' }}>Kontaktregister</Text>
                   </View>
-                  <View style={{ flex: 1, maxWidth: 400, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8 }}>
+                  <View style={{ flex: 1, maxWidth: 520, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8 }}>
                     <Ionicons name="search" size={16} color="#64748b" style={{ marginRight: 8 }} />
                   <TextInput
                     value={search}
@@ -1198,7 +1220,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 </TouchableOpacity>
                 </View>
               </View>
-              <View style={{ padding: 18 }}>
+              <View style={{ padding: 14 }}>
                 {hasSelectedCompany ? (
                   <>
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1222,13 +1244,13 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.8}
                         >
-                          <Text style={{ color: '#1976D2', fontWeight: '700', fontSize: 13 }}>Visa fler</Text>
+                          <Text style={{ color: '#1976D2', fontWeight: '500', fontSize: 13 }}>Visa fler</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
 
                     <View style={{ 
-                      backgroundColor: '#F8FAFC', 
+                      backgroundColor: '#F1F5F9', 
                       paddingVertical: 12, 
                       paddingHorizontal: 14, 
                       borderRadius: 12, 
@@ -1251,7 +1273,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Namn</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Namn</Text>
                           {sortColumn === 'name' ? (
                             <Ionicons 
                               name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} 
@@ -1276,7 +1298,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Företag</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Företag</Text>
                           {sortColumn === 'contactCompanyName' ? (
                             <Ionicons 
                               name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} 
@@ -1301,7 +1323,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Roll</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Roll</Text>
                           {sortColumn === 'role' ? (
                             <Ionicons 
                               name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} 
@@ -1326,7 +1348,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Telefon</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Telefon</Text>
                           {sortColumn === 'phone' ? (
                             <Ionicons 
                               name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} 
@@ -1351,7 +1373,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>E-post</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>E-post</Text>
                           {sortColumn === 'email' ? (
                             <Ionicons 
                               name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} 
@@ -1381,7 +1403,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                     <View style={{ width: 64, height: 64, borderRadius: 16, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                       <Ionicons name="book-outline" size={32} color="#1976D2" />
                     </View>
-                    <Text style={{ color: '#475569', fontSize: 15, fontWeight: '600', marginBottom: 6 }}>Inga kontakter ännu</Text>
+                    <Text style={{ color: '#475569', fontSize: 15, fontWeight: '500', marginBottom: 6 }}>Inga kontakter ännu</Text>
                     <Text style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center' }}>
                       {search ? 'Inga kontakter matchade din sökning.' : 'Lägg till din första kontakt för att komma igång.'}
                     </Text>
@@ -1398,7 +1420,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                           paddingHorizontal: 14, 
                           borderBottomWidth: 1, 
                           borderBottomColor: '#EEF0F3',
-                          backgroundColor: '#F8FAFC',
+                          backgroundColor: '#EFF6FF',
                         }}>
                           <TextInput
                             value={inlineName}
@@ -1546,7 +1568,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                               // If Tab is pressed in the last field, save instead of moving to next element
                               if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
                                 e.preventDefault();
-                                if (!inlineSaving && inlineName.trim() && String(companyId || '').trim()) {
+                                if (!inlineSaving && inlineName.trim()) {
                                   handleInlineSave();
                                 }
                               }
@@ -1581,46 +1603,38 @@ export default function ContactRegistryScreen({ navigation, route }) {
                             paddingHorizontal: 14, 
                             borderBottomWidth: index < shownContacts.length - 1 ? 1 : 0, 
                             borderBottomColor: '#EEF0F3',
-                            backgroundColor: '#fff',
+                            backgroundColor: index % 2 === 1 ? '#F4F7FC' : '#fff',
                             ...(Platform.OS === 'web' ? {
                               transition: 'background-color 0.15s',
                             } : {}),
                           }}
                           onMouseEnter={Platform.OS === 'web' ? (e) => {
                             if (e?.currentTarget) {
-                              e.currentTarget.style.backgroundColor = '#F8FAFC';
+                              e.currentTarget.style.backgroundColor = '#EEF6FF';
                             }
                           } : undefined}
                           onMouseLeave={Platform.OS === 'web' ? (e) => {
                             if (e?.currentTarget) {
-                              e.currentTarget.style.backgroundColor = '#fff';
+                              e.currentTarget.style.backgroundColor = index % 2 === 1 ? '#F4F7FC' : '#fff';
                             }
                           } : undefined}
                         >
                           <TouchableOpacity 
                             onPress={() => startEdit(c)} 
                             onLongPress={() => openRowMenu(null, c)} 
-                            style={{ flex: 1.2, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                            style={{ flex: 1.2, flexDirection: 'row', alignItems: 'center' }}
                             activeOpacity={0.7}
                           >
-                            <View style={{ 
-                              width: 22, 
-                              height: 22, 
-                              borderRadius: 11, 
-                              backgroundColor: '#1976D2', 
-                              alignItems: 'center', 
-                              justifyContent: 'center' 
-                            }}>
-                              <Text style={{ fontSize: 9, fontWeight: '700', color: '#fff' }}>
-                                {getContactInitials(c)}
-                              </Text>
-                            </View>
-                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#111' }} numberOfLines={1}>{String(c?.name || '—')}</Text>
+                            <Text style={{ fontSize: 13, fontWeight: '500', color: '#111' }} numberOfLines={1}>{String(c?.name || '—')}</Text>
                           </TouchableOpacity>
                           <View style={{ flex: 1.1 }}>
-                            <Text style={{ fontSize: 13, color: '#475569', fontWeight: '500' }} numberOfLines={1}>{String(c?.contactCompanyName || '—')}</Text>
+                            <Text style={{ fontSize: 13, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                              {String(c?.contactCompanyName || '—')}
+                            </Text>
                           </View>
-                          <Text style={{ flex: 1.0, fontSize: 13, color: '#64748b' }} numberOfLines={1}>{String(c?.role || '—')}</Text>
+                          <Text style={{ flex: 1.0, fontSize: 13, color: '#64748b' }} numberOfLines={1}>
+                            {String(c?.role || '—')}
+                          </Text>
                           <TouchableOpacity
                             onPress={() => openTel(c?.phone)}
                             onLongPress={() => openRowMenu(null, c)}
@@ -1657,6 +1671,14 @@ export default function ContactRegistryScreen({ navigation, route }) {
                               <Text style={{ fontSize: 13, color: '#94A3B8' }} numberOfLines={1}>—</Text>
                             )}
                           </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => openRowMenu(null, c)}
+                            style={{ padding: 6, borderRadius: 8, backgroundColor: 'transparent', marginLeft: 6 }}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
+                          </TouchableOpacity>
                         </View>
                       ))}
                     </View>
@@ -1666,7 +1688,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
                 ) : (
                   <View style={{ padding: 32, alignItems: 'center' }}>
                     <Ionicons name="business-outline" size={48} color="#CBD5E1" style={{ marginBottom: 12 }} />
-                    <Text style={{ color: '#94A3B8', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+                    <Text style={{ color: '#94A3B8', fontSize: 14, fontWeight: '500', textAlign: 'center' }}>
                       Välj ett företag på vänstersidan för att se kontakter
                     </Text>
                   </View>

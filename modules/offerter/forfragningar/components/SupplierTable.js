@@ -1,8 +1,18 @@
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import ContactPickerInline from './ContactPickerInline';
 
 function safeText(v) {
   const s = String(v ?? '').trim();
   return s || '';
+}
+
+function getCategoryList(supplier) {
+  if (!supplier) return [];
+  if (Array.isArray(supplier.categories) && supplier.categories.length) return supplier.categories;
+  if (supplier.category) return [supplier.category];
+  return [];
 }
 
 function StatusPill({ status }) {
@@ -53,29 +63,73 @@ function SmallButton({ label, onPress, disabled, variant }) {
 
 export default function SupplierTable({
   packages,
+  suppliers,
+  contacts,
+  onPickContact,
+  onCreateContact,
   onSetStatus,
   onOpenFolder,
   onRemove,
   canOpenFolder,
 }) {
   const rows = Array.isArray(packages) ? packages : [];
+  const supplierMap = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(suppliers) ? suppliers : []).forEach((s) => {
+      const id = safeText(s?.id);
+      if (id) map.set(id, s);
+      const name = safeText(s?.companyName).toLowerCase();
+      if (name) map.set(`name:${name}`, s);
+    });
+    return map;
+  }, [suppliers]);
+  const contactMap = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(contacts) ? contacts : []).forEach((c) => {
+      const id = safeText(c?.id);
+      if (id) map.set(id, c);
+    });
+    return map;
+  }, [contacts]);
+
+  const resolveSupplier = (pkg) => {
+    const sid = safeText(pkg?.supplierId);
+    if (sid && supplierMap.has(sid)) return supplierMap.get(sid);
+    const name = safeText(pkg?.supplierName).toLowerCase();
+    if (name && supplierMap.has(`name:${name}`)) return supplierMap.get(`name:${name}`);
+    return null;
+  };
+
+  const resolveContact = (pkg) => {
+    const cid = safeText(pkg?.contactId);
+    if (cid && contactMap.has(cid)) return contactMap.get(cid);
+    return null;
+  };
 
   return (
     <View style={styles.table}>
       <View style={styles.headerRow}>
         <Text style={[styles.th, styles.colSupplier]}>Företag</Text>
+        <Text style={[styles.th, styles.colCategory]}>Kategorier</Text>
+        <Text style={[styles.th, styles.colContact]}>Kontaktperson</Text>
         <Text style={[styles.th, styles.colStatus]}>Status</Text>
         <Text style={[styles.th, styles.colActions]}>Åtgärder</Text>
       </View>
 
       {rows.length === 0 ? (
         <View style={styles.emptyRow}>
-          <Text style={styles.emptyText}>Inga leverantörer ännu.</Text>
+          <Text style={styles.emptyText}>Inga leverantörer tillagda i denna disciplin.</Text>
         </View>
       ) : (
         rows.map((p) => {
           const status = safeText(p?.status) || 'Ej skickad';
           const supplierName = safeText(p?.supplierName) || '—';
+          const supplier = resolveSupplier(p);
+          const categories = getCategoryList(supplier);
+          const visibleCategories = categories.slice(0, 3);
+          const extraCategories = Math.max(0, categories.length - visibleCategories.length);
+          const contact = resolveContact(p);
+          const contactName = safeText(p?.contactName) || safeText(contact?.name);
           const openDisabled = !canOpenFolder?.(p);
           return (
             <View key={p.id} style={styles.dataRow}>
@@ -83,6 +137,41 @@ export default function SupplierTable({
                 <Text style={styles.supplierText} numberOfLines={1}>
                   {supplierName}
                 </Text>
+              </View>
+              <View style={[styles.td, styles.colCategory]}>
+                {visibleCategories.length ? (
+                  <View style={styles.chipRow}>
+                    {visibleCategories.map((cat) => (
+                      <View key={cat} style={styles.chip}>
+                        <Text style={styles.chipText} numberOfLines={1}>{safeText(cat)}</Text>
+                      </View>
+                    ))}
+                    {extraCategories > 0 ? (
+                      <View style={styles.chipMuted}>
+                        <Text style={styles.chipMutedText}>{`+${extraCategories}`}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.emptyCell}>—</Text>
+                )}
+              </View>
+              <View style={[styles.td, styles.colContact]}>
+                <View style={styles.contactCell}>
+                  {contactName ? (
+                    <View style={styles.contactChip}>
+                      <Text style={styles.contactChipText} numberOfLines={1}>{contactName}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.emptyCell}>Ingen kontakt</Text>
+                  )}
+                  <ContactPickerInline
+                    contacts={contacts}
+                    supplierId={safeText(supplier?.id || p?.supplierId)}
+                    onPick={(c) => onPickContact?.(p, c)}
+                    onCreate={(name) => onCreateContact?.(p, name)}
+                  />
+                </View>
               </View>
               <View style={[styles.td, styles.colStatus]}>
                 <StatusPill status={status} />
@@ -150,6 +239,14 @@ const styles = StyleSheet.create({
     flex: 2,
     minWidth: 160,
   },
+  colCategory: {
+    flex: 2,
+    minWidth: 160,
+  },
+  colContact: {
+    flex: 2,
+    minWidth: 200,
+  },
   colStatus: {
     width: 120,
     alignItems: 'flex-start',
@@ -162,6 +259,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '400',
     color: '#111827',
+  },
+  emptyCell: {
+    fontSize: 12,
+    color: '#94a3b8',
   },
   emptyRow: {
     paddingHorizontal: 12,
@@ -177,6 +278,53 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    alignItems: 'center',
+  },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#F1F5F9',
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  chipMuted: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#fff',
+  },
+  chipMutedText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  contactCell: {
+    gap: 6,
+  },
+  contactChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  contactChipText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#334155',
   },
   statusPill: {
     paddingHorizontal: 10,

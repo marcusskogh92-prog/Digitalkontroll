@@ -3,10 +3,10 @@ import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, 
 
 import DocumentListSurface from '../components/DocumentListSurface';
 
-import { fetchCompanySuppliers, getCompanySharePointSiteId } from '../../../components/firebase';
+import { createCompanyContact, fetchCompanyContacts, fetchCompanySuppliers, getCompanySharePointSiteId } from '../../../components/firebase';
 import { getDriveItemByPath } from '../../../services/azure/fileService';
 
-import { listenRfqByggdelar, listenRfqPackages, updateRfqPackage } from '../../../features/project-phases/phases/kalkylskede/services/forfragningarService';
+import { listenRfqByggdelar, listenRfqPackages, softDeleteRfqByggdel, updateRfqByggdel, updateRfqPackage } from '../../../features/project-phases/phases/kalkylskede/services/forfragningarService';
 
 import ByggdelRowAccordion from './components/ByggdelRowAccordion';
 import StructurePickerModal from './components/StructurePickerModal';
@@ -22,6 +22,7 @@ import {
     seedDefaultByggdelTable,
     setRfqStructureMode,
 } from './forfragningarModuleService';
+import { linkExistingContactToSupplier } from '../../leverantorer/leverantorerService';
 
 function safeText(v) {
 	const s = String(v ?? '').trim();
@@ -70,6 +71,16 @@ function formatStructureLabel(mode) {
 		: 'Byggdelstabell';
 }
 
+function sortContacts(a, b) {
+	const ac = safeText(a?.contactCompanyName || a?.companyName || a?.companyId || '');
+	const bc = safeText(b?.contactCompanyName || b?.companyName || b?.companyId || '');
+	const cn = ac.localeCompare(bc, 'sv');
+	if (cn !== 0) return cn;
+	const an = safeText(a?.name);
+	const bn = safeText(b?.name);
+	return an.localeCompare(bn, 'sv');
+}
+
 async function openUrl(url) {
 	const u = safeText(url);
 	if (!u) return;
@@ -99,6 +110,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 	const [loading, setLoading] = useState(true);
 	const [suppliers, setSuppliers] = useState([]);
 	const [suppliersLoading, setSuppliersLoading] = useState(false);
+	const [contacts, setContacts] = useState([]);
 
 	const [structureMode, setStructureMode] = useState(null);
 	const [structurePickerOpen, setStructurePickerOpen] = useState(false);
@@ -108,6 +120,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 	const [newByggdelCode, setNewByggdelCode] = useState('');
 	const [newByggdelLabel, setNewByggdelLabel] = useState('');
 	const [newByggdelGroup, setNewByggdelGroup] = useState('');
+	const [editingByggdelId, setEditingByggdelId] = useState('');
 	const [creatingByggdel, setCreatingByggdel] = useState(false);
 	const [seeding, setSeeding] = useState(false);
 
@@ -191,6 +204,45 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 		};
 	}, [companyId]);
 
+	const supplierMap = useMemo(() => {
+		const map = new Map();
+		(Array.isArray(suppliers) ? suppliers : []).forEach((s) => {
+			const id = safeText(s?.id);
+			if (id) map.set(id, s);
+			const name = safeText(s?.companyName).toLowerCase();
+			if (name) map.set(`name:${name}`, s);
+		});
+		return map;
+	}, [suppliers]);
+
+	const resolveSupplierForPackage = (pkg) => {
+		const sid = safeText(pkg?.supplierId);
+		if (sid && supplierMap.has(sid)) return supplierMap.get(sid);
+		const name = safeText(pkg?.supplierName).toLowerCase();
+		if (name && supplierMap.has(`name:${name}`)) return supplierMap.get(`name:${name}`);
+		return null;
+	};
+
+	useEffect(() => {
+		let alive = true;
+		const cid = safeText(companyId);
+		if (!cid) return () => {};
+
+		fetchCompanyContacts(cid)
+			.then((list) => {
+				if (!alive) return;
+				setContacts(Array.isArray(list) ? list : []);
+			})
+			.catch(() => {
+				if (!alive) return;
+				setContacts([]);
+			});
+
+		return () => {
+			alive = false;
+		};
+	}, [companyId]);
+
 	const byggdelSorted = useMemo(() => {
 		const list = Array.isArray(byggdelar) ? [...byggdelar] : [];
 		list.sort((a, b) => {
@@ -207,6 +259,19 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 		});
 		return list;
 	}, [byggdelar]);
+
+	useEffect(() => {
+		if (!companyId || !projectId) return;
+		if (!tableEnabled) return;
+		if (seeding) return;
+		if (byggdelSorted.length > 0) return;
+		setSeeding(true);
+		seedDefaultByggdelTable({ companyId, projectId, existingByggdelCount: byggdelSorted.length })
+			.catch((e) => {
+				Alert.alert('Kunde inte skapa tabell', e?.message || 'Saknar behörighet eller okänt fel');
+			})
+			.finally(() => setSeeding(false));
+	}, [companyId, projectId, tableEnabled, byggdelSorted.length, seeding]);
 
 	const packagesByByggdel = useMemo(() => {
 		const map = {};
@@ -247,25 +312,71 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 
 		setCreatingByggdel(true);
 		try {
-			await createByggdelWithBestEffortFolders({
-				companyId,
-				projectId,
-				project,
-				byggdel: {
+			if (safeText(editingByggdelId)) {
+				await updateRfqByggdel(companyId, projectId, editingByggdelId, {
 					label,
 					code: code || null,
 					group: group || null,
-					moment: null,
-				},
-			});
+				});
+			} else {
+				await createByggdelWithBestEffortFolders({
+					companyId,
+					projectId,
+					project,
+					byggdel: {
+						label,
+						code: code || null,
+						group: group || null,
+						moment: null,
+					},
+				});
+			}
 			setNewByggdelCode('');
 			setNewByggdelLabel('');
 			setNewByggdelGroup('');
+			setEditingByggdelId('');
 		} catch (e) {
 			Alert.alert('Kunde inte lägga till byggdel', e?.message || 'Okänt fel');
 		} finally {
 			setCreatingByggdel(false);
 		}
+	};
+
+	const startEditByggdel = (byggdel) => {
+		const bid = safeText(byggdel?.id);
+		if (!bid) return;
+		setEditingByggdelId(bid);
+		setNewByggdelCode(safeText(byggdel?.code));
+		setNewByggdelLabel(safeText(byggdel?.label));
+		setNewByggdelGroup(safeText(byggdel?.group));
+	};
+
+	const cancelEditByggdel = () => {
+		setEditingByggdelId('');
+		setNewByggdelCode('');
+		setNewByggdelLabel('');
+		setNewByggdelGroup('');
+	};
+
+	const removeByggdel = async (byggdel) => {
+		if (!companyId || !projectId) return;
+		const bid = safeText(byggdel?.id);
+		if (!bid) return;
+		if (!tableEnabled) return;
+		Alert.alert('Ta bort disciplin?', 'Disciplinen döljs från listan. Du kan återställa genom att ändra i databasen vid behov.', [
+			{ text: 'Avbryt', style: 'cancel' },
+			{
+				text: 'Ta bort',
+				style: 'destructive',
+				onPress: async () => {
+					try {
+						await softDeleteRfqByggdel(companyId, projectId, bid);
+					} catch (e) {
+						Alert.alert('Kunde inte ta bort', e?.message || 'Okänt fel');
+					}
+				},
+			},
+		]);
 	};
 
 	const addSupplierFromRegistry = async (byggdel, supplier) => {
@@ -307,6 +418,81 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 		if (!companyId || !projectId || !pkg?.id) return;
 		if (!tableEnabled) return;
 		await updateRfqPackage(companyId, projectId, pkg.id, { status });
+	};
+
+	const pickContactForPackage = async (pkg, contact) => {
+		if (!companyId || !projectId || !pkg?.id) return;
+		if (!tableEnabled) return;
+		const contactId = safeText(contact?.id);
+		if (!contactId) return;
+		const contactName = safeText(contact?.name);
+		const supplier = resolveSupplierForPackage(pkg);
+		const supplierId = safeText(supplier?.id || pkg?.supplierId);
+		const supplierName = safeText(supplier?.companyName || pkg?.supplierName);
+
+		if (supplierId) {
+			try {
+				await linkExistingContactToSupplier(companyId, supplierId, contactId, {
+					contactCompanyName: supplierName || safeText(contact?.contactCompanyName),
+				});
+			} catch (_e) {}
+		}
+
+		await updateRfqPackage(companyId, projectId, pkg.id, {
+			contactId,
+			contactName: contactName || null,
+		});
+	};
+
+	const createContactForPackage = async (pkg, name) => {
+		if (!companyId || !projectId || !pkg?.id) return;
+		if (!tableEnabled) return;
+		const contactName = safeText(name);
+		if (!contactName) return;
+
+		const supplier = resolveSupplierForPackage(pkg);
+		const supplierId = safeText(supplier?.id || pkg?.supplierId);
+		const supplierName = safeText(supplier?.companyName || pkg?.supplierName);
+
+		const newId = await createCompanyContact(
+			{
+				name: contactName,
+				contactCompanyName: supplierName,
+				companyId: null,
+				customerId: null,
+				companyType: null,
+			},
+			companyId,
+		);
+
+		if (supplierId) {
+			try {
+				await linkExistingContactToSupplier(companyId, supplierId, newId, {
+					contactCompanyName: supplierName,
+				});
+			} catch (_e) {}
+		}
+
+		setContacts((prev) => {
+			const arr = Array.isArray(prev) ? prev : [];
+			if (arr.some((c) => safeText(c?.id) === newId)) return arr;
+			const next = [
+				...arr,
+				{
+					id: newId,
+					name: contactName,
+					contactCompanyName: supplierName,
+					linkedSupplierId: supplierId || null,
+				},
+			];
+			next.sort(sortContacts);
+			return next;
+		});
+
+		await updateRfqPackage(companyId, projectId, pkg.id, {
+			contactId: newId,
+			contactName,
+		});
 	};
 
 	const canOpenFolder = (pkg) => Boolean(companyId && safeText(pkg?.sharePointFolderPath));
@@ -389,32 +575,13 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 				</Pressable>
 			)}
 
-			{tableEnabled ? (
-				<Pressable
-					onPress={async () => {
-						if (seeding || byggdelSorted.length > 0) return;
-						setSeeding(true);
-						try {
-							await seedDefaultByggdelTable({ companyId, projectId, existingByggdelCount: byggdelSorted.length });
-						} catch (e) {
-							Alert.alert('Kunde inte skapa tabell', e?.message || 'Okänt fel');
-						} finally {
-							setSeeding(false);
-						}
-					}}
-					disabled={seeding || byggdelSorted.length > 0}
-					style={({ pressed }) => [styles.secondaryBtn, (seeding || byggdelSorted.length > 0) && styles.btnDisabled, pressed && styles.btnPressed]}
-				>
-					<Text style={styles.secondaryBtnText}>{seeding ? 'Skapar…' : 'Skapa tabell'}</Text>
-				</Pressable>
-			) : null}
 		</View>
 	);
 
 	return (
 		<DocumentListSurface
 			title="Förfrågningar"
-			subtitle="Förfrågningsunderlag → Förfrågningar"
+			subtitle="Offerter / förfrågningar"
 			statusLine={structureStatusLine}
 			rightActions={rightActions}
 		>
@@ -459,6 +626,8 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 							<Text style={[styles.th, styles.colNr]} numberOfLines={1}>Nr</Text>
 							<Text style={[styles.th, styles.colDesc]} numberOfLines={1}>Beskrivning</Text>
 							<Text style={[styles.th, styles.colGroup]} numberOfLines={1}>Kategori/disciplin</Text>
+							<Text style={[styles.th, styles.colCount]} numberOfLines={1}>Leverantörer</Text>
+							<Text style={[styles.th, styles.colStatus]} numberOfLines={1}>Status</Text>
 							<View style={[styles.colChevron]} />
 						</View>
 
@@ -486,13 +655,25 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 									style={[styles.input, styles.inputGroup, !tableEnabled && styles.inputDisabled]}
 								/>
 							</View>
-							<Pressable
-								onPress={handleAddByggdel}
-								disabled={!tableEnabled || creatingByggdel || !safeText(newByggdelLabel)}
-								style={({ pressed }) => [styles.secondaryBtn, (!tableEnabled || creatingByggdel || !safeText(newByggdelLabel)) && styles.btnDisabled, pressed && styles.btnPressed]}
-							>
-								<Text style={styles.secondaryBtnText}>{creatingByggdel ? 'Sparar…' : 'Lägg till'}</Text>
-							</Pressable>
+							<View style={styles.helpActions}>
+								{safeText(editingByggdelId) ? (
+									<Pressable
+										onPress={cancelEditByggdel}
+										style={({ pressed }) => [styles.ghostBtnSmall, pressed && styles.btnPressed]}
+									>
+										<Text style={styles.ghostBtnSmallText}>Avbryt</Text>
+									</Pressable>
+								) : null}
+								<Pressable
+									onPress={handleAddByggdel}
+									disabled={!tableEnabled || creatingByggdel || !safeText(newByggdelLabel)}
+									style={({ pressed }) => [styles.secondaryBtn, (!tableEnabled || creatingByggdel || !safeText(newByggdelLabel)) && styles.btnDisabled, pressed && styles.btnPressed]}
+								>
+									<Text style={styles.secondaryBtnText}>
+										{creatingByggdel ? 'Sparar…' : safeText(editingByggdelId) ? 'Spara' : 'Lägg till'}
+									</Text>
+								</Pressable>
+							</View>
 						</View>
 
 						{loading ? (
@@ -504,8 +685,8 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 							<ScrollView style={styles.tableScrollWrap} contentContainerStyle={styles.tableInner}>
 								{byggdelSorted.length === 0 ? (
 									<View style={styles.emptyRow}>
-										<Text style={styles.emptyTitle}>Inga byggdelar</Text>
-										<Text style={styles.emptyHint}>Skapa en byggdel som en rad i tabellen, och expandera den för att koppla UE.</Text>
+										<Text style={styles.emptyTitle}>Inga discipliner</Text>
+										<Text style={styles.emptyHint}>Skapa en disciplin och koppla UE/leverantörer.</Text>
 									</View>
 								) : null}
 
@@ -520,6 +701,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 											onToggle={() => toggleByggdel(bid)}
 											packages={(packagesByByggdel?.[bid] || []).filter((p) => !p?.deleted)}
 											suppliers={suppliers}
+											contacts={contacts}
 											onPickSupplier={async (s) => {
 												try {
 													await addSupplierFromRegistry(bd, s);
@@ -534,6 +716,22 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 													Alert.alert('Kunde inte skapa', e?.message || 'Okänt fel');
 												}
 											}}
+											onPickContact={async (pkg, contact) => {
+												try {
+													await pickContactForPackage(pkg, contact);
+												} catch (e) {
+													Alert.alert('Kunde inte koppla kontakt', e?.message || 'Okänt fel');
+												}
+											}}
+											onCreateContact={async (pkg, name) => {
+												try {
+													await createContactForPackage(pkg, name);
+												} catch (e) {
+													Alert.alert('Kunde inte skapa kontakt', e?.message || 'Okänt fel');
+												}
+											}}
+											onEditByggdel={startEditByggdel}
+											onRemoveByggdel={removeByggdel}
 											onSetStatus={setPackageStatus}
 											onOpenFolder={openFolder}
 											onRemove={removePackage}
@@ -676,6 +874,12 @@ const styles = StyleSheet.create({
 		width: 220,
 		minWidth: 0,
 	},
+	colCount: {
+		width: 140,
+	},
+	colStatus: {
+		width: 110,
+	},
 	colChevron: {
 		width: 28,
 	},
@@ -695,6 +899,25 @@ const styles = StyleSheet.create({
 		flexDirection: 'row',
 		alignItems: 'center',
 		gap: 10,
+	},
+	helpActions: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 10,
+	},
+	ghostBtnSmall: {
+		paddingHorizontal: 10,
+		paddingVertical: 8,
+		borderRadius: 10,
+		borderWidth: 1,
+		borderColor: '#E2E8F0',
+		backgroundColor: '#fff',
+		...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+	},
+	ghostBtnSmallText: {
+		fontSize: 12,
+		fontWeight: '500',
+		color: '#64748b',
 	},
 	input: {
 		borderWidth: 1,

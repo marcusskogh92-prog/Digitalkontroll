@@ -14,10 +14,30 @@ import {
 } from '../components/firebase';
 import MainLayout from '../components/MainLayout';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
+import LeverantorerView from '../modules/leverantorer/LeverantorerView';
+import KunderView from '../modules/kunder/KunderView';
 
 export default function SuppliersScreen({ navigation, route }) {
   const routeCompanyId = String(route?.params?.companyId || '').trim();
   const isCustomers = route?.name === 'Customers'; // Check if this is customers screen
+
+  // Webb: använd nya leverantörsmodulen (Leverantörer). Kunder använder fortfarande legacy-vyn.
+  if (Platform.OS === 'web' && route?.name === 'Suppliers') {
+    return <LeverantorerView navigation={navigation} route={route} />;
+  }
+  if (Platform.OS === 'web' && route?.name === 'Customers') {
+    return <KunderView navigation={navigation} route={route} />;
+  }
+  if (Platform.OS !== 'web' && route?.name === 'Customers') {
+    return (
+      <View style={{ flex: 1, padding: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: '500', color: '#111' }}>Kunder</Text>
+        <Text style={{ marginTop: 8, fontSize: 14, color: '#64748b' }}>
+          Kunder är optimerat för webbläget.
+        </Text>
+      </View>
+    );
+  }
   
   // For superadmins, don't auto-select company - require explicit selection
   const [companyId, setCompanyId] = useState(() => {

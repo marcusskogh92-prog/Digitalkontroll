@@ -22,6 +22,8 @@ const MainLayout = ({
   sidebarControlTypesMode = false,
   sidebarSelectedCompanyId = null,
   sidebarOnAddMainFolder = null,
+  contentFullWidth = false,
+  contentPadding = 32,
   adminMode = false,
   adminCurrentScreen = null,
   adminOnSelectCompany = null,
@@ -105,8 +107,8 @@ const MainLayout = ({
             onAddMainFolder={sidebarOnAddMainFolder}
           />
         )}
-        <div style={{ flex: 1, paddingTop: 32, paddingLeft: 32, paddingRight: 32, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, WebkitOverflowScrolling: 'touch' }}>
-          <div style={{ width: '100%', maxWidth: 1200, margin: '0 auto' }}>
+        <div style={{ flex: 1, paddingTop: contentPadding, paddingLeft: contentPadding, paddingRight: contentPadding, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ width: '100%', maxWidth: contentFullWidth ? '100%' : 1200, margin: contentFullWidth ? '0' : '0 auto' }}>
             {showCompanyBanner && (
               <CompanyBanner 
                 companyId={sidebarSelectedCompanyId} 

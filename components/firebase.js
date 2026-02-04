@@ -2264,7 +2264,10 @@ export async function fetchAllCompanyContacts({ max = 2000 } = {}) {
   }
 }
 
-export async function createCompanyContact({ name, companyName, contactCompanyName, role, phone, email }, companyIdOverride) {
+export async function createCompanyContact(
+  { name, companyName, contactCompanyName, role, phone, email, linkedSupplierId, companyId: contactCompanyId, customerId, companyType },
+  companyIdOverride
+) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
   if (!companyId) {
     const err = new Error('no_company');
@@ -2286,6 +2289,13 @@ export async function createCompanyContact({ name, companyName, contactCompanyNa
     email: String(email || '').trim(),
     createdAt: serverTimestamp(),
   };
+  if (contactCompanyId !== undefined) payload.companyId = contactCompanyId;
+  if (customerId !== undefined) payload.customerId = customerId;
+  if (companyType !== undefined) payload.companyType = companyType;
+  if (linkedSupplierId !== undefined) {
+    const ls = linkedSupplierId === null ? null : String(linkedSupplierId || '').trim();
+    payload.linkedSupplierId = ls;
+  }
   let createdBy = null;
   try {
     const u = auth && auth.currentUser ? auth.currentUser : null;
@@ -2341,6 +2351,10 @@ export async function updateCompanyContact({ id, patch }, companyIdOverride) {
   if (Object.prototype.hasOwnProperty.call(safePatch, 'email')) {
     safePatch.email = String(safePatch.email || '').trim();
   }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'linkedSupplierId')) {
+    safePatch.linkedSupplierId =
+      safePatch.linkedSupplierId === null ? null : String(safePatch.linkedSupplierId || '').trim();
+  }
   safePatch.updatedAt = serverTimestamp();
 
   const ref = doc(db, 'foretag', companyId, 'kontakter', contactId);
@@ -2366,8 +2380,9 @@ export async function deleteCompanyContact({ id }, companyIdOverride) {
 }
 
 // Leverantörer per företag
-// Data model: foretag/{companyId}/leverantorer/{supplierId} with fields:
-// { companyName: string, organizationNumber: string, vatNumber: string, address: string, category: string, createdAt, updatedAt }
+// Data model: foretag/{companyId}/leverantorer/{supplierId}
+// Fields: companyName, organizationNumber, address (gata), postalCode, city, category, byggdelTags[], contactIds[], createdAt, updatedAt
+// (vatNumber deprecated – not written for new/updated docs)
 export async function fetchCompanySuppliers(companyIdOverride) {
   try {
     const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -2389,7 +2404,10 @@ export async function fetchCompanySuppliers(companyIdOverride) {
   }
 }
 
-export async function createCompanySupplier({ companyName, organizationNumber, vatNumber, address, category }, companyIdOverride) {
+export async function createCompanySupplier(
+  { companyName, organizationNumber, address, postalCode, city, category, categories, byggdelTags, contactIds },
+  companyIdOverride
+) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
   if (!companyId) {
     const err = new Error('no_company');
@@ -2405,11 +2423,24 @@ export async function createCompanySupplier({ companyName, organizationNumber, v
   const payload = {
     companyName: n,
     organizationNumber: String(organizationNumber || '').trim(),
-    vatNumber: String(vatNumber || '').trim(),
     address: String(address || '').trim(),
+    postalCode: String(postalCode || '').trim(),
+    city: String(city || '').trim(),
     category: String(category || '').trim(),
     createdAt: serverTimestamp(),
   };
+  if (Array.isArray(categories)) {
+    payload.categories = categories.map((c) => String(c || '').trim()).filter(Boolean);
+    if (!payload.category && payload.categories.length) {
+      payload.category = payload.categories[0];
+    }
+  }
+  if (Array.isArray(byggdelTags) && byggdelTags.length > 0) {
+    payload.byggdelTags = byggdelTags.map((t) => String(t || '').trim()).filter(Boolean);
+  }
+  if (Array.isArray(contactIds) && contactIds.length > 0) {
+    payload.contactIds = contactIds.map((id) => String(id || '').trim()).filter(Boolean);
+  }
   let createdBy = null;
   try {
     const u = auth && auth.currentUser ? auth.currentUser : null;
@@ -2453,15 +2484,37 @@ export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
   if (Object.prototype.hasOwnProperty.call(safePatch, 'organizationNumber')) {
     safePatch.organizationNumber = String(safePatch.organizationNumber || '').trim();
   }
-  if (Object.prototype.hasOwnProperty.call(safePatch, 'vatNumber')) {
-    safePatch.vatNumber = String(safePatch.vatNumber || '').trim();
-  }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'address')) {
     safePatch.address = String(safePatch.address || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'postalCode')) {
+    safePatch.postalCode = String(safePatch.postalCode || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'city')) {
+    safePatch.city = String(safePatch.city || '').trim();
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'category')) {
     safePatch.category = String(safePatch.category || '').trim();
   }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'categories')) {
+    safePatch.categories = Array.isArray(safePatch.categories)
+      ? safePatch.categories.map((c) => String(c || '').trim()).filter(Boolean)
+      : [];
+    if (!safePatch.category && safePatch.categories.length) {
+      safePatch.category = safePatch.categories[0];
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'byggdelTags')) {
+    safePatch.byggdelTags = Array.isArray(safePatch.byggdelTags)
+      ? safePatch.byggdelTags.map((t) => String(t || '').trim()).filter(Boolean)
+      : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'contactIds')) {
+    safePatch.contactIds = Array.isArray(safePatch.contactIds)
+      ? safePatch.contactIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  }
+  delete safePatch.vatNumber;
   safePatch.updatedAt = serverTimestamp();
 
   const ref = doc(db, 'foretag', companyId, 'leverantorer', supplierId);
@@ -2483,6 +2536,142 @@ export async function deleteCompanySupplier({ id }, companyIdOverride) {
     throw err;
   }
   await deleteDoc(doc(db, 'foretag', companyId, 'leverantorer', supplierId));
+  return true;
+}
+
+// Kunder per företag
+// Data model: foretag/{companyId}/kunder/{customerId}
+// Fields: name, personalOrOrgNumber, address (gata), postalCode, city, customerType, contactIds[], createdAt, updatedAt
+export async function fetchCompanyCustomers(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const snap = await getDocs(collection(db, 'foretag', companyId, 'kunder'));
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a?.name || '').trim();
+      const bn = String(b?.name || '').trim();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCompanyCustomer(
+  { name, personalOrOrgNumber, address, postalCode, city, customerType, contactIds },
+  companyIdOverride
+) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const n = String(name || '').trim();
+  if (!n) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  const payload = {
+    name: n,
+    personalOrOrgNumber: String(personalOrOrgNumber || '').trim(),
+    address: String(address || '').trim(),
+    postalCode: String(postalCode || '').trim(),
+    city: String(city || '').trim(),
+    customerType: String(customerType || '').trim(),
+    createdAt: serverTimestamp(),
+  };
+  if (Array.isArray(contactIds) && contactIds.length > 0) {
+    payload.contactIds = contactIds.map((id) => String(id || '').trim()).filter(Boolean);
+  }
+  let createdBy = null;
+  try {
+    const u = auth && auth.currentUser ? auth.currentUser : null;
+    if (u) {
+      createdBy = {
+        uid: u.uid || null,
+        email: u.email || null,
+        displayName: u.displayName || null,
+      };
+    }
+  } catch (_e) {
+    createdBy = null;
+  }
+  if (createdBy) payload.createdBy = createdBy;
+
+  const colRef = collection(db, 'foretag', companyId, 'kunder');
+  const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
+  return docRef.id;
+}
+
+export async function updateCompanyCustomer({ id, patch }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const customerId = String(id || '').trim();
+  if (!customerId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'name')) {
+    const n = String(safePatch.name || '').trim();
+    if (!n) throw new Error('Namn är obligatoriskt.');
+    safePatch.name = n;
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'personalOrOrgNumber')) {
+    safePatch.personalOrOrgNumber = String(safePatch.personalOrOrgNumber || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'address')) {
+    safePatch.address = String(safePatch.address || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'postalCode')) {
+    safePatch.postalCode = String(safePatch.postalCode || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'city')) {
+    safePatch.city = String(safePatch.city || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'customerType')) {
+    safePatch.customerType = String(safePatch.customerType || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'contactIds')) {
+    safePatch.contactIds = Array.isArray(safePatch.contactIds)
+      ? safePatch.contactIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  }
+  safePatch.updatedAt = serverTimestamp();
+
+  const ref = doc(db, 'foretag', companyId, 'kunder', customerId);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+export async function deleteCompanyCustomer({ id }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) {
+    const err = new Error('no_company');
+    err.code = 'no_company';
+    throw err;
+  }
+  const customerId = String(id || '').trim();
+  if (!customerId) {
+    const err = new Error('invalid-argument');
+    err.code = 'invalid-argument';
+    throw err;
+  }
+  await deleteDoc(doc(db, 'foretag', companyId, 'kunder', customerId));
   return true;
 }
 

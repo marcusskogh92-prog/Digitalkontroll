@@ -107,9 +107,9 @@ export default function AdminSidebar({
     adminMenuItems.push(
       { key: 'manage_users', label: 'Användare', icon: 'person', color: '#1976D2', screen: 'ManageUsers' },
       { key: 'manage_control_types', label: 'Kontrolltyper', icon: 'options-outline', color: '#6A1B9A', screen: 'ManageControlTypes' },
-      { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#0f172a', screen: 'ContactRegistry' },
-      { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#43A047', screen: 'Suppliers' },
-      { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#FB8C00', screen: 'Customers' },
+      { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#1976D2', screen: 'ContactRegistry' },
+      { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#1976D2', screen: 'Suppliers' },
+      { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#1976D2', screen: 'Customers' },
       { key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageSharePointNavigation' },
     );
   }
@@ -334,12 +334,12 @@ export default function AdminSidebar({
                             onMouseEnter={() => setHoveredKey(hoverKey)}
                             onMouseLeave={() => setHoveredKey(null)}
                           >
-                            <Ionicons
-                              name="business"
-                              size={16}
-                              color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
-                              style={{ marginRight: 8 }}
-                            />
+                          <Ionicons
+                            name="business"
+                            size={16}
+                            color="#2E7D32"
+                            style={{ marginRight: 8 }}
+                          />
                             <span
                               style={{
                                 fontSize: 13,
@@ -393,8 +393,8 @@ export default function AdminSidebar({
                             role="button"
                             aria-label="Lägg till företag"
                           >
-                            <Ionicons name="add-circle-outline" size={16} color={hoveredKey === 'company|add' ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted} style={{ marginRight: 8 }} />
-                            <span style={{ fontSize: 13, fontWeight: '400', color: hoveredKey === 'company|add' ? LEFT_NAV.hoverText : LEFT_NAV.textMuted }}>
+                          <Ionicons name="add-circle-outline" size={16} color="#2E7D32" style={{ marginRight: 8 }} />
+                          <span style={{ fontSize: 13, fontWeight: '400', color: '#1976D2' }}>
                               Lägg till företag
                             </span>
                           </div>
@@ -461,7 +461,7 @@ export default function AdminSidebar({
                   <Ionicons
                     name={item.icon}
                     size={18}
-                    color={isActive ? LEFT_NAV.iconDefault : isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                    color={item.color || (isActive ? LEFT_NAV.iconDefault : isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
                     style={{ marginRight: 10 }}
                   />
                   <span style={{
@@ -587,7 +587,7 @@ export default function AdminSidebar({
                           <Ionicons
                             name="business"
                             size={16}
-                            color={LEFT_NAV.iconMuted}
+                            color="#2E7D32"
                             style={{ marginRight: 8 }}
                           />
                           <Text
@@ -625,8 +625,8 @@ export default function AdminSidebar({
                             borderColor: '#CBD5E1',
                           }}
                         >
-                          <Ionicons name="add-circle-outline" size={16} color={LEFT_NAV.iconMuted} style={{ marginRight: 8 }} />
-                          <Text style={{ fontSize: 13, fontWeight: '400', color: LEFT_NAV.textMuted }}>
+                          <Ionicons name="add-circle-outline" size={16} color="#2E7D32" style={{ marginRight: 8 }} />
+                          <Text style={{ fontSize: 13, fontWeight: '400', color: '#1976D2' }}>
                             Lägg till företag
                           </Text>
                         </TouchableOpacity>
@@ -685,7 +685,7 @@ export default function AdminSidebar({
                 <Ionicons
                   name={item.icon}
                   size={18}
-                  color={LEFT_NAV.iconMuted}
+                  color={item.color || LEFT_NAV.iconMuted}
                   style={{ marginRight: 10 }}
                 />
                 <Text style={{

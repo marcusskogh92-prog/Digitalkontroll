@@ -9,6 +9,7 @@ import { useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
+import SelectDropdown from '../../../../../../components/common/SelectDropdown';
 import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
 import { fetchCompanyProject, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
@@ -2073,8 +2074,6 @@ const InfoTooltip = ({ info, onPress }) => {
 // SelectRow component - dropdown with options like the design from image 1
 const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue = '', visible, onToggleVisible, optionInfo = {}, onInfoPress }) => {
   const hasChanged = String(value || '').trim() !== String(originalValue || '').trim();
-  const inputRef = React.useRef(null);
-  const inputWrapRef = React.useRef(null);
 
   const selectedOption = React.useMemo(() => {
     try {
@@ -2103,175 +2102,75 @@ const SelectRow = ({ label, value, options, onSelect, placeholder, originalValue
     ? String(selectedOption.color)
     : null;
 
-  // Close on outside click (web only), without rendering via portal.
-  React.useEffect(() => {
-    if (!visible || Platform.OS !== 'web') return;
-    const el = inputWrapRef.current;
-    if (!el || typeof document === 'undefined') return;
-
-    const onDown = (e) => {
-      try {
-        if (!inputWrapRef.current) return;
-        if (typeof inputWrapRef.current.contains === 'function' && inputWrapRef.current.contains(e.target)) return;
-        onToggleVisible();
-      } catch (_e) {
-        onToggleVisible();
-      }
-    };
-
-    document.addEventListener('mousedown', onDown, true);
-    document.addEventListener('touchstart', onDown, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown, true);
-      document.removeEventListener('touchstart', onDown, true);
-    };
-  }, [visible, onToggleVisible]);
-  
   return (
-    <>
-      <Pressable
-        onPress={onToggleVisible}
-        disabled={typeof onToggleVisible !== 'function'}
-        style={({ hovered, pressed }) => [
-          styles.infoRow,
-          hasChanged && styles.infoRowChanged,
-          {
-            overflow: 'visible',
-            position: 'relative',
-            ...(visible ? { zIndex: 2000 } : {}),
-            ...(Platform.OS === 'web' ? { cursor: typeof onToggleVisible === 'function' ? 'pointer' : 'default' } : {}),
-          },
-          (hovered || pressed) ? { backgroundColor: '#F8FAFC' } : null,
-        ]}
-      >
-        <Text style={styles.infoLabel} pointerEvents="none">{label}:</Text>
-        <View
-          ref={inputWrapRef}
-          style={{
-            flex: 1,
-            position: 'relative',
-            overflow: 'visible',
-          }}
-        >
-          {selectedColor && !!displayValue && (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                left: 12,
-                top: 0,
-                bottom: 0,
-                justifyContent: 'center',
-                zIndex: 2,
-              }}
-            >
-              <View
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: 5,
-                  backgroundColor: selectedColor,
-                }}
-              />
-            </View>
-          )}
-          <TextInput
-            ref={inputRef}
-            value={displayValue || ''}
-            placeholder={placeholder}
-            editable={false}
-            style={[
-              styles.infoInput,
-              hasChanged && styles.infoInputChanged,
-              { paddingRight: 35, paddingLeft: selectedColor && !!displayValue ? 34 : undefined },
-            ]}
-            autoCapitalize="none"
-            autoCorrect={false}
-            pointerEvents="none"
-          />
+    <View
+      style={[
+        styles.infoRow,
+        hasChanged && styles.infoRowChanged,
+        {
+          overflow: 'visible',
+          position: 'relative',
+          ...(visible ? { zIndex: 2000 } : {}),
+        },
+      ]}
+    >
+      <Text style={styles.infoLabel}>{label}:</Text>
+      <View style={{ flex: 1, position: 'relative', overflow: 'visible' }}>
+        {selectedColor && !!displayValue ? (
           <View
             pointerEvents="none"
             style={{
               position: 'absolute',
-              right: 8,
+              left: 12,
               top: 0,
               bottom: 0,
               justifyContent: 'center',
-              alignItems: 'center',
-              paddingHorizontal: 8,
+              zIndex: 2,
             }}
           >
-            <Ionicons name={visible ? 'chevron-up' : 'chevron-down'} size={20} color="#666" />
-          </View>
-
-          {visible && (
             <View
-              style={[
-                styles.dropdownList,
-                {
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  right: 0,
-                  marginTop: -1,
-                  zIndex: 2001,
-                  elevation: 2001,
-                },
-              ]}
-            >
-              {options.map((option, index) => (
-                <TouchableOpacity
-                  key={option.value || option || index}
-                  style={[
-                    styles.dropdownItem,
-                    (value === option || value === option.value) && styles.dropdownItemSelected,
-                  ]}
-                  onPress={() => {
-                    onSelect(option.value || option);
-                    onToggleVisible();
-                  }}
-                >
-                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                      {option && typeof option === 'object' && option.color ? (
-                        <View
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: 5,
-                            backgroundColor: option.color,
-                            marginRight: 10,
-                          }}
-                        />
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.dropdownItemText,
-                          (value === option || value === option.value) && styles.dropdownItemTextSelected,
-                          { flex: 1 },
-                        ]}
-                      >
-                        {option.label || option}
-                      </Text>
-                    </View>
-                    {optionInfo[option.label || option] && onInfoPress && (
-                      <InfoTooltip
-                        info={optionInfo[option.label || option]}
-                        onPress={(e) => {
-                          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-                          const optionText = option.label || option;
-                          const infoText = optionInfo[optionText];
-                          if (infoText && onInfoPress) onInfoPress(infoText, optionText);
-                        }}
-                      />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-      </Pressable>
-    </>
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: selectedColor,
+              }}
+            />
+          </View>
+        ) : null}
+        <SelectDropdown
+          value={value}
+          options={options}
+          placeholder={placeholder}
+          visible={visible}
+          onToggleVisible={onToggleVisible}
+          onSelect={onSelect}
+          fieldStyle={[
+            styles.infoInput,
+            hasChanged && styles.infoInputChanged,
+            { paddingRight: 35, paddingLeft: selectedColor && !!displayValue ? 34 : undefined },
+          ]}
+          listStyle={styles.dropdownList}
+          itemStyle={styles.dropdownItem}
+          itemSelectedStyle={styles.dropdownItemSelected}
+          itemTextStyle={styles.dropdownItemText}
+          itemTextSelectedStyle={styles.dropdownItemTextSelected}
+          renderOptionRight={(option) => {
+            const labelText = option && typeof option === 'object' ? option.label || option.value : option;
+            const infoText = optionInfo[labelText];
+            if (!infoText || !onInfoPress) return null;
+            return (
+              <InfoTooltip
+                info={infoText}
+                onPress={(e) => {
+                  if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                  if (infoText && onInfoPress) onInfoPress(infoText, labelText);
+                }}
+              />
+            );
+          }}
+        />
+      </View>
+    </View>
   );
 };

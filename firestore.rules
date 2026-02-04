@@ -1,13 +1,31 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     function isCompanyMember(company) {
-      return request.auth != null
+      return isSignedIn()
         && (
           request.auth.token.companyId == company
           || (
             exists(/databases/$(database)/documents/users/$(request.auth.uid))
             && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == company
+          )
+          || exists(/databases/$(database)/documents/foretag/$(company)/members/$(request.auth.uid))
+        );
+    }
+
+    function hasWriteAccess(company) {
+      return isCompanyMember(company)
+        && (
+          isGlobalAdmin()
+          || (request.auth.token.admin == true)
+          || (request.auth.token.role in ['admin', 'editor', 'superadmin'])
+          || (
+            exists(/databases/$(database)/documents/foretag/$(company)/members/$(request.auth.uid))
+            && (get(/databases/$(database)/documents/foretag/$(company)/members/$(request.auth.uid)).data.role in ['admin', 'editor'])
           )
         );
     }
@@ -153,14 +171,24 @@ service cloud.firestore {
     // Varje företag har sitt eget register: foretag/{company}/kontakter/{contactId}
     // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera kontakter för alla företag.
     match /foretag/{company}/kontakter/{contactId} {
-      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+      allow read: if isSignedIn() && isCompanyMember(company);
+      allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
     }
 
     // Leverantörer (company-scoped)
     // Varje företag har sitt eget register: foretag/{company}/leverantorer/{supplierId}
     // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera leverantörer för alla företag.
     match /foretag/{company}/leverantorer/{supplierId} {
-      allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+      allow read: if isSignedIn() && isCompanyMember(company);
+      allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
+    }
+
+    // Kunder (company-scoped)
+    // Varje företag har sitt eget register: foretag/{company}/kunder/{customerId}
+    // Globala admins (superadmin/MS Byggsystem-admin) ska kunna hantera kunder för alla företag.
+    match /foretag/{company}/kunder/{customerId} {
+      allow read: if isSignedIn() && isCompanyMember(company);
+      allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
     }
 
     // Company members directory (company-scoped)
@@ -286,6 +314,16 @@ service cloud.firestore {
     // Collection: foretag/{company}/project_timeline/{projectId}
     match /foretag/{company}/project_timeline/{projectId} {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
+    }
+
+    // Förfrågningar (Offerter) byggdelar/paket (company + project scoped)
+    match /foretag/{company}/projects/{projectId}/offerter/{document=**} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // External inquiries build parts (legacy/new path)
+    match /projects/{projectId}/inquiries/{inquiryId}/buildParts/{buildPartId} {
+      allow read, write: if request.auth != null;
     }
 
     // Projects (company-scoped)

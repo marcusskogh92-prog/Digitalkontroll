@@ -203,7 +203,7 @@ export function findExistingContact(contacts, { name, email, phone, contactCompa
 	});
 }
 
-export async function upsertContactInRegistry({ companyId, existingContacts, contact, contactCompanyName }) {
+export async function upsertContactInRegistry({ companyId, existingContacts, contact, contactCompanyName, linkedSupplierId }) {
 	const cid = safeText(companyId);
 	if (!cid) throw new Error('Saknar företag');
 	const name = safeText(contact?.name);
@@ -227,6 +227,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
 		email: safeText(contact?.email),
+		linkedSupplierId: linkedSupplierId ?? undefined,
 	}, cid);
 
 	const created = {
@@ -237,6 +238,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
 		email: safeText(contact?.email),
+		linkedSupplierId: linkedSupplierId ?? null,
 	};
 	return { id: createdId, contact: created, created: true, contacts: [...contacts, created] };
 }

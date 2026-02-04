@@ -8,6 +8,7 @@ import {
     createRfqPackage,
     getForfragningarDocRef,
     getRfqByggdelarCollectionRef,
+    seedInquiryBuildParts,
     updateRfqPackage
 } from '../../../features/project-phases/phases/kalkylskede/services/forfragningarService';
 
@@ -213,29 +214,10 @@ export async function seedDefaultByggdelTable({ companyId, projectId, existingBy
   const pid = safeText(projectId);
   if (!cid || !pid) return { created: 0 };
 
-  const defaults = [
-    { code: '10', label: 'Mark', group: 'Markentreprenör' },
-    { code: '20', label: 'Grund', group: '' },
-    { code: '30', label: 'Stomme', group: '' },
-    { code: '40', label: 'Yttertak', group: '' },
-    { code: '50', label: 'Fasad', group: '' },
-    { code: '60', label: 'Invändigt', group: '' },
-    { code: '70', label: 'Installationer', group: '' },
-    { code: '80', label: 'Gemensamt', group: '' },
-  ];
-
   const forfragningarRef = getForfragningarDocRef(cid, pid);
   await setDoc(forfragningarRef, { seededAt: serverTimestamp() }, { merge: true });
 
-  let created = 0;
-  for (const bd of defaults) {
-    try {
-      await createRfqByggdel(cid, pid, { label: safeText(bd.label), code: safeText(bd.code), group: safeText(bd.group) });
-      created += 1;
-    } catch (_e) {}
-  }
-
-  return { created };
+  return seedInquiryBuildParts(cid, pid);
 }
 
 export async function createSupplierInRegistry({ companyId, supplierName, category }) {
