@@ -46,10 +46,10 @@ const SECTION_DEFS = {
       '06 - Slutsida',
     ],
   },
-  'ue-offerter': {
-    title: 'UE och offerter',
+  offerter: {
+    title: 'Offerter',
     icon: 'document-outline',
-    items: ['01 - Förfrågningar', '02 - Inkomna offerter', '03 - Jämförelser', '04 - Vald UE'],
+    items: ['01 - Förfrågningar', '02 - Offerter', '03 - Jämförelser', '04 - Vald UE'],
   },
   'konstruktion-berakningar': {
     title: 'Konstruktion och beräkningar',
@@ -103,7 +103,7 @@ const ORDER_BY_VERSION = {
     'oversikt',
     'forfragningsunderlag',
     'kalkyl',
-    'ue-offerter',
+    'offerter',
     'konstruktion-berakningar',
     'myndigheter',
     'risk-mojligheter',
@@ -116,7 +116,7 @@ const ORDER_BY_VERSION = {
   [KALKYLSKEDE_STRUCTURE_VERSIONS.V2]: [
     'oversikt',
     'forfragningsunderlag',
-    'ue-offerter',
+    'offerter',
     'konstruktion-berakningar',
     'myndigheter',
     'risk-mojligheter',
@@ -189,10 +189,10 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'omkostnadskalkyl', name: '05 - Omkostnadskalkyl', component: 'OmkostnadskalkylView', order: 5, enabled: true },
             { id: 'slutsida', name: '06 - Slutsida', component: 'SlutsidaView', order: 6, enabled: true },
           ];
-        } else if (id === 'ue-offerter') {
+        } else if (id === 'offerter') {
           section.items = [
             { id: 'forfragningar', name: '01 - Förfrågningar', component: 'ForfragningarView', order: 1, enabled: true },
-            { id: 'inkomna-offerter', name: '02 - Inkomna offerter', component: 'InkomnaOfferterView', order: 2, enabled: true },
+            { id: 'offerter', name: '02 - Offerter', component: 'OfferterView', order: 2, enabled: true },
             { id: 'jamforelser', name: '03 - Jämförelser', component: 'JamforelserView', order: 3, enabled: true },
             { id: 'vald-ue', name: '04 - Vald UE', component: 'ValdUEView', order: 4, enabled: true },
           ];
@@ -263,8 +263,8 @@ export function detectKalkylskedeStructureVersionFromSectionFolderNames(folderNa
   const names = Array.isArray(folderNames) ? folderNames.map((n) => String(n || '').trim()) : [];
   const has = (needle) => names.some((n) => n.toLowerCase() === String(needle || '').trim().toLowerCase());
 
-  if (has('09 - Kalkyl') || has('03 - UE och offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V2;
-  if (has('03 - Kalkyl') || has('04 - UE och offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V1;
+  if (has('09 - Kalkyl') || has('03 - UE och offerter') || has('03 - Offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V2;
+  if (has('03 - Kalkyl') || has('04 - UE och offerter') || has('04 - Offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V1;
 
   return null;
 }

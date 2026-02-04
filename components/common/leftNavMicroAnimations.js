@@ -9,7 +9,7 @@ export const LEFT_NAV_MICRO = {
   webEasing: 'ease-out',
 };
 
-function useNativeDriver() {
+function shouldUseNativeDriver() {
   // RN-web has limited native driver support and can warn.
   return !(Platform && Platform.OS === 'web');
 }
@@ -40,7 +40,7 @@ export function AnimatedChevron({
       toValue: angle,
       duration: durationMs,
       easing: Easing.out(Easing.ease),
-      useNativeDriver: useNativeDriver(),
+      useNativeDriver: shouldUseNativeDriver(),
     }).start();
   }, [animDeg, angle, durationMs]);
 
@@ -72,20 +72,50 @@ export function MicroPulse({
   style,
   children,
 }) {
-  if (Platform.OS === 'web') {
-    const [pulsing, setPulsing] = React.useState(false);
-    const timeoutRef = React.useRef(null);
+  const isWeb = Platform.OS === 'web';
+  const [pulsing, setPulsing] = React.useState(false);
+  const timeoutRef = React.useRef(null);
+  const anim = React.useRef(new Animated.Value(1)).current;
 
-    React.useEffect(() => {
-      if (!Number.isFinite(Number(trigger)) || Number(trigger) <= 0) return;
+  React.useEffect(() => {
+    const t = Number(trigger);
+    if (!Number.isFinite(t) || t <= 0) return;
+
+    if (isWeb) {
       setPulsing(true);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => setPulsing(false), Math.max(60, durationMs));
       return () => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
       };
-    }, [trigger, durationMs]);
+    }
 
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
+    anim.stopAnimation();
+    anim.setValue(1);
+    Animated.sequence([
+      Animated.timing(anim, {
+        toValue: scaleTo,
+        duration: Math.max(60, Math.round(durationMs * 0.5)),
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: shouldUseNativeDriver(),
+      }),
+      Animated.timing(anim, {
+        toValue: 1,
+        duration: Math.max(60, Math.round(durationMs * 0.5)),
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: shouldUseNativeDriver(),
+      }),
+    ]).start();
+
+    return undefined;
+  }, [trigger, isWeb, durationMs, scaleTo, anim]);
+
+  if (isWeb) {
     return (
       <View
         style={[
@@ -103,33 +133,7 @@ export function MicroPulse({
     );
   }
 
-  const anim = React.useRef(new Animated.Value(1)).current;
-
-  React.useEffect(() => {
-    if (!Number.isFinite(Number(trigger)) || Number(trigger) <= 0) return;
-    anim.stopAnimation();
-    anim.setValue(1);
-    Animated.sequence([
-      Animated.timing(anim, {
-        toValue: scaleTo,
-        duration: Math.max(60, Math.round(durationMs * 0.5)),
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: useNativeDriver(),
-      }),
-      Animated.timing(anim, {
-        toValue: 1,
-        duration: Math.max(60, Math.round(durationMs * 0.5)),
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: useNativeDriver(),
-      }),
-    ]).start();
-  }, [trigger, anim, durationMs, scaleTo]);
-
-  return (
-    <Animated.View style={[style, { transform: [{ scale: anim }] }]}>
-      {children}
-    </Animated.View>
-  );
+  return <Animated.View style={[style, { transform: [{ scale: anim }] }]}>{children}</Animated.View>;
 }
 
 export function MicroShake({
@@ -165,12 +169,12 @@ export function MicroShake({
     const a = Math.max(1, Number(amplitude) || 4);
     const step = Math.max(40, Math.round(durationMs / 6));
     Animated.sequence([
-      Animated.timing(anim, { toValue: -a, duration: step, easing: Easing.linear, useNativeDriver: useNativeDriver() }),
-      Animated.timing(anim, { toValue: a, duration: step, easing: Easing.linear, useNativeDriver: useNativeDriver() }),
-      Animated.timing(anim, { toValue: -a * 0.75, duration: step, easing: Easing.linear, useNativeDriver: useNativeDriver() }),
-      Animated.timing(anim, { toValue: a * 0.75, duration: step, easing: Easing.linear, useNativeDriver: useNativeDriver() }),
-      Animated.timing(anim, { toValue: -a * 0.5, duration: step, easing: Easing.linear, useNativeDriver: useNativeDriver() }),
-      Animated.timing(anim, { toValue: 0, duration: step, easing: Easing.out(Easing.ease), useNativeDriver: useNativeDriver() }),
+      Animated.timing(anim, { toValue: -a, duration: step, easing: Easing.linear, useNativeDriver: shouldUseNativeDriver() }),
+      Animated.timing(anim, { toValue: a, duration: step, easing: Easing.linear, useNativeDriver: shouldUseNativeDriver() }),
+      Animated.timing(anim, { toValue: -a * 0.75, duration: step, easing: Easing.linear, useNativeDriver: shouldUseNativeDriver() }),
+      Animated.timing(anim, { toValue: a * 0.75, duration: step, easing: Easing.linear, useNativeDriver: shouldUseNativeDriver() }),
+      Animated.timing(anim, { toValue: -a * 0.5, duration: step, easing: Easing.linear, useNativeDriver: shouldUseNativeDriver() }),
+      Animated.timing(anim, { toValue: 0, duration: step, easing: Easing.out(Easing.ease), useNativeDriver: shouldUseNativeDriver() }),
     ]).start();
   }, [trigger, anim, durationMs, amplitude]);
 

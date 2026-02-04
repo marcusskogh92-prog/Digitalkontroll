@@ -639,6 +639,18 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   
   // Internal navigation state
   const [activeSection, setActiveSection] = useState('overview');
+
+  const normalizeInternalSectionId = React.useCallback((sectionId) => {
+    if (sectionId === 'ue-offerter') return 'kalkyl';
+    return sectionId;
+  }, []);
+
+  // Backwards-compat: migrate legacy section id.
+  useEffect(() => {
+    if (activeSection === 'ue-offerter') {
+      setActiveSection('kalkyl');
+    }
+  }, [activeSection]);
   
   // Update project state when route params change
   useEffect(() => {
@@ -1752,7 +1764,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       {/* Internal Navigation */}
       <ProjectInternalNavigation
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={(id) => setActiveSection(normalizeInternalSectionId(id))}
         project={editableProject || project}
       />
 
@@ -3807,7 +3819,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
       )}
 
       {/* Controls rendering - moved to controls section */}
-      {selectedAction?.kind !== 'overblick' && activeSection !== 'controls' && activeSection !== 'overview' && activeSection !== 'documents' && activeSection !== 'kalkyl' && activeSection !== 'ue-offerter' && (
+      {selectedAction?.kind !== 'overblick' && activeSection !== 'controls' && activeSection !== 'overview' && activeSection !== 'documents' && activeSection !== 'kalkyl' && (
         <>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8, minHeight: 32 }}>
 
@@ -4598,18 +4610,6 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
           </Text>
           <Text style={{ color: '#666', fontSize: 14 }}>
             Kalkyl-funktionalitet kommer snart...
-          </Text>
-        </View>
-      )}
-
-      {/* UE & Offerter Section - Placeholder for future implementation */}
-      {activeSection === 'ue-offerter' && (
-        <View style={{ padding: 16 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 16, color: '#222' }}>
-            UE & Offerter
-          </Text>
-          <Text style={{ color: '#666', fontSize: 14 }}>
-            UE & Offerter-funktionalitet kommer snart...
           </Text>
         </View>
       )}

@@ -2,16 +2,18 @@
  * Hook for managing kalkylskede navigation
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  getProjectPhaseNavigation,
-  saveProjectPhaseNavigation
+    getProjectPhaseNavigation,
+    saveProjectPhaseNavigation
 } from '../services/navigationService';
 
-export function useKalkylskedeNavigation(companyId, projectId) {
+export function useKalkylskedeNavigation(companyId, projectId, project = null) {
   const [navigation, setNavigation] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const structureVersion = String(project?.kalkylskedeStructureVersion || '').trim().toLowerCase();
 
   const loadNavigation = useCallback(async () => {
     if (!companyId) {
@@ -24,7 +26,7 @@ export function useKalkylskedeNavigation(companyId, projectId) {
 
     try {
       // Navigation is now stored at company level, projectId is optional (kept for backwards compatibility)
-      const nav = await getProjectPhaseNavigation(companyId, projectId, 'kalkylskede');
+      const nav = await getProjectPhaseNavigation(companyId, projectId, 'kalkylskede', project);
       setNavigation(nav);
     } catch (err) {
       console.error('[useKalkylskedeNavigation] Error loading navigation:', err);
@@ -32,7 +34,7 @@ export function useKalkylskedeNavigation(companyId, projectId) {
     } finally {
       setIsLoading(false);
     }
-  }, [companyId, projectId]);
+  }, [companyId, projectId, project, structureVersion]);
 
   useEffect(() => {
     loadNavigation();

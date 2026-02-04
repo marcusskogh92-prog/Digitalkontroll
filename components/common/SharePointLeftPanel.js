@@ -1844,7 +1844,10 @@ export function SharePointLeftPanel({
 
       const getMatchedSectionForToggle = () => {
         const lastSeg = String(pathToLoad || '').split('/').filter(Boolean).pop() || '';
-        const toggledBase = normalizeAscii(stripNumericPrefix(toggledFolderName || lastSeg));
+        let toggledBase = normalizeAscii(stripNumericPrefix(toggledFolderName || lastSeg));
+        // Backwards-compatible aliasing for renamed system folders.
+        // Allows matching old SharePoint folder names before the auto-migration has run.
+        if (toggledBase === 'ue och offerter') toggledBase = 'offerter';
         if (!toggledBase) return null;
 
         const fallbackByBase = {

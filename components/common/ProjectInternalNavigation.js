@@ -1,6 +1,6 @@
 /**
  * ProjectInternalNavigation - Internal navigation tabs for project view
- * Shows sections like Overview, Kalkyl, UE & Offerter, Documents, etc.
+ * Shows sections like Overview, Kalkyl, Documents, etc.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -13,7 +13,6 @@ import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 const NAVIGATION_SECTIONS = [
   { id: 'overview', name: 'Översikt', icon: 'list-outline', order: 1 },
   { id: 'kalkyl', name: 'Kalkyl', icon: 'calculator-outline', order: 2 },
-  { id: 'ue-offerter', name: 'UE & Offerter', icon: 'document-text-outline', order: 3 },
   { id: 'documents', name: 'Dokument', icon: 'folder-outline', order: 4 },
   { id: 'controls', name: 'Kontroller', icon: 'checkbox-outline', order: 5 },
 ];

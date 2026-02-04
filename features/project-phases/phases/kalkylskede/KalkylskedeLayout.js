@@ -15,11 +15,13 @@ import AnteckningarSection from './sections/anteckningar/AnteckningarSection';
 import ForfragningsunderlagSection from './sections/forfragningsunderlag/ForfragningsunderlagSection';
 import KalkylSection from './sections/kalkyl/KalkylSection';
 import MotenSection from './sections/moten/MotenSection';
+import OfferterSection from './sections/offerter/OfferterSection';
 import OversiktSection from './sections/oversikt/OversiktSection';
 
 const SECTION_COMPONENTS = {
   oversikt: OversiktSection,
   forfragningsunderlag: ForfragningsunderlagSection,
+  offerter: OfferterSection,
   kalkyl: KalkylSection,
   anteckningar: AnteckningarSection,
   moten: MotenSection,
@@ -30,11 +32,24 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
   // Use project.id if available, otherwise fall back to projectId prop
   // This ensures we use the latest project ID if it changed
   const effectiveProjectId = project?.id || projectId;
-  const { navigation, isLoading: navLoading, loadNavigation, saveNavigation } = useKalkylskedeNavigation(companyId, effectiveProjectId);
+  const { navigation, isLoading: navLoading, loadNavigation, saveNavigation } = useKalkylskedeNavigation(companyId, effectiveProjectId, project);
 
   const [activeSection, setActiveSection] = useState(null);
   const [activeItem, setActiveItem] = useState(null);
   const [navigationParams, setNavigationParams] = useState(null);
+
+  const projectName = String(project?.name || project?.title || project?.projectName || '').trim();
+
+  function normalizeSectionId(sectionId) {
+    const raw = String(sectionId || '').trim();
+    if (!raw) return raw;
+    // Backwards compatibility: legacy UE/Offerter ids should map to canonical Offerter.
+    const lowered = raw.toLowerCase();
+    if (lowered === 'ue-offerter') return 'offerter';
+    const compact = lowered.replace(/[^a-z0-9]+/g, '');
+    if (compact.includes('ue') && compact.includes('offert')) return 'offerter';
+    return raw;
+  }
   
   // Listen for project updates to keep in sync if project ID changes
   useEffect(() => {
@@ -68,7 +83,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
   useEffect(() => {
     if (navigation && navigation.sections && navigation.sections.length > 0 && !activeSection) {
       const firstSection = navigation.sections[0];
-      setActiveSection(firstSection.id);
+      setActiveSection(normalizeSectionId(firstSection.id));
       if (firstSection.items && firstSection.items.length > 0) {
         setActiveItem(firstSection.items[0].id);
       }
@@ -82,10 +97,11 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
       setActiveItem(null);
       return;
     }
-    setActiveSection(sectionId);
+    const normalizedSectionId = normalizeSectionId(sectionId);
+    setActiveSection(normalizedSectionId);
     // Set first item in section as active if available
     if (navigation) {
-      const section = navigation.sections.find(s => s.id === sectionId);
+      const section = navigation.sections.find(s => normalizeSectionId(s.id) === normalizedSectionId);
       if (section && section.items && section.items.length > 0) {
         setActiveItem(section.items[0].id);
       } else {
@@ -96,7 +112,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
 
   const handleSelectItem = (sectionId, itemId, params) => {
     console.log('[KalkylskedeLayout] handleSelectItem called - sectionId:', sectionId, 'itemId:', itemId);
-    setActiveSection(sectionId);
+    setActiveSection(normalizeSectionId(sectionId));
     setActiveItem(itemId);
     setNavigationParams(params ?? null);
   };
@@ -120,14 +136,15 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
       );
     }
 
-    const SectionComponent = SECTION_COMPONENTS[activeSection];
+    const normalizedActiveSection = normalizeSectionId(activeSection);
+    const SectionComponent = SECTION_COMPONENTS[normalizedActiveSection];
     
-    console.log('[KalkylskedeLayout] SectionComponent for', activeSection, ':', SectionComponent ? 'Found' : 'Not found');
+    console.log('[KalkylskedeLayout] SectionComponent for', normalizedActiveSection, ':', SectionComponent ? 'Found' : 'Not found');
 
     if (!SectionComponent) {
       return (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>Sektion "{activeSection}" hittades inte</Text>
+          <Text style={styles.emptyText}>Sektion "{normalizedActiveSection}" hittades inte</Text>
         </View>
       );
     }
@@ -138,7 +155,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
         companyId={companyId}
         project={project}
         activeItem={activeItem}
-        navigation={navigation.sections.find(s => s.id === activeSection)}
+        navigation={navigation.sections.find(s => normalizeSectionId(s.id) === normalizedActiveSection)}
         navigationParams={navigationParams}
       />
     );

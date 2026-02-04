@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
-import { subscribeUserNotifications } from '../firebase';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
+import OfferterLayout from '../../features/offerter/OfferterLayout';
+import { subscribeUserNotifications } from '../firebase';
 import { Dashboard } from './Dashboard';
 import InlineProjectCreationPanel from './InlineProjectCreationPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
@@ -92,6 +93,9 @@ export default function WebMainPane(props) {
     afSelectedItemId,
     setAfSelectedItemId,
     bumpAfMirrorRefreshNonce,
+
+    // Project module routing (web)
+    projectModuleRoute,
   } = props;
 
   const isWeb = Platform.OS === 'web';
@@ -134,6 +138,9 @@ export default function WebMainPane(props) {
   // ProjectDetails manages its own scrolling.
   const showOuterScroll = !(selectedProject || (inlineControlEditor && inlineControlEditor.project));
 
+  const isOfferterModule = String(projectModuleRoute?.moduleId || '') === 'offerter';
+  const offerterActiveItemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
+
   const mainContent = inlineControlEditor && inlineControlEditor.project ? (
     <View style={{ flex: 1, paddingHorizontal: PANE_PADDING, paddingTop: PANE_PADDING, paddingBottom: 0 }}>
       <TemplateControlScreen
@@ -169,6 +176,15 @@ export default function WebMainPane(props) {
       setSelectedProjectPath={setSelectedProjectPath}
       isProjectNumberUnique={isProjectNumberUnique}
     />
+  ) : selectedProject && isOfferterModule ? (
+    <View style={{ flex: 1 }}>
+      <OfferterLayout
+        companyId={companyId}
+        projectId={selectedProject?.id}
+        project={selectedProject}
+        activeItemId={offerterActiveItemId}
+      />
+    </View>
   ) : selectedProject ? (
     <View style={{ flex: 1 }}>
       <ProjectDetails
@@ -424,7 +440,7 @@ export default function WebMainPane(props) {
                             </Text>
                             {textPreview ? (
                               <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>
-                                "{textPreview}{textPreview.length >= 120 ? '…' : ''}"
+                                “{textPreview}{textPreview.length >= 120 ? '…' : ''}”
                               </Text>
                             ) : null}
                           </>

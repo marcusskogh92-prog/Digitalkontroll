@@ -8,8 +8,8 @@ import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
 import { buildLockedFileRename, normalizeLockedRenameBase, splitBaseAndExt as splitLockedBaseAndExt } from '../../../utils/lockedFileRename';
 import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDirectoryFiles';
-import { subscribeProjectFileComments } from '../../firebase';
 import ContextMenu from '../../ContextMenu';
+import { subscribeProjectFileComments } from '../../firebase';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
 import { useUploadManager } from '../uploads/UploadManagerContext';
@@ -212,6 +212,14 @@ export default function SharePointFolderFileArea({
 
   const [previewItemId, setPreviewItemId] = useState(null);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+
+  // UX: "active/open" is purely derived from the preview modal being open.
+  // Closing the preview must always clear the active state so that a "last opened" file
+  // does not remain visually marked when no preview is active.
+  const closePreview = useCallback(() => {
+    setPreviewModalOpen(false);
+    setPreviewItemId(null);
+  }, []);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewNumPages, setPreviewNumPages] = useState(null);
@@ -329,6 +337,9 @@ export default function SharePointFolderFileArea({
     if (!id) return null;
     return (Array.isArray(items) ? items : []).find((x) => x?.type === 'file' && safeText(x?.id) === id) || null;
   }, [items, previewItemId]);
+
+  // Treat "preview open" as the single source of truth for active/open row state.
+  const previewOpen = Platform.OS === 'web' && Boolean(previewModalOpen && previewItem);
 
   const resolveSiteId = useCallback(async () => {
     const fromProject = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
@@ -705,9 +716,8 @@ export default function SharePointFolderFileArea({
 
   // Navigating to another folder closes preview modal and clears preview item.
   useEffect(() => {
-    setPreviewModalOpen(false);
-    setPreviewItemId(null);
-  }, [relativePath]);
+    closePreview();
+  }, [relativePath, closePreview]);
 
   // Changing the preview target resets viewer state (zoom, page).
   useEffect(() => {
@@ -715,6 +725,14 @@ export default function SharePointFolderFileArea({
     setPreviewPage(1);
     setPreviewNumPages(null);
   }, [previewItemId]);
+
+  // Defensive: if the item disappears (refresh/folder change), never keep a ghost "open" state.
+  useEffect(() => {
+    if (!previewModalOpen) return;
+    if (!safeText(previewItemId)) return;
+    if (previewItem) return;
+    closePreview();
+  }, [previewModalOpen, previewItemId, previewItem, closePreview]);
 
   const pid = project?.id ?? project?.projectId ?? project?.projectNumber ?? null;
   useEffect(() => {
@@ -1859,8 +1877,12 @@ export default function SharePointFolderFileArea({
             const rowRelPath = isFolder ? joinPath(relativePath, name) : '';
             const isRowDragOver = enableWebDnD && isFolder && !isLockedFolder && safeText(activeDropFolder) === safeText(rowRelPath);
 
-            const isSelected = !isFolder && safeText(it?.id) && safeText(selectedItemId) === safeText(it?.id);
-            const isPreviewing = !isFolder && safeText(previewItemId) === safeText(it?.id);
+            // Row state model:
+            // - hover: pointer over row (never persists)
+            // - selected: user explicitly marks via checkbox (persists)
+            // - active/open: preview modal is open for this file (never persists after close)
+            const isRowSelected = Boolean(!isLockedFolder && safeText(it?.id) && isIdSelected(it.id));
+            const isRowActive = Boolean(!isFolder && previewOpen && safeText(previewItemId) === safeText(it?.id));
             const ext = fileExtFromName(name);
             const typeMeta = isFolder
               ? { label: 'MAPP', icon: 'folder-outline' }
@@ -1943,12 +1965,13 @@ export default function SharePointFolderFileArea({
                 onPress={() => {
                   if (isFolder) {
                     setSelectedItemId(null);
-                    setPreviewModalOpen(false);
-                    setPreviewItemId(null);
+                    closePreview();
                     openFolder(name);
                     return;
                   }
                   const id = safeText(it?.id) || null;
+                  // Keep a non-visual "focus" id for possible external consumers,
+                  // but do not use it for row marking (selection is checkbox-only).
                   setSelectedItemId(id);
                   // Single click on file: open floating preview modal (no side-by-side pane).
                   if (id) {
@@ -1974,13 +1997,15 @@ export default function SharePointFolderFileArea({
                       borderLeftColor: '#1976D2',
                     }
                     : {
-                      backgroundColor: isPreviewing
+                      // Visual precedence: active/open > selected > hover.
+                      // (Hover should always work when nothing is active/open.)
+                      backgroundColor: isRowActive
                         ? 'rgba(25, 118, 210, 0.12)'
-                        : isSelected
-                          ? 'rgba(25, 118, 210, 0.06)'
+                        : isRowSelected
+                          ? (hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.06)')
                           : (hovered || pressed ? '#F8FAFC' : '#fff'),
-                      borderLeftWidth: isPreviewing ? 3 : 0,
-                      borderLeftColor: isPreviewing ? '#1976D2' : 'transparent',
+                      borderLeftWidth: isRowActive ? 3 : 0,
+                      borderLeftColor: isRowActive ? '#1976D2' : 'transparent',
                     }),
                   ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
@@ -2104,12 +2129,11 @@ export default function SharePointFolderFileArea({
 
       </View>
 
-      {Platform.OS === 'web' && previewModalOpen && previewItem ? (
+      {previewOpen ? (
         <FilePreviewModal
           visible
           onClose={() => {
-            setPreviewModalOpen(false);
-            setPreviewItemId(null);
+            closePreview();
           }}
           fileItem={previewItem}
           onOpenInNewTab={(url) => openUrl(url)}
@@ -2134,8 +2158,7 @@ export default function SharePointFolderFileArea({
             onNumPages={setPreviewNumPages}
             onPageChange={setPreviewPage}
             onClose={() => {
-              setPreviewModalOpen(false);
-              setPreviewItemId(null);
+              closePreview();
             }}
             onOpenInNewTab={(url) => openUrl(url)}
           />

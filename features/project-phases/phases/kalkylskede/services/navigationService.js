@@ -8,47 +8,190 @@ import { getDefaultNavigationForProject } from '../../../constants';
 
 const NAV_SCHEMA_VERSION = 2;
 
+function normalizeKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function compactKey(value) {
+  // Keep only a-z/0-9 to make comparisons resilient to punctuation, accents, and spacing.
+  return normalizeKey(value).replace(/[^a-z0-9]+/g, '');
+}
+
+function looksLikeLegacyOfferterSection(section) {
+  if (!section || typeof section !== 'object') return false;
+  const id = normalizeKey(section?.id);
+  const name = normalizeKey(section?.name);
+  const idC = compactKey(section?.id);
+  const nameC = compactKey(section?.name);
+  const compactLooksLikeOfferter =
+    (idC.includes('ue') && (idC.includes('offerter') || idC.includes('offert'))) ||
+    (nameC.includes('ue') && (nameC.includes('offerter') || nameC.includes('offert')));
+  return (
+    id === 'ue-offerter' ||
+    id === 'ue och offerter' ||
+    name.includes('ue och offerter') ||
+    name.includes('ue & offerter') ||
+    name.includes('ue &offerter') ||
+    compactLooksLikeOfferter
+  );
+}
+
+function mergeSectionItems(primaryItems, secondaryItems) {
+  const a = Array.isArray(primaryItems) ? primaryItems.filter(Boolean) : [];
+  const b = Array.isArray(secondaryItems) ? secondaryItems.filter(Boolean) : [];
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+
+  const byId = new Map();
+  for (const it of a) {
+    const id = String(it?.id || '').trim();
+    if (!id) continue;
+    byId.set(id, it);
+  }
+  for (const it of b) {
+    const id = String(it?.id || '').trim();
+    if (!id) continue;
+    // Prefer later item props, but preserve nested items if present.
+    const prev = byId.get(id);
+    if (prev && (Array.isArray(prev?.items) || Array.isArray(it?.items))) {
+      byId.set(id, { ...prev, ...it, items: mergeSectionItems(prev?.items, it?.items) });
+    } else {
+      byId.set(id, { ...(prev || {}), ...(it || {}) });
+    }
+  }
+
+  // Preserve any items without ids (rare) by appending them.
+  const noId = [...a, ...b].filter((it) => !String(it?.id || '').trim());
+  return [...Array.from(byId.values()), ...noId];
+}
+
+function mergeSections(primary, secondary) {
+  const p = primary && typeof primary === 'object' ? primary : {};
+  const s = secondary && typeof secondary === 'object' ? secondary : {};
+  return {
+    ...p,
+    ...s,
+    items: mergeSectionItems(p?.items, s?.items),
+  };
+}
+
+function migrateStoredSectionId(section) {
+  if (!section || typeof section !== 'object') return section;
+  // Map legacy UE/Offerter to canonical Offerter section id.
+  if (looksLikeLegacyOfferterSection(section)) {
+    return { ...section, id: 'offerter' };
+  }
+  return section;
+}
+
+function normalizeStoredNavigation(storedNav) {
+  const nav = storedNav && typeof storedNav === 'object' ? storedNav : {};
+  const sections = Array.isArray(nav.sections) ? nav.sections : [];
+
+  // Map legacy ids -> current ids.
+  const migrated = sections.map(migrateStoredSectionId).filter(Boolean);
+
+  // Deduplicate by id and MERGE (so legacy/custom duplicates don't lose custom items).
+  const byId = new Map();
+  for (const s of migrated) {
+    const sid = String(s?.id || '').trim();
+    if (!sid) continue;
+    const prev = byId.get(sid);
+    byId.set(sid, prev ? mergeSections(prev, s) : s);
+  }
+
+  return {
+    ...nav,
+    sections: Array.from(byId.values()),
+  };
+}
+
 function normalizeSections(sections) {
   return Array.isArray(sections) ? sections.filter(Boolean) : [];
 }
 
-function normalizeItems(items, fallbackItems) {
-  const a = Array.isArray(items) ? items : null;
-  const b = Array.isArray(fallbackItems) ? fallbackItems : [];
+function mergeItemsWithDefaults(defaultItems, storedItems) {
+  const defaults = Array.isArray(defaultItems) ? defaultItems.filter(Boolean) : [];
+  const stored = Array.isArray(storedItems) ? storedItems.filter(Boolean) : null;
+
   // If stored items are missing or empty, backfill from defaults.
   // (Empty arrays in stored docs are almost always legacy/partial saves.)
-  if (!a || a.length === 0) return b;
-  return a;
+  if (!stored || stored.length === 0) return defaults;
+
+  const storedById = new Map(stored.map((it) => [it?.id, it]));
+
+  const mergeOne = (def, st) => {
+    const merged = {
+      ...(def || {}),
+      ...(st || {}),
+      // Always prefer default names/order/components for known items.
+      name: def?.name,
+      order: def?.order,
+      component: def?.component,
+    };
+
+    // Support nested item lists if they exist.
+    const defNested = Array.isArray(def?.items) ? def.items : null;
+    const stNested = Array.isArray(st?.items) ? st.items : null;
+    if (defNested || stNested) {
+      merged.items = mergeItemsWithDefaults(defNested || [], stNested || []);
+    }
+
+    return merged;
+  };
+
+  const merged = defaults.map((def) => mergeOne(def, def?.id ? storedById.get(def.id) : null)).filter(Boolean);
+
+  // Preserve any custom items that don't exist in defaults.
+  const defaultIds = new Set(defaults.map((it) => it?.id).filter(Boolean));
+  for (const st of stored) {
+    if (!st?.id) continue;
+    if (defaultIds.has(st.id)) continue;
+    merged.push(st);
+  }
+
+  return merged;
 }
 
 function mergeNavigationWithDefaults(defaultNav, storedNav) {
   const defaultSections = normalizeSections(defaultNav?.sections);
-  const storedSections = normalizeSections(storedNav?.sections);
+  const normalizedStored = normalizeStoredNavigation(storedNav);
+  const storedSections = normalizeSections(normalizedStored?.sections);
 
-  const defaultById = new Map(defaultSections.map((s) => [s?.id, s]));
-  const storedIds = new Set(storedSections.map((s) => s?.id).filter(Boolean));
+  const storedById = new Map(storedSections.map((s) => [s?.id, s]));
 
-  // Preserve stored section order, but backfill missing content from defaults.
-  const mergedSections = storedSections.map((storedSection) => {
-    const def = storedSection?.id ? defaultById.get(storedSection.id) : null;
-    const fallbackItems = def?.items;
-    return {
-      ...(def || {}),
-      ...storedSection,
-      items: normalizeItems(storedSection?.items, fallbackItems),
-    };
-  });
+  // IMPORTANT UX/SYNC RULE:
+  // Section `name` (numeric prefix) + `order` must remain in sync with the versioned
+  // SharePoint structure (v1/v2). Company-level stored navigation may contain legacy
+  // ordering; it must not override the versioned prefixes.
+  const mergedSections = defaultSections
+    .map((def) => {
+      const stored = def?.id ? storedById.get(def.id) : null;
+      return {
+        ...(def || {}),
+        ...(stored || {}),
+        // Always use versioned defaults for ordering + names (prefixes).
+        name: def?.name,
+        order: def?.order,
+        items: mergeItemsWithDefaults(def?.items, stored?.items),
+      };
+    })
+    .filter(Boolean);
 
-  // Add any default sections that are missing entirely.
-  for (const def of defaultSections) {
-    if (!def?.id) continue;
-    if (storedIds.has(def.id)) continue;
-    mergedSections.push(def);
+  // Preserve any custom sections that don't exist in defaults.
+  const defaultIds = new Set(defaultSections.map((s) => s?.id).filter(Boolean));
+  for (const stored of storedSections) {
+    if (!stored?.id) continue;
+    if (defaultIds.has(stored.id)) continue;
+    mergedSections.push(stored);
   }
 
   return {
     ...defaultNav,
-    ...storedNav,
+    ...normalizedStored,
     sections: mergedSections,
   };
 }

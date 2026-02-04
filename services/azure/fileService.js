@@ -1149,35 +1149,199 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
   if (!companyId) throw new Error('companyId is required');
   if (!siteId) throw new Error('siteId is required');
 
-  let resolvedVersion = String(structureVersion || '').trim().toLowerCase() || null;
-  if (!resolvedVersion) {
-    try {
-      const existingFolders = await listFolders(root, siteId);
-      const names = (existingFolders || []).map((f) => String(f?.name || '').trim()).filter(Boolean);
-      const { detectKalkylskedeStructureVersionFromSectionFolderNames, KALKYLSKEDE_STRUCTURE_VERSIONS } = await import('../../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition');
-      const detected = detectKalkylskedeStructureVersionFromSectionFolderNames(names);
-      if (detected) {
-        resolvedVersion = String(detected || '').trim().toLowerCase();
-      } else if (names.length === 0) {
-        // New/empty project root: default to the latest structure.
-        resolvedVersion = String(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
-      } else {
-        // Unknown/legacy: prefer v1 to avoid creating new numbered folders in existing projects.
-        resolvedVersion = String(KALKYLSKEDE_STRUCTURE_VERSIONS.V1);
+  const renameByPathIfSafe = async ({ fromRel, toName }) => {
+    const fromPath = `${root}/${String(fromRel || '').trim()}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    const toPath = `${root}/${String(toName || '').trim()}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+
+    const oldItem = await getDriveItemByPath(fromPath, siteId);
+    if (!oldItem?.id) return { status: 'missing-old' };
+
+    const newItem = await getDriveItemByPath(toPath, siteId);
+    if (newItem?.id) return { status: 'already-new' };
+
+    const { renameDriveItemById } = await import('./hierarchyService');
+    await renameDriveItemById(siteId, oldItem.id, String(toName || '').trim());
+    return { status: 'renamed' };
+  };
+
+  const renameChildByPathIfSafe = async ({ parentRel, fromChild, toChild }) => {
+    const parent = String(parentRel || '').trim();
+    const from = String(fromChild || '').trim();
+    const to = String(toChild || '').trim();
+    if (!parent || !from || !to) return { status: 'invalid' };
+
+    const fromPath = `${root}/${parent}/${from}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    const toPath = `${root}/${parent}/${to}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+
+    const oldItem = await getDriveItemByPath(fromPath, siteId);
+    if (!oldItem?.id) return { status: 'missing-old' };
+
+    const newItem = await getDriveItemByPath(toPath, siteId);
+    if (newItem?.id) return { status: 'already-new' };
+
+    const { renameDriveItemById } = await import('./hierarchyService');
+    await renameDriveItemById(siteId, oldItem.id, to);
+    return { status: 'renamed' };
+  };
+
+  // Best-effort migration: rename legacy folder names to current naming.
+  // - Keeps item identity by renaming by driveItem id (no move/copy).
+  // - Idempotent: only renames when old exists and new does not.
+  // - Does NOT throw on failure; structure ensuring should still proceed.
+  const migrateOfferterFolderNames = async () => {
+    const parentRenames = [
+      { old: '03 - UE och offerter', next: '03 - Offerter' },
+      { old: '04 - UE och offerter', next: '04 - Offerter' },
+      { old: 'UE och offerter', next: 'Offerter' },
+    ];
+
+    for (const pr of parentRenames) {
+      try {
+        // If we can rename the parent, do it first; then rename the child under the effective parent name.
+        const parentResult = await renameByPathIfSafe({ fromRel: pr.old, toName: pr.next });
+        const effectiveParent = parentResult.status === 'renamed' || parentResult.status === 'already-new' ? pr.next : pr.old;
+
+        // Child folder rename: "Inkomna offerter" -> "Offerter" (with and without numeric prefix).
+        await renameChildByPathIfSafe({ parentRel: effectiveParent, fromChild: '02 - Inkomna offerter', toChild: '02 - Offerter' });
+        await renameChildByPathIfSafe({ parentRel: effectiveParent, fromChild: 'Inkomna offerter', toChild: 'Offerter' });
+      } catch (e) {
+        // Never fail structure ensuring because of a rename attempt.
+        console.warn('[ensureKalkylskedeProjectFolderStructure] Offerter rename migration failed:', e?.message || e);
       }
-    } catch (_e) {
-      // Safe fallback: v1 avoids creating new numbered folders in existing projects.
-      resolvedVersion = 'v1';
     }
+  };
+
+  const migrateKalkylskedeV1ToV2SectionNumbers = async () => {
+    // V1 -> V2 numbering mapping (idempotent; rename-by-id preserves permissions/content).
+    // NOTE: Offerter also covers legacy "UE och offerter".
+    const targets = [
+      { next: '03 - Offerter', olds: ['04 - UE och offerter', '04 - Offerter'] },
+      { next: '04 - Konstruktion och beräkningar', olds: ['05 - Konstruktion och beräkningar'] },
+      { next: '05 - Myndigheter', olds: ['06 - Myndigheter'] },
+      { next: '06 - Risk och möjligheter', olds: ['07 - Risk och möjligheter'] },
+      { next: '07 - Bilder', olds: ['08 - Bilder'] },
+      { next: '08 - Möten', olds: ['09 - Möten'] },
+      { next: '09 - Kalkyl', olds: ['03 - Kalkyl'] },
+      // Keep 01/02/10 unchanged (but include for robustness if someone has wrong prefix)
+      { next: '01 - Översikt', olds: [] },
+      { next: '02 - Förfrågningsunderlag', olds: [] },
+      { next: '10 - Anbud', olds: [] },
+    ];
+
+    for (const t of targets) {
+      try {
+        const nextName = String(t?.next || '').trim();
+        if (!nextName) continue;
+
+        const nextItem = await getDriveItemByPath(`${root}/${nextName}`, siteId);
+        if (nextItem?.id) continue;
+
+        const olds = Array.isArray(t?.olds) ? t.olds : [];
+        for (const oldName of olds) {
+          const oldItem = await getDriveItemByPath(`${root}/${String(oldName || '').trim()}`, siteId);
+          if (!oldItem?.id) continue;
+          await renameByPathIfSafe({ fromRel: String(oldName || '').trim(), toName: nextName });
+          break;
+        }
+      } catch (e) {
+        console.warn('[ensureKalkylskedeProjectFolderStructure] V1->V2 section rename migration failed:', e?.message || e);
+      }
+    }
+
+    // Child folder rename under Offerter.
+    const offerterParents = ['03 - Offerter', '04 - Offerter', '04 - UE och offerter', '03 - UE och offerter'];
+    for (const p of offerterParents) {
+      try {
+        await renameChildByPathIfSafe({ parentRel: p, fromChild: '02 - Inkomna offerter', toChild: '02 - Offerter' });
+        await renameChildByPathIfSafe({ parentRel: p, fromChild: 'Inkomna offerter', toChild: 'Offerter' });
+      } catch (_e) {}
+    }
+  };
+
+  // Consolidated structure: always target v2. We still detect current naming so we can
+  // migrate v1 folders to v2 numbering without data loss.
+  let resolvedVersion = 'v2';
+  try {
+    const existingFolders = await listFolders(root, siteId);
+    const names = (existingFolders || []).map((f) => String(f?.name || '').trim()).filter(Boolean);
+    const { detectKalkylskedeStructureVersionFromSectionFolderNames } = await import('../../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition');
+    const detected = detectKalkylskedeStructureVersionFromSectionFolderNames(names);
+    const dv = String(detected || '').trim().toLowerCase();
+    if (dv === 'v1') {
+      await migrateKalkylskedeV1ToV2SectionNumbers();
+    }
+  } catch (_e) {
+    // ignore
   }
+
+  // Run after version detection so we don't accidentally change the signal we use.
+  // This is safe even if the project is v1; it will just rename the matching folder number (03/04).
+  await migrateOfferterFolderNames();
 
   const { getKalkylskedeLockedRelativeFolderPaths } = await import('../../components/firebase');
   const relPaths = getKalkylskedeLockedRelativeFolderPaths(resolvedVersion);
 
+  // If a legacy folder still exists (rename failed or not yet run) and the new folder name
+  // does NOT exist, avoid creating a duplicate "Offerter" folder by treating the legacy name
+  // as an acceptable alias when ensuring the locked structure.
+  let effectiveRelPaths = Array.isArray(relPaths) ? [...relPaths] : [];
+  try {
+    const replacePrefix = (p, from, to) => {
+      const s = String(p || '').trim();
+      const a = String(from || '').trim();
+      const b = String(to || '').trim();
+      if (!s || !a || !b) return s;
+      if (s === a) return b;
+      if (s.startsWith(`${a}/`)) return `${b}${s.slice(a.length)}`;
+      return s;
+    };
+
+    const sectionPairs = [
+      // Consolidated v2 expects these names.
+      { next: '03 - Offerter', old: '04 - UE och offerter' },
+      { next: '03 - Offerter', old: '04 - Offerter' },
+      { next: '03 - Offerter', old: '03 - UE och offerter' },
+      { next: '04 - Konstruktion och beräkningar', old: '05 - Konstruktion och beräkningar' },
+      { next: '05 - Myndigheter', old: '06 - Myndigheter' },
+      { next: '06 - Risk och möjligheter', old: '07 - Risk och möjligheter' },
+      { next: '07 - Bilder', old: '08 - Bilder' },
+      { next: '08 - Möten', old: '09 - Möten' },
+      { next: '09 - Kalkyl', old: '03 - Kalkyl' },
+      // Legacy non-prefixed section.
+      { next: 'Offerter', old: 'UE och offerter' },
+    ];
+
+    for (const pair of sectionPairs) {
+      const oldSection = await getDriveItemByPath(`${root}/${pair.old}`, siteId);
+      if (!oldSection?.id) continue;
+      const newSection = await getDriveItemByPath(`${root}/${pair.next}`, siteId);
+      if (newSection?.id) continue;
+
+      // Rewrite ensure-paths to use the legacy section name.
+      effectiveRelPaths = effectiveRelPaths.map((p) => replacePrefix(p, pair.next, pair.old));
+
+      // Also handle the legacy subfolder name if present (Offerter only).
+      if (String(pair.old || '').toLowerCase().includes('offerter')) {
+        const legacyChild = await getDriveItemByPath(`${root}/${pair.old}/02 - Inkomna offerter`, siteId);
+        if (legacyChild?.id) {
+          const newChild = await getDriveItemByPath(`${root}/${pair.old}/02 - Offerter`, siteId);
+          if (!newChild?.id) {
+            const from = `${pair.old}/02 - Offerter`;
+            const to = `${pair.old}/02 - Inkomna offerter`;
+            effectiveRelPaths = effectiveRelPaths.map((p) => replacePrefix(p, from, to));
+          }
+        }
+      }
+    }
+  } catch (_e) {
+    // ignore; fall back to default relPaths
+    effectiveRelPaths = Array.isArray(relPaths) ? [...relPaths] : [];
+  }
+
   // Ensure section folders first, then nested item folders.
   // (The list already contains both; we keep ordering stable by sorting by depth.)
-  const ordered = Array.isArray(relPaths)
-    ? [...relPaths]
+  const ordered = Array.isArray(effectiveRelPaths)
+    ? [...effectiveRelPaths]
         .map((p) => String(p || '').trim())
         .filter(Boolean)
         .sort((a, b) => a.split('/').length - b.split('/').length)

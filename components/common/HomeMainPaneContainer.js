@@ -97,6 +97,9 @@ export function HomeMainPaneContainer(props) {
     afSelectedItemId,
     setAfSelectedItemId,
     bumpAfMirrorRefreshNonce,
+
+    // Project module routing (web)
+    projectModuleRoute,
   } = props;
 
   const isWeb = Platform.OS === 'web';
@@ -188,6 +191,8 @@ export function HomeMainPaneContainer(props) {
           afSelectedItemId={afSelectedItemId}
           setAfSelectedItemId={setAfSelectedItemId}
           bumpAfMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
+
+          projectModuleRoute={projectModuleRoute}
         />
       ) : (
         <NativeMainPane

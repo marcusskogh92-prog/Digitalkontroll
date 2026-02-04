@@ -416,6 +416,10 @@ export default function HomeScreen({ navigation, route }) {
   const [phaseActiveItem, setPhaseActiveItem] = useState(null);
   const [phaseActiveNode, setPhaseActiveNode] = useState(null);
 
+  // Project module routing (web): decouple Offerter from kalkylskede PhaseLayout.
+  // When moduleId === 'offerter', WebMainPane renders OfferterLayout.
+  const [projectModuleRoute, setProjectModuleRoute] = useState(null); // { moduleId, itemId }
+
   // AF (Administrativa föreskrifter) explorer state (used to mirror folder contents in left panel).
   const [afRelativePath, setAfRelativePath] = useState('');
   const [afSelectedItemId, setAfSelectedItemId] = useState(null);
@@ -444,6 +448,7 @@ export default function HomeScreen({ navigation, route }) {
     const selectedActionProvided = Object.prototype.hasOwnProperty.call(opts, 'selectedAction');
     const clearActionAfter = !!opts.clearActionAfter;
     const selectedAction = selectedActionProvided ? opts.selectedAction : null;
+    const keepModuleRoute = opts && opts.keepModuleRoute === true;
 
     const resolveBase = () => {
       if (!projectOrId) return null;
@@ -470,6 +475,12 @@ export default function HomeScreen({ navigation, route }) {
         setPhaseActiveItem(null);
         setPhaseActiveNode(null);
       } catch (_e) {}
+
+      if (!keepModuleRoute) {
+        try {
+          setProjectModuleRoute(null);
+        } catch (_e) {}
+      }
 
       try {
         setAfRelativePath('');
@@ -711,6 +722,10 @@ export default function HomeScreen({ navigation, route }) {
       setProjectSelectedAction(null);
       setInlineControlEditor(null);
       setProjectInlineViewLabel(null);
+    } catch (_e) {}
+
+    try {
+      setProjectModuleRoute(null);
     } catch (_e) {}
   }, [selectedProject?.id, setProjectSelectedAction, setInlineControlEditor, setProjectInlineViewLabel]);
 
@@ -999,6 +1014,8 @@ export default function HomeScreen({ navigation, route }) {
     setSelectedProjectPath,
     setInlineControlEditor,
     setProjectSelectedAction,
+    projectModuleRoute,
+    setProjectModuleRoute,
     findProjectById,
   });
   // Web-only: koordinera inline-editor och projektbyte via dkInlineExitDecision
@@ -1608,11 +1625,33 @@ export default function HomeScreen({ navigation, route }) {
                     }}
                     onOpenPhaseItem={(sectionId, itemId, meta) => {
                       try {
-                        setPhaseActiveSection(sectionId || null);
-                        setPhaseActiveItem(itemId || null);
+                        const sid = String(sectionId || '').trim();
+                        const iid = String(itemId || '').trim();
+
+                        const normalizeOfferterItemId = (raw) => {
+                          const v = String(raw || '').trim();
+                          if (!v) return 'forfragningar';
+                          if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+                          return v;
+                        };
+
+                        // Offerter is a standalone project module (not a kalkylskede subsection).
+                        if (sid === 'offerter') {
+                          const nextItem = normalizeOfferterItemId(iid || 'forfragningar');
+                          setProjectModuleRoute({ moduleId: 'offerter', itemId: nextItem });
+                          setPhaseActiveSection('offerter');
+                          setPhaseActiveItem(nextItem);
+                          setPhaseActiveNode(null);
+                          return;
+                        }
+
+                        // Any other phase section -> clear module route.
+                        setProjectModuleRoute(null);
+                        setPhaseActiveSection(sid || null);
+                        setPhaseActiveItem(iid || null);
                         if (meta && Object.prototype.hasOwnProperty.call(meta, 'activeNode')) {
                           setPhaseActiveNode(meta.activeNode || null);
-                        } else if (!itemId) {
+                        } else if (!iid) {
                           setPhaseActiveNode(null);
                         }
                       } catch (_e) {}
@@ -1716,6 +1755,8 @@ export default function HomeScreen({ navigation, route }) {
                     afSelectedItemId={afSelectedItemId}
                     setAfSelectedItemId={setAfSelectedItemId}
                     bumpAfMirrorRefreshNonce={() => setAfMirrorRefreshNonce((n) => n + 1)}
+
+                    projectModuleRoute={projectModuleRoute}
                   />
                 </View>
               </View>

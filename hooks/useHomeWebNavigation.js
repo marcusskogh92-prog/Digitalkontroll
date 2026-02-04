@@ -24,9 +24,19 @@ export function useHomeWebNavigation({
   setSelectedProjectPath,
   setInlineControlEditor,
   setProjectSelectedAction,
+  projectModuleRoute,
+  setProjectModuleRoute,
   findProjectById,
 }) {
   const didApplyInitialUrlRef = React.useRef(false);
+
+  const normalizeOfferterItemId = React.useCallback((raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return 'forfragningar';
+    if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+    return v;
+  }, []);
+
   // Hitta projektets main/sub-path utifrån ID (använder hierarki-ref för alltid färsk data)
   const findProjectPathById = React.useCallback((projectId) => {
     if (!projectId) return null;
@@ -175,27 +185,56 @@ export function useHomeWebNavigation({
 
     try {
       const st = window.history.state || {};
-      if (!st.dkView) window.history.replaceState({ ...st, dkView: 'home' }, '');
+      if (!st.dkView) window.history.replaceState({ ...st, dkView: 'home' }, '', window.location.pathname + (window.location.search || ''));
     } catch(_e) {}
 
     const onPopState = (e) => {
       try {
         const st = e?.state || window.history.state || {};
-        if (st && st.dkView === 'project' && st.projectId) {
+        const view = st?.dkView;
+        const pid = st?.projectId ? String(st.projectId) : '';
+
+        if (view === 'offerter' && pid) {
+          const itemId = normalizeOfferterItemId(st?.itemId || 'forfragningar');
+          try {
+            if (typeof setProjectModuleRoute === 'function') {
+              setProjectModuleRoute({ moduleId: 'offerter', itemId });
+            }
+          } catch (_e) {}
+
           if (typeof openProject === 'function') {
-            openProject(String(st.projectId), { selectedAction: null });
+            openProject(pid, { selectedAction: null, keepModuleRoute: true });
             return;
           }
 
-          const proj = findProjectById(st.projectId);
-          requestProjectSwitch(proj || { id: String(st.projectId), name: String(st.projectId) }, {
-            selectedAction: null,
-            path: null,
-          });
-        } else {
-          requestProjectSwitch(null, { selectedAction: null, path: null });
+          const proj = findProjectById(pid);
+          requestProjectSwitch(proj || { id: pid, name: pid }, { selectedAction: null, path: null });
+          return;
         }
+
+        if (view === 'project' && pid) {
+          try {
+            if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
+          } catch (_e) {}
+
+          if (typeof openProject === 'function') {
+            openProject(pid, { selectedAction: null });
+            return;
+          }
+
+          const proj = findProjectById(pid);
+          requestProjectSwitch(proj || { id: pid, name: pid }, { selectedAction: null, path: null });
+          return;
+        }
+
+        try {
+          if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
+        } catch (_e) {}
+        requestProjectSwitch(null, { selectedAction: null, path: null });
       } catch(_e) {
+        try {
+          if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
+        } catch (_e2) {}
         requestProjectSwitch(null, { selectedAction: null, path: null });
       }
     };
@@ -204,7 +243,7 @@ export function useHomeWebNavigation({
     return () => {
       try { window.removeEventListener('popstate', onPopState); } catch(_e) {}
     };
-  }, [findProjectById, openProject, requestProjectSwitch]);
+  }, [findProjectById, openProject, requestProjectSwitch, normalizeOfferterItemId, setProjectModuleRoute]);
 
   // Web: support direct URL opens (best-effort)
   React.useEffect(() => {
@@ -219,14 +258,35 @@ export function useHomeWebNavigation({
       const url = new URL(window.location.href);
       const qp = url.searchParams;
       const fromQuery = String(qp.get('projectId') || qp.get('project') || qp.get('pid') || '').trim();
-      const m = String(url.pathname || '').match(/\/project\/(.+)$/);
-      const fromPath = m && m[1] ? String(decodeURIComponent(m[1])).trim() : '';
-      const projectId = fromQuery || fromPath;
+
+      const pathname = String(url.pathname || '');
+      const mOfferter = pathname.match(/^\/projects\/([^/]+)\/offerter(?:\/([^/]+))?\/?$/i);
+      const mProjectPlural = pathname.match(/^\/projects\/([^/]+)\/?$/i);
+      const mProjectLegacy = pathname.match(/\/project\/(.+)$/i);
+
+      const projectIdFromOfferter = mOfferter && mOfferter[1] ? String(decodeURIComponent(mOfferter[1])).trim() : '';
+      const offerterItem = mOfferter && mOfferter[2] ? String(decodeURIComponent(mOfferter[2])).trim() : '';
+      const projectIdFromPlural = mProjectPlural && mProjectPlural[1] ? String(decodeURIComponent(mProjectPlural[1])).trim() : '';
+      const projectIdFromLegacy = mProjectLegacy && mProjectLegacy[1] ? String(decodeURIComponent(mProjectLegacy[1])).trim() : '';
+
+      const projectId = fromQuery || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
       if (!projectId) return;
 
-      openProject(projectId, { selectedAction: null });
+      if (projectIdFromOfferter) {
+        try {
+          if (typeof setProjectModuleRoute === 'function') {
+            setProjectModuleRoute({ moduleId: 'offerter', itemId: normalizeOfferterItemId(offerterItem || 'forfragningar') });
+          }
+        } catch (_e) {}
+      } else {
+        try {
+          if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
+        } catch (_e) {}
+      }
+
+      openProject(projectId, { selectedAction: null, keepModuleRoute: Boolean(projectIdFromOfferter) });
     } catch (_e) {}
-  }, [openProject]);
+  }, [openProject, normalizeOfferterItemId, setProjectModuleRoute]);
 
   // Web: pusha nytt state när selectedProject ändras
   React.useEffect(() => {
@@ -235,14 +295,37 @@ export function useHomeWebNavigation({
     if (!window.history || typeof window.history.pushState !== 'function') return;
 
     const proj = selectedProject;
-    if (proj && proj.id) {
-      try {
-        const st = window.history.state || {};
-        if (st.dkView === 'project' && String(st.projectId || '') === String(proj.id)) return;
-        window.history.pushState({ ...st, dkView: 'project', projectId: String(proj.id) }, '');
-      } catch(_e) {}
-    }
-  }, [selectedProject]);
+    if (!proj || !proj.id) return;
+
+    const pid = String(proj.id);
+    const mod = String(projectModuleRoute?.moduleId || '').trim();
+    const item = String(projectModuleRoute?.itemId || '').trim();
+
+    const next = (() => {
+      if (mod === 'offerter') {
+        const safeItem = normalizeOfferterItemId(item || 'forfragningar');
+        return {
+          state: { dkView: 'offerter', projectId: pid, moduleId: 'offerter', itemId: safeItem },
+          url: `/projects/${encodeURIComponent(pid)}/offerter/${encodeURIComponent(safeItem)}`,
+        };
+      }
+      return {
+        state: { dkView: 'project', projectId: pid },
+        url: `/projects/${encodeURIComponent(pid)}`,
+      };
+    })();
+
+    try {
+      const st = window.history.state || {};
+      const sameView = st.dkView === next.state.dkView;
+      const samePid = String(st.projectId || '') === pid;
+      const sameItem = next.state.dkView !== 'offerter' || String(st.itemId || '') === String(next.state.itemId || '');
+      const sameUrl = String(window.location.pathname || '') === String(next.url);
+      if (sameView && samePid && sameItem && sameUrl) return;
+
+      window.history.pushState({ ...st, ...next.state }, '', next.url);
+    } catch(_e) {}
+  }, [selectedProject, projectModuleRoute, normalizeOfferterItemId]);
 
   return { applyBreadcrumbTarget, navigateViaBreadcrumb };
 }

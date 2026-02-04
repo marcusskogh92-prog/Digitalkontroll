@@ -5,11 +5,9 @@
 
 import { buildKalkylskedeNavigation, KALKYLSKEDE_STRUCTURE_VERSIONS } from './phases/kalkylskede/kalkylskedeStructureDefinition';
 
-// NOTE:
-// - DEFAULT_KALKYLSKEDE_NAVIGATION remains the legacy (v1) structure.
-// - v2 (Kalkyl late, between Möten and Anbud) must only be applied to NEW projects.
-export const DEFAULT_KALKYLSKEDE_NAVIGATION = buildKalkylskedeNavigation(KALKYLSKEDE_STRUCTURE_VERSIONS.V1);
-export const DEFAULT_KALKYLSKEDE_NAVIGATION_V2 = buildKalkylskedeNavigation(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
+// Consolidated structure: use v2 everywhere (single source of truth).
+export const DEFAULT_KALKYLSKEDE_NAVIGATION = buildKalkylskedeNavigation(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
+export const DEFAULT_KALKYLSKEDE_NAVIGATION_V2 = DEFAULT_KALKYLSKEDE_NAVIGATION;
 
 // Default navigation for other phases (can be customized later)
 export const DEFAULT_PRODUKTION_NAVIGATION = {
@@ -104,8 +102,6 @@ export function getDefaultNavigationForProject(phaseKey, project) {
   const pk = String(phaseKey || '').trim().toLowerCase();
   if (pk !== 'kalkylskede') return getDefaultNavigation(phaseKey);
 
-  const v = String(project?.kalkylskedeStructureVersion || '').trim().toLowerCase();
-  if (v === 'v2') return DEFAULT_KALKYLSKEDE_NAVIGATION_V2;
-
-  return DEFAULT_KALKYLSKEDE_NAVIGATION;
+  // Single structure: always use v2.
+  return DEFAULT_KALKYLSKEDE_NAVIGATION_V2;
 }

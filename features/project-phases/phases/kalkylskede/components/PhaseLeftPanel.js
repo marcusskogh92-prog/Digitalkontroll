@@ -449,7 +449,22 @@ export default function PhaseLeftPanel({
       return;
     }
 
-    const rootNodes = navigation.sections.map((section) => {
+    const calcSortKey = (section) => {
+      const numOrder = Number(section?.order);
+      if (Number.isFinite(numOrder) && numOrder > 0) return numOrder;
+      return 10_000;
+    };
+
+    const sortedSections = [...navigation.sections].sort((a, b) => {
+      const ak = calcSortKey(a);
+      const bk = calcSortKey(b);
+      if (ak !== bk) return ak - bk;
+      const an = String(a?.name || '');
+      const bn = String(b?.name || '');
+      return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    const rootNodes = sortedSections.map((section) => {
       const sectionName = String(section?.name || '').trim();
       const sectionPath = normalizePath(`${basePath}/${sectionName}`);
       return {
@@ -812,7 +827,16 @@ export default function PhaseLeftPanel({
           </View>
         ) : (
           <>
-            {navigation.sections.map(section => {
+            {[...(navigation.sections || [])]
+              .sort((a, b) => {
+                const ak = Number.isFinite(Number(a?.order)) && Number(a?.order) > 0 ? Number(a.order) : 10_000;
+                const bk = Number.isFinite(Number(b?.order)) && Number(b?.order) > 0 ? Number(b.order) : 10_000;
+                if (ak !== bk) return ak - bk;
+                const an = String(a?.name || '');
+                const bn = String(b?.name || '');
+                return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+              })
+              .map(section => {
           const isExpanded = expandedSections[section.id] ?? false;
           const isActive = activeSection === section.id;
           const hasItems = section.items && section.items.length > 0;
@@ -1089,7 +1113,16 @@ export default function PhaseLeftPanel({
             </View>
           ) : (
             <>
-              {navigation.sections.map(section => {
+              {[...(navigation.sections || [])]
+                .sort((a, b) => {
+                  const ak = Number.isFinite(Number(a?.order)) && Number(a?.order) > 0 ? Number(a.order) : 10_000;
+                  const bk = Number.isFinite(Number(b?.order)) && Number(b?.order) > 0 ? Number(b.order) : 10_000;
+                  if (ak !== bk) return ak - bk;
+                  const an = String(a?.name || '');
+                  const bn = String(b?.name || '');
+                  return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+                })
+                .map(section => {
             const isExpanded = expandedSections[section.id] ?? false;
             const isActive = isExpanded && activeSection === section.id;
             const hasItems = section.items && section.items.length > 0;

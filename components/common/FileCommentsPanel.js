@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Alert,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from 'react-native';
 
-import { auth, createFileComment, createCommentNotifications, deleteFileComment, subscribeFileComments } from '../firebase';
 import { useProjectOrganisation } from '../../hooks/useProjectOrganisation';
+import { auth, createCommentNotifications, createFileComment, deleteFileComment, subscribeFileComments } from '../firebase';
 import MentionInput from './MentionInput';
 
 function safeText(v) {
@@ -133,6 +133,7 @@ export default function FileCommentsPanel({
   pageNumber = null,
   variant = 'default',
   comments: commentsProp = null,
+  showList = true,
   onNavigateToPage = null,
 }) {
   const [userId, setUserId] = useState(null);
@@ -302,11 +303,13 @@ export default function FileCommentsPanel({
 
   const isSidebar = variant === 'sidebar';
   return (
-    <View style={[styles.container, isSidebar && styles.containerSidePanel]}>
+    <View style={[styles.container, isSidebar ? styles.containerSidePanel : styles.containerInline]}>
+      {/* 1) Fixed header (never scrolls) */}
       <View style={[styles.header, isSidebar && styles.headerShrink]}>
         <Text style={styles.title}>Kommentarer</Text>
       </View>
 
+      {/* 2) Middle area (only this part scrolls) */}
       <View style={[styles.contentArea, isSidebar && styles.contentAreaSidebar]}>
         {!available ? (
           <View style={styles.unavailableBox}>
@@ -330,7 +333,7 @@ export default function FileCommentsPanel({
           </View>
         ) : null}
 
-        {available && !loadingEffective ? (
+        {available && !loadingEffective && showList ? (
           <ScrollView
             style={styles.list}
             contentContainerStyle={styles.listContent}
@@ -408,9 +411,15 @@ export default function FileCommentsPanel({
               })()
             )}
           </ScrollView>
+        ) : available && !loadingEffective && !showList ? (
+          <View style={styles.collapsedBox}>
+            <Text style={styles.collapsedTitle}>Kommentarer är dolda</Text>
+            <Text style={styles.collapsedHint}>Använd knappen “Visa kommentarer” i toppbaren för att visa igen.</Text>
+          </View>
         ) : null}
       </View>
 
+      {/* 3) Fixed composer (never scrolls) */}
       <View style={[styles.form, !available && styles.formDisabled, isSidebar && styles.formShrink]}>
         {newMentions.length > 0 ? (
           <View style={styles.draftMentionsRow}>
@@ -435,9 +444,11 @@ export default function FileCommentsPanel({
           placeholder={available ? 'Skriv en kommentar… (skriv @ för att tagga)' : 'Ej tillgängligt'}
           editable={available && !submitting}
           maxLength={2000}
-          numberOfLines={2}
+          // Show at least ~3 lines by default for readability.
+          numberOfLines={3}
           multiline
-          inputStyle={[!available && styles.inputDisabled]}
+          // Extra spacing keeps the composer airy; does not affect the comment list.
+          inputStyle={[styles.composerInput, !available && styles.inputDisabled]}
         />
         <Pressable
           onPress={handleAddComment}
@@ -461,25 +472,43 @@ export default function FileCommentsPanel({
 
 const styles = StyleSheet.create({
   container: {
+    // Neutral base surface for the whole comments component.
+    backgroundColor: '#F1F5F9',
+    flexDirection: 'column',
+  },
+  // Default (non-sidebar) variant is a compact box.
+  containerInline: {
     borderTopWidth: 1,
     borderTopColor: '#EEF2F7',
-    backgroundColor: '#F8FAFC',
     minHeight: 180,
     maxHeight: 280,
-    flexDirection: 'column',
   },
   containerSidePanel: {
     flex: 1,
     minHeight: 0,
-    maxHeight: undefined,
     borderTopWidth: 0,
-    overflow: 'visible',
+    // Sidebar variant is a 3-zone layout: header (fixed), list (scroll), composer (fixed).
+    // Keep overflow hidden so only the middle list scrolls.
+    overflow: 'hidden',
   },
   header: {
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#EEF2F7',
+    flexShrink: 0,
+    // White header on a neutral panel background for clear structure.
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web'
+      ? {
+        // Defensive: if any ancestor scrolls, keep the header pinned.
+        position: 'sticky',
+        top: 0,
+        zIndex: 2,
+        backgroundColor: '#fff',
+        boxShadow: '0 1px 0 rgba(15, 23, 42, 0.06)',
+      }
+      : null),
   },
   headerShrink: {
     flexShrink: 0,
@@ -533,6 +562,12 @@ const styles = StyleSheet.create({
   inputDisabled: {
     backgroundColor: '#F1F5F9',
   },
+  // Composer textarea: taller by default (≈3 lines) + extra separation from the button.
+  composerInput: {
+    minHeight: 84,
+    maxHeight: 180,
+    marginBottom: 12,
+  },
   loadingBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -547,6 +582,7 @@ const styles = StyleSheet.create({
   list: {
     flex: 1,
     minHeight: 0,
+    backgroundColor: '#F1F5F9',
   },
   listContent: {
     flexGrow: 1,
@@ -585,11 +621,15 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   comment: {
-    marginBottom: 12,
-    paddingBottom: 12,
-    paddingHorizontal: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    // Comments as white cards on neutral background for long-read comfort.
+    marginBottom: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(15, 23, 42, 0.06)' } : { elevation: 1 }),
   },
   commentMeta: {
     flexDirection: 'row',
@@ -644,11 +684,41 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
+    // White composer on neutral panel background.
     backgroundColor: '#fff',
     overflow: 'visible',
+    flexShrink: 0,
+    ...(Platform.OS === 'web'
+      ? {
+        // Defensive: keep composer pinned to the bottom of the panel.
+        position: 'sticky',
+        bottom: 0,
+        zIndex: 2,
+        boxShadow: '0 -1px 0 rgba(15, 23, 42, 0.06)',
+      }
+      : null),
   },
   formShrink: {
     flexShrink: 0,
+  },
+
+  collapsedBox: {
+    padding: 14,
+    margin: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#fff',
+  },
+  collapsedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  collapsedHint: {
+    fontSize: 12,
+    color: '#64748b',
   },
   draftMentionsRow: {
     flexDirection: 'row',
@@ -672,7 +742,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1976D2',
     paddingVertical: 4,
     paddingHorizontal: 8,
-    borderRadius: 6,
     borderRadius: 6,
     maxWidth: 160,
   },
@@ -700,6 +769,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
     backgroundColor: '#1976D2',
+    // Keep a bit of breathing room from the input above.
+    marginTop: 2,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   submitBtnDisabled: {

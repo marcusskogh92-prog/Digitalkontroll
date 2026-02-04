@@ -18,8 +18,6 @@ export default function ContextMenu({
   compact = false,
   maxWidth,
 }) {
-  if (!visible) return null;
-
   const dims = useWindowDimensions();
   const menuRef = React.useRef(null);
   const [menuSize, setMenuSize] = React.useState({ width: 0, height: 0 });
@@ -151,6 +149,8 @@ export default function ContextMenu({
 
   const left = Number(pos?.left || safeX);
   const top = Number(pos?.top || safeY);
+
+  if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>

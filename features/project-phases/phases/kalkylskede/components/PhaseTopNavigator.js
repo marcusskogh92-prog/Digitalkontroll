@@ -16,6 +16,23 @@ export default function PhaseTopNavigator({
     return null;
   }
 
+  const calcSortKey = (section) => {
+    const numOrder = Number(section?.order);
+    if (Number.isFinite(numOrder) && numOrder > 0) return numOrder;
+
+    // Keep unknown/custom sections after known ones.
+    return 10_000;
+  };
+
+  const sections = [...(navigation.sections || [])].sort((a, b) => {
+    const ak = calcSortKey(a);
+    const bk = calcSortKey(b);
+    if (ak !== bk) return ak - bk;
+    const an = String(a?.name || '');
+    const bn = String(b?.name || '');
+    return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -23,7 +40,7 @@ export default function PhaseTopNavigator({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {navigation.sections.map(section => {
+        {sections.map(section => {
           const isActive = activeSection === section.id;
 
           return (

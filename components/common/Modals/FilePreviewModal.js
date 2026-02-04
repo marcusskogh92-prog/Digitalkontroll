@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import FileCommentsPanel from '../FileCommentsPanel';
 import { subscribeFileComments } from '../../firebase';
+import FileCommentsPanel from '../FileCommentsPanel';
 import { classifyFileType } from '../SharePointFiles/sharePointFileUtils';
 
 const POS = Platform.OS === 'web' ? 'fixed' : 'absolute';
@@ -259,8 +259,6 @@ export default function FilePreviewModal({
     };
   }, [maxWidth, isFullscreen, rect.x, rect.y, rect.w, rect.h]);
 
-  if (!show) return null;
-
   const hasZoom = typeof onZoomIn === 'function' && typeof onZoomOut === 'function';
   const isWordFile = typeMeta?.kind === 'word';
   const ZOOM_MIN = 50;
@@ -275,6 +273,8 @@ export default function FilePreviewModal({
     },
     [onZoomChange, isWordFile]
   );
+
+  if (!show) return null;
 
   const headerContent = (
     <View
@@ -344,7 +344,7 @@ export default function FilePreviewModal({
             {...(Platform.OS === 'web' ? { title: commentsPanelOpen ? 'Dölj kommentarer' : 'Visa kommentarer' } : {})}
           >
             <Ionicons name={commentsPanelOpen ? 'chatbubbles' : 'chatbubbles-outline'} size={18} color="#1976D2" />
-            {Platform.OS === 'web' ? <Text style={styles.headerBtnLabel}>{commentsPanelOpen ? 'Dölj kommentarer' : 'Kommentarer'}</Text> : null}
+            {Platform.OS === 'web' ? <Text style={styles.headerBtnLabel}>{commentsPanelOpen ? 'Dölj kommentarer' : 'Visa kommentarer'}</Text> : null}
           </Pressable>
         ) : null}
         <Pressable
@@ -417,25 +417,32 @@ export default function FilePreviewModal({
           pointerEvents="box-none"
         >
           {headerContent}
-          <View style={[styles.body, showComments && commentsPanelOpen && styles.bodyRow]}>
+          {/* Body layout: preview area + fixed right sidebar. The sidebar column is always reserved so the preview doesn't shift when toggling comments. */}
+          <View style={[styles.body, showComments && styles.bodyRow]}>
+            {/* Preview area: neutral background + a subtle "paper" frame for readability. */}
             <View style={styles.previewArea} pointerEvents="box-none">
-              {React.Children.count(children) === 1 && React.isValidElement(children)
-                ? React.cloneElement(children, { commentCountByPage })
-                : children}
+              <View style={styles.previewPaper} pointerEvents="box-none">
+                {React.Children.count(children) === 1 && React.isValidElement(children)
+                  ? React.cloneElement(children, { commentCountByPage })
+                  : children}
+              </View>
             </View>
-            {showComments && commentsPanelOpen ? (
+            {showComments ? (
               <View style={styles.commentsColumn}>
                 <View style={styles.commentsPanelWrap}>
-                  <FileCommentsPanel
-                    companyId={cid}
-                    projectId={pid}
-                    fileId={fileId}
-                    fileName={name}
-                    pageNumber={pageNumber}
-                    variant="sidebar"
-                    comments={fileComments}
-                    onNavigateToPage={typeof onRequestPage === 'function' ? onRequestPage : undefined}
-                  />
+                  {/* Comments sidebar is a locked 3-zone column (header / scroll list / composer). */}
+                  {commentsPanelOpen ? (
+                    <FileCommentsPanel
+                      companyId={cid}
+                      projectId={pid}
+                      fileId={fileId}
+                      fileName={name}
+                      pageNumber={pageNumber}
+                      variant="sidebar"
+                      comments={fileComments}
+                      onNavigateToPage={typeof onRequestPage === 'function' ? onRequestPage : undefined}
+                    />
+                  ) : null}
                 </View>
               </View>
             ) : null}
@@ -481,10 +488,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    backgroundColor: 'rgba(25, 118, 210, 0.2)',
+    // Neutral base: avoid large blue surfaces; keep blue as an accent.
+    backgroundColor: '#F8FAFC',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(25, 118, 210, 0.3)',
-    borderLeftWidth: 4,
+    borderBottomColor: '#E2E8F0',
+    borderLeftWidth: 3,
     borderLeftColor: '#1976D2',
     gap: 12,
   },
@@ -559,28 +567,46 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     minWidth: 0,
+    // Neutral workspace around the document.
+    backgroundColor: '#F1F5F9',
+    padding: 14,
+  },
+  previewPaper: {
+    // "Paper" feel: white sheet with a subtle frame/shadow.
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)' }
+      : { elevation: 2 }),
   },
   commentsColumn: {
+    // Reserved right sidebar column so the preview doesn't shift when toggling comments.
     width: 400,
     minWidth: 400,
     maxWidth: 400,
     borderLeftWidth: 1,
     borderLeftColor: '#E2E8F0',
-    backgroundColor: 'transparent',
+    // Neutral panel background to distinguish from the document.
+    backgroundColor: '#F1F5F9',
     flexDirection: 'column',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
     flexShrink: 0,
     minHeight: 0,
   },
   commentsPanelWrap: {
-    maxHeight: '75%',
-    minHeight: 280,
-    backgroundColor: '#F8FAFC',
-    borderLeftWidth: 1,
+    // Host the 3-zone comments panel; keep overflow hidden so only the middle list scrolls.
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: '#F1F5F9',
     borderTopWidth: 1,
     borderColor: '#E2E8F0',
-    borderTopLeftRadius: 10,
-    overflow: 'visible',
+    overflow: 'hidden',
     ...(Platform.OS === 'web' ? { boxShadow: '-4px 0 12px rgba(0,0,0,0.08)' } : { elevation: 4 }),
   },
   headerBtnActive: {
