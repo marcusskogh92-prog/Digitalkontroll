@@ -3,13 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
-import { deleteDriveItemByIdGuarded, ensureFolderPath, ensureKalkylskedeProjectFolderStructure, moveDriveItemByIdGuarded, renameDriveItemByIdGuarded } from '../../services/azure/fileService';
-import { folderHasFilesDeep, getDriveItemByPath, getDriveItems, loadFolderChildren } from '../../services/azure/hierarchyService';
+import { ensureDkBasStructure, ensureFolderPath, ensureKalkylskedeProjectFolderStructure, moveDriveItemByIdGuarded, renameDriveItemByIdGuarded } from '../../services/azure/fileService';
+import { folderHasFilesDeep, getDriveItemByPath, getDriveItems, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../../services/azure/hierarchyService';
 import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
 import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
-import { archiveCompanyProject, auth, fetchSharePointProjectMetadataMap, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
+import { archiveCompanyProject, auth, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
@@ -453,6 +453,83 @@ export function SharePointLeftPanel({
   const projectSelfHealCacheRef = useRef(new Map()); // key: siteId|path -> { checkedAtMs, exists }
   const kalkylStructureSelfHealCacheRef = useRef(new Map()); // key: siteId|rootPath -> { checkedAtMs }
   const projectStructureSelfHealCacheRef = useRef(new Map()); // key: siteId|rootPath -> { checkedAtMs }
+  const [sharepointSyncState, setSharepointSyncState] = useState('idle');
+  const [sharepointSyncError, setSharepointSyncError] = useState(null);
+  const syncInFlightRef = useRef(null);
+  const ensureInFlightRef = useRef(new Map());
+  const ensurePassInFlightRef = useRef(null);
+  const syncNavDoneRef = useRef(false);
+  const syncEnsureDoneRef = useRef(false);
+  const lastCompanyIdRef = useRef(null);
+
+  const VERIFICATION_TTL_MS = 6 * 60 * 60 * 1000;
+  const STORAGE_KEYS = {
+    verified: 'sharepointStructureVerified',
+    verifiedAt: 'verifiedAt',
+  };
+
+  const setSyncState = (nextState, errorMessage = null) => {
+    setSharepointSyncState(nextState);
+    setSharepointSyncError(errorMessage);
+    try {
+      if (nextState === 'error') {
+        console.error('[SharePointSync] error', errorMessage || 'Unknown error');
+      } else {
+        console.log(`[SharePointSync] ${nextState}`);
+      }
+    } catch (_e) {}
+  };
+
+  const readSyncVerification = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) {
+      return { valid: false, verifiedAt: null };
+    }
+    const raw = window.localStorage.getItem(STORAGE_KEYS.verified);
+    const tsRaw = window.localStorage.getItem(STORAGE_KEYS.verifiedAt);
+    const verifiedAt = tsRaw ? Number(tsRaw) : null;
+    if (raw !== 'true' || !verifiedAt || Number.isNaN(verifiedAt)) {
+      return { valid: false, verifiedAt: null };
+    }
+    const age = Date.now() - verifiedAt;
+    return { valid: age >= 0 && age <= VERIFICATION_TTL_MS, verifiedAt };
+  };
+
+  const writeSyncVerification = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.verified, 'true');
+      window.localStorage.setItem(STORAGE_KEYS.verifiedAt, String(Date.now()));
+    } catch (_e) {}
+  };
+
+  const clearSyncVerification = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      window.localStorage.removeItem(STORAGE_KEYS.verified);
+      window.localStorage.removeItem(STORAGE_KEYS.verifiedAt);
+    } catch (_e) {}
+  };
+
+  const maybeMarkSyncReady = () => {
+    if (syncNavDoneRef.current && syncEnsureDoneRef.current) {
+      setSyncState('ready');
+    }
+  };
+
+  const runEnsureSingleFlight = (key, task) => {
+    if (!key) return task();
+    const existing = ensureInFlightRef.current.get(key);
+    if (existing) return existing;
+    const promise = (async () => {
+      try {
+        return await task();
+      } finally {
+        ensureInFlightRef.current.delete(key);
+      }
+    })();
+    ensureInFlightRef.current.set(key, promise);
+    return promise;
+  };
 
   const getTwoDigitPrefix = (name) => {
     const s = String(name || '').trim();
@@ -613,7 +690,7 @@ export function SharePointLeftPanel({
       if (!lockCtx) {
         items.push({ key: 'sp-rename', label: 'Byt namn', iconName: 'pencil-outline' });
         items.push({ key: 'sp-move', label: 'Flytta…', iconName: 'arrow-forward-outline' });
-        items.push({ key: 'sp-delete', label: 'Radera', iconName: 'trash-outline', danger: true });
+        items.push({ key: 'sp-archive', label: 'Arkivera', iconName: 'archive-outline', danger: true });
       }
     }
 
@@ -1021,9 +1098,9 @@ export function SharePointLeftPanel({
       setSpActionModal({ visible: true, kind: 'move', title: 'Flytta till (ange målmappens sökväg)', siteId, itemId: driveItemId || null, itemPath: folderPath, basePath: '' });
       return;
     }
-    if (key === 'sp-delete') {
+    if (key === 'sp-archive') {
       if (lockCtx) {
-        const msg = 'Denna systemmapp är låst och kan inte raderas.';
+        const msg = 'Denna systemmapp är låst och kan inte arkiveras.';
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           try { window.alert(msg); } catch (_e) {}
         } else {
@@ -1031,26 +1108,81 @@ export function SharePointLeftPanel({
         }
         return;
       }
+
+      const normalizedPath = normalizeSharePointPath(folderPath);
+      const rootName = String(normalizedPath || '').split('/')[0] || '';
+      const rootLower = rootName.toLowerCase();
+      const blockedRoots = new Set(['projekt', 'mappar', 'arkiv', 'metadata', 'system']);
+      const isBlockedRoot = !normalizedPath || (normalizedPath.indexOf('/') === -1 && blockedRoots.has(rootLower));
+      if (isBlockedRoot) {
+        const msg = 'Denna huvudmapp kan inte arkiveras.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          try { window.alert(msg); } catch (_e) {}
+        } else {
+          try { Alert.alert('Inte tillåtet', msg); } catch (_e) {}
+        }
+        return;
+      }
+
       const name = String(target?.name || '').trim() || 'mappen';
-      const confirmText = `Radera "${name}"?`;
+      const confirmText = `Arkivera "${name}"?`;
 
       const confirm = (Platform.OS === 'web' && typeof window !== 'undefined')
         ? window.confirm(confirmText)
         : await new Promise((resolve) => {
-            Alert.alert('Bekräfta', confirmText, [
+            Alert.alert('Arkivera', confirmText, [
               { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Radera', style: 'destructive', onPress: () => resolve(true) },
+              { text: 'Arkivera', style: 'destructive', onPress: () => resolve(true) },
             ]);
           });
       if (!confirm) return;
 
       try {
-        if (driveItemId) {
-          await deleteDriveItemByIdGuarded({ siteId, itemId: driveItemId, projectRootPath: null, itemPath: folderPath });
-        } else {
-          const item = await getDriveItemByPath(siteId, folderPath);
-          await deleteDriveItemByIdGuarded({ siteId, itemId: item?.id, projectRootPath: null, itemPath: folderPath });
+        const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+        if (!systemSiteId) {
+          throw new Error('Ingen DK Bas-site hittades för arkivering.');
         }
+
+        await ensureDkBasStructure(systemSiteId);
+
+      const isProject = isProjectFolder(target);
+      if (isProject) {
+        const msg = 'Projekt arkiveras via projektlistan.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          try { window.alert(msg); } catch (_e) {}
+        } else {
+          try { Alert.alert('Inte tillåtet', msg); } catch (_e) {}
+        }
+        return;
+      }
+
+      const pathParts = String(normalizedPath || '').split('/').filter(Boolean);
+      const destName = pathParts[pathParts.length - 1] || name;
+      const destParentPath = pathParts.length > 1
+        ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}`
+        : 'Arkiv/Mappar';
+
+        console.log('[Archive] start', {
+          siteId,
+          path: normalizedPath,
+          destSiteId: systemSiteId,
+          destParentPath,
+          destName,
+          type: 'folder',
+        });
+
+        await moveDriveItemAcrossSitesByPath({
+          sourceSiteId: siteId,
+          sourcePath: normalizedPath,
+          destSiteId: systemSiteId,
+          destParentPath,
+          destName,
+        });
+
+        console.log('[Archive] moved', {
+          from: `${siteId}:${normalizedPath}`,
+          to: `${systemSiteId}:${destParentPath}/${destName}`,
+        });
 
         // Update UI immediately; refresh is still triggered to resync from SharePoint.
         try { removeFolderFromFilteredHierarchy(siteId, folderPath); } catch (_e) {}
@@ -1058,6 +1190,7 @@ export function SharePointLeftPanel({
           if (typeof onPressRefresh === 'function') onPressRefresh();
         } catch (_e) {}
       } catch (e) {
+        console.error('[Archive] error', e?.message || e);
         const msg = e?.message || String(e);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           try { window.alert(msg); } catch (_e2) {}
@@ -1153,6 +1286,16 @@ export function SharePointLeftPanel({
       } catch (_e) {}
     };
   }, []);
+
+  // Reset sync verification when company changes.
+  useEffect(() => {
+    const current = String(companyId || '').trim() || null;
+    const last = lastCompanyIdRef.current || null;
+    if (last && current && last !== current) {
+      clearSyncVerification();
+    }
+    lastCompanyIdRef.current = current;
+  }, [companyId]);
 
   // Permissions: Only superadmin or company admin may archive projects.
   useEffect(() => {
@@ -1283,7 +1426,24 @@ export function SharePointLeftPanel({
   // create it automatically in the DK Site (siteRole = "projects").
   useEffect(() => {
     if (!companyId) return;
-    if (!Array.isArray(firestoreProjects) || firestoreProjects.length === 0) return;
+    if (projectsLoading) return;
+
+    const verification = readSyncVerification();
+    if (verification.valid) {
+      syncEnsureDoneRef.current = true;
+      maybeMarkSyncReady();
+      return;
+    }
+
+    if (!Array.isArray(firestoreProjects) || firestoreProjects.length === 0) {
+      syncEnsureDoneRef.current = true;
+      writeSyncVerification();
+      console.log('[SharePointSync] ensured');
+      maybeMarkSyncReady();
+      return;
+    }
+
+    if (ensurePassInFlightRef.current) return;
 
     let cancelled = false;
 
@@ -1292,7 +1452,9 @@ export function SharePointLeftPanel({
       return msg.includes('404') || msg.includes('itemnotfound') || msg.includes('not found');
     };
 
-    (async () => {
+    const run = (async () => {
+      setSyncState('syncing');
+
       // Keep this small so we don't spam Graph. Remaining projects will be checked on next refresh.
       const batch = firestoreProjects.slice(0, 12);
       for (const p of batch) {
@@ -1329,7 +1491,10 @@ export function SharePointLeftPanel({
           }
 
           try {
-            await ensureFolderPath(path, companyId, siteId, { siteRole: 'projects' });
+            await runEnsureSingleFlight(
+              `ensure:${siteId}|${path}`,
+              () => ensureFolderPath(path, companyId, siteId, { siteRole: 'projects' })
+            );
             projectSelfHealCacheRef.current.set(cacheKey, { checkedAtMs: Date.now(), exists: true });
           } catch (createErr) {
             // Guard rails in fileService will prevent creating system folders on DK Site.
@@ -1346,7 +1511,10 @@ export function SharePointLeftPanel({
           const now2 = Date.now();
           if (!cached2 || typeof cached2.checkedAtMs !== 'number' || now2 - cached2.checkedAtMs > 10 * 60 * 1000) {
             try {
-              await ensureKalkylskedeProjectFolderStructure(path, companyId, siteId);
+              await runEnsureSingleFlight(
+                `kalkyl:${siteId}|${path}`,
+                () => ensureKalkylskedeProjectFolderStructure(path, companyId, siteId)
+              );
             } catch (e2) {
               console.warn('[SharePointLeftPanel] Self-heal kalkyl structure failed:', e2?.message || e2);
             } finally {
@@ -1355,12 +1523,28 @@ export function SharePointLeftPanel({
           }
         }
       }
-    })();
+
+      if (!cancelled) {
+        syncEnsureDoneRef.current = true;
+        writeSyncVerification();
+        console.log('[SharePointSync] ensured');
+        maybeMarkSyncReady();
+      }
+    })()
+      .catch((e) => {
+        if (cancelled) return;
+        setSyncState('error', e?.message || 'SharePoint sync failed');
+      })
+      .finally(() => {
+        ensurePassInFlightRef.current = null;
+      });
+
+    ensurePassInFlightRef.current = run;
 
     return () => {
       cancelled = true;
     };
-  }, [companyId, firestoreProjects]);
+  }, [companyId, firestoreProjects, projectsLoading]);
 
   // When we're inside a project, always ensure the (current) project has the expected structure.
   // For now we reuse the kalkylskede locked structure for all phases, so the leftpanel experience is consistent
@@ -1392,7 +1576,10 @@ export function SharePointLeftPanel({
 
     (async () => {
       try {
-        await ensureKalkylskedeProjectFolderStructure(rootPath, companyId, siteId);
+        await runEnsureSingleFlight(
+          `kalkyl:${siteId}|${rootPath}`,
+          () => ensureKalkylskedeProjectFolderStructure(rootPath, companyId, siteId)
+        );
       } catch (e) {
         console.warn('[SharePointLeftPanel] Self-heal project structure failed:', e?.message || e);
       } finally {
@@ -2019,7 +2206,15 @@ export function SharePointLeftPanel({
                 matchedSectionId: matchedSection?.id,
               });
             }
-            await Promise.all(folderNames.map((folderName) => ensureFolderPath(`${key}/${folderName}`, companyId, null, { siteRole: 'projects' })));
+            await Promise.all(
+              folderNames.map((folderName) => {
+                const fullPath = `${key}/${folderName}`;
+                return runEnsureSingleFlight(
+                  `ensure:${companyId || 'no-company'}|${fullPath}`,
+                  () => ensureFolderPath(fullPath, companyId, null, { siteRole: 'projects' })
+                );
+              })
+            );
             const repaired = await loadFolderChildren(companyId, key);
             children = Array.isArray(repaired) ? repaired : [];
 
@@ -2159,54 +2354,86 @@ export function SharePointLeftPanel({
   // Load navigation config and build hierarchy from enabled sites
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    const runSync = async () => {
       if (!companyId) {
-        if (mounted) setFilteredHierarchy([]);
+        if (mounted) {
+          setFilteredHierarchy([]);
+          setNavLoading(false);
+          setSyncState('idle');
+        }
+        syncNavDoneRef.current = false;
+        syncEnsureDoneRef.current = false;
         return;
       }
 
+      if (syncInFlightRef.current) {
+        try {
+          await syncInFlightRef.current;
+        } catch (_e) {}
+        return;
+      }
+
+      const verification = readSyncVerification();
+      syncNavDoneRef.current = false;
+      syncEnsureDoneRef.current = !!verification.valid;
+      console.log('[SharePointSync] start');
+      setSyncState('syncing');
+
+      const promise = (async () => {
+        try {
+          setNavLoading(true);
+          const config = await getSharePointNavigationConfig(companyId);
+          if (!mounted) return;
+          setNavConfig(config);
+
+          // Ensure visibility metadata exists (server-side migration). Best-effort.
+          try {
+            await syncSharePointSiteVisibilityRemote({ companyId });
+          } catch (_e) {
+            // Non-fatal: UI can still fall back to legacy behavior.
+          }
+
+          // Enabled sites are controlled by Firestore metadata (sharepoint_sites).
+          // Navigation config is only used for optional folder/path config.
+          let visibleSiteIds = [];
+          try {
+            visibleSiteIds = await getCompanyVisibleSharePointSiteIds(companyId);
+          } catch (_e) {
+            visibleSiteIds = [];
+          }
+
+          const effectiveConfig = {
+            // Only render project sites. System sites (e.g. DK Bas) must never appear.
+            enabledSites: Array.isArray(visibleSiteIds) ? visibleSiteIds : [],
+            siteConfigs: config?.siteConfigs || {},
+          };
+
+          // Build hierarchy from enabled sites
+          const filtered = await filterHierarchyByConfig([], companyId, effectiveConfig);
+          if (mounted) {
+            setFilteredHierarchy(filtered);
+          }
+
+          syncNavDoneRef.current = true;
+          maybeMarkSyncReady();
+        } catch (error) {
+          console.error('[SharePointLeftPanel] Error loading/filtering hierarchy:', error);
+          if (mounted) setFilteredHierarchy([]);
+          setSyncState('error', error?.message || 'SharePoint sync failed');
+        } finally {
+          if (mounted) setNavLoading(false);
+        }
+      })();
+
+      syncInFlightRef.current = promise;
       try {
-        setNavLoading(true);
-        const config = await getSharePointNavigationConfig(companyId);
-        if (!mounted) return;
-        setNavConfig(config);
-
-        // Ensure visibility metadata exists (server-side migration). Best-effort.
-        try {
-          await syncSharePointSiteVisibilityRemote({ companyId });
-        } catch (_e) {
-          // Non-fatal: UI can still fall back to legacy behavior.
-        }
-
-        // Enabled sites are controlled by Firestore metadata (sharepoint_sites).
-        // Navigation config is only used for optional folder/path config.
-        let visibleSiteIds = [];
-        try {
-          visibleSiteIds = await getCompanyVisibleSharePointSiteIds(companyId);
-        } catch (_e) {
-          visibleSiteIds = [];
-        }
-
-        const effectiveConfig = {
-          // Only render project sites. System sites (e.g. DK Bas) must never appear.
-          enabledSites: Array.isArray(visibleSiteIds) ? visibleSiteIds : [],
-          siteConfigs: config?.siteConfigs || {},
-        };
-
-        // Build hierarchy from enabled sites
-        const filtered = await filterHierarchyByConfig([], companyId, effectiveConfig);
-        if (mounted) {
-          setFilteredHierarchy(filtered);
-        }
-      } catch (error) {
-        console.error('[SharePointLeftPanel] Error loading/filtering hierarchy:', error);
-        // On error, show empty (admin must configure properly)
-        if (mounted) setFilteredHierarchy([]);
+        await promise;
+      } finally {
+        syncInFlightRef.current = null;
       }
-      finally {
-        if (mounted) setNavLoading(false);
-      }
-    })();
+    };
+
+    runSync();
     return () => { mounted = false; };
   }, [companyId, reloadKey]);
 
@@ -2487,6 +2714,30 @@ export function SharePointLeftPanel({
                       }}
                     >
                       Laddar projektstruktur...
+                    </Text>
+                  </View>
+                </View>
+              );
+            }
+
+            if (!selectedProject && sharepointSyncState === 'error') {
+              return (
+                <View style={{ paddingHorizontal: 4 }}>
+                  <View style={{ paddingVertical: 16 }}>
+                    <Text style={{ paddingHorizontal: 4, color: '#D32F2F', fontSize: 14 }}>
+                      {sharepointSyncError || 'SharePoint-synk misslyckades'}
+                    </Text>
+                  </View>
+                </View>
+              );
+            }
+
+            if (!selectedProject && sharepointSyncState !== 'ready') {
+              return (
+                <View style={{ paddingHorizontal: 4 }}>
+                  <View style={{ paddingVertical: 16 }}>
+                    <Text style={{ paddingHorizontal: 4, color: '#666', fontSize: 14 }}>
+                      Laddar mappar...
                     </Text>
                   </View>
                 </View>

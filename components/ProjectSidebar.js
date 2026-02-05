@@ -5,11 +5,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
 import { LEFT_NAV } from '../constants/leftNavTheme';
-import { checkSharePointConnection, createSharePointFolder, deleteItem, getSharePointHierarchy, loadFolderChildren } from '../services/azure/hierarchyService';
+import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
+import { ensureDkBasStructure } from '../services/azure/fileService';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ContextMenu from './ContextMenu';
 import UserEditModal from './UserEditModal';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, provisionCompanyRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteIdByRole, provisionCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 
 const PRIMARY_BLUE = '#1976D2';
 const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
@@ -1895,7 +1896,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                           ...(deleted ? [{ key: 'unhideCompany', label: 'Gör synligt igen', icon: '👁️' }] : []),
                           { key: 'activate', label: 'Aktivera företag', icon: '▶️', disabled: enabled },
                           { key: 'pause', label: 'Pausa företag', icon: '⏸️', disabled: !enabled },
-                          { key: 'deleteCompany', label: deleted ? 'Radera företag' : 'Dölj företag', icon: '🗑️', danger: true, disabled: isProtectedCompany || (!deleted && enabled) },
+                          ...(!deleted ? [{ key: 'deleteCompany', label: 'Dölj företag', icon: '🗑️', danger: true, disabled: isProtectedCompany || enabled }] : []),
                         ]);
                       })()}
                       onSelect={async (item) => {
@@ -1976,6 +1977,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                             hideToast();
                           }
                         } else if (item.key === 'deleteCompany') {
+                          // Permanent delete is intentionally disabled in UI.
                           if (isProtectedCompany) {
                             showToast('MS Byggsystem kan aldrig raderas.');
                             return;
@@ -2025,38 +2027,6 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                               const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
                               showToast('Kunde inte radera företaget: ' + combined);
                               try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget.'); } catch (__ ) {} }
-                            } finally {
-                              hideToast();
-                            }
-                          } else {
-                            const conf = (typeof window !== 'undefined')
-                              ? window.confirm(
-                                  'Företaget ' +
-                                    compId +
-                                    ' är redan dolt. Vill du radera det PERMANENT? Detta tar bort all historik och kan inte ångras.'
-                                )
-                              : true;
-                            if (!conf) return;
-                            showToastSticky('Laddar…');
-                            try {
-                              const res = await purgeCompanyRemote({ companyId: compId });
-                              const ok = !!(res && (res.ok === true || res.success === true));
-                              if (!ok) {
-                                showToast('Kunde inte radera företaget permanent (servern avvisade ändringen).');
-                                return;
-                              }
-                              setCompanies(prev => (Array.isArray(prev) ? prev.filter(c => c.id !== compId) : prev));
-                              try {
-                                Alert.alert('Borttaget', 'Företaget har raderats permanent och all historik är borttagen.');
-                              } catch (_e) {
-                                try { window.alert('Företaget har raderats permanent.'); } catch (_) {}
-                              }
-                            } catch (e) {
-                              const rawCode = e && e.code ? String(e.code) : '';
-                              const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                              const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                              showToast('Kunde inte radera företaget permanent: ' + combined);
-                              try { Alert.alert('Fel', 'Kunde inte radera företaget permanent: ' + combined); } catch (_) { try { window.alert('Kunde inte radera företaget permanent.'); } catch (__ ) {} }
                             } finally {
                               hideToast();
                             }
@@ -3241,7 +3211,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
           items={[
             { key: 'createFolder', label: 'Lägg till mapp i SharePoint' },
             { key: 'rename', label: 'Byt namn' },
-            { key: 'delete', label: 'Radera mapp', danger: true },
+            { key: 'archive', label: 'Arkivera mapp', danger: true },
           ]}
           onSelect={async (item) => {
             const folder = folderContextMenu?.folder;
@@ -3261,18 +3231,43 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                 setHierarchy(sharePointFolders || []);
                 
                 showToast(`Mappen "${folderName}" har skapats i SharePoint`);
-              } else if (item.key === 'delete') {
-                const confirmed = window.confirm(`Är du säker på att du vill radera mappen "${folder.name}" från SharePoint? Detta går inte att ångra.`);
+              } else if (item.key === 'archive') {
+                const confirmed = window.confirm(`Är du säker på att du vill arkivera mappen "${folder.name}"?`);
                 if (!confirmed) return;
                 
-                const folderPath = folder.path || folder.name;
-                await deleteItem(resolvedCompanyId, folderPath);
+                const folderPath = String(folder.path || folder.name || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+                if (!folderPath) throw new Error('Saknar mappsökväg.');
+                const root = folderPath.split('/')[0] || '';
+                const rootLower = root.toLowerCase();
+                const blockedRoots = new Set(['projekt', 'mappar', 'arkiv', 'metadata', 'system']);
+                if (folderPath.indexOf('/') === -1 && blockedRoots.has(rootLower)) {
+                  window.alert('Denna systemmapp kan inte arkiveras.');
+                  return;
+                }
+
+                const systemSiteId = await getCompanySharePointSiteIdByRole(resolvedCompanyId, 'system', { syncIfMissing: true });
+                if (!systemSiteId) throw new Error('Ingen DK Bas-site hittades för arkivering.');
+                await ensureDkBasStructure(systemSiteId);
+
+                const pathParts = folderPath.split('/').filter(Boolean);
+                const destParentPath = pathParts.length > 1
+                  ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}`
+                  : 'Arkiv/Mappar';
+                const destName = pathParts[pathParts.length - 1] || folder.name;
+
+                await moveDriveItemAcrossSitesByPath({
+                  sourceSiteId: folder?.siteId || folder?.siteID || null,
+                  sourcePath: folderPath,
+                  destSiteId: systemSiteId,
+                  destParentPath,
+                  destName,
+                });
                 
                 // Refresh hierarchy
                 const sharePointFolders = await getSharePointHierarchy(resolvedCompanyId, null);
                 setHierarchy(sharePointFolders || []);
                 
-                showToast(`Mappen "${folder.name}" har raderats från SharePoint`);
+                showToast(`Mappen "${folder.name}" har arkiverats`);
               } else if (item.key === 'rename') {
                 const newName = window.prompt('Nytt namn på mappen:', folder.name);
                 if (!newName || !newName.trim() || newName.trim() === folder.name) return;

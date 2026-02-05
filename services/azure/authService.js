@@ -51,6 +51,22 @@ const TOKEN_STORAGE_KEY = 'azure_access_token';
 const REFRESH_TOKEN_STORAGE_KEY = 'azure_refresh_token';
 const TOKEN_EXPIRY_KEY = 'azure_token_expiry';
 const CODE_VERIFIER_KEY = 'azure_code_verifier'; // For PKCE
+const CODE_STORAGE_KEY = 'azure_oauth_code'; // Cached auth code for redirect race safety
+
+function cacheOauthCodeFromUrl() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.location || !window.sessionStorage) return;
+  try {
+    const hash = window.location.hash.substring(1);
+    const search = window.location.search.substring(1);
+    const urlParams = new URLSearchParams(hash || search);
+    const code = urlParams.get('code');
+    if (code) {
+      window.sessionStorage.setItem(CODE_STORAGE_KEY, code);
+    }
+  } catch (_e) {}
+}
+
+cacheOauthCodeFromUrl();
 
 /**
  * Get stored access token
@@ -58,8 +74,15 @@ const CODE_VERIFIER_KEY = 'azure_code_verifier'; // For PKCE
  */
 export async function getStoredAccessToken() {
   try {
-    const token = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
-    const expiry = await AsyncStorage.getItem(TOKEN_EXPIRY_KEY);
+    let token = null;
+    let expiry = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+      expiry = window.localStorage.getItem(TOKEN_EXPIRY_KEY);
+    } else {
+      token = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+      expiry = await AsyncStorage.getItem(TOKEN_EXPIRY_KEY);
+    }
     
     if (!token || !expiry) {
       return null;
@@ -72,7 +95,9 @@ export async function getStoredAccessToken() {
     
     if (now + bufferTime >= expiryTime) {
       // Token expired or expiring soon, try to refresh
-      const refreshToken = await AsyncStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+      const refreshToken = (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage)
+        ? window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)
+        : await AsyncStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
       if (refreshToken) {
         try {
           const newToken = await refreshAccessToken(refreshToken);
@@ -106,10 +131,18 @@ export async function getStoredAccessToken() {
 export async function storeAccessToken(accessToken, refreshToken = null, expiresIn = 3600) {
   try {
     const expiryTime = Date.now() + (expiresIn * 1000);
-    await AsyncStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-    await AsyncStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
-    if (refreshToken) {
-      await AsyncStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+      window.localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
+      if (refreshToken) {
+        window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+      }
+    } else {
+      await AsyncStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+      await AsyncStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
+      if (refreshToken) {
+        await AsyncStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+      }
     }
   } catch (error) {
     console.error('[Azure Auth] Error storing token:', error);
@@ -122,7 +155,13 @@ export async function storeAccessToken(accessToken, refreshToken = null, expires
  */
 export async function clearStoredTokens() {
   try {
-    await AsyncStorage.multiRemove([TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY, TOKEN_EXPIRY_KEY]);
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(TOKEN_EXPIRY_KEY);
+    } else {
+      await AsyncStorage.multiRemove([TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY, TOKEN_EXPIRY_KEY]);
+    }
   } catch (error) {
     console.error('[Azure Auth] Error clearing tokens:', error);
   }
@@ -206,7 +245,7 @@ async function authenticateWeb(config) {
     const hash = window.location.hash.substring(1); // Remove #
     const search = window.location.search.substring(1); // Remove ?
     const urlParams = new URLSearchParams(hash || search);
-    const code = urlParams.get('code');
+    const codeFromUrl = urlParams.get('code');
     const state = urlParams.get('state');
     const error = urlParams.get('error');
     
@@ -214,19 +253,34 @@ async function authenticateWeb(config) {
       throw new Error(`Azure authentication error: ${error}`);
     }
     
+    let code = codeFromUrl;
+    if (!code && typeof window !== 'undefined' && window.sessionStorage) {
+      code = window.sessionStorage.getItem(CODE_STORAGE_KEY);
+      if (code) {
+        // Using cached OAuth code from sessionStorage
+      }
+    }
+
     if (code) {
+      if (typeof window !== 'undefined' && window.sessionStorage && codeFromUrl) {
+        try {
+          window.sessionStorage.setItem(CODE_STORAGE_KEY, codeFromUrl);
+        } catch (_e) {}
+      }
       // We're returning from OAuth redirect - exchange code for token
       // Retrieve stored code_verifier for PKCE (use localStorage on web)
       let codeVerifier;
       if (typeof window !== 'undefined' && window.localStorage) {
         codeVerifier = window.localStorage.getItem(CODE_VERIFIER_KEY);
-        console.log('[authenticateWeb] Retrieved code_verifier from localStorage:', codeVerifier ? 'found' : 'not found');
       } else {
         codeVerifier = await AsyncStorage.getItem(CODE_VERIFIER_KEY);
       }
       
       if (!codeVerifier) {
         console.warn('[authenticateWeb] Code verifier not found in storage (may have expired). Cleaning URL and starting new OAuth flow. Available keys:', typeof window !== 'undefined' && window.localStorage ? Object.keys(window.localStorage) : 'N/A');
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          try { window.sessionStorage.removeItem(CODE_STORAGE_KEY); } catch (_e) {}
+        }
         
         // Clean up URL fragment - code is invalid without verifier
         const url = new URL(window.location.href);
@@ -246,20 +300,26 @@ async function authenticateWeb(config) {
           url.search = '';
           window.history.replaceState({}, '', url.toString());
           
-          // Clear stored code_verifier after successful exchange (use localStorage on web)
+          // Clear stored code_verifier/code after successful exchange (use localStorage on web)
           if (typeof window !== 'undefined' && window.localStorage) {
             window.localStorage.removeItem(CODE_VERIFIER_KEY);
           } else {
             await AsyncStorage.removeItem(CODE_VERIFIER_KEY);
           }
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            try { window.sessionStorage.removeItem(CODE_STORAGE_KEY); } catch (_e) {}
+          }
           
           return token;
         } catch (tokenError) {
-          // Clear code_verifier on error (use localStorage on web)
+          // Clear code_verifier/code on error (use localStorage on web)
           if (typeof window !== 'undefined' && window.localStorage) {
             window.localStorage.removeItem(CODE_VERIFIER_KEY);
           } else {
             await AsyncStorage.removeItem(CODE_VERIFIER_KEY);
+          }
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            try { window.sessionStorage.removeItem(CODE_STORAGE_KEY); } catch (_e) {}
           }
           throw new Error(`Token exchange failed: ${tokenError?.message || tokenError}`);
         }
@@ -284,7 +344,6 @@ async function authenticateWeb(config) {
         console.error('[authenticateWeb] CRITICAL: code_verifier was not saved correctly! Expected:', codeVerifier?.substring(0, 10), 'Got:', savedVerifier?.substring(0, 10));
         throw new Error('Failed to save code_verifier to localStorage');
       }
-      console.log('[authenticateWeb] ✅ Stored code_verifier in localStorage. Key:', CODE_VERIFIER_KEY, 'Length:', codeVerifier?.length);
     } catch (e) {
       console.error('[authenticateWeb] ❌ Failed to store code_verifier in localStorage:', e);
       throw new Error(`Failed to store code_verifier: ${e?.message || e}`);

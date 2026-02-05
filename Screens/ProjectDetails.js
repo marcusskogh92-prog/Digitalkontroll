@@ -43,7 +43,7 @@ import { DigitalKontrollHeaderLogo } from '../components/HeaderComponents';
 import ProjectDocumentsView from '../components/common/ProjectDocumentsView';
 import ProjectInternalNavigation from '../components/common/ProjectInternalNavigation';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
-import { DEFAULT_CONTROL_TYPES, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchCompanyProject, fetchControlsForProject, fetchDraftControlsForProject, hasDuplicateProjectNumber, patchCompanyProject, updateSharePointProjectPropertiesFromFirestoreProject } from '../components/firebase';
+import { DEFAULT_CONTROL_TYPES, archiveCompanyProject, deleteControlFromFirestore, deleteDraftControlFromFirestore, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, fetchCompanyProject, fetchControlsForProject, fetchDraftControlsForProject, hasDuplicateProjectNumber, patchCompanyProject, updateSharePointProjectPropertiesFromFirestoreProject } from '../components/firebase';
 import { enqueueFsExcelSync } from '../features/project-phases/phases/kalkylskede/services/fragaSvarExcelSyncQueue';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 // Note: `expo-file-system` is used only on native; avoid static top-level import
@@ -639,11 +639,36 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
   
   // Internal navigation state
   const [activeSection, setActiveSection] = useState('overview');
+  const [archivingProject, setArchivingProject] = useState(false);
 
   const normalizeInternalSectionId = React.useCallback((sectionId) => {
     if (sectionId === 'ue-offerter') return 'kalkyl';
     return sectionId;
   }, []);
+
+  const handleArchiveProject = async () => {
+    const cid = String(companyId || '').trim();
+    const pid = String(project?.id || '').trim();
+    if (!cid || !pid) {
+      Alert.alert('Fel', 'Saknar projekt eller företag.');
+      return;
+    }
+    setArchivingProject(true);
+    try {
+      const res = await archiveCompanyProject(cid, pid);
+      if (res && res.ok) {
+        try { Alert.alert('Klart', 'Projektet är arkiverat.'); } catch (_e) {}
+        try { navigation?.goBack?.(); } catch (_e) {}
+      } else {
+        const msg = res?.error || 'Arkivering misslyckades.';
+        Alert.alert('Fel', msg);
+      }
+    } catch (e) {
+      Alert.alert('Fel', String(e?.message || e || 'Arkivering misslyckades.'));
+    } finally {
+      setArchivingProject(false);
+    }
+  };
 
   // Backwards-compat: migrate legacy section id.
   useEffect(() => {
@@ -3007,9 +3032,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
                           }}
                           style={{ marginTop: 12, paddingVertical: 10, alignItems: 'center' }}
                           activeOpacity={0.85}
-                          accessibilityLabel="Radera projekt"
+                          accessibilityLabel="Arkivera projekt"
                         >
-                          <Text style={{ color: '#D32F2F', fontSize: 13, fontWeight: '600' }}>Radera projekt</Text>
+                        <Text style={{ color: '#D32F2F', fontSize: 13, fontWeight: '600' }}>Arkivera projekt</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -3428,9 +3453,9 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               }}
               style={{ marginTop: 10, paddingVertical: 10, alignItems: 'center' }}
               activeOpacity={0.85}
-              accessibilityLabel="Radera projekt"
+              accessibilityLabel="Arkivera projekt"
             >
-              <Text style={{ color: '#D32F2F', fontSize: 14, fontWeight: '600' }}>Radera projekt</Text>
+              <Text style={{ color: '#D32F2F', fontSize: 14, fontWeight: '600' }}>Arkivera projekt</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4068,10 +4093,17 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               <Modal visible={showDeleteModal} transparent animationType="fade" onRequestClose={() => setShowDeleteModal(false)}>
                 <View style={styles.centerOverlay}>
                   <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, minWidth: 260, maxWidth: 340, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
-                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#222', textAlign: 'center' }}>Vill du ta bort projektet?</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#222', textAlign: 'center' }}>Vill du arkivera projektet?</Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
-                      <TouchableOpacity style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center' }} onPress={() => {/* TODO: Lägg till raderingslogik här */ setShowDeleteModal(false); }}>
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Ta bort</Text>
+                        <TouchableOpacity
+                          style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center', opacity: archivingProject ? 0.7 : 1 }}
+                          disabled={archivingProject}
+                          onPress={async () => {
+                            setShowDeleteModal(false);
+                            await handleArchiveProject();
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{archivingProject ? 'Arkiverar…' : 'Arkivera'}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, flex: 1, marginLeft: 8, alignItems: 'center' }} onPress={() => setShowDeleteModal(false)}>
                         <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>
@@ -4084,10 +4116,17 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
               <Modal visible={showDeleteWarning} transparent animationType="fade" onRequestClose={() => setShowDeleteWarning(false)}>
                 <View style={styles.centerOverlay}>
                   <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 28, minWidth: 260, maxWidth: 340, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 12 }}>
-                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#D32F2F', textAlign: 'center' }}>Projektet har kontroller kopplade.\nÄr du säker på att du vill ta bort projektet? Allt kommer att förloras.</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 18, color: '#D32F2F', textAlign: 'center' }}>Projektet har kontroller kopplade.\nÄr du säker på att du vill arkivera projektet? Det flyttas till arkiv.</Text>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
-                      <TouchableOpacity style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center' }} onPress={() => {/* TODO: Lägg till raderingslogik här */ setShowDeleteWarning(false); }}>
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Ta bort</Text>
+                        <TouchableOpacity
+                          style={{ backgroundColor: '#D32F2F', borderRadius: 8, padding: 12, flex: 1, marginRight: 8, alignItems: 'center', opacity: archivingProject ? 0.7 : 1 }}
+                          disabled={archivingProject}
+                          onPress={async () => {
+                            setShowDeleteWarning(false);
+                            await handleArchiveProject();
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{archivingProject ? 'Arkiverar…' : 'Arkivera'}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={{ backgroundColor: '#e0e0e0', borderRadius: 8, padding: 12, flex: 1, marginLeft: 8, alignItems: 'center' }} onPress={() => setShowDeleteWarning(false)}>
                         <Text style={{ color: '#222', fontWeight: '600', fontSize: 16 }}>Avbryt</Text>

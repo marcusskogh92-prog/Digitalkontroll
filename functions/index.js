@@ -8,6 +8,7 @@ const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === "true";
 if (!admin.apps.length) { admin.initializeApp(); }
 
 const db = getFirestore();
+const KEEP_COMPANY_ID = 'MS Byggsystem';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -621,6 +622,180 @@ function readFunctionsConfigValue(path, fallback = null) {
   } catch (_e) {
     return fallback;
   }
+}
+
+function encodeGraphPath(path) {
+  const clean = String(path || '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .trim();
+  if (!clean) return '';
+  return clean
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+}
+
+async function graphDeleteSite({ siteId, accessToken }) {
+  const sid = String(siteId || '').trim();
+  if (!sid) return;
+  const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${sid}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const txt = await res.text();
+    throw new Error(`Graph delete site failed: ${res.status} - ${txt}`);
+  }
+}
+
+async function graphGetChildren({ siteId, path, accessToken }) {
+  const sid = String(siteId || '').trim();
+  if (!sid) throw new Error('siteId is required');
+  const clean = String(path || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  const endpoint = clean
+    ? `https://graph.microsoft.com/v1.0/sites/${sid}/drive/root:/${encodeGraphPath(clean)}:/children`
+    : `https://graph.microsoft.com/v1.0/sites/${sid}/drive/root/children`;
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+  if (res.status === 404) {
+    return [];
+  }
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph list children failed: ${res.status} - ${txt}`);
+  }
+  const data = await res.json();
+  return data?.value || [];
+}
+
+async function graphDeleteItem({ siteId, itemId, accessToken }) {
+  const sid = String(siteId || '').trim();
+  const iid = String(itemId || '').trim();
+  if (!sid || !iid) throw new Error('siteId and itemId are required');
+  const endpoint = `https://graph.microsoft.com/v1.0/sites/${sid}/drive/items/${iid}`;
+  const res = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const txt = await res.text();
+    throw new Error(`Graph delete item failed: ${res.status} - ${txt}`);
+  }
+}
+
+async function deleteDriveTreeByPathAdmin({ siteId, path, accessToken }) {
+  const children = await graphGetChildren({ siteId, path, accessToken });
+  for (const item of children || []) {
+    const name = String(item?.name || '').trim();
+    if (!name) continue;
+    const isFolder = !!item?.folder;
+    const childPath = path ? `${path}/${name}` : name;
+    if (isFolder) {
+      await deleteDriveTreeByPathAdmin({ siteId, path: childPath, accessToken });
+    }
+    if (item?.id) {
+      await graphDeleteItem({ siteId, itemId: item.id, accessToken });
+    }
+  }
+}
+
+async function ensureFolderPathAdmin({ siteId, path, accessToken }) {
+  const parts = String(path || '').split('/').map((p) => String(p || '').trim()).filter(Boolean);
+  if (parts.length === 0) return;
+  let current = '';
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    const encoded = encodeGraphPath(current);
+    const checkEndpoint = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${encoded}:`;
+    const checkRes = await fetch(checkEndpoint, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (checkRes.ok) {
+      continue;
+    }
+    const parentPath = current.split('/').slice(0, -1).join('/');
+    const createEndpoint = parentPath
+      ? `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${encodeGraphPath(parentPath)}:/children`
+      : `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root/children`;
+    const createRes = await fetch(createEndpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: part,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'replace',
+      }),
+    });
+    if (!createRes.ok) {
+      const txt = await createRes.text();
+      throw new Error(`Graph create folder failed: ${createRes.status} - ${txt}`);
+    }
+  }
+}
+
+async function ensureDkBasStructureAdmin({ siteId, accessToken }) {
+  const folders = [
+    'Arkiv',
+    'Arkiv/Projekt',
+    'Arkiv/Mappar',
+    'Arkiv/Filer',
+    'Metadata',
+    'System',
+  ];
+  for (const folder of folders) {
+    await ensureFolderPathAdmin({ siteId, path: folder, accessToken });
+  }
+}
+
+async function getCompanySiteIdsFromConfig(companyId) {
+  const cfgRef = db.doc(`foretag/${companyId}/sharepoint_system/config`);
+  const snap = await cfgRef.get().catch(() => null);
+  const cfg = snap && snap.exists ? (snap.data() || {}) : {};
+  const sp = cfg.sharepoint && typeof cfg.sharepoint === 'object' ? cfg.sharepoint : {};
+  const baseSiteId = sp.baseSite && sp.baseSite.siteId ? String(sp.baseSite.siteId).trim() : '';
+  const workspaceSiteId = sp.workspaceSite && sp.workspaceSite.siteId ? String(sp.workspaceSite.siteId).trim() : '';
+  return { baseSiteId: baseSiteId || null, workspaceSiteId: workspaceSiteId || null };
+}
+
+async function purgeCompanyFirestore(companyId) {
+  const companyRef = db.doc(`foretag/${companyId}`);
+  async function deleteCollection(colPath) {
+    const colRef = db.collection(colPath);
+    const snap = await colRef.get();
+    const deletions = [];
+    snap.forEach((d) => {
+      deletions.push(d.ref.delete().catch(() => null));
+    });
+    await Promise.all(deletions);
+  }
+  const subcollections = [
+    `foretag/${companyId}/profil`,
+    `foretag/${companyId}/members`,
+    `foretag/${companyId}/activity`,
+    `foretag/${companyId}/controls`,
+    `foretag/${companyId}/draft_controls`,
+    `foretag/${companyId}/hierarki`,
+    `foretag/${companyId}/mallar`,
+    `foretag/${companyId}/byggdel_mallar`,
+    `foretag/${companyId}/byggdel_hierarki`,
+    `foretag/${companyId}/sharepoint_sites`,
+    `foretag/${companyId}/sharepoint_navigation`,
+    `foretag/${companyId}/sharepoint_system`,
+  ];
+  for (const path of subcollections) {
+    await deleteCollection(path);
+  }
+  await companyRef.delete();
 }
 
 function getSmtpConfig() {
@@ -1543,5 +1718,94 @@ exports.purgeCompany = functions.https.onCall(async (data, context) => {
     });
   } catch (_e) {}
 
+  return { ok: true };
+});
+
+// DEV-only: reset all non-MS Byggsystem companies and clean SharePoint.
+exports.devResetAdmin = functions.https.onCall(async (data, context) => {
+  console.log('[DEV-RESET][ADMIN] start');
+
+  if (!context || !context.auth || !context.auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const projectId = (() => {
+    const raw = String(process.env.FIREBASE_CONFIG || '').trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.projectId) return String(parsed.projectId);
+      } catch (_e) {}
+    }
+    return String(process.env.GCLOUD_PROJECT || '');
+  })();
+  const isDevEnv = String(process.env.FUNCTIONS_EMULATOR || '') === 'true' || projectId === 'digitalkontroll-8fd05';
+  if (!isDevEnv) {
+    throw new functions.https.HttpsError('failed-precondition', 'DEV-reset only allowed in development');
+  }
+
+  const token = context.auth.token || {};
+  const callerIsSuper = !!token.superadmin || token.role === 'superadmin';
+  if (!callerIsSuper) {
+    throw new functions.https.HttpsError('permission-denied', 'Superadmin required');
+  }
+
+  const accessToken = getSharePointProvisioningAccessToken();
+  if (!accessToken) {
+    throw new functions.https.HttpsError('failed-precondition', 'SharePoint provisioning access token missing');
+  }
+
+  const companiesSnap = await db.collection('foretag').get();
+  const companies = companiesSnap.docs.map((docSnap) => ({
+    id: docSnap.id,
+    ...docSnap.data(),
+  }));
+
+  // Step 1: delete all companies except MS Byggsystem.
+  for (const company of companies) {
+    const companyId = String(company?.id || '').trim();
+    if (!companyId) continue;
+    if (companyId === KEEP_COMPANY_ID) continue;
+
+    console.log('[DEV-RESET][ADMIN] deleting company', companyId);
+
+    const { workspaceSiteId, baseSiteId } = await getCompanySiteIdsFromConfig(companyId);
+
+    try {
+      await purgeCompanyFirestore(companyId);
+    } catch (e) {
+      console.error('[DEV-RESET][ADMIN] Firestore purge failed', companyId, e?.message || e);
+      throw new functions.https.HttpsError('internal', `Firestore purge failed for ${companyId}: ${e?.message || e}`);
+    }
+
+    try {
+      if (workspaceSiteId) await graphDeleteSite({ siteId: workspaceSiteId, accessToken });
+      if (baseSiteId) await graphDeleteSite({ siteId: baseSiteId, accessToken });
+    } catch (e) {
+      console.error('[DEV-RESET][ADMIN] SharePoint delete failed', companyId, e?.message || e);
+      throw new functions.https.HttpsError('internal', `SharePoint delete failed for ${companyId}: ${e?.message || e}`);
+    }
+
+    console.log('[DEV-RESET][ADMIN] company done', companyId);
+  }
+
+  // Step 2: MS Byggsystem DK Site - hard delete all content.
+  const msSites = await getCompanySiteIdsFromConfig(KEEP_COMPANY_ID);
+  if (msSites.workspaceSiteId) {
+    console.log('[DEV-RESET][ADMIN] cleaning MS DK Site');
+    await deleteDriveTreeByPathAdmin({ siteId: msSites.workspaceSiteId, path: '', accessToken });
+  }
+
+  // Step 3: MS Byggsystem DK Bas - clear Arkiv contents, then ensure structure.
+  if (msSites.baseSiteId) {
+    console.log('[DEV-RESET][ADMIN] cleaning MS DK Bas Arkiv');
+    await deleteDriveTreeByPathAdmin({ siteId: msSites.baseSiteId, path: 'Arkiv/Projekt', accessToken });
+    await deleteDriveTreeByPathAdmin({ siteId: msSites.baseSiteId, path: 'Arkiv/Mappar', accessToken });
+    await deleteDriveTreeByPathAdmin({ siteId: msSites.baseSiteId, path: 'Arkiv/Filer', accessToken });
+    console.log('[DEV-RESET][ADMIN] ensuring MS DK Bas');
+    await ensureDkBasStructureAdmin({ siteId: msSites.baseSiteId, accessToken });
+  }
+
+  console.log('[DEV-RESET][ADMIN] completed');
   return { ok: true };
 });

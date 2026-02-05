@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { HomeHeader } from '../components/common/HomeHeader';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, fetchCompanySharePointSiteMetas, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, getSharePointNavigationConfig, purgeCompanyRemote, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, saveSharePointNavigationConfig, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, syncSharePointSiteVisibilityRemote, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, fetchCompanySharePointSiteMetas, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, getSharePointNavigationConfig, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, saveSharePointNavigationConfig, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, syncSharePointSiteVisibilityRemote, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
 import MainLayout from '../components/MainLayout';
 import { PROJECT_PHASES } from '../features/projects/constants';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
@@ -1724,66 +1724,10 @@ export default function ManageCompany({ navigation, route }) {
                     {dangerousActionsOpen ? (
                       <View style={{ marginTop: 12 }}>
                         <Text style={{ fontSize: 12, color: '#666', marginBottom: 16 }}>Endast superadmin. Åtgärder här går inte att ångra.</Text>
-
-                        <ActionCard
-                          icon={<Ionicons name="trash" size={28} color="#C62828" />}
-                          title="Radera företag"
-                          text="Tar bort företagets data permanent. SharePoint-innehåll rörs inte automatiskt, men kopplingar kan bli inaktuella."
-                          button="Radera företag"
-                          color="red"
-                          disabled={String(companyId || '').trim() === 'MS Byggsystem'}
-                          onPress={async () => {
-                            if (!companyId) return;
-                            const compId = String(companyId).trim();
-                            const compName = String(companyName || companyId || '').trim();
-                            if (compId === 'MS Byggsystem') {
-                              try { if (typeof window !== 'undefined') window.alert('MS Byggsystem kan aldrig raderas.'); } catch (_e) {}
-                              return;
-                            }
-
-                            const conf = (typeof window !== 'undefined')
-                              ? window.confirm(
-                                `Radera företaget "${compName}" (${compId}) permanent?\n\n` +
-                                `Detta raderar företagets data permanent och går inte att ångra.`
-                              )
-                              : true;
-                            if (!conf) return;
-
-                            if (typeof window !== 'undefined') {
-                              const typed = (window.prompt(`Skriv företags-ID för att bekräfta radering:\n\n${compId}`) || '').trim();
-                              if (typed !== compId) {
-                                try { window.alert('Bekräftelsen matchade inte. Radering avbruten.'); } catch (_e) {}
-                                return;
-                              }
-                            }
-
-                            const endBusy = beginBusy('Raderar företag…');
-                            try {
-                              const res = await purgeCompanyRemote({ companyId: compId });
-                              const ok = !!(res && (res.ok === true || res.success === true));
-                              if (!ok) {
-                                try { if (typeof window !== 'undefined') window.alert('Kunde inte radera företaget (servern avvisade ändringen).'); } catch (_e) {}
-                                return;
-                              }
-                              try { if (typeof window !== 'undefined') window.alert('Raderat. Klicka på uppdatera-ikonen i företagslistan för att uppdatera listan.'); } catch (_e) {}
-                              setCompanyId('');
-                              setCompanyName('');
-                              setUserLimit('10');
-                              setCompanyEnabled(true);
-                              setCompanyDeleted(false);
-                              setCompanyMemberCount(null);
-                              setAuditEvents([]);
-                              setSelectedCompanyAuditEvents([]);
-                            } catch (e) {
-                              const rawCode = e && e.code ? String(e.code) : '';
-                              const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                              const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                              try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte radera företaget: ' + combined); } catch (_e) {}
-                            } finally {
-                              endBusy();
-                            }
-                          }}
-                        />
+                        {/* Permanent delete is intentionally disabled in UI. */}
+                        <Text style={{ fontSize: 13, color: '#444' }}>
+                          Permanent radering av företag är inte tillåten via UI.
+                        </Text>
                       </View>
                     ) : null}
                   </View>

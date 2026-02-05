@@ -8,6 +8,23 @@ import { getAccessToken } from './authService';
 import { getAzureConfig } from './config';
 // Note: getCompanySharePointSiteId is imported dynamically to avoid circular dependency
 
+const dkBasEnsureInFlight = new Map(); // key: siteId -> Promise
+
+function runEnsureSingleFlight(key, task) {
+  if (!key) return task();
+  const existing = dkBasEnsureInFlight.get(key);
+  if (existing) return existing;
+  const promise = (async () => {
+    try {
+      return await task();
+    } finally {
+      dkBasEnsureInFlight.delete(key);
+    }
+  })();
+  dkBasEnsureInFlight.set(key, promise);
+  return promise;
+}
+
 // Guard rails: DK Site (role=projects) must never contain system folders.
 // System folders (company/admin structure) belong in DK Bas (role=system) only.
 const SYSTEM_ROOT_FOLDERS = new Set(
@@ -1035,6 +1052,59 @@ export async function ensureSystemFolderStructure(siteId = null) {
       console.warn('[ensureSystemFolderStructure] ⚠️ Warning ensuring system folder structure:', error);
     }
   }
+}
+
+/**
+ * Ensure DK Bas archive/system structure exists.
+ * DK - Bas
+ * ├── Arkiv
+ * │   ├── Projekt
+ * │   ├── Mappar
+ * │   └── Filer
+ * ├── Metadata
+ * └── System
+ */
+export async function ensureDkBasStructure(siteId = null) {
+  const key = String(siteId || 'default');
+  return runEnsureSingleFlight(key, async () => {
+    try {
+      try {
+        const accessToken = await getAccessToken();
+        if (!accessToken) {
+          console.warn('[ensureDkBasStructure] ⚠️ No access token available. Will retry on first archive.');
+          return;
+        }
+      } catch (authError) {
+        console.warn('[ensureDkBasStructure] ⚠️ Authentication not available:', authError?.message || authError);
+        return;
+      }
+
+      const folders = [
+        'Arkiv',
+        'Arkiv/Projekt',
+        'Arkiv/Mappar',
+        'Arkiv/Filer',
+        'Metadata',
+        'System',
+      ];
+
+      for (const folder of folders) {
+        try {
+          await ensureFolderPath(folder, null, siteId, { siteRole: 'system' });
+        } catch (error) {
+          if (error?.message && !error.message.includes('Popup window was blocked')) {
+            console.warn(`[ensureDkBasStructure] Warning creating folder ${folder}:`, error);
+          }
+        }
+      }
+
+      console.log('[ensureDkBasStructure] ✅ Ensured DK Bas folder structure');
+    } catch (error) {
+      if (error?.message && !error.message.includes('Popup window was blocked') && !error.message.includes('authenticate')) {
+        console.warn('[ensureDkBasStructure] ⚠️ Warning ensuring DK Bas folder structure:', error);
+      }
+    }
+  });
 }
 
 /**

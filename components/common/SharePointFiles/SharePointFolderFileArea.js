@@ -2,14 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
-import { deleteDriveItemById, getDriveItemByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
+import { ensureDkBasStructure, ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
+import { getDriveItemByPath, moveDriveItemAcrossSitesByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
 import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
 import { buildLockedFileRename, normalizeLockedRenameBase, splitBaseAndExt as splitLockedBaseAndExt } from '../../../utils/lockedFileRename';
 import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDirectoryFiles';
 import ContextMenu from '../../ContextMenu';
-import { subscribeProjectFileComments } from '../../firebase';
+import { getCompanySharePointSiteIdByRole, subscribeProjectFileComments } from '../../firebase';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
 import { useUploadManager } from '../uploads/UploadManagerContext';
@@ -205,6 +205,15 @@ export default function SharePointFolderFileArea({
     if (systemFolderRootOnly && safeText(relativePath) !== '') return false;
     return normalizeKey(it?.name) === sys;
   }, [systemFolderName, systemFolderRootOnly, relativePath]);
+
+  const isWithinSystemFolder = useMemo(() => {
+    if (!lockSystemFolder || !safeText(systemFolderName)) return false;
+    const sys = normalizeKey(systemFolderName);
+    const rel = normalizeKey(relativePath);
+    if (!sys || !rel) return false;
+    if (systemFolderRootOnly && rel !== sys) return false;
+    return rel === sys || rel.startsWith(`${sys}/`);
+  }, [lockSystemFolder, systemFolderName, relativePath, systemFolderRootOnly]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1243,9 +1252,9 @@ export default function SharePointFolderFileArea({
       },
       { isSeparator: true, key: 'sep2' },
       {
-        key: 'delete',
-        label: 'Ta bort',
-        iconName: 'trash-outline',
+        key: 'archive',
+        label: 'Arkivera',
+        iconName: 'archive-outline',
         danger: true,
         disabled: lockedSys || !(isFile || isFolder),
       },
@@ -1286,7 +1295,7 @@ export default function SharePointFolderFileArea({
       return;
     }
 
-    if (key === 'delete') {
+    if (key === 'archive') {
       setDeleteError('');
       setDeleteTarget(it);
       setDeleteTargets([it]);
@@ -1344,12 +1353,16 @@ export default function SharePointFolderFileArea({
   };
 
   const performDelete = async () => {
-    const toDelete = deleteTargets.length > 0 ? deleteTargets : (deleteTarget ? [deleteTarget] : []);
-    if (toDelete.length === 0) return;
+    const toArchive = deleteTargets.length > 0 ? deleteTargets : (deleteTarget ? [deleteTarget] : []);
+    if (toArchive.length === 0) return;
 
-    const locked = toDelete.find((it) => it?.type === 'folder' && lockSystemFolder && isSystemFolder(it));
-    if (locked) {
-      setDeleteError('En av de valda objekten är en skyddad systemmapp och kan inte raderas.');
+    const lockedFolder = toArchive.find((it) => it?.type === 'folder' && lockSystemFolder && isSystemFolder(it));
+    if (lockedFolder) {
+      setDeleteError('En av de valda objekten är en skyddad systemmapp och kan inte arkiveras.');
+      return;
+    }
+    if (isWithinSystemFolder) {
+      setDeleteError('Skyddade filer i systemmappen kan inte arkiveras.');
       return;
     }
     if (!safeText(siteId)) {
@@ -1359,9 +1372,53 @@ export default function SharePointFolderFileArea({
 
     try {
       setDeleteError('');
-      for (const it of toDelete) {
-        if (it?.id) await deleteDriveItemById(siteId, it.id);
+
+      const systemSiteId = await getCompanySharePointSiteIdByRole(cid, 'system', { syncIfMissing: true });
+      if (!systemSiteId) {
+        throw new Error('Ingen DK Bas-site hittades för arkivering.');
       }
+
+      await ensureDkBasStructure(systemSiteId);
+
+      await runWithConcurrency(toArchive, 2, async (it) => {
+        if (!it?.id || !safeText(it?.name)) return;
+        const kind = it?.type === 'folder' ? 'folder' : 'file';
+        const sourcePath = joinPath(currentPath, safeText(it?.name));
+        const pathParts = safeText(sourcePath).split('/').filter(Boolean);
+        if (kind === 'folder' && pathParts.length === 1) {
+          const rootLower = String(pathParts[0] || '').toLowerCase();
+          const blockedRoots = new Set(['projekt', 'mappar', 'arkiv', 'metadata', 'system']);
+          if (blockedRoots.has(rootLower)) {
+            throw new Error('Denna systemmapp kan inte arkiveras.');
+          }
+        }
+        const archiveBasePath = kind === 'folder'
+          ? (pathParts.length > 1 ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}` : 'Arkiv/Mappar')
+          : 'Arkiv/Filer';
+
+        console.log('[Archive][File] start', {
+          siteId,
+          path: sourcePath,
+          destSiteId: systemSiteId,
+          destParentPath: archiveBasePath,
+          destName: safeText(it?.name),
+          type: kind,
+        });
+
+        await moveDriveItemAcrossSitesByPath({
+          sourceSiteId: siteId,
+          sourcePath,
+          destSiteId: systemSiteId,
+          destParentPath: archiveBasePath,
+          destName: safeText(it?.name),
+        });
+
+        console.log('[Archive][File] moved', {
+          from: `${siteId}:${sourcePath}`,
+          to: `${systemSiteId}:${archiveBasePath}/${safeText(it?.name)}`,
+        });
+      });
+
       setDeleteOpen(false);
       setDeleteTarget(null);
       setDeleteTargets([]);
@@ -1371,7 +1428,8 @@ export default function SharePointFolderFileArea({
         if (typeof onDidMutate === 'function') onDidMutate();
       } catch (_e) {}
     } catch (e) {
-      setDeleteError(String(e?.message || e || 'Kunde inte ta bort.'));
+      console.error('[Archive][File] error', e?.message || e);
+      setDeleteError(String(e?.message || e || 'Kunde inte arkivera.'));
     }
   };
 
@@ -1695,8 +1753,8 @@ export default function SharePointFolderFileArea({
                   (hovered || pressed) && styles.bulkToolbarButtonDangerHover,
                 ]}
               >
-                <Ionicons name="trash-outline" size={16} color="#B91C1C" />
-                <Text style={styles.bulkToolbarButtonTextDanger}>Radera</Text>
+                <Ionicons name="archive-outline" size={16} color="#B91C1C" />
+                <Text style={styles.bulkToolbarButtonTextDanger}>Arkivera</Text>
               </Pressable>
               <Pressable
                 onPress={clearSelection}
@@ -2262,12 +2320,12 @@ export default function SharePointFolderFileArea({
 
       <FileActionModal
         visible={deleteOpen}
-        title="Ta bort"
+        title="Arkivera"
         description={
           deleteTargets.length > 1
-            ? `Tar bort ${deleteTargets.length} objekt från SharePoint.`
+            ? `Arkiverar ${deleteTargets.length} objekt till Arkiv.`
             : (deleteTargets[0] || deleteTarget)
-              ? `Tar bort "${safeText((deleteTargets[0] || deleteTarget)?.name) || 'objekt'}" från SharePoint.`
+              ? `Arkiverar "${safeText((deleteTargets[0] || deleteTarget)?.name) || 'objekt'}" till Arkiv.`
               : ''
         }
         onClose={() => {
@@ -2276,7 +2334,7 @@ export default function SharePointFolderFileArea({
           setDeleteTargets([]);
           setDeleteError('');
         }}
-        primaryLabel="Ta bort"
+        primaryLabel="Arkivera"
         onPrimary={performDelete}
         primaryDisabled={deleteTargets.length === 0 && !deleteTarget}
       >
@@ -2286,7 +2344,7 @@ export default function SharePointFolderFileArea({
           </View>
         ) : (
           <Text style={{ fontSize: 12, fontWeight: '400', color: '#64748b' }}>
-            Åtgärden kan inte ångras.
+            Åtgärden flyttar objekten till Arkiv.
           </Text>
         )}
       </FileActionModal>

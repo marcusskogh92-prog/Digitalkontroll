@@ -11,6 +11,21 @@ import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { auth, fetchCompanies } from '../firebase';
 
+const dispatchWindowEvent = (name, detail) => {
+  try {
+    if (typeof window === 'undefined') return;
+    const evt = (typeof CustomEvent === 'function')
+      ? new CustomEvent(name, { detail })
+      : (() => {
+        const e = document.createEvent('Event');
+        e.initEvent(name, true, true);
+        e.detail = detail;
+        return e;
+      })();
+    window.dispatchEvent(evt);
+  } catch (_e) {}
+};
+
 export default function AdminSidebar({ 
   currentScreen = null, // 'manage_company', 'manage_users', etc.
   selectedCompanyId = null,
@@ -24,6 +39,9 @@ export default function AdminSidebar({
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
+  const [spinCompanyChevron, setSpinCompanyChevron] = useState(0);
+  const [spinAdminChevron, setSpinAdminChevron] = useState(0);
+  const [spinAdminIcons, setSpinAdminIcons] = useState({});
   const [companiesExpanded, setCompaniesExpanded] = useState(true);
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [hoveredKey, setHoveredKey] = useState(null);
@@ -131,6 +149,10 @@ export default function AdminSidebar({
 
   const handleMenuClick = async (item) => {
     try {
+      setSpinAdminIcons((prev) => ({
+        ...prev,
+        [item.key]: (prev[item.key] || 0) + 1,
+      }));
       const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
       if (item.screen === 'ManageCompany') {
         navigation.navigate('ManageCompany');
@@ -174,18 +196,14 @@ export default function AdminSidebar({
 
   const handleGoHome = () => {
     try {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('dkGoHome'));
-      }
+      dispatchWindowEvent('dkGoHome');
     } catch (_e) {}
   };
 
   const handleHardRefresh = async () => {
     // Refresh current admin screen (web) + refresh companies list (superadmin)
     try {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('dkRefresh'));
-      }
+      if (Platform.OS === 'web') dispatchWindowEvent('dkRefresh');
     } catch (_e) {}
 
     await loadCompanies();
@@ -274,6 +292,7 @@ export default function AdminSidebar({
               <div
                 onClick={() => {
                   // Accordion only needed for superadmin
+                  setSpinCompanyChevron((n) => n + 1);
                   setCompaniesExpanded(v => !v);
                 }}
                 style={{
@@ -292,7 +311,15 @@ export default function AdminSidebar({
                 <div style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
                   Företag
                 </div>
-                <Ionicons name={companiesExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+                <Ionicons
+                  name={companiesExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color="#64748B"
+                  style={{
+                    transform: `rotate(${spinCompanyChevron * 360}deg)`,
+                    transition: 'transform 0.35s ease'
+                  }}
+                />
               </div>
 
               {companiesExpanded && (
@@ -413,7 +440,10 @@ export default function AdminSidebar({
           <div style={{ padding: 12 }}>
             <div
               onClick={() => {
-                if (isSuperadmin) setAdminExpanded(v => !v);
+                if (isSuperadmin) {
+                  setSpinAdminChevron((n) => n + 1);
+                  setAdminExpanded(v => !v);
+                }
               }}
               style={{
                 display: 'flex',
@@ -432,7 +462,15 @@ export default function AdminSidebar({
                 Admin
               </div>
               {isSuperadmin ? (
-                <Ionicons name={adminExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+                <Ionicons
+                  name={adminExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color="#64748B"
+                  style={{
+                    transform: `rotate(${spinAdminChevron * 360}deg)`,
+                    transition: 'transform 0.35s ease'
+                  }}
+                />
               ) : null}
             </div>
 
@@ -440,6 +478,7 @@ export default function AdminSidebar({
               const isActive = currentScreen === item.key;
               const hoverKey = `admin|${item.key}`;
               const isHovered = hoveredKey === hoverKey;
+              const spinCount = spinAdminIcons[item.key] || 0;
               return (
                 <div
                   key={item.key}
@@ -462,7 +501,11 @@ export default function AdminSidebar({
                     name={item.icon}
                     size={18}
                     color={item.color || (isActive ? LEFT_NAV.iconDefault : isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
-                    style={{ marginRight: 10 }}
+                    style={{
+                      marginRight: 10,
+                      transform: `rotate(${spinCount * 360}deg)`,
+                      transition: 'transform 0.35s ease'
+                    }}
                   />
                   <span style={{
                     fontSize: 14,
@@ -534,7 +577,10 @@ export default function AdminSidebar({
         {isSuperadmin && showCompanySelector && (
           <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0', marginBottom: 8 }}>
             <TouchableOpacity
-              onPress={() => setCompaniesExpanded(v => !v)}
+              onPress={() => {
+                setSpinCompanyChevron((n) => n + 1);
+                setCompaniesExpanded(v => !v);
+              }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -547,7 +593,12 @@ export default function AdminSidebar({
               <Text style={{ fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.6 }}>
                 Företag
               </Text>
-              <Ionicons name={companiesExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+              <Ionicons
+                name={companiesExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color="#64748B"
+                style={{ transform: [{ rotate: `${spinCompanyChevron * 360}deg` }] }}
+              />
             </TouchableOpacity>
 
             {companiesExpanded && (
@@ -645,7 +696,10 @@ export default function AdminSidebar({
         <View style={{ padding: 12 }}>
           <TouchableOpacity
             onPress={() => {
-              if (isSuperadmin) setAdminExpanded(v => !v);
+              if (isSuperadmin) {
+                setSpinAdminChevron((n) => n + 1);
+                setAdminExpanded(v => !v);
+              }
             }}
             style={{
               flexDirection: 'row',
@@ -661,12 +715,18 @@ export default function AdminSidebar({
               Admin
             </Text>
             {isSuperadmin ? (
-              <Ionicons name={adminExpanded ? 'chevron-up' : 'chevron-down'} size={18} color="#64748B" />
+              <Ionicons
+                name={adminExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color="#64748B"
+                style={{ transform: [{ rotate: `${spinAdminChevron * 360}deg` }] }}
+              />
             ) : null}
           </TouchableOpacity>
 
           {(adminExpanded || !isSuperadmin) && adminMenuItems.map(item => {
             const isActive = currentScreen === item.key;
+          const spinCount = spinAdminIcons[item.key] || 0;
             return (
               <TouchableOpacity
                 key={item.key}
@@ -686,7 +746,7 @@ export default function AdminSidebar({
                   name={item.icon}
                   size={18}
                   color={item.color || LEFT_NAV.iconMuted}
-                  style={{ marginRight: 10 }}
+                style={{ marginRight: 10, transform: [{ rotate: `${spinCount * 360}deg` }] }}
                 />
                 <Text style={{
                   fontSize: 14,

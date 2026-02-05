@@ -313,6 +313,32 @@ export default function KunderView({
     loadContacts();
   }, [loadContacts]);
 
+  // Listen for global home/refresh events from AdminSidebar (web)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (typeof window === 'undefined') return undefined;
+
+    const handleGoHome = () => {
+      try {
+        navigation?.reset?.({ index: 0, routes: [{ name: 'Home' }] });
+      } catch (_e) {}
+    };
+
+    const handleRefresh = () => {
+      try {
+        loadCustomers();
+        loadContacts();
+      } catch (_e) {}
+    };
+
+    window.addEventListener('dkGoHome', handleGoHome);
+    window.addEventListener('dkRefresh', handleRefresh);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handleGoHome); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
+    };
+  }, [navigation, loadCustomers, loadContacts]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {

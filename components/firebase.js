@@ -40,7 +40,7 @@ if (Platform.OS === 'web') {
 }
 export { auth };
 export const db = getFirestore(app);
-export const functionsClient = getFunctions(app);
+export const functionsClient = getFunctions(app, 'us-central1');
 
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
@@ -3973,7 +3973,9 @@ export async function archiveCompanyProject(companyIdOverride, projectId) {
 
   const sourceSiteId = String(project?.sharePointSiteId || '').trim();
   const sourcePath = String(project?.rootFolderPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
-  const projectName = String(project?.fullName || project?.projectName || pid).trim() || pid;
+  const projectNumber = String(project?.projectNumber || project?.number || pid).trim() || pid;
+  const projectTitle = String(project?.projectName || project?.name || '').trim();
+  const projectName = projectTitle ? `${projectNumber} – ${projectTitle}` : projectNumber;
 
   // Update Firestore first so left panel hides it immediately and self-heal won’t recreate it.
   await updateDoc(ref, {
@@ -4003,8 +4005,8 @@ export async function archiveCompanyProject(companyIdOverride, projectId) {
   const archiveBasePath = 'Arkiv/Projekt';
 
   try {
-    const { ensureFolderPath } = await import('../services/azure/fileService');
-    await ensureFolderPath(archiveBasePath, companyId, systemSiteId, { siteRole: 'system' });
+    const { ensureDkBasStructure } = await import('../services/azure/fileService');
+    await ensureDkBasStructure(systemSiteId);
 
     const { moveDriveItemAcrossSitesByPath } = await import('../services/azure/hierarchyService');
     await moveDriveItemAcrossSitesByPath({

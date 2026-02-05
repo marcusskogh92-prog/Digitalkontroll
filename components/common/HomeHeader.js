@@ -441,36 +441,6 @@ export function HomeHeader({
           <Text style={{ color: '#fff', fontWeight: '700' }}>Adminlogg</Text>
         </TouchableOpacity>
       )}
-      {canShowSupportToolsInHeader && supportMenuOpen && (
-        <TouchableOpacity
-          style={{ backgroundColor: '#1976D2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
-          onPress={() => {
-            try { navigation.navigate('ContactRegistry', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna kontaktregister'); }
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Kontaktregister</Text>
-        </TouchableOpacity>
-      )}
-      {canShowSupportToolsInHeader && supportMenuOpen && (
-        <TouchableOpacity
-          style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
-          onPress={() => {
-            try { navigation.navigate('Suppliers', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna leverantörer'); }
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Leverantörer</Text>
-        </TouchableOpacity>
-      )}
-      {canShowSupportToolsInHeader && supportMenuOpen && (
-        <TouchableOpacity
-          style={{ backgroundColor: '#FB8C00', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
-          onPress={() => {
-            try { navigation.navigate('Customers', { companyId }); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna kunder'); }
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Kunder</Text>
-        </TouchableOpacity>
-      )}
       {__DEV__ && showAdminButton && canShowSupportToolsInHeader && supportMenuOpen && (
         <TouchableOpacity
           style={{ backgroundColor: '#43A047', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, marginTop: 8, alignSelf: 'flex-start' }}
