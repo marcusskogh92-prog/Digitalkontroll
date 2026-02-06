@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
@@ -14,6 +14,12 @@ import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimation
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
 import SidebarItem from './SidebarItem';
+
+const VERIFICATION_TTL_MS = 6 * 60 * 60 * 1000;
+const STORAGE_KEYS = {
+  verified: 'sharepointStructureVerified',
+  verifiedAt: 'verifiedAt',
+};
 
 function isHiddenSystemRootFolderName(name) {
   const n = String(name || '').trim().toLowerCase();
@@ -462,13 +468,7 @@ export function SharePointLeftPanel({
   const syncEnsureDoneRef = useRef(false);
   const lastCompanyIdRef = useRef(null);
 
-  const VERIFICATION_TTL_MS = 6 * 60 * 60 * 1000;
-  const STORAGE_KEYS = {
-    verified: 'sharepointStructureVerified',
-    verifiedAt: 'verifiedAt',
-  };
-
-  const setSyncState = (nextState, errorMessage = null) => {
+  const setSyncState = useCallback((nextState, errorMessage = null) => {
     setSharepointSyncState(nextState);
     setSharepointSyncError(errorMessage);
     try {
@@ -478,9 +478,9 @@ export function SharePointLeftPanel({
         console.log(`[SharePointSync] ${nextState}`);
       }
     } catch (_e) {}
-  };
+  }, [setSharepointSyncError, setSharepointSyncState]);
 
-  const readSyncVerification = () => {
+  const readSyncVerification = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) {
       return { valid: false, verifiedAt: null };
     }
@@ -492,29 +492,29 @@ export function SharePointLeftPanel({
     }
     const age = Date.now() - verifiedAt;
     return { valid: age >= 0 && age <= VERIFICATION_TTL_MS, verifiedAt };
-  };
+  }, []);
 
-  const writeSyncVerification = () => {
+  const writeSyncVerification = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return;
     try {
       window.localStorage.setItem(STORAGE_KEYS.verified, 'true');
       window.localStorage.setItem(STORAGE_KEYS.verifiedAt, String(Date.now()));
     } catch (_e) {}
-  };
+  }, []);
 
-  const clearSyncVerification = () => {
+  const clearSyncVerification = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return;
     try {
       window.localStorage.removeItem(STORAGE_KEYS.verified);
       window.localStorage.removeItem(STORAGE_KEYS.verifiedAt);
     } catch (_e) {}
-  };
+  }, []);
 
-  const maybeMarkSyncReady = () => {
+  const maybeMarkSyncReady = useCallback(() => {
     if (syncNavDoneRef.current && syncEnsureDoneRef.current) {
       setSyncState('ready');
     }
-  };
+  }, [setSyncState]);
 
   const runEnsureSingleFlight = (key, task) => {
     if (!key) return task();
@@ -1295,7 +1295,7 @@ export function SharePointLeftPanel({
       clearSyncVerification();
     }
     lastCompanyIdRef.current = current;
-  }, [companyId]);
+  }, [companyId, clearSyncVerification]);
 
   // Permissions: Only superadmin or company admin may archive projects.
   useEffect(() => {
@@ -1544,7 +1544,7 @@ export function SharePointLeftPanel({
     return () => {
       cancelled = true;
     };
-  }, [companyId, firestoreProjects, projectsLoading]);
+  }, [companyId, firestoreProjects, maybeMarkSyncReady, projectsLoading, readSyncVerification, setSyncState, writeSyncVerification]);
 
   // When we're inside a project, always ensure the (current) project has the expected structure.
   // For now we reuse the kalkylskede locked structure for all phases, so the leftpanel experience is consistent
@@ -2435,7 +2435,7 @@ export function SharePointLeftPanel({
 
     runSync();
     return () => { mounted = false; };
-  }, [companyId, reloadKey]);
+  }, [companyId, maybeMarkSyncReady, readSyncVerification, reloadKey, setSyncState]);
 
   // Load saved phase/structure metadata so we can color projects consistently.
   useEffect(() => {

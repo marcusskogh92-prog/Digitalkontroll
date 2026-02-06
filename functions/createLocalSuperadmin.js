@@ -10,7 +10,7 @@
 const admin = require('firebase-admin');
 
 const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || process.env.FIREBASE_PROJECT || process.env.FIREBASE_CONFIG && (() => {
-  try { return JSON.parse(process.env.FIREBASE_CONFIG).projectId; } catch (e) { return null; }
+  try { return JSON.parse(process.env.FIREBASE_CONFIG).projectId; } catch (_e) { return null; }
 })() || 'digitalkontroll-8fd05';
 
 admin.initializeApp({ projectId });
@@ -27,11 +27,11 @@ if (!email && !uidArg) {
   try {
     let user = null;
     if (uidArg) {
-      try { user = await admin.auth().getUser(uidArg); } catch (e) { user = null; }
+      try { user = await admin.auth().getUser(uidArg); } catch (_e) { user = null; }
     }
 
     if (!user && email) {
-      try { user = await admin.auth().getUserByEmail(email); } catch (e) { user = null; }
+      try { user = await admin.auth().getUserByEmail(email); } catch (_e) { user = null; }
     }
 
     if (!user) {

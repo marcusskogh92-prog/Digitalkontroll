@@ -6,6 +6,7 @@
 const fnModule = require('./index');
 const { PassThrough } = require('stream');
 
+// eslint-disable-next-line no-unused-vars
 async function callOnCallFunction(fnName, data, authContext = null) {
   return new Promise((resolve, reject) => {
     const fn = fnModule[fnName];
@@ -51,7 +52,7 @@ async function callOnCallFunction(fnName, data, authContext = null) {
       try {
         const parsed = body ? JSON.parse(body) : null;
         resolve(parsed);
-      } catch (e) {
+      } catch (_e) {
         resolve(body);
       }
     });
@@ -59,8 +60,8 @@ async function callOnCallFunction(fnName, data, authContext = null) {
     // Call the exported function as the emulator would (req, res)
     try {
       fn(req, res);
-    } catch (e) {
-      reject(e);
+    } catch (_e) {
+      reject(_e);
     }
   });
 }

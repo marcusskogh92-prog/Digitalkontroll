@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 let createPortal = null;
@@ -235,13 +235,13 @@ export default function SelectDropdown({
   const [portalPos, setPortalPos] = useState({ top: 0, left: 0, width: 0 });
 
   const open = typeof visible === 'boolean' ? visible : openInternal;
-  const setOpen = (next) => {
+  const setOpen = useCallback((next) => {
     if (typeof visible === 'boolean' && onToggleVisible) {
       onToggleVisible();
     } else {
       setOpenInternal(next);
     }
-  };
+  }, [onToggleVisible, visible]);
 
   const toggleOpen = () => {
     if (disabled) return;
@@ -252,7 +252,7 @@ export default function SelectDropdown({
     setOpenInternal((prev) => !prev);
   };
 
-  const list = Array.isArray(options) ? options : [];
+  const list = useMemo(() => (Array.isArray(options) ? options : []), [options]);
   const query = String(queryInternal || '').trim();
   const filtered = useMemo(() => {
     if (!searchable || !query) return list;
@@ -358,7 +358,7 @@ export default function SelectDropdown({
         window.removeEventListener('scroll', updatePosition, true);
       }
     };
-  }, [open, usePortal]);
+  }, [open, setOpen, usePortal]);
 
   const ensurePortalRoot = () => {
     if (!createPortal || Platform.OS !== 'web') return null;
