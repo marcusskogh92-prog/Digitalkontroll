@@ -22,6 +22,7 @@
     "deploy:web": "npm run build && npx firebase-tools deploy --only hosting",
     "serve:web": "npx serve -s web-build -l 4173",
     "test:smoke:web": "npx playwright test",
+    "test:smoke:web:headed": "PLAYWRIGHT_BROWSERS_PATH=./playwright-browsers npx playwright test --headed",
     "lint": "expo lint"
   },
   "dependencies": {
