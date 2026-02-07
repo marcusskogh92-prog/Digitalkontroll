@@ -4,6 +4,10 @@ const { admin, db, FieldValue } = require('./sharedFirebase');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
+const { extractTextByMimeType } = require('./services/fileTextExtractor');
+
+const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
+
 const { syncSharePointSiteVisibility } = require('./sharepointVisibility');
 const { provisionCompanyImpl } = require('./companyProvisioning');
 const { createUser, deleteUser, updateUser } = require('./userAdmin');
@@ -267,26 +271,7 @@ async function callOpenAIForFFUAnalysis({ apiKey, system, user }) {
 // AI: Analyze FFU (förfrågningsunderlag)
 // Input: { companyId, projectId, files: [{id,name,type,extractedText}] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
-exports.analyzeFFU = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
-  }
-
-  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
-  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
-  const files = (data && Array.isArray(data.files)) ? data.files : [];
-  if (!companyId || !projectId) {
-    throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
-  }
-
-  // Allow company members or global admins.
-  const token = context.auth.token || {};
-  const isGlobal = !!token.globalAdmin || !!token.superadmin || token.role === 'superadmin' || (token.companyId === 'MS Byggsystem' && (token.admin === true || token.role === 'admin'));
-  const isMember = token.companyId === companyId;
-  if (!isMember && !isGlobal) {
-    throw new functions.https.HttpsError('permission-denied', 'Not allowed');
-  }
-
+async function analyzeFFUCore({ companyId, projectId, files, uid }) {
   const normalizedFiles = (files || []).map((f) => ({
     id: f && f.id != null ? String(f.id).trim() : '',
     name: f && f.name != null ? String(f.name).trim() : '',
@@ -358,7 +343,7 @@ exports.analyzeFFU = functions.https.onCall(async (data, context) => {
       message: String(e && e.message ? e.message : e),
       companyId,
       projectId,
-      uid: context.auth.uid,
+      uid,
     });
     analysis = emptyFFUAnalysisResult('Kunde inte generera analys. Försök igen eller kontrollera underlaget.');
   }
@@ -373,13 +358,184 @@ exports.analyzeFFU = functions.https.onCall(async (data, context) => {
       nonEmptyFileCount: nonEmpty.length,
       totalChars,
       updatedAt: FieldValue.serverTimestamp(),
-      updatedBy: context.auth.uid,
+      updatedBy: uid,
     }, { merge: true });
   } catch (e) {
     console.warn('analyzeFFU: failed to write cache', String(e && e.message ? e.message : e));
   }
 
   return analysis;
+}
+
+function assertAnalyzeFFUPermission({ companyId, context }) {
+  const token = (context && context.auth && context.auth.token) ? context.auth.token : {};
+  const isGlobal =
+    !!token.globalAdmin ||
+    !!token.superadmin ||
+    token.role === 'superadmin' ||
+    (token.companyId === 'MS Byggsystem' && (token.admin === true || token.role === 'admin'));
+  const isMember = token.companyId === companyId;
+  // Emulator convenience: allow any authenticated caller to test the analysis flow.
+  if (!IS_EMULATOR && !isMember && !isGlobal) {
+    throw new functions.https.HttpsError('permission-denied', 'Not allowed');
+  }
+}
+
+exports.analyzeFFU = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  const files = (data && Array.isArray(data.files)) ? data.files : [];
+  if (!companyId || !projectId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  }
+
+  assertAnalyzeFFUPermission({ companyId, context });
+  return analyzeFFUCore({ companyId, projectId, files, uid: context.auth.uid });
+});
+
+function parseGsPath(raw) {
+  const s = String(raw || '').trim();
+  if (!s.startsWith('gs://')) return null;
+  const without = s.slice('gs://'.length);
+  const firstSlash = without.indexOf('/');
+  if (firstSlash <= 0) return null;
+  const bucket = without.slice(0, firstSlash);
+  const objectPath = without.slice(firstSlash + 1);
+  return { bucket, objectPath };
+}
+
+function isStorageEmulated() {
+  return Boolean(process.env.FIREBASE_STORAGE_EMULATOR_HOST || process.env.STORAGE_EMULATOR_HOST);
+}
+
+async function downloadStorageObjectAsBuffer({ bucketName, objectPath }) {
+  // Never trust a bucket name coming from the client. Always use the default bucket.
+  // This also prevents accidentally downloading from an unexpected bucket.
+  void bucketName;
+  const b = admin.storage().bucket();
+  const file = b.file(objectPath);
+
+  const [meta] = await file.getMetadata();
+  const sizeBytes = meta && meta.size != null ? Number(meta.size) : null;
+  const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
+  if (
+    sizeBytes != null &&
+    Number.isFinite(sizeBytes) &&
+    Number.isFinite(maxBytes) &&
+    sizeBytes > maxBytes
+  ) {
+    throw new Error(`File too large to extract (${sizeBytes} bytes > ${maxBytes})`);
+  }
+
+  const [buf] = await file.download();
+  return {
+    buffer: buf,
+    sizeBytes: sizeBytes != null && Number.isFinite(sizeBytes) ? sizeBytes : buf.length,
+  };
+}
+
+// AI: Analyze FFU from uploaded files (Storage paths)
+// Input: { companyId, projectId, files: [{ path, name, mimeType }] }
+// Output: FFUAnalysisResult JSON (exact schema; no extra keys)
+exports.analyzeFFUFromFiles = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  const files = (data && Array.isArray(data.files)) ? data.files : [];
+  if (!companyId || !projectId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  }
+
+  assertAnalyzeFFUPermission({ companyId, context });
+
+  if (IS_EMULATOR && !isStorageEmulated()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Storage emulator is not configured. Refusing to download files to avoid hitting production.'
+    );
+  }
+
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'files is required');
+  }
+
+  const minChars = Number(process.env.FFU_EXTRACT_MIN_CHARS || 30);
+  const extractedFiles = [];
+
+  for (let i = 0; i < files.length; i += 1) {
+    const f = files[i] || {};
+    const name = f.name != null ? String(f.name).trim() : '';
+    const mimeType = f.mimeType != null ? String(f.mimeType).trim() : '';
+    const rawPath = f.path != null ? String(f.path).trim() : '';
+
+    if (!rawPath) {
+      console.warn('analyzeFFUFromFiles: skipping file with missing path', { index: i, name: name || null });
+      continue;
+    }
+
+    // No directory traversal.
+    if (rawPath.includes('..')) {
+      console.warn('analyzeFFUFromFiles: skipping file with suspicious path', { index: i, name: name || null });
+      continue;
+    }
+
+    try {
+      const gs = parseGsPath(rawPath);
+      const bucketName = gs ? gs.bucket : null;
+      const objectPath = gs ? gs.objectPath : rawPath.replace(/^\/+/, '');
+
+      const { buffer, sizeBytes } = await downloadStorageObjectAsBuffer({ bucketName, objectPath });
+      const { kind, text } = await extractTextByMimeType({ mimeType, buffer });
+      const charLen = String(text || '').length;
+
+      const pathHash = sha256Hex(rawPath).slice(0, 12);
+      console.log('analyzeFFUFromFiles: extracted', {
+        index: i,
+        name: name || null,
+        mimeType: mimeType || null,
+        kind,
+        sizeBytes,
+        charLen,
+        pathHash,
+      });
+
+      if (!text || String(text).trim().length < minChars) {
+        console.log('analyzeFFUFromFiles: ignoring short/empty extracted text', { index: i, charLen, pathHash });
+        continue;
+      }
+
+      extractedFiles.push({
+        id: `file-${i + 1}`,
+        name: name || `file-${i + 1}`,
+        type: kind,
+        extractedText: text,
+      });
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      console.warn('analyzeFFUFromFiles: failed to extract file (continuing)', {
+        index: i,
+        name: name || null,
+        mimeType: mimeType || null,
+        message: msg,
+      });
+    }
+  }
+
+  const totalChars = extractedFiles.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
+  console.log('analyzeFFUFromFiles: extraction summary', {
+    inputFileCount: files.length,
+    extractedFileCount: extractedFiles.length,
+    totalChars,
+  });
+
+  return analyzeFFUCore({ companyId, projectId, files: extractedFiles, uid: context.auth.uid });
 });
 
 function encodeGraphPath(path) {
