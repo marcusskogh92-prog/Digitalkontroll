@@ -78,6 +78,68 @@ export async function updateUserRemote({ companyId, uid, displayName, email, rol
   return res && res.data ? res.data : res;
 }
 
+// Callable wrapper: AI FFU analysis
+// Signature intentionally minimal: (companyId, projectId, files)
+export async function analyzeFFURemote(companyId, projectId, files) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid) throw new Error('analyzeFFU: companyId is required');
+  if (!pid) throw new Error('analyzeFFU: projectId is required');
+
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('analyzeFFU: files must be a non-empty array');
+  }
+
+  const allowedTypes = new Set(['pdf', 'docx', 'xlsx', 'txt']);
+  const normalizedFiles = files.map((f, idx) => {
+    const id = f && f.id != null ? String(f.id).trim() : '';
+    const name = f && f.name != null ? String(f.name).trim() : '';
+    const type = f && f.type != null ? String(f.type).trim() : '';
+    const extractedText = f && f.extractedText != null ? String(f.extractedText) : '';
+
+    if (!id) throw new Error(`analyzeFFU: files[${idx}].id is required`);
+    if (!name) throw new Error(`analyzeFFU: files[${idx}].name is required`);
+    if (!type) throw new Error(`analyzeFFU: files[${idx}].type is required`);
+    if (!allowedTypes.has(type)) throw new Error(`analyzeFFU: files[${idx}].type must be one of pdf|docx|xlsx|txt`);
+
+    return { id, name, type, extractedText };
+  });
+
+  const hasAnyText = normalizedFiles.some((f) => String(f.extractedText || '').trim().length > 0);
+  if (!hasAnyText) {
+    throw new Error('analyzeFFU: no extractedText found in any file');
+  }
+
+  try {
+    const fn = httpsCallable(functionsClient, 'analyzeFFU');
+    const res = await fn({ companyId: cid, projectId: pid, files: normalizedFiles });
+    const payload = (res && res.data !== undefined) ? res.data : res;
+
+    // Support both plain schema return and a future envelope { data, fromCache }.
+    if (payload && typeof payload === 'object' && payload.data && Object.prototype.hasOwnProperty.call(payload, 'fromCache')) {
+      return { data: payload.data, fromCache: !!payload.fromCache };
+    }
+    return { data: payload, fromCache: false };
+  } catch (e) {
+    const code = e && typeof e.code === 'string' ? e.code : null;
+    const msg = e && typeof e.message === 'string' ? e.message : String(e);
+    const details = e && e.details != null ? e.details : null;
+
+    const codeClean = code ? String(code).replace(/^functions\//, '') : null;
+    const detailStr = details != null
+      ? (typeof details === 'string' ? details : (() => { try { return JSON.stringify(details); } catch (_err) { return String(details); } })())
+      : '';
+
+    const parts = ['analyzeFFU failed'];
+    if (codeClean) parts.push(`code=${codeClean}`);
+    if (msg) parts.push(`message=${msg}`);
+    if (detailStr) parts.push(`details=${detailStr}`);
+    throw new Error(parts.join(' | '));
+  }
+}
+
 export async function uploadUserAvatar({ companyId, uid, file }) {
   if (!companyId) throw new Error('companyId is required');
   if (!uid) throw new Error('uid is required');
