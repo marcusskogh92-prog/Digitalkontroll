@@ -45,6 +45,18 @@ export default function AdminSidebar({
   const [spinCompanyChevrons, setSpinCompanyChevrons] = useState({});
   const [storedCompanyId, setStoredCompanyId] = useState('');
 
+  const normalizeCompanyId = (value) => {
+    try {
+      return String(value || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  };
+
+  // UX rule: navigation inside a company must not collapse the company accordion.
+  // Prefer `selectedCompanyId` (route/screen) and fall back to stored company (reload).
+  const expandedCompanyId = normalizeCompanyId(selectedCompanyId || storedCompanyId);
+
   // Load admin status
   useEffect(() => {
     let mounted = true;
@@ -92,6 +104,17 @@ export default function AdminSidebar({
     })();
     return () => { active = false; };
   }, []);
+
+  // Keep the selected company expanded across route changes / re-mounts.
+  useEffect(() => {
+    const cid = normalizeCompanyId(expandedCompanyId);
+    if (!cid) return;
+    setExpandedCompanies((prev) => {
+      const alreadyOnlyThis = !!(prev && prev[cid] && Object.keys(prev || {}).length === 1);
+      if (alreadyOnlyThis) return prev;
+      return { [cid]: true };
+    });
+  }, [expandedCompanyId]);
 
   // Function to load companies
   const loadCompanies = useCallback(async () => {
@@ -198,7 +221,7 @@ export default function AdminSidebar({
       }
 
       if (item.screen === 'ManageCompany') {
-        navigation.navigate('ManageCompany');
+        navigation.navigate('ManageCompany', { companyId: cid });
       } else if (item.screen === 'ManageUsers') {
         navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.screen === 'ManageControlTypes') {
@@ -240,9 +263,8 @@ export default function AdminSidebar({
     }));
 
     setExpandedCompanies((prev) => {
-      const isOpen = !!prev[cid];
-      // Keep UI compact: allow only one expanded company at a time.
-      if (isOpen) return {};
+      const alreadyOnlyThis = !!(prev && prev[cid] && Object.keys(prev || {}).length === 1);
+      if (alreadyOnlyThis) return prev;
       return { [cid]: true };
     });
 

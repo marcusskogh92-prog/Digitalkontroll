@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
 import { LEFT_NAV } from '../constants/leftNavTheme';
-import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
 import { ensureDkBasStructure } from '../services/azure/fileService';
+import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ContextMenu from './ContextMenu';
 import UserEditModal from './UserEditModal';
@@ -206,6 +206,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCompanies, setExpandedCompanies] = useState({});
+  const [storedCompanyId, setStoredCompanyId] = useState('');
   const [membersByCompany, setMembersByCompany] = useState({});
   const [hoveredCompany, setHoveredCompany] = useState(null);
   const [hoveredUser, setHoveredUser] = useState(null);
@@ -254,6 +255,58 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const templateFetchErrorCount = Object.keys(templateFetchErrors || {}).length;
   const lastMembersPrefetchNonceRef = useRef(0);
   const toastTimeoutRef = useRef(null);
+
+  const normalizeCompanyId = (value) => {
+    try {
+      return String(value || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  };
+
+  // UX rule: navigation inside a company must not collapse the company accordion.
+  // Source of truth for which company should be expanded:
+  // 1) `selectedCompanyId` (typically route param / screen state)
+  // 2) `restrictCompanyId` (restricted mode)
+  // 3) last stored company in localStorage (reload fallback)
+  const expandedCompanyId = normalizeCompanyId(selectedCompanyId || restrictCompanyId || storedCompanyId);
+
+  // Web: load last selected company so the open company stays stable on reload.
+  useEffect(() => {
+    if (!companiesMode) return;
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    try {
+      const ls = normalizeCompanyId(window?.localStorage?.getItem?.('dk_companyId'));
+      if (ls) setStoredCompanyId(ls);
+    } catch (_e) {}
+  }, [companiesMode]);
+
+  // Persist chosen company (when driven by route/screen) for reload stability.
+  useEffect(() => {
+    if (!companiesMode) return;
+    if (Platform.OS !== 'web') return;
+    if (typeof window === 'undefined') return;
+    const cid = normalizeCompanyId(selectedCompanyId);
+    if (!cid) return;
+    try {
+      setStoredCompanyId(cid);
+      window?.localStorage?.setItem?.('dk_companyId', cid);
+    } catch (_e) {}
+  }, [companiesMode, selectedCompanyId]);
+
+  // Keep the company expanded when navigating between views within the same company.
+  // Only change expansion when the selected company changes.
+  useEffect(() => {
+    if (!companiesMode) return;
+    const cid = normalizeCompanyId(expandedCompanyId);
+    if (!cid) return;
+    setExpandedCompanies((prev) => {
+      const alreadyOnlyThis = !!(prev && prev[cid] && Object.keys(prev || {}).length === 1);
+      if (alreadyOnlyThis) return prev;
+      return { [cid]: true };
+    });
+  }, [companiesMode, expandedCompanyId]);
 
   const showToast = (msg, timeout = 3000) => {
     try {
@@ -1719,16 +1772,17 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                         justifyContent: 'space-between',
                       }}
                         onClick={async () => {
+                          let didChangeCompany = false;
                           setExpandedCompanies(prev => {
-                            const isOpen = !!prev[company.id];
-                            // Allow only one expanded company at a time
-                            if (isOpen) return {};
+                            const alreadyOnlyThis = !!(prev && prev[company.id] && Object.keys(prev || {}).length === 1);
+                            if (alreadyOnlyThis) return prev;
+                            didChangeCompany = true;
                             return { [company.id]: true };
                           });
-                          // Whenever we change which company is öppnad, reset
-                          // the per-company member role expansion so that
-                          // "Admin" och "Användare" listas alltid startar stängda.
-                          try { setExpandedMemberRoles({}); } catch(_e) {}
+                          // Only reset member-role expansion when switching company.
+                          if (didChangeCompany) {
+                            try { setExpandedMemberRoles({}); } catch(_e) {}
+                          }
                           if (showMembers && !membersByCompany[company.id]) {
                             // Try admin callable first (works across companies as superadmin), then fallback to client fetch
                             let loaded = false;

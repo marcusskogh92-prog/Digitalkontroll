@@ -15,6 +15,7 @@ export default function CompanyOverviewCard({
   onEditName,
   onChangeLogo,
   canEditUserLimit = false,
+  onToggleCompanyEnabled,
   userLimitEditorOpen = false,
   userLimitDraft = '',
   onOpenUserLimitEditor,
@@ -135,6 +136,30 @@ export default function CompanyOverviewCard({
               </Text>
             </View>
           </View>
+
+          {typeof onToggleCompanyEnabled === 'function' ? (
+            <TouchableOpacity
+              onPress={async () => {
+                try { await onToggleCompanyEnabled?.(); } catch (_e) {}
+              }}
+              disabled={!!busy}
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                backgroundColor: busy ? '#ccc' : (companyEnabled ? '#3f7f3f' : '#C62828'),
+                opacity: busy ? 0.6 : 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Ionicons name={companyEnabled ? 'pause-outline' : 'play-outline'} size={14} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>
+                {companyEnabled ? 'Inaktivera företag' : 'Aktivera företag'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           {typeof onEditName === 'function' ? (
             <TouchableOpacity

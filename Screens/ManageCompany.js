@@ -66,7 +66,6 @@ export default function ManageCompany({ navigation, route }) {
   const [manualSharePointSiteName, setManualSharePointSiteName] = useState('');
   const [phaseSharePointConfigs, setPhaseSharePointConfigs] = useState({});
   const [phaseConfigModalVisible, setPhaseConfigModalVisible] = useState(false);
-  const [legacyAdvancedOpen, setLegacyAdvancedOpen] = useState(false);
   const [selectedPhaseForConfig, setSelectedPhaseForConfig] = useState(null);
   const [externalSiteIdInput, setExternalSiteIdInput] = useState('');
   const [externalSiteUrlInput, setExternalSiteUrlInput] = useState('');
@@ -507,6 +506,39 @@ export default function ManageCompany({ navigation, route }) {
     }
   }, [route?.params?.createNew]);
 
+  // If navigated with a companyId (e.g. clicking "Översikt" under a company in the sidebar),
+  // auto-select that company so the screen doesn't show the "Välj ett företag..." placeholder.
+  useEffect(() => {
+    (async () => {
+      try {
+        if (route?.params?.createNew) return;
+        const fromRoute = String(route?.params?.companyId || '').trim();
+        let cid = fromRoute;
+
+        // Fallback: if route param is missing on web, try last stored selection.
+        if (!cid) {
+          try {
+            const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+            if (stored) cid = stored;
+          } catch (_e) {}
+
+          if (!cid && Platform.OS === 'web') {
+            try {
+              const ls = String(window?.localStorage?.getItem?.('dk_companyId') || '').trim();
+              if (ls) cid = ls;
+            } catch (_e) {}
+          }
+        }
+
+        if (!cid) return;
+        const current = String(companyId || '').trim();
+        if (current === cid && !isCreatingNew) return;
+
+        handleSelectCompany(cid);
+      } catch (_e) {}
+    })();
+  }, [route?.params?.companyId]);
+
   const handleSave = async () => {
     if (!companyId) return Alert.alert('Fel', 'Ange ett företags-ID');
     const limitNum = parseInt(String(userLimit || '0'), 10) || 0;
@@ -813,6 +845,58 @@ export default function ManageCompany({ navigation, route }) {
     const statusLabel = companyEnabled ? 'Aktivt' : 'Pausat';
 
     const canEditCompanyTools = hasSelectedCompany && allowedTools && !isCreatingNew;
+
+    const toggleCompanyEnabled = async () => {
+      if (!companyId) return;
+      const wantEnable = !companyEnabled;
+      const compId = String(companyId).trim();
+      const label = wantEnable ? 'aktivera' : 'pausa';
+      const message = wantEnable
+        ? `Aktivera företaget ${compId}? Användare och admins får åtkomst igen.`
+        : `Pausa företaget ${compId}? All data och kontroller sparas, men användare och admins kan inte logga in.`;
+      const conf = (typeof window !== 'undefined') ? window.confirm(message) : true;
+      if (!conf) return;
+
+      const endBusy = beginBusy(wantEnable ? 'Aktiverar företag…' : 'Pausar företag…');
+      try {
+        const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable, ...(wantEnable ? { deleted: false } : {}) });
+        const ok = !!(res && (res.ok === true || res.success === true));
+        if (!ok) {
+          try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra företagsstatus (servern avvisade ändringen).'); } catch (_e) {}
+          return;
+        }
+
+        let latest = null;
+        try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
+        const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : wantEnable;
+        const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : (wantEnable ? false : companyDeleted);
+        setCompanyEnabled(enabledNow);
+        setCompanyDeleted(deletedNow);
+
+        try {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
+              detail: { companyId: compId, profile: { enabled: enabledNow, deleted: deletedNow } },
+            }));
+          }
+        } catch (_e) {}
+
+        try {
+          if (isSuperadmin) {
+            loadAuditForCompany(compId, 50, { setLogEvents: true, setSelectedCompanyEvents: true });
+          }
+        } catch (_e) {}
+
+        try { if (typeof window !== 'undefined') window.alert(`Ok: företaget ${label}des.`); } catch (_e) {}
+      } catch (e) {
+        const rawCode = e && e.code ? String(e.code) : '';
+        const rawMsg = e && e.message ? String(e.message) : String(e || '');
+        const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+        try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte ändra status: ' + combined); } catch (_e) {}
+      } finally {
+        endBusy();
+      }
+    };
 
     const openUserLimitEditor = () => {
       setUserLimitDraft(String(userLimit || '10'));
@@ -1362,6 +1446,7 @@ export default function ManageCompany({ navigation, route }) {
                           onEditName={(hasSelectedCompany && isSuperadmin && !isCreatingNew) ? handleBannerEditName : null}
                           onChangeLogo={canEditCompanyTools ? handleBannerChangeLogo : null}
                           canEditUserLimit={canEditCompanyTools}
+                          onToggleCompanyEnabled={canEditCompanyTools ? toggleCompanyEnabled : null}
                           userLimitEditorOpen={userLimitEditorOpen}
                           userLimitDraft={userLimitDraft}
                           onOpenUserLimitEditor={openUserLimitEditor}
@@ -1376,159 +1461,6 @@ export default function ManageCompany({ navigation, route }) {
                         ) : null}
                       </View>
                     ) : null}
-
-                    {/* ACTION CARDS */}
-                {hasSelectedCompany && allowedTools && !isCreatingNew ? (
-                  <View style={{ 
-                    flexDirection: Platform.OS === 'web' ? 'row' : 'column', 
-                    gap: 24, 
-                    marginBottom: 24,
-                    flexWrap: 'wrap'
-                  }}>
-                    {/* Status Card */}
-                    <View style={{
-                      flex: 1,
-                      minWidth: Platform.OS === 'web' ? 280 : '100%',
-                      maxWidth: Platform.OS === 'web' ? 400 : '100%',
-                      backgroundColor: '#fff',
-                      borderRadius: 16,
-                      padding: 24,
-                      shadowColor: '#000',
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.1,
-                      shadowRadius: 4,
-                      elevation: 3,
-                      justifyContent: 'space-between',
-                    }}>
-                      <View style={{ gap: 12 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                            <Ionicons name="settings-outline" size={28} color="#111827" />
-                            <Text style={{ fontSize: 18, fontWeight: '600', color: '#222' }}>Företagsinställningar</Text>
-                          </View>
-                          <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, backgroundColor: companyEnabled ? '#E8F5E9' : '#FFEBEE' }}>
-                            <Text style={{ fontSize: 12, fontWeight: '800', color: companyEnabled ? '#2E7D32' : '#C62828' }}>
-                              {statusLabel}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={{ borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 12, gap: 8 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#222' }}>Användargräns</Text>
-                            {!userLimitEditorOpen ? (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  openUserLimitEditor();
-                                }}
-                                disabled={busyCount > 0}
-                                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff', opacity: busyCount > 0 ? 0.6 : 1 }}
-                              >
-                                <Ionicons name="create-outline" size={14} color="#222" />
-                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#222' }}>Ändra</Text>
-                              </TouchableOpacity>
-                            ) : null}
-                          </View>
-
-                          {userLimitEditorOpen ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              <TextInput
-                                value={userLimitDraft}
-                                onChangeText={setUserLimitDraft}
-                                keyboardType="numeric"
-                                placeholder="10"
-                                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, minWidth: 90, backgroundColor: '#fff' }}
-                              />
-                              <TouchableOpacity
-                                onPress={saveUserLimitFromDraft}
-                                disabled={busyCount > 0}
-                                style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#1976D2', opacity: busyCount > 0 ? 0.6 : 1 }}
-                              >
-                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>Spara</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => {
-                                  cancelUserLimitEditor();
-                                }}
-                                disabled={busyCount > 0}
-                                style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff', opacity: busyCount > 0 ? 0.6 : 1 }}
-                              >
-                                <Text style={{ fontSize: 12, fontWeight: '800', color: '#222' }}>Avbryt</Text>
-                              </TouchableOpacity>
-                            </View>
-                          ) : null}
-                        </View>
-                      </View>
-
-                      <TouchableOpacity
-                        onPress={async () => {
-                          if (!companyId) return;
-                          const wantEnable = !companyEnabled;
-                          const compId = String(companyId).trim();
-                          const label = wantEnable ? 'aktivera' : 'pausa';
-                          const message = wantEnable
-                            ? `Aktivera företaget ${compId}? Användare och admins får åtkomst igen.`
-                            : `Pausa företaget ${compId}? All data och kontroller sparas, men användare och admins kan inte logga in.`;
-                          const conf = (typeof window !== 'undefined') ? window.confirm(message) : true;
-                          if (!conf) return;
-
-                          const endBusy = beginBusy(wantEnable ? 'Aktiverar företag…' : 'Pausar företag…');
-                          try {
-                            const res = await setCompanyStatusRemote({ companyId: compId, enabled: wantEnable, ...(wantEnable ? { deleted: false } : {}) });
-                            const ok = !!(res && (res.ok === true || res.success === true));
-                            if (!ok) {
-                              try { if (typeof window !== 'undefined') window.alert('Kunde inte ändra företagsstatus (servern avvisade ändringen).'); } catch (_e) {}
-                              return;
-                            }
-
-                            let latest = null;
-                            try { latest = await fetchCompanyProfile(compId).catch(() => null); } catch (_e) { latest = null; }
-                            const enabledNow = (latest && typeof latest.enabled === 'boolean') ? !!latest.enabled : wantEnable;
-                            const deletedNow = (latest && typeof latest.deleted === 'boolean') ? !!latest.deleted : (wantEnable ? false : companyDeleted);
-                            setCompanyEnabled(enabledNow);
-                            setCompanyDeleted(deletedNow);
-
-                            try {
-                              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                window.dispatchEvent(new CustomEvent('dkCompanyProfileUpdated', {
-                                  detail: { companyId: compId, profile: { enabled: enabledNow, deleted: deletedNow } },
-                                }));
-                              }
-                            } catch (_e) {}
-
-                            try {
-                              if (isSuperadmin) {
-                                loadAuditForCompany(compId, 50, { setLogEvents: true, setSelectedCompanyEvents: true });
-                              }
-                            } catch (_e) {}
-
-                            try { if (typeof window !== 'undefined') window.alert(`Ok: företaget ${label}des.`); } catch (_e) {}
-                          } catch (e) {
-                            const rawCode = e && e.code ? String(e.code) : '';
-                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
-                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
-                            try { if (typeof window !== 'undefined') window.alert('Fel: kunde inte ändra status: ' + combined); } catch (_e) {}
-                          } finally {
-                            endBusy();
-                          }
-                        }}
-                        disabled={busyCount > 0}
-                        style={{
-                          marginTop: 16,
-                          paddingVertical: 10,
-                          paddingHorizontal: 16,
-                          borderRadius: 8,
-                          backgroundColor: busyCount > 0 ? '#ccc' : (companyEnabled ? '#3f7f3f' : '#C62828'),
-                          opacity: busyCount > 0 ? 0.6 : 1,
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, textAlign: 'center' }}>
-                          {companyEnabled ? 'Inaktivera företag' : 'Aktivera företag'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : null}
 
                 {/* ZONE 3: SHAREPOINT */}
                 {hasSelectedCompany && allowedTools && !isCreatingNew ? (
@@ -1979,40 +1911,6 @@ export default function ManageCompany({ navigation, route }) {
                             </View>
                           </View>
                         ) : null}
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {/* Legacy SharePoint per phase (hidden by default) */}
-                {hasSelectedCompany && allowedTools && !isCreatingNew ? (
-                  <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3, marginBottom: 24 }}>
-                    <TouchableOpacity
-                      onPress={() => setLegacyAdvancedOpen((v) => !v)}
-                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <Ionicons name="warning-outline" size={18} color="#C62828" />
-                        <Text style={{ fontSize: 16, fontWeight: '700', color: '#222' }}>Avancerat (legacy)</Text>
-                      </View>
-                      <Ionicons name={legacyAdvancedOpen ? 'chevron-up' : 'chevron-down'} size={18} color="#666" />
-                    </TouchableOpacity>
-
-                    {legacyAdvancedOpen ? (
-                      <View style={{ marginTop: 12, gap: 10 }}>
-                        <Text style={{ fontSize: 12, color: '#C62828', fontWeight: '800' }}>
-                          Används inte i nya SharePoint-modellen
-                        </Text>
-                        <Text style={{ fontSize: 12, color: '#666' }}>
-                          Här finns äldre inställningar för “SharePoint per fas”. Backend/logik lämnas orörd, men funktionen ska inte användas i nya upplägget.
-                        </Text>
-                        <TouchableOpacity
-                          onPress={() => setPhaseConfigModalVisible(true)}
-                          disabled={busyCount > 0}
-                          style={{ alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff', opacity: busyCount > 0 ? 0.6 : 1 }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#222' }}>Öppna SharePoint per fas</Text>
-                        </TouchableOpacity>
                       </View>
                     ) : null}
                   </View>
