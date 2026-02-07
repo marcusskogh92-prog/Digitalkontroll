@@ -94,10 +94,9 @@ export default function HeaderUserMenu() {
     menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
   }
 
-  // Både företags-admin och superadmin ska kunna hantera användare + kontrolltyper
+  // Både företags-admin och superadmin ska kunna hantera användare
   if (isCompanyAdmin || isSuperadmin) {
     menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
   }
 
   // Admin + superadmin: kontaktregister
@@ -148,10 +147,6 @@ export default function HeaderUserMenu() {
           if (it.key === 'manage_users') {
             const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
             return navigation.navigate('ManageUsers', { companyId: cid });
-          }
-          if (it.key === 'manage_control_types') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ManageControlTypes', { companyId: cid });
           }
           if (it.key === 'contact_registry') {
             const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();

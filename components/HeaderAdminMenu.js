@@ -88,7 +88,6 @@ export default function HeaderAdminMenu() {
     }
     if (isOwner || isCompanyAdmin) {
       menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-      menuItems.push({ key: 'manage_control_types', label: 'Kontrolltyper', icon: <Ionicons name="options-outline" size={16} color="#6A1B9A" /> });
     }
   }
 
@@ -119,7 +118,6 @@ export default function HeaderAdminMenu() {
           const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
           if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
           if (it.key === 'manage_users') return navigation.navigate('ManageUsers', { companyId: cid });
-          if (it.key === 'manage_control_types') return navigation.navigate('ManageControlTypes', { companyId: cid });
           if (it.key === 'contact_registry') {
             return navigation.navigate('ContactRegistry', {
               companyId: cid,
