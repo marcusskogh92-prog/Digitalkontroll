@@ -53,11 +53,7 @@ function RecursiveFolderView({
   const [isHovered, setIsHovered] = useState(false);
 
   if (!folder) return null;
-
   const safeName = folder.name || folder.id || '';
-  const marginLeft = 12 + level * 8;
-  const folderSpin = spinSubs?.[folder.id] || 0;
-  const isExpanded = expandedSubs?.[folder.id] === true;
   const visibleChildren = Array.isArray(folder.children)
     ? folder.children
         .filter(child => child && (child.type === 'folder' || !child.type))
@@ -2182,9 +2178,7 @@ export function SharePointLeftPanel({
           // Use known defaults for the most important sections.
           const fallbackBySectionId = {
             oversikt: ['01 - Projektinformation', '02 - Organisation och roller', '03 - Tidsplan och viktiga datum', '04 - FrågaSvar'],
-            forfragningsunderlag: [
-              'AI-sammanställning',
-            ],
+            forfragningsunderlag: [],
           };
 
           const fallbackFolderNames = fallbackBySectionId[String(matchedSection?.id || '')] || [];
@@ -2630,8 +2624,10 @@ export function SharePointLeftPanel({
                     staticRootHeader
                     edgeToEdge={Boolean(isWeb && selectedProject)}
                     activePhaseSection={phaseActiveSection}
+                    activePhaseItem={phaseActiveItem}
                     activeOverviewPrefix={activeOverviewPrefix}
                     activePhaseSectionPrefix={activePhaseSectionPrefix}
+                    onOpenPhaseItem={onOpenPhaseItem}
                     afMirror={{
                       enabled: Boolean(isFfuActive && afMirrorRootPath),
                       companyId,

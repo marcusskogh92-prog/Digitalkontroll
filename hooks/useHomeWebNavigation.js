@@ -194,6 +194,23 @@ export function useHomeWebNavigation({
         const view = st?.dkView;
         const pid = st?.projectId ? String(st.projectId) : '';
 
+        if (view === 'ffu-ai-summary' && pid) {
+          try {
+            if (typeof setProjectModuleRoute === 'function') {
+              setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
+            }
+          } catch (_e) {}
+
+          if (typeof openProject === 'function') {
+            openProject(pid, { selectedAction: null, keepModuleRoute: true });
+            return;
+          }
+
+          const proj = findProjectById(pid);
+          requestProjectSwitch(proj || { id: pid, name: pid }, { selectedAction: null, path: null });
+          return;
+        }
+
         if (view === 'offerter' && pid) {
           const itemId = normalizeOfferterItemId(st?.itemId || 'forfragningar');
           try {
@@ -260,22 +277,36 @@ export function useHomeWebNavigation({
       const fromQuery = String(qp.get('projectId') || qp.get('project') || qp.get('pid') || '').trim();
 
       const pathname = String(url.pathname || '');
+      const mFfuAiSummary = pathname.match(/^\/project\/([^/]+)\/ffu\/ai-summary\/?$/i);
       const mOfferter = pathname.match(/^\/projects\/([^/]+)\/offerter(?:\/([^/]+))?\/?$/i);
       const mProjectPlural = pathname.match(/^\/projects\/([^/]+)\/?$/i);
       const mProjectLegacy = pathname.match(/\/project\/(.+)$/i);
 
+      const projectIdFromFfuAiSummary = mFfuAiSummary && mFfuAiSummary[1] ? String(decodeURIComponent(mFfuAiSummary[1])).trim() : '';
+
       const projectIdFromOfferter = mOfferter && mOfferter[1] ? String(decodeURIComponent(mOfferter[1])).trim() : '';
       const offerterItem = mOfferter && mOfferter[2] ? String(decodeURIComponent(mOfferter[2])).trim() : '';
       const projectIdFromPlural = mProjectPlural && mProjectPlural[1] ? String(decodeURIComponent(mProjectPlural[1])).trim() : '';
-      const projectIdFromLegacy = mProjectLegacy && mProjectLegacy[1] ? String(decodeURIComponent(mProjectLegacy[1])).trim() : '';
+      const legacyRest = mProjectLegacy && mProjectLegacy[1] ? String(decodeURIComponent(mProjectLegacy[1])).trim() : '';
+      const legacyParts = legacyRest ? legacyRest.split('/').filter(Boolean) : [];
+      const projectIdFromLegacy = legacyParts[0] ? String(legacyParts[0]).trim() : '';
+      const legacyTail = legacyParts[1] ? String(legacyParts[1]).trim().toLowerCase() : '';
 
-      const projectId = fromQuery || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
+      const projectId = fromQuery || projectIdFromFfuAiSummary || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
       if (!projectId) return;
+
+      const wantsFfuAiSummary = Boolean(projectIdFromFfuAiSummary);
 
       if (projectIdFromOfferter) {
         try {
           if (typeof setProjectModuleRoute === 'function') {
             setProjectModuleRoute({ moduleId: 'offerter', itemId: normalizeOfferterItemId(offerterItem || 'forfragningar') });
+          }
+        } catch (_e) {}
+      } else if (wantsFfuAiSummary) {
+        try {
+          if (typeof setProjectModuleRoute === 'function') {
+            setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
           }
         } catch (_e) {}
       } else {
@@ -284,7 +315,8 @@ export function useHomeWebNavigation({
         } catch (_e) {}
       }
 
-      openProject(projectId, { selectedAction: null, keepModuleRoute: Boolean(projectIdFromOfferter) });
+      const keep = Boolean(projectIdFromOfferter || wantsFfuAiSummary);
+      openProject(projectId, { selectedAction: null, keepModuleRoute: keep });
     } catch (_e) {}
   }, [openProject, normalizeOfferterItemId, setProjectModuleRoute]);
 
@@ -307,6 +339,12 @@ export function useHomeWebNavigation({
         return {
           state: { dkView: 'offerter', projectId: pid, moduleId: 'offerter', itemId: safeItem },
           url: `/projects/${encodeURIComponent(pid)}/offerter/${encodeURIComponent(safeItem)}`,
+        };
+      }
+      if (mod === 'ffu-ai-summary') {
+        return {
+          state: { dkView: 'ffu-ai-summary', projectId: pid, moduleId: 'ffu-ai-summary' },
+          url: `/project/${encodeURIComponent(pid)}/ffu/ai-summary`,
         };
       }
       return {

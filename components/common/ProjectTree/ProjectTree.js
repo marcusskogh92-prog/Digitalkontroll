@@ -22,7 +22,9 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TouchableOpacity, View } from 'react-native';
+import { LEFT_NAV } from '../../../constants/leftNavTheme';
 import SharePointFolderHierarchyTree from '../SharePointFiles/SharePointFolderHierarchyTree';
+import SidebarItem from '../SidebarItem';
 import ProjectTreeFolder from './ProjectTreeFolder';
 import ProjectTreeNode from './ProjectTreeNode';
 import { useProjectTree } from './useProjectTree';
@@ -33,6 +35,7 @@ export default function ProjectTree({
   onSelectFunction,
   navigation,
   companyId,
+  onOpenPhaseItem,
   onToggleMainFolder,
   onToggleSubFolder,
   onCollapseSubtree,
@@ -52,6 +55,7 @@ export default function ProjectTree({
   hideFolderIcons = false,
   staticRootHeader = false,
   activePhaseSection = null,
+  activePhaseItem = null,
   activeOverviewPrefix = null,
   activePhaseSectionPrefix = null,
   afMirror = null,
@@ -371,14 +375,18 @@ export default function ProjectTree({
                           isParentPhaseSectionFolder &&
                           Boolean(getTwoDigitPrefix(folderNode?.name));
 
-                        const isFfuSectionFolder = (() => {
-                          if (!afMirror || !afMirror.enabled) return false;
+                        const isFfuNamedSectionFolder = (() => {
                           if (!isPhaseSectionFolder) return false;
-                          if (!afMirror.rootPath) return false;
-                          if (typeof afMirror.onRelativePathChange !== 'function') return false;
-
                           const name = String(folderNode?.name || '').trim().toLowerCase();
                           return name.includes('förfrågningsunderlag') || name.includes('forfragningsunderlag');
+                        })();
+
+                        const showFfuMirrorTree = (() => {
+                          if (!isFfuNamedSectionFolder) return false;
+                          if (!afMirror || !afMirror.enabled) return false;
+                          if (!afMirror.rootPath) return false;
+                          if (typeof afMirror.onRelativePathChange !== 'function') return false;
+                          return true;
                         })();
 
                         const isActivePhaseSectionFolder =
@@ -445,24 +453,53 @@ export default function ProjectTree({
                             />
 
                             {isSubExpanded && !isOverviewPage && (
-                              isFfuSectionFolder ? (
-                                <SharePointFolderHierarchyTree
-                                  indentLevel={level + 1}
-                                  compact={compact}
-                                  edgeToEdge={Boolean(edgeToEdge && compact)}
-                                  companyId={afMirror.companyId}
-                                  project={afMirror.project}
-                                  rootPath={afMirror.rootPath}
-                                  relativePath={afMirror.relativePath}
-                                  onRelativePathChange={afMirror.onRelativePathChange}
-                                  selectedItemId={afMirror.selectedItemId}
-                                  onSelectedItemIdChange={afMirror.onSelectedItemIdChange}
-                                  refreshNonce={afMirror.refreshNonce}
-                                  systemFolderName="AI-sammanställning"
-                                  ensureSystemFolder
-                                  pinSystemFolderLast
-                                  systemFolderRootOnly
-                                />
+                              showFfuMirrorTree ? (
+                                <>
+                                  <SharePointFolderHierarchyTree
+                                    indentLevel={level + 1}
+                                    compact={compact}
+                                    edgeToEdge={Boolean(edgeToEdge && compact)}
+                                    companyId={afMirror.companyId}
+                                    project={afMirror.project}
+                                    rootPath={afMirror.rootPath}
+                                    relativePath={afMirror.relativePath}
+                                    onRelativePathChange={afMirror.onRelativePathChange}
+                                    selectedItemId={afMirror.selectedItemId}
+                                    onSelectedItemIdChange={afMirror.onSelectedItemIdChange}
+                                    refreshNonce={afMirror.refreshNonce}
+                                    hiddenFolderNames={['AI-sammanställning']}
+                                  />
+
+                                  {/* FFU system view (NOT a folder): always last under Förfrågningsunderlag */}
+                                  {typeof onOpenPhaseItem === 'function' ? (
+                                  <SidebarItem
+                                    label={'AI-sammanställning'}
+                                    fullWidth={Boolean(edgeToEdge && compact)}
+                                    squareCorners={Boolean(edgeToEdge && compact)}
+                                    indentMode={Boolean(edgeToEdge && compact) ? 'padding' : 'margin'}
+                                    indent={(level + 1) * 12}
+                                    active={
+                                      String(activePhaseSection || '') === 'forfragningsunderlag' &&
+                                      String(activePhaseItem || '') === 'ai-summary'
+                                    }
+                                    onPress={() => {
+                                      try {
+                                        onOpenPhaseItem('forfragningsunderlag', 'ai-summary', { source: 'system' });
+                                      } catch (_e) {}
+                                    }}
+                                    left={({ hovered, active }) => (
+                                      <>
+                                        <View style={{ width: compact ? 18 : 20 }} />
+                                        <Ionicons
+                                          name={'sparkles-outline'}
+                                          size={compact ? 16 : 18}
+                                          color={active ? LEFT_NAV.accent : hovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                                        />
+                                      </>
+                                    )}
+                                  />
+                                  ) : null}
+                                </>
                               ) : folderNode.loading ? (
                                 <Text
                                   style={{
@@ -486,7 +523,36 @@ export default function ProjectTree({
                                 >
                                   Fel: {folderNode.error}
                                 </Text>
-                              ) : !folderNode.children || folderNode.children.length === 0 ? null : (() => {
+                              ) : !folderNode.children || folderNode.children.length === 0 ? (
+                                isFfuNamedSectionFolder && typeof onOpenPhaseItem === 'function' ? (
+                                  <SidebarItem
+                                    label={'AI-sammanställning'}
+                                    fullWidth={Boolean(edgeToEdge && compact)}
+                                    squareCorners={Boolean(edgeToEdge && compact)}
+                                    indentMode={Boolean(edgeToEdge && compact) ? 'padding' : 'margin'}
+                                    indent={(level + 1) * 12}
+                                    active={
+                                      String(activePhaseSection || '') === 'forfragningsunderlag' &&
+                                      String(activePhaseItem || '') === 'ai-summary'
+                                    }
+                                    onPress={() => {
+                                      try {
+                                        onOpenPhaseItem('forfragningsunderlag', 'ai-summary', { source: 'system' });
+                                      } catch (_e) {}
+                                    }}
+                                    left={({ hovered, active }) => (
+                                      <>
+                                        <View style={{ width: compact ? 18 : 20 }} />
+                                        <Ionicons
+                                          name={'sparkles-outline'}
+                                          size={compact ? 16 : 18}
+                                          color={active ? LEFT_NAV.accent : hovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                                        />
+                                      </>
+                                    )}
+                                  />
+                                ) : null
+                              ) : (() => {
                                 const children = Array.isArray(folderNode.children) ? folderNode.children : [];
                                 const hasFolderChildren = children.some((c) => {
                                   const t = c?.type;
@@ -497,9 +563,40 @@ export default function ProjectTree({
                                 if (!hasFolderChildren && hasFileChildren) return null;
 
                                 return (
-                                  <View style={{ marginLeft: edgeToEdge && compact ? 0 : (compact ? 10 : 12), marginTop: 4 }}>
-                                    {renderNodes(children, level + 1, folderNode, parentNode)}
-                                  </View>
+                                  <>
+                                    <View style={{ marginLeft: edgeToEdge && compact ? 0 : (compact ? 10 : 12), marginTop: 4 }}>
+                                      {renderNodes(children, level + 1, folderNode, parentNode)}
+                                    </View>
+
+                                    {isFfuNamedSectionFolder && typeof onOpenPhaseItem === 'function' ? (
+                                      <SidebarItem
+                                        label={'AI-sammanställning'}
+                                        fullWidth={Boolean(edgeToEdge && compact)}
+                                        squareCorners={Boolean(edgeToEdge && compact)}
+                                        indentMode={Boolean(edgeToEdge && compact) ? 'padding' : 'margin'}
+                                        indent={(level + 1) * 12}
+                                        active={
+                                          String(activePhaseSection || '') === 'forfragningsunderlag' &&
+                                          String(activePhaseItem || '') === 'ai-summary'
+                                        }
+                                        onPress={() => {
+                                          try {
+                                            onOpenPhaseItem('forfragningsunderlag', 'ai-summary', { source: 'system' });
+                                          } catch (_e) {}
+                                        }}
+                                        left={({ hovered, active }) => (
+                                          <>
+                                            <View style={{ width: compact ? 18 : 20 }} />
+                                            <Ionicons
+                                              name={'sparkles-outline'}
+                                              size={compact ? 16 : 18}
+                                              color={active ? LEFT_NAV.accent : hovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
+                                            />
+                                          </>
+                                        )}
+                                      />
+                                    ) : null}
+                                  </>
                                 );
                               })()
                             )}

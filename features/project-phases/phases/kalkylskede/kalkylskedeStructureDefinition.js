@@ -130,17 +130,13 @@ const ORDER_BY_VERSION = {
 export function buildKalkylskedeLockedStructure(version = KALKYLSKEDE_STRUCTURE_VERSIONS.V1) {
   const v = ORDER_BY_VERSION[version] ? version : KALKYLSKEDE_STRUCTURE_VERSIONS.V1;
   const ids = ORDER_BY_VERSION[v];
-  const FFU_SYSTEM_FOLDER = 'AI-sammanställning';
 
   return ids
     .map((id, idx) => {
       const def = SECTION_DEFS[id];
       if (!def) return null;
       const name = `${pad2(idx + 1)} - ${def.title}`;
-      // FFU is user-controlled, with one system exception.
-      if (id === 'forfragningsunderlag') {
-        return { name, items: [FFU_SYSTEM_FOLDER] };
-      }
+      // FFU is user-controlled (no fixed subfolder structure).
       return { name, items: Array.isArray(def.items) ? [...def.items] : [] };
     })
     .filter(Boolean);

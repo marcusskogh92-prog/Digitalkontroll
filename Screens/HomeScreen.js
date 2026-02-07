@@ -1645,6 +1645,16 @@ export default function HomeScreen({ navigation, route }) {
                           return;
                         }
 
+                        // FFU: AI-sammanställning is a system view under Förfrågningsunderlag.
+                        // It must NOT be treated as a folder, and must have its own route/view.
+                        if (sid === 'forfragningsunderlag' && iid === 'ai-summary') {
+                          setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
+                          setPhaseActiveSection('forfragningsunderlag');
+                          setPhaseActiveItem('ai-summary');
+                          setPhaseActiveNode(null);
+                          return;
+                        }
+
                         // Any other phase section -> clear module route.
                         setProjectModuleRoute(null);
                         setPhaseActiveSection(sid || null);

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import FFUAISummaryView from '../../Screens/FFUAISummaryView';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
 import OfferterLayout from '../../features/offerter/OfferterLayout';
@@ -139,6 +140,7 @@ export default function WebMainPane(props) {
 
   const isOfferterModule = String(projectModuleRoute?.moduleId || '') === 'offerter';
   const offerterActiveItemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
+  const isFfuAiSummaryModule = String(projectModuleRoute?.moduleId || '') === 'ffu-ai-summary';
 
   const mainContent = inlineControlEditor && inlineControlEditor.project ? (
     <View style={{ flex: 1, paddingHorizontal: PANE_PADDING, paddingTop: PANE_PADDING, paddingBottom: 0 }}>
@@ -183,6 +185,10 @@ export default function WebMainPane(props) {
         project={selectedProject}
         activeItemId={offerterActiveItemId}
       />
+    </View>
+  ) : selectedProject && isFfuAiSummaryModule ? (
+    <View style={{ flex: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
+      <FFUAISummaryView projectId={selectedProject?.id} />
     </View>
   ) : selectedProject ? (
     <View style={{ flex: 1 }}>
