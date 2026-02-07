@@ -5,17 +5,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import * as XLSX from 'xlsx-js-style';
 import { HomeHeader } from '../../components/common/HomeHeader';
@@ -25,21 +25,21 @@ import MainLayout from '../../components/MainLayout';
 import { useSharePointStatus } from '../../hooks/useSharePointStatus';
 import type { Supplier } from './leverantorerService';
 import {
-  addContactToSupplier,
-  createSupplier,
-  deleteSupplier,
-  fetchByggdelar,
-  fetchContacts,
-  fetchSuppliers,
-  linkExistingContactToSupplier,
-  removeContactFromSupplier,
-  updateSupplier,
+    addContactToSupplier,
+    createSupplier,
+    deleteSupplier,
+    fetchByggdelar,
+    fetchContacts,
+    fetchSuppliers,
+    linkExistingContactToSupplier,
+    removeContactFromSupplier,
+    updateSupplier,
 } from './leverantorerService';
-import LeverantorForm, { type LeverantorFormValues } from './LeverantorForm';
 import LeverantorerTable, {
-  type SortColumn,
-  type SortDirection,
+    type SortColumn,
+    type SortDirection,
 } from './LeverantorerTable';
+import LeverantorForm, { type LeverantorFormValues } from './LeverantorForm';
 
 const styles = StyleSheet.create({
   container: { width: '100%', backgroundColor: 'transparent' },
@@ -325,6 +325,41 @@ export default function LeverantorerView({
       setByggdelar([]);
     }
   }, [companyId]);
+
+  // Web: listen for global home/refresh events from the left sidebar.
+  // SuppliersScreen returns this module directly on web, so it won't mount the legacy listeners.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (typeof window === 'undefined') return undefined;
+
+    const handleGoHome = () => {
+      try {
+        const nav: any = navigation as any;
+        if (typeof nav?.reset === 'function') {
+          nav.reset({ index: 0, routes: [{ name: 'Home' }] });
+          return;
+        }
+        if (typeof nav?.navigate === 'function') {
+          nav.navigate('Home');
+        }
+      } catch (_e) {}
+    };
+
+    const handleRefresh = () => {
+      try {
+        loadSuppliers();
+        loadContacts();
+        loadByggdelar();
+      } catch (_e) {}
+    };
+
+    window.addEventListener('dkGoHome', handleGoHome);
+    window.addEventListener('dkRefresh', handleRefresh);
+    return () => {
+      try { window.removeEventListener('dkGoHome', handleGoHome); } catch (_e) {}
+      try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
+    };
+  }, [navigation, loadSuppliers, loadContacts, loadByggdelar]);
 
   useEffect(() => {
     loadSuppliers();
