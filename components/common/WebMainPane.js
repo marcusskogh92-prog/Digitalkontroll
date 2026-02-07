@@ -188,7 +188,7 @@ export default function WebMainPane(props) {
     </View>
   ) : selectedProject && isFfuAiSummaryModule ? (
     <View style={{ flex: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
-      <FFUAISummaryView projectId={selectedProject?.id} />
+      <FFUAISummaryView projectId={selectedProject?.id} companyId={effectiveCompanyId} project={selectedProject} />
     </View>
   ) : selectedProject ? (
     <View style={{ flex: 1 }}>
