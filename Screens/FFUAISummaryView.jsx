@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { httpsCallable } from 'firebase/functions';
 
+import { functionsClient, getCompanySharePointSiteIdByRole } from '../components/firebase';
 import { getSharePointFolderItems } from '../services/sharepoint/sharePointStructureService';
-import { getCompanySharePointSiteIdByRole } from '../components/firebase';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -71,10 +72,11 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const [checkingFiles, setCheckingFiles] = useState(false);
   const [hasFfuFiles, setHasFfuFiles] = useState(false);
   const [fileCheckError, setFileCheckError] = useState('');
-  const [mockRunning, setMockRunning] = useState(false);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisCompleted, setAnalysisCompleted] = useState(false);
 
-  const status = mockRunning ? 'Analyseras' : (analysis ? 'Analyserad' : 'Ej analyserad');
-  const statusTone = mockRunning ? 'warning' : (analysis ? 'success' : 'neutral');
+  const status = analysisRunning ? 'Analyseras' : ((analysisCompleted || analysis) ? 'Analyserad' : 'Ej analyserad');
+  const statusTone = analysisRunning ? 'warning' : ((analysisCompleted || analysis) ? 'success' : 'neutral');
 
   const ffuRootPath = useMemo(() => {
     const basePath = safeText(
@@ -122,16 +124,27 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     refreshHasFiles();
   }, [refreshHasFiles]);
 
-  const canRun = !checkingFiles && hasFfuFiles && !mockRunning;
+  const canRun = !checkingFiles && hasFfuFiles && !analysisRunning;
 
-  const onRunMock = () => {
+  const onRunAnalysis = useCallback(async () => {
     if (!canRun) return;
-    setMockRunning(true);
+    if (!cid || !pid) return;
+
+    setAnalysisRunning(true);
+    setAnalysisCompleted(false);
+
     try {
-      console.log('AI-analys startad (mock)');
-    } catch (_e) {}
-    setTimeout(() => setMockRunning(false), 1200);
-  };
+      const fn = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
+      const res = await fn({ companyId: cid, projectId: pid });
+      const payload = (res && res.data !== undefined) ? res.data : res;
+      console.log('✅ analyzeFFUFromFiles result:', payload);
+      setAnalysisCompleted(true);
+    } catch (e) {
+      console.error('❌ analyzeFFUFromFiles failed:', e);
+    } finally {
+      setAnalysisRunning(false);
+    }
+  }, [canRun, cid, pid]);
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
@@ -151,7 +164,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         <View style={styles.actionZone}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <Pressable
-              onPress={onRunMock}
+              onPress={onRunAnalysis}
               disabled={!canRun}
               style={({ pressed }) => [
                 styles.primaryButton,
