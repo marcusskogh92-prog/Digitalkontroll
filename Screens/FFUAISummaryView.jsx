@@ -1,22 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { httpsCallable } from 'firebase/functions';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { functionsClient, getCompanySharePointSiteIdByRole } from '../components/firebase';
-import { getSharePointFolderItems } from '../services/sharepoint/sharePointStructureService';
+import { functionsClient } from '../components/firebase';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
   return String(v).trim();
-}
-
-function joinPath(a, b) {
-  const left = safeText(a).replace(/^\/+/, '').replace(/\/+$/, '');
-  const right = safeText(b).replace(/^\/+/, '').replace(/\/+$/, '');
-  if (!left) return right;
-  if (!right) return left;
-  return `${left}/${right}`;
 }
 
 function Badge({ label, tone = 'neutral' }) {
@@ -66,85 +57,86 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const pid = safeText(projectId);
   const cid = safeText(companyId);
 
-  // Later: load from Firestore
-  const analysis = null;
+  void project;
 
-  const [checkingFiles, setCheckingFiles] = useState(false);
-  const [hasFfuFiles, setHasFfuFiles] = useState(false);
-  const [fileCheckError, setFileCheckError] = useState('');
+  const [backendStatus, setBackendStatus] = useState(''); // success | partial | error | analyzing
+  const [summaryText, setSummaryText] = useState('');
+  const [requirements, setRequirements] = useState([]);
+  const [risks, setRisks] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [meta, setMeta] = useState(null);
+
+  const [runError, setRunError] = useState('');
   const [analysisRunning, setAnalysisRunning] = useState(false);
-  const [analysisCompleted, setAnalysisCompleted] = useState(false);
 
-  const status = analysisRunning ? 'Analyseras' : ((analysisCompleted || analysis) ? 'Analyserad' : 'Ej analyserad');
-  const statusTone = analysisRunning ? 'warning' : ((analysisCompleted || analysis) ? 'success' : 'neutral');
+  const effectiveStatus = analysisRunning ? 'analyzing' : (safeText(backendStatus) || '');
+  const hasResult = Boolean(summaryText || (Array.isArray(requirements) && requirements.length) || (Array.isArray(risks) && risks.length) || (Array.isArray(questions) && questions.length));
 
-  const ffuRootPath = useMemo(() => {
-    const basePath = safeText(
-      project?.rootFolderPath ||
-      project?.rootPath ||
-      project?.sharePointPath ||
-      project?.sharepointPath ||
-      project?.sharePointBasePath ||
-      project?.sharepointBasePath ||
-      project?.basePath,
-    );
-    const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
-    const root = joinPath(basePath, FORFRAGNINGSUNDERLAG_FOLDER);
-    return root.replace(/^\/+/, '');
-  }, [project]);
+  const statusLabel = effectiveStatus === 'analyzing'
+    ? 'Analyseras'
+    : effectiveStatus === 'error'
+      ? 'Misslyckad'
+      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasResult)
+        ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
+        : 'Ej analyserad';
 
-  const refreshHasFiles = useCallback(async () => {
-    if (!cid || !pid || !ffuRootPath) {
-      setHasFfuFiles(false);
-      return;
-    }
+  const statusTone = effectiveStatus === 'analyzing'
+    ? 'warning'
+    : effectiveStatus === 'error'
+      ? 'warning'
+      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasResult)
+        ? 'success'
+        : 'neutral';
 
-    setCheckingFiles(true);
-    setFileCheckError('');
-    try {
-      const siteId = await getCompanySharePointSiteIdByRole(cid, 'workspace');
-      if (!siteId) {
-        setHasFfuFiles(false);
-        setFileCheckError('Kunde inte läsa SharePoint-siteId för företaget.');
-        return;
-      }
-
-      const items = await getSharePointFolderItems(siteId, `/${ffuRootPath}`);
-      const files = (Array.isArray(items) ? items : []).filter((x) => x?.type === 'file');
-      setHasFfuFiles(files.length > 0);
-    } catch (e) {
-      setHasFfuFiles(false);
-      setFileCheckError(e?.message ? String(e.message) : 'Kunde inte kontrollera filer i SharePoint');
-    } finally {
-      setCheckingFiles(false);
-    }
-  }, [cid, pid, ffuRootPath]);
-
-  useEffect(() => {
-    refreshHasFiles();
-  }, [refreshHasFiles]);
-
-  const canRun = !checkingFiles && hasFfuFiles && !analysisRunning;
+  const canRun = Boolean(cid && pid && !analysisRunning);
 
   const onRunAnalysis = useCallback(async () => {
     if (!canRun) return;
     if (!cid || !pid) return;
 
     setAnalysisRunning(true);
-    setAnalysisCompleted(false);
+    setRunError('');
+    setBackendStatus('analyzing');
 
     try {
-      const fn = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
-      const res = await fn({ companyId: cid, projectId: pid });
-      const payload = (res && res.data !== undefined) ? res.data : res;
-      console.log('✅ analyzeFFUFromFiles result:', payload);
-      setAnalysisCompleted(true);
+      console.log('AI analysis started');
+      const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
+      const res = await analyzeFFU({ companyId: cid, projectId: pid });
+      console.log('AI analysis result', res?.data);
+
+      const data = res?.data || {};
+      const status = safeText(data?.status);
+      setBackendStatus(status || 'success');
+
+      const s = safeText(data?.summary) || 'AI kunde inte skapa en sammanfattning, men analysen kördes.';
+      setSummaryText(s);
+      setRequirements(Array.isArray(data?.requirements) ? data.requirements.filter((x) => safeText(x)) : []);
+      setRisks(Array.isArray(data?.risks) ? data.risks.filter((x) => safeText(x)) : []);
+      setQuestions(Array.isArray(data?.questions) ? data.questions.filter((x) => safeText(x)) : []);
+      setMeta(data?.meta && typeof data.meta === 'object' ? data.meta : null);
     } catch (e) {
       console.error('❌ analyzeFFUFromFiles failed:', e);
+      const msg = String(e?.message || e?.details || e?.code || '').trim();
+      setRunError(msg || 'Kunde inte köra AI-analys. Försök igen.');
+      setBackendStatus('error');
     } finally {
       setAnalysisRunning(false);
     }
   }, [canRun, cid, pid]);
+
+  const analysis = hasResult ? {
+    summary: {
+      text: summaryText,
+      projectType: '',
+      procurementForm: '',
+    },
+    requirements: {
+      must: Array.isArray(requirements) ? requirements : [],
+      should: [],
+    },
+    risks: (Array.isArray(risks) ? risks : []).map((t, idx) => ({ title: `Risk ${idx + 1}`, details: safeText(t) })),
+    openQuestions: Array.isArray(questions) ? questions : [],
+  } : null;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
@@ -156,9 +148,15 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
             <Text style={styles.subtitle}>AI-analys baserad på uppladdade dokument i förfrågningsunderlaget</Text>
           </View>
           <View style={{ marginLeft: 12, alignItems: 'flex-end' }}>
-            <Badge label={status} tone={statusTone} />
+            <Badge label={statusLabel} tone={statusTone} />
           </View>
         </View>
+
+        {effectiveStatus === 'partial' ? (
+          <Text style={[styles.hintText, { marginLeft: 0, marginTop: 6 }]}>
+            ⚠️ Analysen är delvis baserad på underlaget (för stort FFU). Resultatet är ändå användbart som beslutsstöd.
+          </Text>
+        ) : null}
 
         {/* Zon 2 – Åtgärd / Trigger */}
         <View style={styles.actionZone}>
@@ -175,28 +173,28 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
             >
               <Text style={styles.primaryButtonText}>Kör AI-analys</Text>
             </Pressable>
-            {checkingFiles ? (
+            {analysisRunning ? (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <ActivityIndicator size="small" color="#64748b" />
-                <Text style={styles.hintText}>Kontrollerar filer…</Text>
+                <Text style={styles.hintText}>AI analyserar förfrågningsunderlaget…</Text>
               </View>
             ) : null}
           </View>
 
-          {!checkingFiles && !hasFfuFiles ? (
-            <Text style={styles.hintText}>
-              Ladda upp minst en fil i Förfrågningsunderlag för att köra analys.
-            </Text>
-          ) : null}
-
-          {!checkingFiles && fileCheckError ? (
-            <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={3}>
-              {fileCheckError}
+          {runError ? (
+            <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={4}>
+              {runError}
             </Text>
           ) : null}
 
           {Platform.OS === 'web' && pid ? (
             <Text style={styles.metaText}>Projekt: {pid}</Text>
+          ) : null}
+
+          {meta && meta.totalChars != null ? (
+            <Text style={styles.metaText}>
+              Underlag: {String(meta.totalChars)} tecken{meta.truncated ? ' (trunkerat)' : ''}
+            </Text>
           ) : null}
         </View>
 

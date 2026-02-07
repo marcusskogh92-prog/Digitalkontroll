@@ -330,7 +330,10 @@ async function analyzeFFUCore({ companyId, projectId, files, uid }) {
 
   let analysis;
   try {
+    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+    console.log('[FFU] Step 3: Calling OpenAI', { model });
     const output = await callOpenAIForFFUAnalysis({ apiKey, system, user });
+    console.log('[FFU] Step 4: OpenAI response received');
     let parsed;
     try {
       parsed = JSON.parse(output);
@@ -360,6 +363,7 @@ async function analyzeFFUCore({ companyId, projectId, files, uid }) {
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: uid,
     }, { merge: true });
+    console.log('[FFU] Step 5: Cache written');
   } catch (e) {
     console.warn('analyzeFFU: failed to write cache', String(e && e.message ? e.message : e));
   }
@@ -412,6 +416,289 @@ function isStorageEmulated() {
   return Boolean(process.env.FIREBASE_STORAGE_EMULATOR_HOST || process.env.STORAGE_EMULATOR_HOST);
 }
 
+function guessMimeTypeFromName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (n.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (n.endsWith('.txt')) return 'text/plain';
+  return '';
+}
+
+function isSupportedFFUFileName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return n.endsWith('.pdf') || n.endsWith('.docx') || n.endsWith('.xlsx') || n.endsWith('.txt');
+}
+
+async function resolveCompanyWorkspaceSiteId(companyId) {
+  const cid = String(companyId || '').trim();
+  if (!cid) return null;
+
+  // Preferred canonical config (server-managed)
+  try {
+    const { workspaceSiteId } = await getCompanySiteIdsFromConfig(cid);
+    if (workspaceSiteId) return String(workspaceSiteId).trim();
+  } catch (_e) {}
+
+  // Fallback: company profile linkage
+  try {
+    const profRef = db.doc(`foretag/${cid}/profil/public`);
+    const snap = await profRef.get().catch(() => null);
+    const d = snap && snap.exists ? (snap.data() || {}) : {};
+    const primary = d.primarySharePointSite && typeof d.primarySharePointSite === 'object' ? d.primarySharePointSite : null;
+    const fromPrimary = primary && primary.siteId ? String(primary.siteId).trim() : '';
+    if (fromPrimary) return fromPrimary;
+    const legacy = d.sharePointSiteId ? String(d.sharePointSiteId).trim() : '';
+    if (legacy) return legacy;
+  } catch (_e) {}
+
+  return null;
+}
+
+async function ensureCompany5555SharePointSeedIfMissing(companyId) {
+  const cid = String(companyId || '').trim();
+  if (cid !== '5555') return { ok: true, seeded: false, siteId: await resolveCompanyWorkspaceSiteId(cid) };
+
+  const existing = await resolveCompanyWorkspaceSiteId(cid);
+  if (existing) return { ok: true, seeded: false, siteId: existing };
+
+  const forcedSiteId =
+    process.env.DK_DEV_COMPANY_5555_SITE_ID ||
+    process.env.SHAREPOINT_SITE_ID_5555 ||
+    readFunctionsConfigValue('sharepoint.dev_company_5555_site_id', null) ||
+    readFunctionsConfigValue('sharepoint.devCompany5555SiteId', null);
+  if (forcedSiteId) {
+    const siteId = String(forcedSiteId).trim();
+    if (!siteId) {
+      return { ok: false, seeded: false, siteId: null, reason: 'Forced siteId was empty' };
+    }
+
+    // Same seeding behavior as Graph-resolved, but without webUrl.
+    const profRef = db.doc(`foretag/${cid}/profil/public`);
+    const profSnap = await profRef.get().catch(() => null);
+    const prof = profSnap && profSnap.exists ? (profSnap.data() || {}) : {};
+    const companyName = String(prof?.companyName || prof?.name || cid).trim();
+
+    try {
+      const cfgRef = db.doc(`foretag/${cid}/sharepoint_system/config`);
+      await cfgRef.set({
+        sharepoint: {
+          workspaceSite: {
+            siteId,
+            webUrl: null,
+            type: 'workspace',
+            visibility: 'company',
+            siteName: companyName,
+            siteSlug: null,
+          },
+          enabledSites: [siteId],
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: 'system-dev-seed',
+      }, { merge: true });
+    } catch (_e) {}
+
+    try {
+      await profRef.set({
+        primarySharePointSite: {
+          siteId,
+          siteUrl: null,
+          linkedAt: FieldValue.serverTimestamp(),
+          linkedBy: 'system-dev-seed',
+        },
+        sharePointSiteId: siteId,
+        sharePointWebUrl: null,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+    } catch (_e) {}
+
+    try {
+      const metaRef = db.doc(`foretag/${cid}/sharepoint_sites/${siteId}`);
+      await metaRef.set({
+        siteId,
+        siteUrl: null,
+        siteName: companyName,
+        role: 'projects',
+        visibleInLeftPanel: true,
+        systemManaged: true,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: 'system-dev-seed',
+      }, { merge: true });
+    } catch (_e) {}
+
+    return { ok: true, seeded: true, siteId };
+  }
+
+  let accessToken = null;
+  try {
+    accessToken = await getSharePointGraphAccessToken();
+  } catch (e) {
+    return { ok: false, seeded: false, siteId: null, reason: String(e && e.message ? e.message : e) };
+  }
+  const hostname = getSharePointHostname();
+  if (!accessToken || !hostname) {
+    return { ok: false, seeded: false, siteId: null, reason: 'SharePoint Graph config missing (token/hostname)' };
+  }
+
+  // Best-effort: infer site slug from company display name (same rule as provisioning)
+  const profRef = db.doc(`foretag/${cid}/profil/public`);
+  const profSnap = await profRef.get().catch(() => null);
+  const prof = profSnap && profSnap.exists ? (profSnap.data() || {}) : {};
+  const companyName = String(prof?.companyName || prof?.name || cid).trim();
+  const workspaceSlug = normalizeSharePointSiteSlug(companyName);
+  if (!workspaceSlug) {
+    return { ok: false, seeded: false, siteId: null, reason: 'Could not derive SharePoint site slug from company name' };
+  }
+
+  const resolved = await graphGetSiteByUrl({ hostname, siteSlug: workspaceSlug, accessToken });
+  if (!resolved || !resolved.siteId) {
+    return { ok: false, seeded: false, siteId: null, reason: `Graph could not resolve site by slug: ${workspaceSlug}` };
+  }
+
+  const siteId = String(resolved.siteId).trim();
+  const webUrl = resolved.webUrl ? String(resolved.webUrl).trim() : null;
+
+  // Seed canonical server config so other systems can reuse it.
+  try {
+    const cfgRef = db.doc(`foretag/${cid}/sharepoint_system/config`);
+    await cfgRef.set({
+      sharepoint: {
+        workspaceSite: {
+          siteId,
+          webUrl,
+          type: 'workspace',
+          visibility: 'company',
+          siteName: companyName,
+          siteSlug: workspaceSlug,
+        },
+        enabledSites: [siteId],
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: 'system-dev-seed',
+    }, { merge: true });
+  } catch (_e) {}
+
+  // Seed profile linkage for backwards compatibility
+  try {
+    await profRef.set({
+      primarySharePointSite: {
+        siteId,
+        siteUrl: webUrl,
+        linkedAt: FieldValue.serverTimestamp(),
+        linkedBy: 'system-dev-seed',
+      },
+      sharePointSiteId: siteId,
+      sharePointWebUrl: webUrl,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } catch (_e) {}
+
+  // Seed visibility metadata so left panel role resolution works
+  try {
+    const metaRef = db.doc(`foretag/${cid}/sharepoint_sites/${siteId}`);
+    await metaRef.set({
+      siteId,
+      siteUrl: webUrl,
+      siteName: companyName,
+      role: 'projects',
+      visibleInLeftPanel: true,
+      systemManaged: true,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: 'system-dev-seed',
+    }, { merge: true });
+  } catch (_e) {}
+
+  return { ok: true, seeded: true, siteId };
+}
+
+async function graphDownloadItemAsBuffer({ siteId, itemId, accessToken, maxBytes }) {
+  const sid = String(siteId || '').trim();
+  const iid = String(itemId || '').trim();
+  if (!sid || !iid) throw new Error('siteId and itemId are required');
+
+  const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${sid}/drive/items/${iid}/content`, {
+    method: 'GET',
+    redirect: 'follow',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph download failed: ${res.status} - ${txt}`);
+  }
+
+  const buf = Buffer.from(await res.arrayBuffer());
+  const limit = Number.isFinite(Number(maxBytes)) ? Number(maxBytes) : (20 * 1024 * 1024);
+  if (Number.isFinite(limit) && buf.length > limit) {
+    throw new Error(`File too large to extract (${buf.length} bytes > ${limit})`);
+  }
+  return { buffer: buf, sizeBytes: buf.length };
+}
+
+async function graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth, maxFiles }) {
+  const sid = String(siteId || '').trim();
+  const base = String(rootPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (!sid || !base) return [];
+
+  const depthLimit = Number.isFinite(Number(maxDepth)) ? Number(maxDepth) : 8;
+  const fileLimit = Number.isFinite(Number(maxFiles)) ? Number(maxFiles) : 25;
+
+  const out = [];
+  async function walk(path, depth) {
+    if (out.length >= fileLimit) return;
+    if (depth > depthLimit) return;
+
+    const children = await graphGetChildren({ siteId: sid, path, accessToken });
+    for (const item of children || []) {
+      if (out.length >= fileLimit) return;
+      const name = String(item?.name || '').trim();
+      if (!name) continue;
+      const isFolder = !!item?.folder;
+      const isFile = !!item?.file;
+      const childPath = path ? `${path}/${name}` : name;
+      if (isFolder) {
+        await walk(childPath, depth + 1);
+        continue;
+      }
+      if (!isFile) continue;
+      if (!isSupportedFFUFileName(name)) continue;
+      if (!item?.id) continue;
+      out.push({
+        id: String(item.id),
+        name,
+        path: childPath,
+        sizeBytes: item?.size != null ? Number(item.size) : null,
+      });
+    }
+  }
+
+  await walk(base, 0);
+  return out;
+}
+
+async function getProjectSharePointBasePath({ companyId, projectId }) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) return '';
+
+  const ref = db.doc(`foretag/${cid}/projects/${pid}`);
+  const snap = await ref.get().catch(() => null);
+  const p = snap && snap.exists ? (snap.data() || {}) : {};
+  const base = String(
+    p?.rootFolderPath ||
+    p?.rootPath ||
+    p?.sharePointRootPath ||
+    p?.sharePointPath ||
+    p?.sharepointPath ||
+    p?.sharePointBasePath ||
+    p?.sharepointBasePath ||
+    p?.basePath ||
+    ''
+  ).trim();
+  return base.replace(/^\/+/, '').replace(/\/+$/, '').trim();
+}
+
 async function downloadStorageObjectAsBuffer({ bucketName, objectPath }) {
   // Never trust a bucket name coming from the client. Always use the default bucket.
   // This also prevents accidentally downloading from an unexpected bucket.
@@ -438,16 +725,102 @@ async function downloadStorageObjectAsBuffer({ bucketName, objectPath }) {
   };
 }
 
+function truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars) {
+  const maxChars = Number(maxTotalChars);
+  if (!Number.isFinite(maxChars) || maxChars <= 0) {
+    return { files: Array.isArray(extractedFiles) ? extractedFiles : [], usedChars: 0, truncated: false, filesUsed: 0 };
+  }
+
+  const input = Array.isArray(extractedFiles) ? extractedFiles : [];
+  const out = [];
+  let used = 0;
+  for (const f of input) {
+    if (used >= maxChars) break;
+    const text = String(f?.extractedText || '');
+    if (!text) continue;
+    const remaining = maxChars - used;
+    const sliced = text.length > remaining ? text.slice(0, remaining) : text;
+    used += sliced.length;
+    out.push({
+      id: f?.id != null ? String(f.id) : '',
+      name: f?.name != null ? String(f.name) : '',
+      type: f?.type != null ? String(f.type) : '',
+      extractedText: sliced,
+    });
+  }
+
+  const originalTotal = input.reduce((sum, f) => sum + String(f?.extractedText || '').length, 0);
+  return {
+    files: out,
+    usedChars: used,
+    truncated: originalTotal > used,
+    filesUsed: out.length,
+  };
+}
+
+function uiFriendlyFFUResult({ status, analysis, meta, fallbackSummary }) {
+  const a = analysis && typeof analysis === 'object' ? analysis : null;
+  const summary = String(a?.summary?.description || '').trim();
+
+  const must = Array.isArray(a?.requirements?.must) ? a.requirements.must : [];
+  const should = Array.isArray(a?.requirements?.should) ? a.requirements.should : [];
+  const requirements = [...must, ...should]
+    .map((r) => String(r?.text || '').trim())
+    .filter(Boolean);
+
+  const risks = (Array.isArray(a?.risks) ? a.risks : [])
+    .map((r) => {
+      const issue = String(r?.issue || '').trim();
+      const reason = String(r?.reason || '').trim();
+      if (!issue && !reason) return '';
+      if (issue && reason) return `${issue} — ${reason}`;
+      return issue || reason;
+    })
+    .filter(Boolean);
+
+  const questions = (Array.isArray(a?.openQuestions) ? a.openQuestions : [])
+    .map((q) => {
+      const question = String(q?.question || '').trim();
+      const reason = String(q?.reason || '').trim();
+      if (!question && !reason) return '';
+      if (question && reason) return `${question} — ${reason}`;
+      return question || reason;
+    })
+    .filter(Boolean);
+
+  const safeSummary = summary || String(fallbackSummary || 'AI kunde inte skapa en sammanfattning, men analysen kördes.').trim();
+  return {
+    status: status || 'success',
+    summary: safeSummary,
+    requirements: Array.isArray(requirements) ? requirements : [],
+    risks: Array.isArray(risks) ? risks : [],
+    questions: Array.isArray(questions) ? questions : [],
+    meta: {
+      totalChars: Number(meta?.totalChars) || 0,
+      filesUsed: Number(meta?.filesUsed) || 0,
+      truncated: Boolean(meta?.truncated),
+    },
+  };
+}
+
 // AI: Analyze FFU from uploaded files (Storage paths)
 // Input: { companyId, projectId, files: [{ path, name, mimeType }] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
-exports.analyzeFFUFromFiles = functions.https.onCall(async (data, context) => {
+exports.analyzeFFUFromFiles = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB',
+  })
+  .https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
 
+  const startedAtMs = Date.now();
+
   const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
   const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  console.log('[analyzeFFUFromFiles] callable invoked', { companyId, projectId });
   const files = (data && Array.isArray(data.files)) ? data.files : [];
   if (!companyId || !projectId) {
     throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
@@ -455,87 +828,228 @@ exports.analyzeFFUFromFiles = functions.https.onCall(async (data, context) => {
 
   assertAnalyzeFFUPermission({ companyId, context });
 
-  if (IS_EMULATOR && !isStorageEmulated()) {
+  // Debug (temporary): verify what SharePoint config is visible in runtime.
+  // NOTE: never log secrets, only presence.
+  try {
+    const sp = (functions.config && typeof functions.config === 'function') ? ((functions.config() || {}).sharepoint || {}) : {};
+    console.log('SHAREPOINT CONFIG CHECK', {
+      tenantId: sp && sp.tenant_id ? sp.tenant_id : (sp && sp.tenantId ? sp.tenantId : null),
+      clientId: sp && sp.client_id ? sp.client_id : (sp && sp.clientId ? sp.clientId : null),
+      hasClientSecret: !!(sp && (sp.client_secret || sp.clientSecret)),
+      hasStaticAccessToken: !!getSharePointProvisioningAccessToken(),
+      hasHostname: !!getSharePointHostname(),
+      isEmulator: !!IS_EMULATOR,
+    });
+  } catch (_e) {}
+
+  const hasClientFiles = Array.isArray(files) && files.length > 0;
+  const useSharePoint = !hasClientFiles;
+
+  if (!useSharePoint && IS_EMULATOR && !isStorageEmulated()) {
     throw new functions.https.HttpsError(
       'failed-precondition',
       'Storage emulator is not configured. Refusing to download files to avoid hitting production.'
     );
   }
 
-  if (!Array.isArray(files) || files.length === 0) {
-    throw new functions.https.HttpsError('invalid-argument', 'files is required');
-  }
-
   const minChars = Number(process.env.FFU_EXTRACT_MIN_CHARS || 30);
   const extractedFiles = [];
 
-  for (let i = 0; i < files.length; i += 1) {
-    const f = files[i] || {};
-    const name = f.name != null ? String(f.name).trim() : '';
-    const mimeType = f.mimeType != null ? String(f.mimeType).trim() : '';
-    const rawPath = f.path != null ? String(f.path).trim() : '';
-
-    if (!rawPath) {
-      console.warn('analyzeFFUFromFiles: skipping file with missing path', { index: i, name: name || null });
-      continue;
+  if (useSharePoint) {
+    const seed = await ensureCompany5555SharePointSeedIfMissing(companyId);
+    if (!seed.ok) {
+      throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
     }
 
-    // No directory traversal.
-    if (rawPath.includes('..')) {
-      console.warn('analyzeFFUFromFiles: skipping file with suspicious path', { index: i, name: name || null });
-      continue;
-    }
-
+    let accessToken = null;
     try {
-      const gs = parseGsPath(rawPath);
-      const bucketName = gs ? gs.bucket : null;
-      const objectPath = gs ? gs.objectPath : rawPath.replace(/^\/+/, '');
+      accessToken = await getSharePointGraphAccessToken();
+    } catch (e) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        `SharePoint Graph access token is not configured (or could not be minted): ${String(e && e.message ? e.message : e)}`
+      );
+    }
 
-      const { buffer, sizeBytes } = await downloadStorageObjectAsBuffer({ bucketName, objectPath });
-      const { kind, text } = await extractTextByMimeType({ mimeType, buffer });
-      const charLen = String(text || '').length;
+    const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
+    }
 
-      const pathHash = sha256Hex(rawPath).slice(0, 12);
-      console.log('analyzeFFUFromFiles: extracted', {
-        index: i,
-        name: name || null,
-        mimeType: mimeType || null,
-        kind,
-        sizeBytes,
-        charLen,
-        pathHash,
-      });
+    const basePath = await getProjectSharePointBasePath({ companyId, projectId });
+    if (!basePath) {
+      throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
+    }
 
-      if (!text || String(text).trim().length < minChars) {
-        console.log('analyzeFFUFromFiles: ignoring short/empty extracted text', { index: i, charLen, pathHash });
+    const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
+    const ffuRootPath = `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
+
+    const maxFiles = Number(process.env.FFU_SP_MAX_FILES || 10);
+    const maxDepth = Number(process.env.FFU_SP_MAX_DEPTH || 8);
+    const spFiles = await graphListFilesRecursive({ siteId, rootPath: ffuRootPath, accessToken, maxDepth, maxFiles });
+
+    console.log('analyzeFFUFromFiles: sharepoint list summary', {
+      companyId,
+      projectId,
+      siteIdHash: sha256Hex(siteId).slice(0, 12),
+      ffuRootPathHash: sha256Hex(ffuRootPath).slice(0, 12),
+      fileCount: spFiles.length,
+      seededCompany5555: seed.seeded === true,
+    });
+
+    console.log('[FFU] Step 1: SharePoint listing done', { ms: Date.now() - startedAtMs, fileCount: Array.isArray(spFiles) ? spFiles.length : 0 });
+
+    if (!Array.isArray(spFiles) || spFiles.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'No FFU files found in SharePoint Förfrågningsunderlag');
+    }
+
+    const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
+    for (let i = 0; i < spFiles.length; i += 1) {
+      const f = spFiles[i] || {};
+      const name = String(f.name || '').trim();
+      const mimeType = guessMimeTypeFromName(name);
+      try {
+        const { buffer, sizeBytes } = await graphDownloadItemAsBuffer({ siteId, itemId: f.id, accessToken, maxBytes });
+        const { kind, text } = await extractTextByMimeType({ mimeType, buffer });
+        const charLen = String(text || '').length;
+        const pathHash = sha256Hex(String(f.path || '')).slice(0, 12);
+
+        console.log('analyzeFFUFromFiles: extracted (sharepoint)', {
+          index: i,
+          name: name || null,
+          mimeType: mimeType || null,
+          kind,
+          sizeBytes,
+          charLen,
+          pathHash,
+        });
+
+        if (!text || String(text).trim().length < minChars) {
+          console.log('analyzeFFUFromFiles: ignoring short/empty extracted text (sharepoint)', { index: i, charLen, pathHash });
+          continue;
+        }
+
+        extractedFiles.push({
+          id: `sp-${String(f.id).slice(0, 16) || (i + 1)}`,
+          name: name || `sharepoint-file-${i + 1}`,
+          type: kind,
+          extractedText: text,
+        });
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        console.warn('analyzeFFUFromFiles: failed to extract sharepoint file (continuing)', { index: i, name: name || null, message: msg });
+      }
+    }
+  } else {
+    for (let i = 0; i < files.length; i += 1) {
+      const f = files[i] || {};
+      const name = f.name != null ? String(f.name).trim() : '';
+      const mimeType = f.mimeType != null ? String(f.mimeType).trim() : '';
+      const rawPath = f.path != null ? String(f.path).trim() : '';
+
+      if (!rawPath) {
+        console.warn('analyzeFFUFromFiles: skipping file with missing path', { index: i, name: name || null });
         continue;
       }
 
-      extractedFiles.push({
-        id: `file-${i + 1}`,
-        name: name || `file-${i + 1}`,
-        type: kind,
-        extractedText: text,
-      });
-    } catch (e) {
-      const msg = String(e && e.message ? e.message : e);
-      console.warn('analyzeFFUFromFiles: failed to extract file (continuing)', {
-        index: i,
-        name: name || null,
-        mimeType: mimeType || null,
-        message: msg,
-      });
+      // No directory traversal.
+      if (rawPath.includes('..')) {
+        console.warn('analyzeFFUFromFiles: skipping file with suspicious path', { index: i, name: name || null });
+        continue;
+      }
+
+      try {
+        const gs = parseGsPath(rawPath);
+        const bucketName = gs ? gs.bucket : null;
+        const objectPath = gs ? gs.objectPath : rawPath.replace(/^\/+/, '');
+
+        const { buffer, sizeBytes } = await downloadStorageObjectAsBuffer({ bucketName, objectPath });
+        const { kind, text } = await extractTextByMimeType({ mimeType, buffer });
+        const charLen = String(text || '').length;
+
+        const pathHash = sha256Hex(rawPath).slice(0, 12);
+        console.log('analyzeFFUFromFiles: extracted', {
+          index: i,
+          name: name || null,
+          mimeType: mimeType || null,
+          kind,
+          sizeBytes,
+          charLen,
+          pathHash,
+        });
+
+        if (!text || String(text).trim().length < minChars) {
+          console.log('analyzeFFUFromFiles: ignoring short/empty extracted text', { index: i, charLen, pathHash });
+          continue;
+        }
+
+        extractedFiles.push({
+          id: `file-${i + 1}`,
+          name: name || `file-${i + 1}`,
+          type: kind,
+          extractedText: text,
+        });
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        console.warn('analyzeFFUFromFiles: failed to extract file (continuing)', { index: i, name: name || null, mimeType: mimeType || null, message: msg });
+      }
     }
   }
 
   const totalChars = extractedFiles.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
   console.log('analyzeFFUFromFiles: extraction summary', {
-    inputFileCount: files.length,
+    inputFileCount: hasClientFiles ? files.length : null,
+    sharepointMode: useSharePoint,
     extractedFileCount: extractedFiles.length,
     totalChars,
   });
 
-  return analyzeFFUCore({ companyId, projectId, files: extractedFiles, uid: context.auth.uid });
+  console.log('[FFU] Step 2: PDF extraction done', { ms: Date.now() - startedAtMs, totalChars });
+
+  const defaultCap = 120_000;
+  const capFromEnv = Number(process.env.FFU_MAX_TOTAL_CHARS || defaultCap);
+  const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
+  const maxTotalChars = Number.isFinite(coreCap)
+    ? Math.min(Number.isFinite(capFromEnv) ? capFromEnv : defaultCap, coreCap)
+    : (Number.isFinite(capFromEnv) ? capFromEnv : defaultCap);
+
+  const trunc = truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars);
+  const status = trunc.truncated ? 'partial' : 'success';
+
+  if (trunc.truncated) {
+    console.warn('[FFU] Underlag truncated for AI analysis', {
+      originalTotalChars: totalChars,
+      usedChars: trunc.usedChars,
+      filesUsed: trunc.filesUsed,
+      maxTotalChars,
+    });
+  }
+
+  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+  console.log('[FFU] Step 3: Calling OpenAI', { ms: Date.now() - startedAtMs, model, status });
+
+  let analysis;
+  try {
+    analysis = await analyzeFFUCore({ companyId, projectId, files: trunc.files, uid: context.auth.uid });
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    console.error('[FFU] analyzeFFUCore failed', { message: msg, companyId, projectId });
+    console.log('[FFU] Step 4: OpenAI response received', { ms: Date.now() - startedAtMs, ok: false });
+    return uiFriendlyFFUResult({
+      status: 'error',
+      analysis: null,
+      fallbackSummary: 'AI kunde inte skapa en sammanfattning, men analysen kördes.',
+      meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+    });
+  }
+
+  console.log('[FFU] Step 4: OpenAI response received', { ms: Date.now() - startedAtMs, ok: true });
+  // Cache write is performed inside analyzeFFUCore (best-effort).
+  return uiFriendlyFFUResult({
+    status,
+    analysis,
+    meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+  });
 });
 
 function encodeGraphPath(path) {
