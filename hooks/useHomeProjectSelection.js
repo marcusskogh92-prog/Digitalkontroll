@@ -136,7 +136,7 @@ export function useHomeProjectSelection({
     ) {
       try {
         const st = window.history.state || {};
-        window.history.replaceState({ ...st, dkView: 'home', projectId: null }, '');
+        window.history.replaceState({ ...st, dkView: 'home', projectId: null }, '', '/');
       } catch (_e) {}
     }
     setProjectSelectedAction(null);

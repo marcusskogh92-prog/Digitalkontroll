@@ -267,7 +267,6 @@ export function useHomeWebNavigation({
     if (Platform.OS !== 'web') return;
     if (typeof window === 'undefined') return;
     if (didApplyInitialUrlRef.current) return;
-    if (typeof openProject !== 'function') return;
 
     didApplyInitialUrlRef.current = true;
 
@@ -293,32 +292,29 @@ export function useHomeWebNavigation({
       const legacyTail = legacyParts[1] ? String(legacyParts[1]).trim().toLowerCase() : '';
 
       const projectId = fromQuery || projectIdFromFfuAiSummary || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
-      if (!projectId) return;
 
-      const wantsFfuAiSummary = Boolean(projectIdFromFfuAiSummary);
-
-      if (projectIdFromOfferter) {
-        try {
-          if (typeof setProjectModuleRoute === 'function') {
-            setProjectModuleRoute({ moduleId: 'offerter', itemId: normalizeOfferterItemId(offerterItem || 'forfragningar') });
-          }
-        } catch (_e) {}
-      } else if (wantsFfuAiSummary) {
-        try {
-          if (typeof setProjectModuleRoute === 'function') {
-            setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
-          }
-        } catch (_e) {}
-      } else {
+      // Desired behavior: treat a hard refresh as a cold start.
+      // If the URL points to a project-specific route, always redirect to start page (Home)
+      // instead of trying to restore/open the project from the URL.
+      if (projectId) {
         try {
           if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
         } catch (_e) {}
-      }
+        try {
+          if (typeof requestProjectSwitch === 'function') {
+            requestProjectSwitch(null, { selectedAction: null, path: null });
+          }
+        } catch (_e) {}
 
-      const keep = Boolean(projectIdFromOfferter || wantsFfuAiSummary);
-      openProject(projectId, { selectedAction: null, keepModuleRoute: keep });
+        try {
+          const st = window.history && window.history.state ? window.history.state : {};
+          if (window.history && typeof window.history.replaceState === 'function') {
+            window.history.replaceState({ ...st, dkView: 'home', projectId: null }, '', '/');
+          }
+        } catch (_e) {}
+      }
     } catch (_e) {}
-  }, [openProject, normalizeOfferterItemId, setProjectModuleRoute]);
+  }, [normalizeOfferterItemId, requestProjectSwitch, setProjectModuleRoute]);
 
   // Web: pusha nytt state när selectedProject ändras
   React.useEffect(() => {
