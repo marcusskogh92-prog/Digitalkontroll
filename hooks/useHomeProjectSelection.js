@@ -25,6 +25,7 @@ export function useHomeProjectSelection({
   const [selectedProjectPath, setSelectedProjectPath] = React.useState(null);
   const selectedProjectRef = React.useRef(null);
   const [selectedProjectFolders, setSelectedProjectFolders] = React.useState([]);
+  const [selectedProjectFoldersLoading, setSelectedProjectFoldersLoading] = React.useState(false);
 
   const [projectSelectedAction, setProjectSelectedAction] = React.useState(null);
   const [inlineControlEditor, setInlineControlEditor] = React.useState(null);
@@ -215,6 +216,8 @@ export function useHomeProjectSelection({
     selectedProjectRef,
     selectedProjectFolders,
     setSelectedProjectFolders,
+    selectedProjectFoldersLoading,
+    setSelectedProjectFoldersLoading,
     projectSelectedAction,
     setProjectSelectedAction,
     inlineControlEditor,

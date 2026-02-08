@@ -396,6 +396,7 @@ export function SharePointLeftPanel({
   phaseNavigation,
   phaseNavigationLoading,
   selectedProjectFolders,
+  selectedProjectFoldersLoading = false,
   navigation,
   companyId,
     reloadKey,
@@ -2151,42 +2152,20 @@ export function SharePointLeftPanel({
       };
     };
 
-    const mergeTrees = (incomingNodes, existingNodes) => {
-      const existingById = new Map((existingNodes || []).filter(Boolean).map((n) => [n.id, n]));
-
-      return (incomingNodes || []).filter(Boolean).map((incoming) => {
-        const existing = existingById.get(incoming.id);
-        if (!existing) return incoming;
-
-        const incomingChildren = Array.isArray(incoming.children) ? incoming.children : [];
-        const existingChildren = Array.isArray(existing.children) ? existing.children : [];
-        const childrenToUse = incomingChildren.length > 0 ? incomingChildren : existingChildren;
-
-        return {
-          ...incoming,
-          expanded: typeof existing.expanded === 'boolean' ? existing.expanded : Boolean(incoming.expanded),
-          loading: typeof existing.loading === 'boolean' ? existing.loading : Boolean(incoming.loading),
-          error: existing.error || incoming.error || null,
-          children: mergeTrees(childrenToUse, existingChildren),
-        };
-      });
-    };
-
     const incoming = selectedProjectFolders.map(normalizeNode);
 
-    // If we switched projects, reset to incoming (even if empty) to avoid leaking old state.
+    // If we switched projects, reset state immediately.
     if (currentProjectId && currentProjectId !== lastProjectId) {
       setLastProjectId(currentProjectId);
-      setProjectFolderTree(incoming);
+    }
+
+    // Solution A: never append/merge; treat loading as an atomic clear.
+    if (selectedProjectFoldersLoading) {
+      setProjectFolderTree([]);
       return;
     }
 
-    // If incoming is temporarily empty, keep existing local tree so expand/collapse works.
-    if (incoming.length === 0) {
-      return;
-    }
-
-    setProjectFolderTree((prev) => mergeTrees(incoming, prev));
+    setProjectFolderTree(incoming);
   }, [
     selectedProject,
     selectedProject?.id,
@@ -2194,6 +2173,7 @@ export function SharePointLeftPanel({
     selectedProject?.projectPath,
     selectedProject?.sharePointPath,
     selectedProjectFolders,
+    selectedProjectFoldersLoading,
     lastProjectId,
     hierarchy,
   ]);
@@ -2846,6 +2826,14 @@ export function SharePointLeftPanel({
                 return (
                   <View style={{ padding: 20, alignItems: 'center' }}>
                     <Text style={{ color: '#888', fontSize: 14 }}>Laddar...</Text>
+                  </View>
+                );
+              }
+
+              if (selectedProjectFoldersLoading) {
+                return (
+                  <View style={{ padding: 20, alignItems: 'center' }}>
+                    <Text style={{ color: '#888', fontSize: 14 }}>Laddar mappar...</Text>
                   </View>
                 );
               }

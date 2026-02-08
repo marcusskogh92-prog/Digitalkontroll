@@ -381,6 +381,8 @@ export default function HomeScreen({ navigation, route }) {
     selectedProjectRef,
     selectedProjectFolders,
     setSelectedProjectFolders,
+    selectedProjectFoldersLoading,
+    setSelectedProjectFoldersLoading,
     projectSelectedAction,
     setProjectSelectedAction,
     inlineControlEditor,
@@ -782,6 +784,7 @@ export default function HomeScreen({ navigation, route }) {
     selectedProject,
     projectPhaseKey,
     setSelectedProjectFolders,
+    setSelectedProjectFoldersLoading,
   });
 
   // Legacy phase dropdown removed - phases are now driven by SharePoint & project phases
@@ -1143,6 +1146,7 @@ export default function HomeScreen({ navigation, route }) {
   const projectPhaseKeySafe = projectPhaseKey ?? null;
   const hierarchySafe = Array.isArray(hierarchy) ? hierarchy : [];
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
+  const selectedProjectFoldersLoadingSafe = Boolean(selectedProjectFoldersLoading);
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
   const projectStatusFilterSafe = projectStatusFilter || 'all';
 
@@ -1572,6 +1576,7 @@ export default function HomeScreen({ navigation, route }) {
                     phaseNavigation={phaseNavigation}
                     phaseNavigationLoading={phaseNavigationLoading}
                     selectedProjectFolders={selectedProjectFoldersSafe}
+                    selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
                     navigation={navigation}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
@@ -1825,6 +1830,7 @@ export default function HomeScreen({ navigation, route }) {
               phaseNavigation={phaseNavigation}
               phaseNavigationLoading={phaseNavigationLoading}
               selectedProjectFolders={selectedProjectFoldersSafe}
+              selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
               navigation={navigation}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}
