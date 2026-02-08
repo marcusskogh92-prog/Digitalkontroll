@@ -16,6 +16,7 @@ const { setSuperadmin } = require('./superadmin');
 const { adminFetchCompanyMembers, setCompanyStatus, setCompanyUserLimit, setCompanyName } = require('./companyAdmin');
 const { purgeCompany } = require('./companyPurge');
 const { devResetAdmin } = require('./devReset');
+const { deleteProject, deleteFolder } = require('./deleteOperations');
 
 exports.syncSharePointSiteVisibility = functions.https.onCall(syncSharePointSiteVisibility);
 
@@ -35,6 +36,9 @@ exports.setCompanyName = functions.https.onCall(setCompanyName);
 exports.purgeCompany = functions.https.onCall(purgeCompany);
 
 exports.devResetAdmin = functions.https.onCall(devResetAdmin);
+
+exports.deleteProject = functions.https.onCall(deleteProject);
+exports.deleteFolder = functions.https.onCall(deleteFolder);
 
 function readFunctionsConfigValue(path, fallback = null) {
   try {

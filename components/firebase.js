@@ -42,6 +42,10 @@ export { auth };
 export const db = getFirestore(app);
 export const functionsClient = getFunctions(app, 'us-central1');
 
+// Callable wrappers (must be invoked via httpsCallable)
+export const deleteProjectCallable = httpsCallable(functionsClient, 'deleteProject');
+export const deleteFolderCallable = httpsCallable(functionsClient, 'deleteFolder');
+
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
@@ -3360,6 +3364,8 @@ export async function saveSharePointProjectMetadata(companyIdOverride, meta) {
   const payload = {
     siteId,
     projectPath,
+    driveId: meta?.driveId != null ? String(meta.driveId) : null,
+    folderId: meta?.folderId != null ? String(meta.folderId) : null,
     projectNumber: meta?.projectNumber != null ? String(meta.projectNumber) : null,
     projectName: meta?.projectName != null ? String(meta.projectName) : null,
     phaseKey: meta?.phaseKey != null ? String(meta.phaseKey) : null,
@@ -3393,6 +3399,13 @@ export async function patchSharePointProjectMetadata(companyIdOverride, meta) {
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,
   };
+
+  if ('driveId' in meta) {
+    payload.driveId = meta?.driveId != null ? String(meta.driveId) : null;
+  }
+  if ('folderId' in meta) {
+    payload.folderId = meta?.folderId != null ? String(meta.folderId) : null;
+  }
 
   if ('projectNumber' in meta) {
     payload.projectNumber = meta?.projectNumber != null ? String(meta.projectNumber) : null;
@@ -3571,6 +3584,10 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
         ? String(data.sharePointRootPath)
         : (data?.rootFolderPath != null ? String(data.rootFolderPath) : null),
     siteRole: data?.siteRole != null ? String(data.siteRole) : 'projects',
+
+    // Optional robust linkage for ID-based delete
+    sharePointDriveId: data?.sharePointDriveId != null ? String(data.sharePointDriveId) : (data?.driveId != null ? String(data.driveId) : null),
+    sharePointFolderId: data?.sharePointFolderId != null ? String(data.sharePointFolderId) : (data?.folderId != null ? String(data.folderId) : null),
 
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,

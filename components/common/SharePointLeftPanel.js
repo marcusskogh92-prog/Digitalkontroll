@@ -9,8 +9,9 @@ import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
 import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
-import { archiveCompanyProject, auth, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
+import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
+import { ConfirmModal } from './Modals';
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
 import SidebarItem from './SidebarItem';
@@ -578,6 +579,279 @@ export function SharePointLeftPanel({
 
   const closeProjectContextMenu = () => setProjectContextMenu({ visible: false, x: 0, y: 0, target: null });
 
+  const toastTimeoutRef = useRef(null);
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const showToast = useCallback((message, timeoutMs = 3200) => {
+    try {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      setToast({ visible: true, message: String(message || '') });
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast({ visible: false, message: '' });
+        toastTimeoutRef.current = null;
+      }, Math.max(800, Number(timeoutMs) || 3200));
+    } catch (_e) {}
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+          toastTimeoutRef.current = null;
+        }
+      } catch (_e) {}
+    };
+  }, []);
+
+  const [deleteConfirm, setDeleteConfirm] = useState({
+    visible: false,
+    kind: null, // 'project' | 'folder'
+    busy: false,
+    error: '',
+    target: null,
+  });
+
+  const [archiveConfirm, setArchiveConfirm] = useState({
+    visible: false,
+    busy: false,
+    error: '',
+    target: null, // { projectId }
+  });
+
+  const closeDeleteConfirm = useCallback(() => {
+    setDeleteConfirm((cur) => {
+      if (cur?.busy) return cur;
+      return { visible: false, kind: null, busy: false, error: '', target: null };
+    });
+  }, []);
+
+  const forceCloseDeleteConfirm = useCallback(() => {
+    setDeleteConfirm({ visible: false, kind: null, busy: false, error: '', target: null });
+  }, []);
+
+  const closeArchiveConfirm = useCallback(() => {
+    setArchiveConfirm((cur) => {
+      if (cur?.busy) return cur;
+      return { visible: false, busy: false, error: '', target: null };
+    });
+  }, []);
+
+  const normalizeForPathMatch = (p) => normalizeSharePointPath(p || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+
+  const ensureHomeAfterDeleteIfNeeded = useCallback((deleted, { siteId = null, folderPath = '' } = {}) => {
+    try {
+      const sid = String(siteId || '').trim();
+      const fp = normalizeForPathMatch(folderPath);
+
+      const activeId = String(selectedProject?.id || selectedProject?.projectId || selectedProject?.projectNumber || '').trim();
+      const activeSite = String(selectedProject?.sharePointSiteId || selectedProject?.siteId || '').trim();
+      const activePath = normalizeForPathMatch(
+        selectedProject?.rootFolderPath ||
+        selectedProject?.rootPath ||
+        selectedProject?.sharePointPath ||
+        selectedProject?.sharepointPath ||
+        ''
+      );
+
+      const deletedProjectId = String(deleted?.projectId || '').trim();
+      const shouldGoHomeByProject = deletedProjectId && activeId && deletedProjectId === activeId;
+      const shouldGoHomeByFolder = !!(sid && fp && activeSite === sid && activePath && (activePath === fp || activePath.startsWith(`${fp}/`)));
+
+      if (!shouldGoHomeByProject && !shouldGoHomeByFolder) return;
+
+      if (typeof onPressHome === 'function') {
+        onPressHome();
+        return;
+      }
+
+      if (navigation && typeof navigation.reset === 'function') {
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+      }
+    } catch (_e) {}
+  }, [selectedProject, navigation, onPressHome]);
+
+  const deleteConfirmTitle = deleteConfirm?.kind === 'folder' ? 'Radera mapp' : 'Radera projekt';
+  const deleteConfirmMessage = deleteConfirm?.kind === 'folder'
+    ? 'Detta raderar mappen, alla undermappar och alla projekt i den.\nÅtgärden kan inte ångras.'
+    : 'Detta raderar projektet permanent, inklusive alla dokument, AI-analyser och historik.\nÅtgärden kan inte ångras.';
+  const deleteConfirmLabel = deleteConfirm?.kind === 'folder' ? 'Radera mapp' : 'Radera projekt';
+
+  const getCallableUiErrorMessage = (err) => {
+    try {
+      if (!err) return '';
+
+      const msg = typeof err?.message === 'string' ? err.message.trim() : '';
+      if (msg) return msg;
+
+      const details = err?.details;
+      if (typeof details === 'string' && details.trim()) return details.trim();
+      if (details && typeof details === 'object') {
+        const dm = typeof details?.message === 'string' ? details.message.trim() : '';
+        if (dm) return dm;
+        try {
+          const asJson = JSON.stringify(details);
+          if (asJson && asJson !== '{}' && asJson !== 'null') return asJson;
+        } catch (_e) {}
+      }
+    } catch (_e) {}
+    return '';
+  };
+
+  const runDeleteConfirmed = async () => {
+    const kind = String(deleteConfirm?.kind || '').trim();
+    const t = deleteConfirm?.target || null;
+    if (!companyId || !kind || !t) return;
+    if (!canArchiveProjects) return;
+
+    // Validate required fields before closing the modal.
+    // After this point, we close immediately and run the backend delete in the background.
+    if (kind === 'project') {
+      const projectId = String(t?.projectId || '').trim();
+      if (!projectId) {
+        setDeleteConfirm((cur) => ({ ...(cur || {}), busy: false, error: 'projectId saknas' }));
+        return;
+      }
+    }
+
+    if (kind === 'folder') {
+      const siteId = String(t?.siteId || '').trim();
+      const folderPath = normalizeSharePointPath(t?.folderPath || '');
+      if (!siteId) {
+        setDeleteConfirm((cur) => ({ ...(cur || {}), busy: false, error: 'siteId saknas' }));
+        return;
+      }
+      if (!folderPath) {
+        setDeleteConfirm((cur) => ({ ...(cur || {}), busy: false, error: 'folderPath saknas' }));
+        return;
+      }
+    }
+
+    // Close immediately to avoid “frozen” UI while waiting for SharePoint/Graph.
+    forceCloseDeleteConfirm();
+    showToast(kind === 'project'
+      ? 'Projektet raderas. Detta kan ta upp till 1 minut.'
+      : 'Mappen raderas. Detta kan ta upp till 1 minut.', 5200);
+
+    try {
+      if (kind === 'project') {
+        const projectId = String(t?.projectId || '').trim();
+
+        // Optimistic UI updates (best-effort)
+        try {
+          setFirestoreProjects((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            return list.filter((p) => {
+              const id = String(p?.id || p?.projectId || p?.projectNumber || '').trim();
+              return id !== projectId;
+            });
+          });
+        } catch (_e) {}
+
+        try {
+          const siteId = String(t?.siteId || '').trim();
+          const folderPath = normalizeSharePointPath(t?.folderPath || '');
+          if (siteId && folderPath) removeFolderFromFilteredHierarchy(siteId, folderPath);
+        } catch (_e) {}
+
+        ensureHomeAfterDeleteIfNeeded({ projectId });
+
+        // Run backend deletion in background (do not block UI).
+        deleteProjectCallable({ companyId, projectId })
+          .then((res) => {
+            try {
+              const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
+              if (data && typeof data === 'object' && data.status && String(data.status) !== 'success') {
+                showToast('Radering misslyckades. Ladda om och försök igen.', 6000);
+                try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+              }
+            } catch (_e) {}
+          })
+          .catch((e) => {
+            const backendMsg = getCallableUiErrorMessage(e);
+            const nice = backendMsg || 'Projektet kunde inte raderas. Ladda om och försök igen.';
+            showToast(nice, 7000);
+            try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+          });
+
+        return;
+      }
+
+      if (kind === 'folder') {
+        const siteId = String(t?.siteId || '').trim();
+        const folderPath = normalizeSharePointPath(t?.folderPath || '');
+        const folderId = String(t?.folderId || t?.driveItemId || '').trim();
+
+        // Optimistic UI: hide folder immediately.
+        try { removeFolderFromFilteredHierarchy(siteId, folderPath); } catch (_e) {}
+        ensureHomeAfterDeleteIfNeeded(null, { siteId, folderPath });
+
+        // Run backend deletion in background (do not block UI).
+        deleteFolderCallable({ companyId, siteId, folderPath, ...(folderId ? { folderId } : {}) })
+          .then((res) => {
+            try {
+              const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
+              if (data && typeof data === 'object' && data.status && String(data.status) !== 'success') {
+                showToast('Radering misslyckades. Ladda om och försök igen.', 6000);
+                try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+              }
+            } catch (_e) {}
+          })
+          .catch((e) => {
+            const backendMsg = getCallableUiErrorMessage(e);
+            const nice = backendMsg || 'Mappen kunde inte raderas. Ladda om och försök igen.';
+            showToast(nice, 7000);
+            try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+          });
+
+        return;
+      }
+    } catch (e) {
+      const backendMsg = getCallableUiErrorMessage(e);
+      const fallback = kind === 'project'
+        ? 'Projektet kunde inte raderas. Försök igen eller kontakta support.'
+        : 'Mappen kunde inte raderas. Försök igen eller kontakta support.';
+      const nice = backendMsg || fallback;
+      // Modal may already be closed; still show a toast so the user gets feedback.
+      showToast(nice, 6500);
+      return;
+    }
+  };
+
+  const archiveConfirmTitle = 'Arkivera projekt';
+  const archiveConfirmMessage =
+    'Projektet flyttas till arkiv och försvinner från aktiva projekt.\n' +
+    'Detta kan återställas av superadmin.';
+
+  const runArchiveConfirmed = async () => {
+    const pid = String(archiveConfirm?.target?.projectId || '').trim();
+    if (!canArchiveProjects) return;
+    if (!companyId || !pid) return;
+
+    setArchiveConfirm((cur) => ({ ...(cur || {}), busy: true, error: '' }));
+    setArchivingProjectId(pid);
+    try {
+      const res = await archiveCompanyProject(companyId, pid);
+      if (res && res.ok) {
+        try {
+          if (typeof onPressRefresh === 'function') onPressRefresh();
+        } catch (_e) {}
+        closeArchiveConfirm();
+        showToast('Projektet har arkiverats');
+      } else {
+        const msg = res?.error || 'Arkivering misslyckades';
+        setArchiveConfirm((cur) => ({ ...(cur || {}), busy: false, error: String(msg) }));
+      }
+    } catch (e) {
+      const msg = e?.message || String(e);
+      setArchiveConfirm((cur) => ({ ...(cur || {}), busy: false, error: String(msg) }));
+    } finally {
+      setArchivingProjectId(null);
+    }
+  };
+
   const isSiteSectionExpanded = (siteId, sectionKey) => {
     const sid = String(siteId || '').trim();
     if (!sid) return true;
@@ -613,7 +887,8 @@ export function SharePointLeftPanel({
     const y = Number(ne.clientY ?? ne.pageY ?? 0) || 0;
 
     setProjectContextMenuItems([
-      { key: 'archive-project', label: 'Arkivera projekt', iconName: 'archive-outline', danger: true },
+      { key: 'delete-project', label: 'Radera projekt', iconName: 'trash-outline', danger: true },
+      { key: 'archive-project', label: 'Arkivera projekt', iconName: 'archive-outline' },
     ]);
     setProjectContextMenu({ visible: true, x, y, target: target || null });
   };
@@ -691,6 +966,9 @@ export function SharePointLeftPanel({
       if (!lockCtx) {
         items.push({ key: 'sp-rename', label: 'Byt namn', iconName: 'pencil-outline' });
         items.push({ key: 'sp-move', label: 'Flytta…', iconName: 'arrow-forward-outline' });
+        if (canArchiveProjects) {
+          items.push({ key: 'sp-delete', label: 'Radera mapp', iconName: 'trash-outline', danger: true });
+        }
         items.push({ key: 'sp-archive', label: 'Arkivera', iconName: 'archive-outline', danger: true });
       }
     }
@@ -1048,6 +1326,29 @@ export function SharePointLeftPanel({
 
   const handleSpContextMenuSelect = async (item) => {
     const key = String(item?.key || '').trim();
+
+        if (key === 'sp-delete') {
+          const t = spContextMenu?.target || null;
+          const type = String(t?.type || '').trim();
+          const isFolder = type === 'folder';
+          const siteId = String(t?.siteId || t?.id || '').trim();
+          const folderPath = isFolder ? normalizeSharePointPath(t?.path || '') : '';
+          const folderId = String(t?.driveItemId || t?.itemId || '').trim();
+          const lockCtx = isFolder ? getSpLockedContext(siteId, folderPath) : null;
+
+          if (!canArchiveProjects) return;
+          if (!isFolder || !siteId || !folderPath) return;
+          if (lockCtx) return;
+
+          setDeleteConfirm({
+            visible: true,
+            kind: 'folder',
+            busy: false,
+            error: '',
+            target: { siteId, folderPath, folderId },
+          });
+          return;
+        }
     const target = spContextMenu?.target;
     const targetType = String(target?.type || '').trim();
     const siteId = String(target?.siteId || target?.id || '').trim();
@@ -1210,50 +1511,27 @@ export function SharePointLeftPanel({
 
     closeProjectContextMenu();
 
-    if (!key || key !== 'archive-project') return;
+    if (!key) return;
     if (!canArchiveProjects) return;
     if (!companyId || !pid) return;
 
-    const confirmText =
-      'Projektet flyttas till arkiv och försvinner från aktiva projekt.\n' +
-      'Detta kan återställas av superadmin.';
+    if (key === 'delete-project') {
+      const siteId = String(target?.sharePointSiteId || '').trim();
+      const folderPath = normalizeSharePointPath(target?.rootFolderPath || target?.path || '');
 
-    const confirm = (Platform.OS === 'web' && typeof window !== 'undefined')
-      ? window.confirm(confirmText)
-      : await new Promise((resolve) => {
-          Alert.alert('Arkivera projekt', confirmText, [
-            { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Arkivera', style: 'destructive', onPress: () => resolve(true) },
-          ]);
-        });
-
-    if (!confirm) return;
-
-    setArchivingProjectId(pid);
-    try {
-      const res = await archiveCompanyProject(companyId, pid);
-      if (res && res.ok) {
-        try {
-          if (typeof onPressRefresh === 'function') onPressRefresh();
-        } catch (_e) {}
-      } else {
-        const msg = res?.error || 'Arkivering misslyckades';
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          try { window.alert(msg); } catch (_e2) {}
-        } else {
-          try { Alert.alert('Fel', msg); } catch (_e2) {}
-        }
-      }
-    } catch (e) {
-      const msg = e?.message || String(e);
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        try { window.alert(msg); } catch (_e2) {}
-      } else {
-        try { Alert.alert('Fel', msg); } catch (_e2) {}
-      }
-    } finally {
-      setArchivingProjectId(null);
+      setDeleteConfirm({
+        visible: true,
+        kind: 'project',
+        busy: false,
+        error: '',
+        target: { projectId: pid, siteId: siteId || null, folderPath: folderPath || '' },
+      });
+      return;
     }
+
+    if (key !== 'archive-project') return;
+
+    setArchiveConfirm({ visible: true, busy: false, error: '', target: { projectId: pid } });
   };
 
   useEffect(() => {
@@ -2967,11 +3245,23 @@ export function SharePointLeftPanel({
                           <View style={{ marginLeft: 12 }}>
                             {(() => {
                               const sid = String(siteItem?.siteId || '').trim();
-                              const projectsForSite = (firestoreProjects || [])
+                              const projectsForSite = (() => {
+                                const list = (firestoreProjects || [])
                                 .filter((p) => String(p?.siteRole || '').trim().toLowerCase() === 'projects')
                                 .filter((p) => String(p?.status || '').trim().toLowerCase() !== 'archived')
                                 .filter((p) => String(p?.sharePointSiteId || '').trim() === sid)
                                 .sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
+
+                                // Defensive: avoid rendering duplicates (legacy docs or transient state).
+                                const seen = new Set();
+                                return list.filter((p) => {
+                                  const key = String(p?.projectNumber || p?.projectId || p?.id || '').trim();
+                                  if (!key) return true;
+                                  if (seen.has(key)) return false;
+                                  seen.add(key);
+                                  return true;
+                                });
+                              })();
 
                               const children = Array.isArray(siteItem?.children) ? siteItem.children : [];
                               const nonProjectFolders = children.filter(
@@ -3295,6 +3585,53 @@ export function SharePointLeftPanel({
             </View>
           </View>
         </Modal>
+
+        <ConfirmModal
+          visible={!!deleteConfirm?.visible}
+          title={deleteConfirmTitle}
+          message={deleteConfirmMessage}
+          cancelLabel="Avbryt"
+          confirmLabel={deleteConfirmLabel}
+          danger
+          busy={!!deleteConfirm?.busy}
+          error={deleteConfirm?.error || ''}
+          onCancel={closeDeleteConfirm}
+          onConfirm={runDeleteConfirmed}
+        />
+
+        <ConfirmModal
+          visible={!!archiveConfirm?.visible}
+          title={archiveConfirmTitle}
+          message={archiveConfirmMessage}
+          cancelLabel="Avbryt"
+          confirmLabel="Arkivera"
+          danger
+          busy={!!archiveConfirm?.busy}
+          error={archiveConfirm?.error || ''}
+          onCancel={closeArchiveConfirm}
+          onConfirm={runArchiveConfirmed}
+        />
+
+        {toast.visible ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: isWeb ? 'fixed' : 'absolute',
+              top: 16,
+              right: 16,
+              zIndex: 2147483647,
+              backgroundColor: 'rgba(15, 23, 42, 0.92)',
+              borderRadius: 10,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.15)',
+              ...(isWeb ? { boxShadow: '0px 8px 16px rgba(0,0,0,0.22)' } : {}),
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{toast.message}</Text>
+          </View>
+        ) : null}
 
         {isWeb && (
           <ContextMenu

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
@@ -1053,17 +1053,6 @@ export default function HomeScreen({ navigation, route }) {
     closeModal: closeCreateProjectModal,
     handleCreateProject,
   } = useCreateSharePointProjectModal({ companyId });
-
-  // Reload hierarchy when project creation completes
-  const prevIsCreatingProject = useRef(isCreatingProject);
-  useEffect(() => {
-    // When isCreatingProject goes from true to false, project was created
-    if (prevIsCreatingProject.current && !isCreatingProject) {
-      // Reload hierarchy to show the new project
-      setHierarchyReloadKey((k) => k + 1);
-    }
-    prevIsCreatingProject.current = isCreatingProject;
-  }, [isCreatingProject]);
 
   // Dashboard: centralised state and logic
   const {
