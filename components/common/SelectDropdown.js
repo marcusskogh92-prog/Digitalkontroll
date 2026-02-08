@@ -243,6 +243,7 @@ export default function SelectDropdown({
     }
   }, [onToggleVisible, visible]);
 
+
   const toggleOpen = () => {
     if (disabled) return;
     if (typeof visible === 'boolean' && onToggleVisible) {

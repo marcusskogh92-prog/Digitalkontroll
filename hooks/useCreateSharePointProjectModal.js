@@ -165,7 +165,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
         parentFolderPath,
       });
       
-      const { ensureFolderPath, ensureKalkylskedeProjectFolderStructure } = await import('../services/azure/fileService');
+      const { ensureFolderPath, ensureKalkylskedeProjectFolderStructure, getDriveItemByPath } = await import('../services/azure/fileService');
 
       // Create project folder name: "{projektnummer} – {projektnamn}"
       const projectFolderName = formatSharePointProjectFolderName(projectNumber, projectName);
@@ -188,6 +188,18 @@ export function useCreateSharePointProjectModal({ companyId }) {
       await ensureFolderPath(projectPath, companyId, siteId, { siteRole: 'projects' });
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] ✅ Project folder created: ${projectPath}`);
+
+      // Resolve stable IDs (driveId + folderId) for robust ID-based deletes.
+      let projectFolderId = null;
+      let projectDriveId = null;
+      try {
+        const item = await getDriveItemByPath(projectPath, siteId);
+        projectFolderId = item?.id || null;
+        projectDriveId = item?.parentReference?.driveId || null;
+      } catch (_e) {
+        projectFolderId = null;
+        projectDriveId = null;
+      }
 
       // Firestore is source of truth for project list.
       // Persist a strong Firestore ↔ SharePoint linkage on the project doc.
@@ -215,6 +227,10 @@ export function useCreateSharePointProjectModal({ companyId }) {
           sharePointSiteUrl: siteUrl ? String(siteUrl) : null,
           rootFolderPath: String(projectPath),
           siteRole: 'projects',
+
+          // Robust linkage for ID-based delete
+          ...(projectFolderId ? { sharePointFolderId: String(projectFolderId) } : {}),
+          ...(projectDriveId ? { sharePointDriveId: String(projectDriveId) } : {}),
 
           // Versioned default structure:
           // v2 => Kalkyl late (between Möten and Anbud). Existing projects remain v1.
@@ -246,6 +262,8 @@ export function useCreateSharePointProjectModal({ companyId }) {
         await saveSharePointProjectMetadata(companyId, {
           siteId,
           projectPath,
+          ...(projectFolderId ? { folderId: String(projectFolderId) } : {}),
+          ...(projectDriveId ? { driveId: String(projectDriveId) } : {}),
           projectNumber: String(projectNumber),
           projectName: String(projectName),
           phaseKey: phaseKeyForMeta,

@@ -98,6 +98,105 @@ async function graphGetChildren({ siteId, path, accessToken }) {
   return data?.value || [];
 }
 
+async function graphGetDriveItemByPath({ siteId, path, accessToken }) {
+  const sid = String(siteId || '').trim();
+  const clean = String(path || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (!sid) throw new Error('siteId is required');
+  if (!clean) throw new Error('path is required');
+
+  const endpoint = `https://graph.microsoft.com/v1.0/sites/${sid}/drive/root:/${encodeGraphPath(clean)}:`;
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph get drive item failed: ${res.status} - ${txt}`);
+  }
+
+  return await res.json();
+}
+
+async function graphGetDefaultDrive({ siteId, accessToken }) {
+  const sid = String(siteId || '').trim();
+  if (!sid) throw new Error('siteId is required');
+  const endpoint = `https://graph.microsoft.com/v1.0/sites/${sid}/drive`;
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph get drive failed: ${res.status} - ${txt}`);
+  }
+  const data = await res.json();
+  return data && data.id ? { driveId: String(data.id) } : null;
+}
+
+async function graphGetChildrenById({ driveId, itemId, accessToken }) {
+  const did = String(driveId || '').trim();
+  const iid = String(itemId || '').trim();
+  if (!did) throw new Error('driveId is required');
+  if (!iid) throw new Error('itemId is required');
+  const endpoint = `https://graph.microsoft.com/v1.0/drives/${did}/items/${iid}/children`;
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Graph list children failed: ${res.status} - ${txt}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.value) ? data.value : [];
+}
+
+async function graphDeleteItemByDriveId({ driveId, itemId, accessToken }) {
+  const did = String(driveId || '').trim();
+  const iid = String(itemId || '').trim();
+  if (!did || !iid) throw new Error('driveId and itemId are required');
+  const endpoint = `https://graph.microsoft.com/v1.0/drives/${did}/items/${iid}`;
+  const res = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const txt = await res.text();
+    throw new Error(`Graph delete item failed: ${res.status} - ${txt}`);
+  }
+  return res.status === 404 ? { notFound: true } : { notFound: false };
+}
+
+async function deleteDriveTreeByIdAdmin({ driveId, itemId, accessToken }) {
+  const children = await graphGetChildrenById({ driveId, itemId, accessToken });
+  if (children === null) return { notFound: true };
+
+  for (const item of children || []) {
+    const isFolder = !!item?.folder;
+    const childId = item?.id ? String(item.id) : '';
+    if (!childId) continue;
+    if (isFolder) {
+      await deleteDriveTreeByIdAdmin({ driveId, itemId: childId, accessToken });
+    }
+    await graphDeleteItemByDriveId({ driveId, itemId: childId, accessToken });
+  }
+
+  return { notFound: false };
+}
+
 async function graphDeleteItem({ siteId, itemId, accessToken }) {
   const sid = String(siteId || '').trim();
   const iid = String(itemId || '').trim();
@@ -187,8 +286,13 @@ module.exports = {
   graphCreateTeamSite,
   graphDeleteSite,
   graphGetChildren,
+  graphGetDriveItemByPath,
   graphDeleteItem,
   deleteDriveTreeByPathAdmin,
+  graphGetDefaultDrive,
+  graphGetChildrenById,
+  graphDeleteItemByDriveId,
+  deleteDriveTreeByIdAdmin,
   ensureFolderPathAdmin,
   ensureDkBasStructureAdmin,
 };

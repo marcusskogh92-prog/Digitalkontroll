@@ -16,6 +16,10 @@ expo-env.d.ts
 # Local test artifacts
 test-results/
 
+# Playwright downloaded browsers (very large, never commit)
+playwright-browsers/
+playwright-report/
+
 # Local lint report artifacts
 eslint-report.json
 

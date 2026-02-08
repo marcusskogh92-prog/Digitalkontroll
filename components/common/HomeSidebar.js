@@ -211,6 +211,7 @@ export function HomeSidebar({
   projectPhaseKey,
   phaseNavigationLoading,
   selectedProjectFolders,
+  selectedProjectFoldersLoading = false,
   navigation,
   companyId,
   handleSelectFunction,
@@ -325,7 +326,7 @@ export function HomeSidebar({
   }, [companyId, selectedProject, projectFolderTree]);
 
   // Keep a local, mutable tree for the selected-project folders so we can expand and lazy-load children.
-  // This avoids requiring a setter from the parent.
+  // Solution A: reset/replace atomically to avoid partial/duplicated state.
   useEffect(() => {
     if (!selectedProject || !Array.isArray(selectedProjectFolders)) {
       setProjectFolderTree([]);
@@ -361,40 +362,18 @@ export function HomeSidebar({
       };
     };
 
-    const mergeTrees = (incomingNodes, existingNodes) => {
-      const existingById = new Map((existingNodes || []).filter(Boolean).map((n) => [n.id, n]));
-
-      return (incomingNodes || []).filter(Boolean).map((incoming) => {
-        const existing = existingById.get(incoming.id);
-        if (!existing) return incoming;
-
-        const incomingChildren = Array.isArray(incoming.children) ? incoming.children : [];
-        const existingChildren = Array.isArray(existing.children) ? existing.children : [];
-        const childrenToUse = incomingChildren.length > 0 ? incomingChildren : existingChildren;
-
-        return {
-          ...incoming,
-          expanded: typeof existing.expanded === 'boolean' ? existing.expanded : Boolean(incoming.expanded),
-          loading: typeof existing.loading === 'boolean' ? existing.loading : Boolean(incoming.loading),
-          error: existing.error || incoming.error || null,
-          children: mergeTrees(childrenToUse, existingChildren),
-        };
-      });
-    };
-
     const incoming = selectedProjectFolders.map(normalizeNode);
 
     if (currentProjectId && currentProjectId !== lastProjectId) {
       setLastProjectId(currentProjectId);
-      setProjectFolderTree(incoming);
+    }
+
+    if (selectedProjectFoldersLoading) {
+      setProjectFolderTree([]);
       return;
     }
 
-    if (incoming.length === 0) {
-      return;
-    }
-
-    setProjectFolderTree((prev) => mergeTrees(incoming, prev));
+    setProjectFolderTree(incoming);
   }, [
     selectedProject,
     selectedProject?.id,
@@ -402,6 +381,7 @@ export function HomeSidebar({
     selectedProject?.projectPath,
     selectedProject?.sharePointPath,
     selectedProjectFolders,
+    selectedProjectFoldersLoading,
     lastProjectId,
   ]);
 

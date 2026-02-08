@@ -6,7 +6,6 @@ function safeText(v) {
 }
 
 const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
-const FFU_SYSTEM_FOLDER = 'AI-sammanställning';
 
 export default function FFUFileListView({
   companyId,
@@ -38,6 +37,7 @@ export default function FFUFileListView({
       breadcrumbBaseSegments={[FORFRAGNINGSUNDERLAG_FOLDER]}
       showCreateFolderButton
       iconName="folder-outline"
+      hiddenFolderNames={['AI-sammanställning']}
       rootPath={rootPath}
       scopeRootPath={rootPath}
       relativePath={ffuRelativePath}
@@ -45,11 +45,6 @@ export default function FFUFileListView({
       selectedItemId={ffuSelectedItemId}
       onSelectedItemIdChange={typeof setFfuSelectedItemId === 'function' ? setFfuSelectedItemId : null}
       onDidMutate={typeof bumpFfuMirrorRefreshNonce === 'function' ? bumpFfuMirrorRefreshNonce : null}
-      systemFolderName={FFU_SYSTEM_FOLDER}
-      ensureSystemFolder
-      pinSystemFolderLast
-      lockSystemFolder
-      systemFolderRootOnly
     />
   );
 }

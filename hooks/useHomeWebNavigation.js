@@ -194,6 +194,23 @@ export function useHomeWebNavigation({
         const view = st?.dkView;
         const pid = st?.projectId ? String(st.projectId) : '';
 
+        if (view === 'ffu-ai-summary' && pid) {
+          try {
+            if (typeof setProjectModuleRoute === 'function') {
+              setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
+            }
+          } catch (_e) {}
+
+          if (typeof openProject === 'function') {
+            openProject(pid, { selectedAction: null, keepModuleRoute: true });
+            return;
+          }
+
+          const proj = findProjectById(pid);
+          requestProjectSwitch(proj || { id: pid, name: pid }, { selectedAction: null, path: null });
+          return;
+        }
+
         if (view === 'offerter' && pid) {
           const itemId = normalizeOfferterItemId(st?.itemId || 'forfragningar');
           try {
@@ -250,7 +267,6 @@ export function useHomeWebNavigation({
     if (Platform.OS !== 'web') return;
     if (typeof window === 'undefined') return;
     if (didApplyInitialUrlRef.current) return;
-    if (typeof openProject !== 'function') return;
 
     didApplyInitialUrlRef.current = true;
 
@@ -260,33 +276,45 @@ export function useHomeWebNavigation({
       const fromQuery = String(qp.get('projectId') || qp.get('project') || qp.get('pid') || '').trim();
 
       const pathname = String(url.pathname || '');
+      const mFfuAiSummary = pathname.match(/^\/project\/([^/]+)\/ffu\/ai-summary\/?$/i);
       const mOfferter = pathname.match(/^\/projects\/([^/]+)\/offerter(?:\/([^/]+))?\/?$/i);
       const mProjectPlural = pathname.match(/^\/projects\/([^/]+)\/?$/i);
       const mProjectLegacy = pathname.match(/\/project\/(.+)$/i);
 
+      const projectIdFromFfuAiSummary = mFfuAiSummary && mFfuAiSummary[1] ? String(decodeURIComponent(mFfuAiSummary[1])).trim() : '';
+
       const projectIdFromOfferter = mOfferter && mOfferter[1] ? String(decodeURIComponent(mOfferter[1])).trim() : '';
       const offerterItem = mOfferter && mOfferter[2] ? String(decodeURIComponent(mOfferter[2])).trim() : '';
       const projectIdFromPlural = mProjectPlural && mProjectPlural[1] ? String(decodeURIComponent(mProjectPlural[1])).trim() : '';
-      const projectIdFromLegacy = mProjectLegacy && mProjectLegacy[1] ? String(decodeURIComponent(mProjectLegacy[1])).trim() : '';
+      const legacyRest = mProjectLegacy && mProjectLegacy[1] ? String(decodeURIComponent(mProjectLegacy[1])).trim() : '';
+      const legacyParts = legacyRest ? legacyRest.split('/').filter(Boolean) : [];
+      const projectIdFromLegacy = legacyParts[0] ? String(legacyParts[0]).trim() : '';
+      const legacyTail = legacyParts[1] ? String(legacyParts[1]).trim().toLowerCase() : '';
 
-      const projectId = fromQuery || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
-      if (!projectId) return;
+      const projectId = fromQuery || projectIdFromFfuAiSummary || projectIdFromOfferter || projectIdFromPlural || projectIdFromLegacy;
 
-      if (projectIdFromOfferter) {
-        try {
-          if (typeof setProjectModuleRoute === 'function') {
-            setProjectModuleRoute({ moduleId: 'offerter', itemId: normalizeOfferterItemId(offerterItem || 'forfragningar') });
-          }
-        } catch (_e) {}
-      } else {
+      // Desired behavior: treat a hard refresh as a cold start.
+      // If the URL points to a project-specific route, always redirect to start page (Home)
+      // instead of trying to restore/open the project from the URL.
+      if (projectId) {
         try {
           if (typeof setProjectModuleRoute === 'function') setProjectModuleRoute(null);
         } catch (_e) {}
-      }
+        try {
+          if (typeof requestProjectSwitch === 'function') {
+            requestProjectSwitch(null, { selectedAction: null, path: null });
+          }
+        } catch (_e) {}
 
-      openProject(projectId, { selectedAction: null, keepModuleRoute: Boolean(projectIdFromOfferter) });
+        try {
+          const st = window.history && window.history.state ? window.history.state : {};
+          if (window.history && typeof window.history.replaceState === 'function') {
+            window.history.replaceState({ ...st, dkView: 'home', projectId: null }, '', '/');
+          }
+        } catch (_e) {}
+      }
     } catch (_e) {}
-  }, [openProject, normalizeOfferterItemId, setProjectModuleRoute]);
+  }, [normalizeOfferterItemId, requestProjectSwitch, setProjectModuleRoute]);
 
   // Web: pusha nytt state när selectedProject ändras
   React.useEffect(() => {
@@ -307,6 +335,12 @@ export function useHomeWebNavigation({
         return {
           state: { dkView: 'offerter', projectId: pid, moduleId: 'offerter', itemId: safeItem },
           url: `/projects/${encodeURIComponent(pid)}/offerter/${encodeURIComponent(safeItem)}`,
+        };
+      }
+      if (mod === 'ffu-ai-summary') {
+        return {
+          state: { dkView: 'ffu-ai-summary', projectId: pid, moduleId: 'ffu-ai-summary' },
+          url: `/project/${encodeURIComponent(pid)}/ffu/ai-summary`,
         };
       }
       return {

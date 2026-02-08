@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
@@ -381,6 +381,8 @@ export default function HomeScreen({ navigation, route }) {
     selectedProjectRef,
     selectedProjectFolders,
     setSelectedProjectFolders,
+    selectedProjectFoldersLoading,
+    setSelectedProjectFoldersLoading,
     projectSelectedAction,
     setProjectSelectedAction,
     inlineControlEditor,
@@ -782,6 +784,7 @@ export default function HomeScreen({ navigation, route }) {
     selectedProject,
     projectPhaseKey,
     setSelectedProjectFolders,
+    setSelectedProjectFoldersLoading,
   });
 
   // Legacy phase dropdown removed - phases are now driven by SharePoint & project phases
@@ -1054,17 +1057,6 @@ export default function HomeScreen({ navigation, route }) {
     handleCreateProject,
   } = useCreateSharePointProjectModal({ companyId });
 
-  // Reload hierarchy when project creation completes
-  const prevIsCreatingProject = useRef(isCreatingProject);
-  useEffect(() => {
-    // When isCreatingProject goes from true to false, project was created
-    if (prevIsCreatingProject.current && !isCreatingProject) {
-      // Reload hierarchy to show the new project
-      setHierarchyReloadKey((k) => k + 1);
-    }
-    prevIsCreatingProject.current = isCreatingProject;
-  }, [isCreatingProject]);
-
   // Dashboard: centralised state and logic
   const {
     dashboardLoading,
@@ -1154,6 +1146,7 @@ export default function HomeScreen({ navigation, route }) {
   const projectPhaseKeySafe = projectPhaseKey ?? null;
   const hierarchySafe = Array.isArray(hierarchy) ? hierarchy : [];
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
+  const selectedProjectFoldersLoadingSafe = Boolean(selectedProjectFoldersLoading);
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
   const projectStatusFilterSafe = projectStatusFilter || 'all';
 
@@ -1583,6 +1576,7 @@ export default function HomeScreen({ navigation, route }) {
                     phaseNavigation={phaseNavigation}
                     phaseNavigationLoading={phaseNavigationLoading}
                     selectedProjectFolders={selectedProjectFoldersSafe}
+                    selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
                     navigation={navigation}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
@@ -1641,6 +1635,16 @@ export default function HomeScreen({ navigation, route }) {
                           setProjectModuleRoute({ moduleId: 'offerter', itemId: nextItem });
                           setPhaseActiveSection('offerter');
                           setPhaseActiveItem(nextItem);
+                          setPhaseActiveNode(null);
+                          return;
+                        }
+
+                        // FFU: AI-sammanställning is a system view under Förfrågningsunderlag.
+                        // It must NOT be treated as a folder, and must have its own route/view.
+                        if (sid === 'forfragningsunderlag' && iid === 'ai-summary') {
+                          setProjectModuleRoute({ moduleId: 'ffu-ai-summary' });
+                          setPhaseActiveSection('forfragningsunderlag');
+                          setPhaseActiveItem('ai-summary');
                           setPhaseActiveNode(null);
                           return;
                         }
@@ -1826,6 +1830,7 @@ export default function HomeScreen({ navigation, route }) {
               phaseNavigation={phaseNavigation}
               phaseNavigationLoading={phaseNavigationLoading}
               selectedProjectFolders={selectedProjectFoldersSafe}
+              selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
               navigation={navigation}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}

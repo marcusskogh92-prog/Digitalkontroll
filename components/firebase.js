@@ -42,6 +42,10 @@ export { auth };
 export const db = getFirestore(app);
 export const functionsClient = getFunctions(app, 'us-central1');
 
+// Callable wrappers (must be invoked via httpsCallable)
+export const deleteProjectCallable = httpsCallable(functionsClient, 'deleteProject');
+export const deleteFolderCallable = httpsCallable(functionsClient, 'deleteFolder');
+
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
@@ -76,6 +80,189 @@ export async function updateUserRemote({ companyId, uid, displayName, email, rol
   if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
+}
+
+// Callable wrapper: AI FFU analysis
+// Signature intentionally minimal: (companyId, projectId, files)
+export async function analyzeFFURemote(companyId, projectId, files) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid) throw new Error('analyzeFFU: companyId is required');
+  if (!pid) throw new Error('analyzeFFU: projectId is required');
+
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('analyzeFFU: files must be a non-empty array');
+  }
+
+  const allowedTypes = new Set(['pdf', 'docx', 'xlsx', 'txt']);
+  const normalizedFiles = files.map((f, idx) => {
+    const id = f && f.id != null ? String(f.id).trim() : '';
+    const name = f && f.name != null ? String(f.name).trim() : '';
+    const type = f && f.type != null ? String(f.type).trim() : '';
+    const extractedText = f && f.extractedText != null ? String(f.extractedText) : '';
+
+    if (!id) throw new Error(`analyzeFFU: files[${idx}].id is required`);
+    if (!name) throw new Error(`analyzeFFU: files[${idx}].name is required`);
+    if (!type) throw new Error(`analyzeFFU: files[${idx}].type is required`);
+    if (!allowedTypes.has(type)) throw new Error(`analyzeFFU: files[${idx}].type must be one of pdf|docx|xlsx|txt`);
+
+    return { id, name, type, extractedText };
+  });
+
+  const hasAnyText = normalizedFiles.some((f) => String(f.extractedText || '').trim().length > 0);
+  if (!hasAnyText) {
+    throw new Error('analyzeFFU: no extractedText found in any file');
+  }
+
+  try {
+    const fn = httpsCallable(functionsClient, 'analyzeFFU');
+    const res = await fn({ companyId: cid, projectId: pid, files: normalizedFiles });
+    const payload = (res && res.data !== undefined) ? res.data : res;
+
+    // Support both plain schema return and a future envelope { data, fromCache }.
+    if (payload && typeof payload === 'object' && payload.data && Object.prototype.hasOwnProperty.call(payload, 'fromCache')) {
+      return { data: payload.data, fromCache: !!payload.fromCache };
+    }
+    return { data: payload, fromCache: false };
+  } catch (e) {
+    const code = e && typeof e.code === 'string' ? e.code : null;
+    const msg = e && typeof e.message === 'string' ? e.message : String(e);
+    const details = e && e.details != null ? e.details : null;
+
+    const codeClean = code ? String(code).replace(/^functions\//, '') : null;
+    const detailStr = details != null
+      ? (typeof details === 'string' ? details : (() => { try { return JSON.stringify(details); } catch (_err) { return String(details); } })())
+      : '';
+
+    const parts = ['analyzeFFU failed'];
+    if (codeClean) parts.push(`code=${codeClean}`);
+    if (msg) parts.push(`message=${msg}`);
+    if (detailStr) parts.push(`details=${detailStr}`);
+    throw new Error(parts.join(' | '));
+  }
+}
+
+// --- AI: Persisted FFU analysis (single source of truth for UI) ---
+function getLatestFFUAnalysisDocRefs(companyId, projectId) {
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid) throw new Error('FFU analysis: companyId is required');
+  if (!pid) throw new Error('FFU analysis: projectId is required');
+  return {
+    canonical: doc(db, 'companies', cid, 'projects', pid, 'ai_ffu_analysis', 'latest'),
+    legacy: doc(db, 'foretag', cid, 'projects', pid, 'ai_ffu_analysis', 'latest'),
+  };
+}
+
+export function subscribeLatestProjectFFUAnalysis(companyId, projectId, { onNext, onError } = {}) {
+  const { canonical, legacy } = getLatestFFUAnalysisDocRefs(companyId, projectId);
+
+  let usingCanonical = false;
+  let lastEmittedKey = '';
+  let unsubscribeLegacy = null;
+
+  const unsubscribeCanonical = onSnapshot(
+    canonical,
+    (snap) => {
+      const exists = snap.exists();
+      if (exists) {
+        usingCanonical = true;
+        lastEmittedKey = 'canonical';
+        const data = snap.data() || {};
+        onNext?.(data, snap);
+        if (unsubscribeLegacy) {
+          try { unsubscribeLegacy(); } catch (_e) {}
+          unsubscribeLegacy = null;
+        }
+        return;
+      }
+
+      if (usingCanonical) {
+        // Canonical doc was deleted/doesn't exist; treat as empty.
+        lastEmittedKey = 'canonical-empty';
+        onNext?.(null, snap);
+        return;
+      }
+
+      // Canonical doesn't exist yet; fall back to legacy path.
+      if (!unsubscribeLegacy) {
+        unsubscribeLegacy = onSnapshot(
+          legacy,
+          (legacySnap) => {
+            if (usingCanonical) return;
+            if (legacySnap.exists()) {
+              lastEmittedKey = 'legacy';
+              onNext?.(legacySnap.data() || {}, legacySnap);
+            } else if (lastEmittedKey !== 'legacy-empty') {
+              lastEmittedKey = 'legacy-empty';
+              onNext?.(null, legacySnap);
+            }
+          },
+          (err) => onError?.(err)
+        );
+      }
+    },
+    (err) => onError?.(err)
+  );
+
+  return () => {
+    try { unsubscribeCanonical?.(); } catch (_e) {}
+    try { unsubscribeLegacy?.(); } catch (_e) {}
+  };
+}
+
+export async function fetchLatestProjectFFUAnalysis(companyId, projectId) {
+  const { canonical, legacy } = getLatestFFUAnalysisDocRefs(companyId, projectId);
+  const snap = await getDoc(canonical);
+  if (snap.exists()) {
+    const data = snap.data() || {};
+    return { id: snap.id, ...data };
+  }
+  const legacySnap = await getDoc(legacy);
+  if (!legacySnap.exists()) return null;
+  const legacyData = legacySnap.data() || {};
+  return { id: legacySnap.id, ...legacyData };
+}
+
+export async function saveLatestProjectFFUAnalysis(companyId, projectId, analysis) {
+  const { canonical } = getLatestFFUAnalysisDocRefs(companyId, projectId);
+  const a = analysis && typeof analysis === 'object' ? analysis : {};
+
+  // Support both legacy keys (must/should) and the canonical Swedish keys (ska/bor).
+  const req = a?.requirements && typeof a.requirements === 'object' ? a.requirements : {};
+  const ska = Array.isArray(req?.ska)
+    ? req.ska
+    : (Array.isArray(req?.must) ? req.must : []);
+  const bor = Array.isArray(req?.bor)
+    ? req.bor
+    : (Array.isArray(req?.should) ? req.should : []);
+
+  const model = a.model != null ? String(a.model).trim() : '';
+
+  const payload = {
+    schemaVersion: 2,
+    status: a.status != null ? String(a.status).trim() : 'success',
+    summary: a.summary != null ? String(a.summary).trim() : '',
+    requirements: {
+      ska: Array.isArray(ska) ? ska.filter((x) => String(x || '').trim()) : [],
+      bor: Array.isArray(bor) ? bor.filter((x) => String(x || '').trim()) : [],
+    },
+    risks: Array.isArray(a?.risks) ? a.risks.filter((x) => String(x || '').trim()) : [],
+    questions: Array.isArray(a?.questions) ? a.questions.filter((x) => String(x || '').trim()) : [],
+    meta: {
+      filesUsed: Number(a?.meta?.filesUsed) || 0,
+      totalChars: Number(a?.meta?.totalChars) || 0,
+      truncated: Boolean(a?.meta?.truncated),
+    },
+    analyzedAt: serverTimestamp(),
+  };
+
+  if (model) payload.model = model;
+
+  await setDoc(canonical, payload, { merge: true });
+  return true;
 }
 
 export async function uploadUserAvatar({ companyId, uid, file }) {
@@ -3298,6 +3485,8 @@ export async function saveSharePointProjectMetadata(companyIdOverride, meta) {
   const payload = {
     siteId,
     projectPath,
+    driveId: meta?.driveId != null ? String(meta.driveId) : null,
+    folderId: meta?.folderId != null ? String(meta.folderId) : null,
     projectNumber: meta?.projectNumber != null ? String(meta.projectNumber) : null,
     projectName: meta?.projectName != null ? String(meta.projectName) : null,
     phaseKey: meta?.phaseKey != null ? String(meta.phaseKey) : null,
@@ -3331,6 +3520,13 @@ export async function patchSharePointProjectMetadata(companyIdOverride, meta) {
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,
   };
+
+  if ('driveId' in meta) {
+    payload.driveId = meta?.driveId != null ? String(meta.driveId) : null;
+  }
+  if ('folderId' in meta) {
+    payload.folderId = meta?.folderId != null ? String(meta.folderId) : null;
+  }
 
   if ('projectNumber' in meta) {
     payload.projectNumber = meta?.projectNumber != null ? String(meta.projectNumber) : null;
@@ -3509,6 +3705,10 @@ export async function upsertCompanyProject(companyIdOverride, projectId, data) {
         ? String(data.sharePointRootPath)
         : (data?.rootFolderPath != null ? String(data.rootFolderPath) : null),
     siteRole: data?.siteRole != null ? String(data.siteRole) : 'projects',
+
+    // Optional robust linkage for ID-based delete
+    sharePointDriveId: data?.sharePointDriveId != null ? String(data.sharePointDriveId) : (data?.driveId != null ? String(data.driveId) : null),
+    sharePointFolderId: data?.sharePointFolderId != null ? String(data.sharePointFolderId) : (data?.folderId != null ? String(data.folderId) : null),
 
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,

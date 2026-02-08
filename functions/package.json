@@ -16,8 +16,11 @@
     "firebase-tools": "^15.2.1",
     "@types/markdown-it": "^14.1.2",
     "markdown-it": "^14.1.0",
+    "mammoth": "^1.10.0",
     "nodemailer": "^7.0.13",
-    "picomatch": "^4.0.3"
+    "pdf-parse": "^2.4.5",
+    "picomatch": "^4.0.3",
+    "xlsx": "^0.18.5"
   },
   "overrides": {
     "fast-xml-parser": "5.3.4"

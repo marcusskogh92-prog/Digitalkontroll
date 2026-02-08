@@ -80,6 +80,9 @@ export default function SharePointFolderHierarchyTree({
   ensureSystemFolder = false,
   pinSystemFolderLast = false,
   systemFolderRootOnly = true,
+
+  // Optional: hide specific folders by name (case-insensitive).
+  hiddenFolderNames = null,
 }) {
   const cid = safeText(companyId);
   const base = safeText(rootPath);
@@ -94,6 +97,13 @@ export default function SharePointFolderHierarchyTree({
   const [errorByPath, setErrorByPath] = useState({});
 
   const inflightRef = useRef(new Set());
+
+  const hiddenFolderKeySet = useMemo(() => {
+    const raw = Array.isArray(hiddenFolderNames) ? hiddenFolderNames : [];
+    const norm = (name) => safeText(name).trim().toLowerCase();
+    const keys = raw.map(norm).filter(Boolean);
+    return new Set(keys);
+  }, [hiddenFolderNames]);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +177,11 @@ export default function SharePointFolderHierarchyTree({
       // GOLDEN RULE: navigation tree shows folders only (never files).
       const folders = (Array.isArray(next) ? next : [])
         .filter((x) => x?.type === 'folder')
+        .filter((x) => {
+          if (!hiddenFolderKeySet || hiddenFolderKeySet.size === 0) return true;
+          const key = safeText(x?.name).trim().toLowerCase();
+          return !hiddenFolderKeySet.has(key);
+        })
         .sort((a, b) => {
           if (pinSystemFolderLast && safeText(systemFolderName) && (!systemFolderRootOnly || key === '')) {
             const aSys = safeText(a?.name).trim().toLowerCase() === safeText(systemFolderName).trim().toLowerCase();
@@ -187,7 +202,7 @@ export default function SharePointFolderHierarchyTree({
       setLoadingByPath((prev) => ({ ...prev, [key]: false }));
       inflightRef.current.delete(key);
     }
-  }, [cid, base, siteId, ensureSystemFolder, systemFolderName, pinSystemFolderLast, systemFolderRootOnly]);
+  }, [cid, base, siteId, ensureSystemFolder, systemFolderName, pinSystemFolderLast, systemFolderRootOnly, hiddenFolderKeySet]);
 
   const expandedKey = useMemo(() => {
     const keys = Object.keys(expandedByPath || {}).filter((k) => expandedByPath?.[k]);

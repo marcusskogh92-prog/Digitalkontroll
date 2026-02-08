@@ -2,6 +2,7 @@
  * Modals - Main export
  */
 
+export { default as ConfirmModal } from './ConfirmModal';
 export { default as FileActionModal } from './FileActionModal';
 export { default as NewProjectModal } from './NewProjectModal';
 export { default as NewSubFolderModal } from './NewSubFolderModal';

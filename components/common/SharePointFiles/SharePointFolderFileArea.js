@@ -132,6 +132,9 @@ export default function SharePointFolderFileArea({
   pinSystemFolderLast = false,
   lockSystemFolder = false,
   systemFolderRootOnly = true,
+
+  // Optional: hide specific folders by name (case-insensitive).
+  hiddenFolderNames = null,
 }) {
   // Keep "Senast ändrad" anchored to the right, while letting other columns share space closer to Filnamn.
   const COL_DATE_W = 140;
@@ -197,6 +200,12 @@ export default function SharePointFolderFileArea({
   }, [breadcrumbBaseSegments, relativePath, title]);
 
   const currentPath = useMemo(() => joinPath(rootPath, relativePath), [rootPath, relativePath]);
+
+  const hiddenFolderKeySet = useMemo(() => {
+    const raw = Array.isArray(hiddenFolderNames) ? hiddenFolderNames : [];
+    const keys = raw.map((name) => normalizeKey(name)).filter(Boolean);
+    return new Set(keys);
+  }, [hiddenFolderNames]);
 
   const isSystemFolder = useCallback((it) => {
     if (!it || it?.type !== 'folder') return false;
@@ -392,7 +401,12 @@ export default function SharePointFolderFileArea({
 
       const next = await getSharePointFolderItems(siteId, `/${currentPath}`);
 
-      const folders = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'folder');
+      const folders = (Array.isArray(next) ? next : [])
+        .filter((x) => x?.type === 'folder')
+        .filter((x) => {
+          if (!hiddenFolderKeySet || hiddenFolderKeySet.size === 0) return true;
+          return !hiddenFolderKeySet.has(normalizeKey(x?.name));
+        });
       const files = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file');
 
       // AI-sammanställning (systemmapp) ska alltid vara längst ner i tabellen.
@@ -424,6 +438,7 @@ export default function SharePointFolderFileArea({
     pinSystemFolderLast,
     lockSystemFolder,
     isSystemFolder,
+    hiddenFolderKeySet,
   ]);
 
   const resolveDropTargetRelativePath = useCallback((dropTarget) => {
