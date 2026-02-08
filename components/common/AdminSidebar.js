@@ -37,6 +37,8 @@ export default function AdminSidebar({
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
+  /** Superadmin's primary company (from auth claims). Used when going Home so context resets to this company. */
+  const [primaryCompanyId, setPrimaryCompanyId] = useState('');
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
   const [spinAdminIcons, setSpinAdminIcons] = useState({});
@@ -74,10 +76,11 @@ export default function AdminSidebar({
         const claims = tokenRes?.claims || {};
         const superadminFlag = !!(claims.superadmin === true || claims.role === 'superadmin' || isEmailSuperadmin);
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
-        
+        const fromClaims = String(claims?.companyId || '').trim();
         if (mounted) {
           setIsSuperadmin(superadminFlag);
           setIsCompanyAdmin(adminClaim);
+          setPrimaryCompanyId(fromClaims);
         }
       } catch (_e) {}
     })();
@@ -170,7 +173,7 @@ export default function AdminSidebar({
         { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#1976D2', screen: 'ContactRegistry' },
         { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#1976D2', screen: 'Suppliers' },
         { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#1976D2', screen: 'Customers' },
-        { key: 'sharepoint_navigation', label: 'SharePoint Navigation', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageSharePointNavigation' },
+        { key: 'sharepoint_sites', label: 'SharePoint', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageCompany', focus: 'sharepoint' },
       );
     }
 
@@ -221,7 +224,7 @@ export default function AdminSidebar({
       }
 
       if (item.screen === 'ManageCompany') {
-        navigation.navigate('ManageCompany', { companyId: cid });
+        navigation.navigate('ManageCompany', { companyId: cid, focus: item.focus || undefined });
       } else if (item.screen === 'ManageUsers') {
         navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.screen === 'ManageControlTypes') {
@@ -271,11 +274,27 @@ export default function AdminSidebar({
     await handleCompanySelect(company);
   };
 
-  const handleGoHome = () => {
+  const handleGoHome = useCallback(async () => {
     try {
+      // Superadmin: always return to primary company (the one they're "logged in on"), not the last-viewed admin company.
+      if (isSuperadmin) {
+        const primary = normalizeCompanyId(primaryCompanyId)
+          || (() => {
+            const sorted = getSortedCompanies();
+            const first = sorted[0];
+            return normalizeCompanyId(first?.id || first?.name);
+          })();
+        if (primary) {
+          await AsyncStorage.setItem('dk_companyId', primary);
+          if (Platform.OS === 'web') {
+            try { window?.localStorage?.setItem?.('dk_companyId', primary); } catch (_e) {}
+          }
+          setStoredCompanyId(primary);
+        }
+      }
       dispatchWindowEvent('dkGoHome');
     } catch (_e) {}
-  };
+  }, [isSuperadmin, primaryCompanyId, companies]);
 
   const handleHardRefresh = async () => {
     // Refresh current admin screen (web) + refresh companies list (superadmin)

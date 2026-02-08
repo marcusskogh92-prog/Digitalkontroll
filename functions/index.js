@@ -8,7 +8,7 @@ const { extractTextByMimeType } = require('./services/fileTextExtractor');
 
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
-const { syncSharePointSiteVisibility } = require('./sharepointVisibility');
+const { syncSharePointSiteVisibility, upsertCompanySharePointSiteMeta } = require('./sharepointVisibility');
 const { provisionCompanyImpl } = require('./companyProvisioning');
 const { createUser, deleteUser, updateUser } = require('./userAdmin');
 const { requestSubscriptionUpgrade } = require('./billing');
@@ -19,6 +19,7 @@ const { devResetAdmin } = require('./devReset');
 const { deleteProject, deleteFolder } = require('./deleteOperations');
 
 exports.syncSharePointSiteVisibility = functions.https.onCall(syncSharePointSiteVisibility);
+exports.upsertCompanySharePointSiteMeta = functions.https.onCall(upsertCompanySharePointSiteMeta);
 
 exports.provisionCompany = functions.https.onCall(provisionCompanyImpl);
 exports.provisionCompanyImpl = provisionCompanyImpl;

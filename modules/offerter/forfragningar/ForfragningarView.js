@@ -14,6 +14,7 @@ import {
     createByggdelWithBestEffortFolders,
     createPackageWithBestEffortFolders,
     createSupplierInRegistry,
+    deleteByggdelFolderInSharePointBestEffort,
     ensureForfragningarRootBestEffort,
     ensurePackageFolderBestEffort,
     getForfragningarRootPath,
@@ -363,7 +364,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 		const bid = safeText(byggdel?.id);
 		if (!bid) return;
 		if (!tableEnabled) return;
-		Alert.alert('Ta bort disciplin?', 'Disciplinen döljs från listan. Du kan återställa genom att ändra i databasen vid behov.', [
+		Alert.alert('Ta bort byggdel?', 'Byggdelen döljs från listan. Mappen i SharePoint flyttas till papperskorgen.', [
 			{ text: 'Avbryt', style: 'cancel' },
 			{
 				text: 'Ta bort',
@@ -371,6 +372,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 				onPress: async () => {
 					try {
 						await softDeleteRfqByggdel(companyId, projectId, bid);
+						void deleteByggdelFolderInSharePointBestEffort({ companyId, byggdel });
 					} catch (e) {
 						Alert.alert('Kunde inte ta bort', e?.message || 'Okänt fel');
 					}
@@ -580,8 +582,8 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 
 	return (
 		<DocumentListSurface
-			title="Förfrågningar"
-			subtitle="Offerter / förfrågningar"
+			title="Inköp och offerter"
+			subtitle="Byggdelar och förfrågningar"
 			statusLine={structureStatusLine}
 			rightActions={rightActions}
 		>

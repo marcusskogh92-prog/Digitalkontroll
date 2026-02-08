@@ -53,6 +53,21 @@ function encodeGraphPathSegments(path) {
     .join('/');
 }
 
+/**
+ * Sanitize a single folder name for SharePoint/Graph API.
+ * Avoids "One of the provided arguments is not acceptable" from invalid characters or leading/trailing dots.
+ */
+function sanitizeFolderNameForGraph(name) {
+  const s = String(name ?? '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
+    .trim();
+  return s;
+}
+
 function normalizeRootFolderName(name) {
   return String(name || '')
     .trim()
@@ -839,14 +854,17 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
     throw new Error('SharePoint Site ID required but not found');
   }
   
-  // Normalize path and split into parts
-  const pathParts = path.split('/').filter(p => p && p.trim().length > 0);
+  // Normalize path and split into parts; sanitize each segment for Graph API
+  const pathParts = path
+    .split('/')
+    .map((p) => sanitizeFolderNameForGraph(p))
+    .filter((p) => p.length > 0);
   if (pathParts.length === 0) {
     throw new Error('Invalid path: path must contain at least one folder name');
   }
-  
+
   const folderName = pathParts.pop();
-  if (!folderName || folderName.trim().length === 0) {
+  if (!folderName || folderName.length === 0) {
     throw new Error('Invalid path: folder name cannot be empty');
   }
   
@@ -1255,27 +1273,20 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
   };
 
   // Best-effort migration: rename legacy folder names to current naming.
-  // - Keeps item identity by renaming by driveItem id (no move/copy).
-  // - Idempotent: only renames when old exists and new does not.
-  // - Does NOT throw on failure; structure ensuring should still proceed.
+  // Target: single folder "03 - Inköp och offerter" (no fixed subfolders; byggdelar sync from Firestore).
   const migrateOfferterFolderNames = async () => {
     const parentRenames = [
-      { old: '03 - UE och offerter', next: '03 - Offerter' },
-      { old: '04 - UE och offerter', next: '04 - Offerter' },
-      { old: 'UE och offerter', next: 'Offerter' },
+      { old: '03 - UE och offerter', next: '03 - Inköp och offerter' },
+      { old: '04 - UE och offerter', next: '03 - Inköp och offerter' },
+      { old: '03 - Offerter', next: '03 - Inköp och offerter' },
+      { old: '04 - Offerter', next: '03 - Inköp och offerter' },
+      { old: 'UE och offerter', next: 'Inköp och offerter' },
     ];
 
     for (const pr of parentRenames) {
       try {
-        // If we can rename the parent, do it first; then rename the child under the effective parent name.
-        const parentResult = await renameByPathIfSafe({ fromRel: pr.old, toName: pr.next });
-        const effectiveParent = parentResult.status === 'renamed' || parentResult.status === 'already-new' ? pr.next : pr.old;
-
-        // Child folder rename: "Inkomna offerter" -> "Offerter" (with and without numeric prefix).
-        await renameChildByPathIfSafe({ parentRel: effectiveParent, fromChild: '02 - Inkomna offerter', toChild: '02 - Offerter' });
-        await renameChildByPathIfSafe({ parentRel: effectiveParent, fromChild: 'Inkomna offerter', toChild: 'Offerter' });
+        await renameByPathIfSafe({ fromRel: pr.old, toName: pr.next });
       } catch (e) {
-        // Never fail structure ensuring because of a rename attempt.
         console.warn('[ensureKalkylskedeProjectFolderStructure] Offerter rename migration failed:', e?.message || e);
       }
     }
@@ -1283,9 +1294,8 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
 
   const migrateKalkylskedeV1ToV2SectionNumbers = async () => {
     // V1 -> V2 numbering mapping (idempotent; rename-by-id preserves permissions/content).
-    // NOTE: Offerter also covers legacy "UE och offerter".
     const targets = [
-      { next: '03 - Offerter', olds: ['04 - UE och offerter', '04 - Offerter'] },
+      { next: '03 - Inköp och offerter', olds: ['04 - UE och offerter', '04 - Offerter', '03 - Offerter'] },
       { next: '04 - Konstruktion och beräkningar', olds: ['05 - Konstruktion och beräkningar'] },
       { next: '05 - Myndigheter', olds: ['06 - Myndigheter'] },
       { next: '06 - Risk och möjligheter', olds: ['07 - Risk och möjligheter'] },
@@ -1318,14 +1328,6 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
       }
     }
 
-    // Child folder rename under Offerter.
-    const offerterParents = ['03 - Offerter', '04 - Offerter', '04 - UE och offerter', '03 - UE och offerter'];
-    for (const p of offerterParents) {
-      try {
-        await renameChildByPathIfSafe({ parentRel: p, fromChild: '02 - Inkomna offerter', toChild: '02 - Offerter' });
-        await renameChildByPathIfSafe({ parentRel: p, fromChild: 'Inkomna offerter', toChild: 'Offerter' });
-      } catch (_e) {}
-    }
   };
 
   // Consolidated structure: always target v2. We still detect current naming so we can
@@ -1367,18 +1369,17 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
     };
 
     const sectionPairs = [
-      // Consolidated v2 expects these names.
-      { next: '03 - Offerter', old: '04 - UE och offerter' },
-      { next: '03 - Offerter', old: '04 - Offerter' },
-      { next: '03 - Offerter', old: '03 - UE och offerter' },
+      { next: '03 - Inköp och offerter', old: '04 - UE och offerter' },
+      { next: '03 - Inköp och offerter', old: '04 - Offerter' },
+      { next: '03 - Inköp och offerter', old: '03 - Offerter' },
+      { next: '03 - Inköp och offerter', old: '03 - UE och offerter' },
       { next: '04 - Konstruktion och beräkningar', old: '05 - Konstruktion och beräkningar' },
       { next: '05 - Myndigheter', old: '06 - Myndigheter' },
       { next: '06 - Risk och möjligheter', old: '07 - Risk och möjligheter' },
       { next: '07 - Bilder', old: '08 - Bilder' },
       { next: '08 - Möten', old: '09 - Möten' },
       { next: '09 - Kalkyl', old: '03 - Kalkyl' },
-      // Legacy non-prefixed section.
-      { next: 'Offerter', old: 'UE och offerter' },
+      { next: 'Inköp och offerter', old: 'UE och offerter' },
     ];
 
     for (const pair of sectionPairs) {
@@ -1386,22 +1387,7 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
       if (!oldSection?.id) continue;
       const newSection = await getDriveItemByPath(`${root}/${pair.next}`, siteId);
       if (newSection?.id) continue;
-
-      // Rewrite ensure-paths to use the legacy section name.
       effectiveRelPaths = effectiveRelPaths.map((p) => replacePrefix(p, pair.next, pair.old));
-
-      // Also handle the legacy subfolder name if present (Offerter only).
-      if (String(pair.old || '').toLowerCase().includes('offerter')) {
-        const legacyChild = await getDriveItemByPath(`${root}/${pair.old}/02 - Inkomna offerter`, siteId);
-        if (legacyChild?.id) {
-          const newChild = await getDriveItemByPath(`${root}/${pair.old}/02 - Offerter`, siteId);
-          if (!newChild?.id) {
-            const from = `${pair.old}/02 - Offerter`;
-            const to = `${pair.old}/02 - Inkomna offerter`;
-            effectiveRelPaths = effectiveRelPaths.map((p) => replacePrefix(p, from, to));
-          }
-        }
-      }
     }
   } catch (_e) {
     // ignore; fall back to default relPaths

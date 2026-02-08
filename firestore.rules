@@ -39,8 +39,9 @@ service cloud.firestore {
           request.auth.token.role == 'superadmin' ||
           // Admin i MS Byggsystem
           (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
-          // Whitelist specifika superadmin-mail för robusthet
+          // Whitelist specifika superadmin-mail (jämförelse är skiftlägeskänslig i token)
           request.auth.token.email == 'marcus@msbyggsystem.se' ||
+          request.auth.token.email == 'Marcus@msbyggsystem.se' ||
           request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
           request.auth.token.email == 'marcus.skogh@msbyggsystem'
         );
@@ -300,6 +301,12 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
       allow update, delete: if request.auth != null
         && resource.data.userId == request.auth.uid;
+    }
+
+    // Collection group for sharepoint_sites: superadmin behöver lista alla företags siter i SharePoint Nav.
+    // Skriv sker fortfarande bara via path-regeln foretag/{company}/sharepoint_sites.
+    match /{path=**}/sharepoint_sites/{siteId} {
+      allow get, list: if isGlobalAdmin();
     }
 
     // Project organisation (company-scoped, project-specific)

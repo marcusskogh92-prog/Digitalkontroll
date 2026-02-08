@@ -46,10 +46,12 @@ const SECTION_DEFS = {
       '06 - Slutsida',
     ],
   },
+  // Inköp & offerter: single SharePoint folder "03 - Inköp och offerter", no fixed subfolders.
+  // Structure (byggdelar) is created by user and synced from Firestore; SharePoint follows.
   offerter: {
-    title: 'Offerter',
+    title: 'Inköp och offerter',
     icon: 'document-outline',
-    items: ['01 - Förfrågningar', '02 - Offerter', '03 - Jämförelser', '04 - Vald UE'],
+    items: [],
   },
   'konstruktion-berakningar': {
     title: 'Konstruktion och beräkningar',
@@ -186,11 +188,9 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'slutsida', name: '06 - Slutsida', component: 'SlutsidaView', order: 6, enabled: true },
           ];
         } else if (id === 'offerter') {
+          // Inköp & offerter: single table/data view (Förfrågningar), no folder sub-nav in SharePoint.
           section.items = [
-            { id: 'forfragningar', name: '01 - Förfrågningar', component: 'ForfragningarView', order: 1, enabled: true },
-            { id: 'offerter', name: '02 - Offerter', component: 'OfferterView', order: 2, enabled: true },
-            { id: 'jamforelser', name: '03 - Jämförelser', component: 'JamforelserView', order: 3, enabled: true },
-            { id: 'vald-ue', name: '04 - Vald UE', component: 'ValdUEView', order: 4, enabled: true },
+            { id: 'forfragningar', name: 'Inköp och offerter', component: 'ForfragningarView', order: 1, enabled: true },
           ];
         } else if (id === 'konstruktion-berakningar') {
           section.items = [
@@ -259,7 +259,7 @@ export function detectKalkylskedeStructureVersionFromSectionFolderNames(folderNa
   const names = Array.isArray(folderNames) ? folderNames.map((n) => String(n || '').trim()) : [];
   const has = (needle) => names.some((n) => n.toLowerCase() === String(needle || '').trim().toLowerCase());
 
-  if (has('09 - Kalkyl') || has('03 - UE och offerter') || has('03 - Offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V2;
+  if (has('09 - Kalkyl') || has('03 - UE och offerter') || has('03 - Offerter') || has('03 - Inköp och offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V2;
   if (has('03 - Kalkyl') || has('04 - UE och offerter') || has('04 - Offerter')) return KALKYLSKEDE_STRUCTURE_VERSIONS.V1;
 
   return null;

@@ -1,6 +1,55 @@
 const functions = require('firebase-functions');
 const { db, FieldValue } = require('./sharedFirebase');
 
+function isGlobalAdmin(context) {
+  if (!context || !context.auth) return false;
+  const token = context.auth.token || {};
+  const email = (token.email && String(token.email).toLowerCase()) || '';
+  const emailSuperadmin = email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem';
+  return (
+    !!token.globalAdmin ||
+    !!token.superadmin ||
+    token.role === 'superadmin' ||
+    (token.companyId === 'MS Byggsystem' && (token.admin === true || token.role === 'admin')) ||
+    emailSuperadmin
+  );
+}
+
+async function upsertCompanySharePointSiteMeta(data, context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  if (!isGlobalAdmin(context)) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin kan koppla site till företag.');
+  }
+
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const meta = (data && data.meta && typeof data.meta === 'object') ? data.meta : {};
+  const siteId = (meta.siteId && String(meta.siteId).trim()) || '';
+  if (!companyId || !siteId) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId and meta.siteId are required');
+  }
+
+  const role = (meta.role && String(meta.role).trim()) || 'custom';
+  const allowedRoles = ['system', 'projects', 'custom'];
+  const roleNorm = allowedRoles.includes(role) ? role : 'custom';
+  const visibleInLeftPanel = (roleNorm === 'projects' || roleNorm === 'custom') && meta.visibleInLeftPanel === true;
+
+  const payload = {
+    siteId,
+    siteUrl: (meta.siteUrl && String(meta.siteUrl).trim()) || (meta.webUrl && String(meta.webUrl).trim()) || null,
+    siteName: (meta.siteName && String(meta.siteName).trim()) || (meta.name && String(meta.name).trim()) || null,
+    role: roleNorm,
+    visibleInLeftPanel: !!visibleInLeftPanel,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: context.auth.uid || null,
+  };
+
+  const ref = db.doc(`foretag/${companyId}/sharepoint_sites/${siteId}`);
+  await ref.set(payload, { merge: true });
+  return { ok: true, companyId, siteId };
+}
+
 async function syncSharePointSiteVisibility(data, context) {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
@@ -31,11 +80,14 @@ async function syncSharePointSiteVisibility(data, context) {
 
   const writes = [];
   if (workspaceSite && workspaceSite.siteId) {
+    const existingSnap = await metaCol.doc(workspaceSite.siteId).get();
+    const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
+    const siteName = (workspaceSite.siteName && String(workspaceSite.siteName).trim()) || (existing.siteName && String(existing.siteName).trim()) || null;
     writes.push(
       metaCol.doc(workspaceSite.siteId).set({
         siteId: workspaceSite.siteId,
         siteUrl: workspaceSite.webUrl || null,
-        siteName: workspaceSite.siteName || null,
+        siteName,
         role: 'projects',
         visibleInLeftPanel: true,
         systemManaged: true,
@@ -45,11 +97,14 @@ async function syncSharePointSiteVisibility(data, context) {
     );
   }
   if (baseSite && baseSite.siteId) {
+    const existingSnap = await metaCol.doc(baseSite.siteId).get();
+    const existing = existingSnap.exists ? (existingSnap.data() || {}) : {};
+    const siteName = (baseSite.siteName && String(baseSite.siteName).trim()) || (existing.siteName && String(existing.siteName).trim()) || null;
     writes.push(
       metaCol.doc(baseSite.siteId).set({
         siteId: baseSite.siteId,
         siteUrl: baseSite.webUrl || null,
-        siteName: baseSite.siteName || null,
+        siteName,
         role: 'system',
         visibleInLeftPanel: false,
         systemManaged: true,
@@ -117,4 +172,5 @@ async function syncSharePointSiteVisibility(data, context) {
 
 module.exports = {
   syncSharePointSiteVisibility,
+  upsertCompanySharePointSiteMeta,
 };

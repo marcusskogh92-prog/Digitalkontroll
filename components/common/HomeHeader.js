@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Platform, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { showAlert } from '../../utils/alerts';
 import ContextMenu from '../ContextMenu';
@@ -43,9 +43,34 @@ export function HomeHeader({
   const { width: windowWidth } = useWindowDimensions();
   const [leftHeaderWidth, setLeftHeaderWidth] = useState(0);
   const [rightHeaderWidth, setRightHeaderWidth] = useState(0);
+  const [isSuperAdminResolved, setIsSuperAdminResolved] = useState(false);
 
   const email = route?.params?.email || '';
   const firstName = formatPersonName(email);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = auth?.currentUser;
+        const rawEmail = String(user?.email || '').toLowerCase();
+        const isEmailSuperadmin = rawEmail === 'marcus@msbyggsystem.se'
+          || rawEmail === 'marcus.skogh@msbyggsystem.se'
+          || rawEmail === 'marcus.skogh@msbyggsystem.com'
+          || rawEmail === 'marcus.skogh@msbyggsystem';
+        let tokenRes = null;
+        try { tokenRes = await user?.getIdTokenResult(false).catch(() => null); } catch (_e) { tokenRes = null; }
+        const claims = tokenRes?.claims || {};
+        const isSuperClaim = !!(claims.superadmin === true || claims.role === 'superadmin');
+        if (mounted) setIsSuperAdminResolved(!!(isEmailSuperadmin || isSuperClaim));
+      } catch (_e) {
+        if (mounted) setIsSuperAdminResolved(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [auth]);
+
+  const canShowSharePointNav = !!(isSuperAdmin || isSuperAdminResolved);
 
   const resolveProjectBannerText = () => {
     try {
@@ -315,6 +340,29 @@ export function HomeHeader({
         }}
       >
         <UploadPanelTrigger />
+        {canShowSharePointNav ? (
+          <TouchableOpacity
+            onPress={() => {
+              try {
+                const cid = String(companyId || routeCompanyId || '').trim();
+                navigation.navigate('ManageSharePointNavigation', cid ? { companyId: cid } : undefined);
+              } catch (_e) {}
+            }}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: '#CFE3FF',
+              backgroundColor: '#F0F7FF',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            accessibilityLabel="SharePoint Nav"
+          >
+            <Ionicons name="git-branch-outline" size={18} color="#1976D2" />
+          </TouchableOpacity>
+        ) : null}
         <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
           {sharePointStatus.checking ? (
             <Animated.View
@@ -562,9 +610,11 @@ export function HomeHeader({
               const tokenRes = user ? await auth.currentUser.getIdTokenResult(true).catch(() => null) : null;
               const claims = tokenRes?.claims || {};
               const stored = await AsyncStorage.getItem('dk_companyId');
+              const tokenEmail = claims.email || '—';
+              const superadmin = claims.superadmin === true || claims.role === 'superadmin';
               showAlert(
                 'Auth info',
-                `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`,
+                `user: ${user ? user.email + ' (' + user.uid + ')' : 'not signed in'}\ntoken.email: ${tokenEmail}\nsuperadmin/role: ${superadmin ? 'ja' : 'nej'}\nclaims.companyId: ${claims.companyId || '—'}\ndk_companyId: ${stored || '—'}`,
               );
             } catch (_e) {
               showAlert('Fel', 'Kunde inte läsa auth info: ' + (_e?.message || _e));

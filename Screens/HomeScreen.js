@@ -219,15 +219,19 @@ export default function HomeScreen({ navigation, route }) {
       try {
         const current = String(companyId || '').trim();
         const fromClaims = String(authClaims?.companyId || '').trim();
-        const cid = current || fromClaims;
+        let cid = current || fromClaims;
+        if (!cid) {
+          const stored = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+          const fromLs = Platform.OS === 'web' && typeof window?.localStorage?.getItem === 'function'
+            ? String(window.localStorage.getItem('dk_companyId') || '').trim()
+            : '';
+          cid = stored || fromLs;
+          if (cid) setCompanyId(cid);
+        }
         if (!cid) return;
-        if (!current && fromClaims) {
-          setCompanyId(fromClaims);
-        }
+        if (!current && cid) setCompanyId(cid);
         const stored = await AsyncStorage.getItem('dk_companyId');
-        if (stored !== cid) {
-          await AsyncStorage.setItem('dk_companyId', cid);
-        }
+        if (stored !== cid) await AsyncStorage.setItem('dk_companyId', cid);
       } catch(_e) {}
     })();
   }, [companyId, authClaims?.companyId]);

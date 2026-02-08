@@ -3,7 +3,7 @@
  * Shows all enabled sites with their folders
  */
 
-import { getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
+import { fetchCompanySharePointSiteMetas, getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
 import { getDriveItems } from '../services/azure/hierarchyService';
 
 /**
@@ -62,6 +62,21 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       });
     }
 
+    // Firestore display names (e.g. from "Byta namn" in SharePoint Nav) override Graph site name in left panel
+    let siteMetaNameBySiteId = {};
+    try {
+      const metas = await fetchCompanySharePointSiteMetas(companyId);
+      if (Array.isArray(metas)) {
+        metas.forEach((m) => {
+          const id = String(m?.siteId || m?.id || '').trim();
+          const displayName = String(m?.siteName || '').trim();
+          if (id && displayName) siteMetaNameBySiteId[id] = displayName;
+        });
+      }
+    } catch (_e) {
+      // non-fatal: fall back to Graph name
+    }
+
     // Self-heal: never show DK Bas (system/base site) even if legacy config accidentally enables it.
     // We only exclude when we are reasonably confident (to avoid hiding unrelated sites).
     const isProbablyBaseSite = (siteId) => {
@@ -91,7 +106,7 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       if (!siteId) continue;
       
       const site = sitesMap[siteId];
-      const siteName = site?.name || site?.displayName || siteId;
+      const siteName = siteMetaNameBySiteId[siteId] || site?.name || site?.displayName || siteId;
       const siteConfig = siteConfigs[siteId] || {};
       const hasExplicitSiteConfig = Object.prototype.hasOwnProperty.call(siteConfigs, siteId);
       

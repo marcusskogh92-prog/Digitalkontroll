@@ -3372,10 +3372,13 @@ export function normalizeSharePointPath(value) {
 
 export function sanitizeSharePointFolderName(name) {
   // SharePoint folder names cannot contain: " # % & * : < > ? / \ { | } ~
-  // We keep it conservative and just remove the most common illegal characters.
+  // Leading/trailing dots or spaces can cause "One of the provided arguments is not acceptable".
   return String(name || '')
     .replace(/[\\\/\:\*\?\"\<\>\|]/g, '-')
     .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
     .trim();
 }
 
@@ -4424,6 +4427,30 @@ export async function fetchCompanySharePointSiteMetas(companyId) {
   }
 }
 
+/**
+ * Same as fetchCompanySharePointSiteMetas but forces a server read (no cache).
+ * Use when list must show latest data, e.g. SharePoint Nav.
+ */
+export async function fetchCompanySharePointSiteMetasFromServer(companyId) {
+  const cid = String(companyId || '').trim();
+  if (!cid) return [];
+  try {
+    const colRef = collection(db, 'foretag', cid, 'sharepoint_sites');
+    const snap = await getDocsFromServer(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      try {
+        const d = docSnap.data() || {};
+        out.push({ id: docSnap.id, ...d });
+      } catch (_e) {}
+    });
+    return out;
+  } catch (error) {
+    console.warn('[fetchCompanySharePointSiteMetasFromServer] Error:', error);
+    return [];
+  }
+}
+
 function normalizeSharePointSiteRole(role) {
   const r = String(role || '').trim().toLowerCase();
   if (!r) return null;
@@ -4486,6 +4513,7 @@ export async function getCompanyVisibleSharePointSiteIds(companyId) {
 
 /**
  * Upsert (create/update) SharePoint site metadata for a company.
+ * Uses Cloud Function so superadmin is determined by token (incl. email whitelist with normalised casing).
  * Doc id is the siteId.
  */
 export async function upsertCompanySharePointSiteMeta(companyId, meta) {
@@ -4493,9 +4521,23 @@ export async function upsertCompanySharePointSiteMeta(companyId, meta) {
   const siteId = String(meta?.siteId || '').trim();
   if (!cid || !siteId) throw new Error('companyId and meta.siteId are required');
 
+  if (functionsClient) {
+    const fn = httpsCallable(functionsClient, 'upsertCompanySharePointSiteMeta');
+    const res = await fn({
+      companyId: cid,
+      meta: {
+        siteId,
+        siteName: meta?.siteName || meta?.name || null,
+        siteUrl: meta?.siteUrl || meta?.webUrl || null,
+        role: normalizeSharePointSiteRole(meta?.role) || 'custom',
+        visibleInLeftPanel: canBeVisibleInLeftPanelByRole(normalizeSharePointSiteRole(meta?.role) || 'custom') && meta?.visibleInLeftPanel === true,
+      },
+    });
+    return res?.data?.ok === true || true;
+  }
+
   const role = normalizeSharePointSiteRole(meta?.role) || 'system';
   const visibleInLeftPanel = canBeVisibleInLeftPanelByRole(role) && meta?.visibleInLeftPanel === true;
-
   const payload = {
     siteId,
     siteUrl: meta?.siteUrl ? String(meta.siteUrl) : (meta?.webUrl ? String(meta.webUrl) : null),
@@ -4505,7 +4547,6 @@ export async function upsertCompanySharePointSiteMeta(companyId, meta) {
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,
   };
-
   const ref = doc(db, 'foretag', cid, 'sharepoint_sites', siteId);
   await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
   return true;

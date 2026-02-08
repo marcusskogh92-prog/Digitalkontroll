@@ -1,6 +1,6 @@
 import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
-import { auth, createCompanySupplier } from '../../../components/firebase';
+import { auth, createCompanySupplier, getCompanySharePointSiteId } from '../../../components/firebase';
 import { ensureFolderPath } from '../../../services/azure/fileService';
 
 import {
@@ -68,10 +68,11 @@ function getProjectBasePath(project) {
   return normalizePath(raw);
 }
 
+/** SharePoint root for Inköp & offerter: single folder "03 - Inköp och offerter". Byggdelar sync as subfolders. */
 export function getForfragningarRootPath(project) {
   const base = getProjectBasePath(project);
   if (!base) return '';
-  return normalizePath(`${base}/03 - Offerter/01 - Förfrågningar`);
+  return normalizePath(`${base}/03 - Inköp och offerter`);
 }
 
 export async function ensureForfragningarRootBestEffort({ companyId, project }) {
@@ -201,6 +202,26 @@ export async function ensurePackageFolderBestEffort({ companyId, projectId, proj
 
     await updateRfqPackage(cid, pid, pkgId, { sharePointFolderPath: fullPath });
     return fullPath;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
+ * Delete byggdel folder in SharePoint (best-effort). Item goes to site recycle bin.
+ * Call after soft-deleting byggdel in Firestore so SharePoint stays in sync.
+ */
+export async function deleteByggdelFolderInSharePointBestEffort({ companyId, byggdel }) {
+  const path = safeText(byggdel?.sharePointFolderPath);
+  if (!path) return null;
+  try {
+    const cid = safeText(companyId);
+    if (!cid) return null;
+    const siteId = await getCompanySharePointSiteId(cid);
+    if (!siteId) return null;
+    const { deleteDriveItemByPath } = await import('../../../services/azure/hierarchyService');
+    await deleteDriveItemByPath(siteId, path);
+    return path;
   } catch (_e) {
     return null;
   }
