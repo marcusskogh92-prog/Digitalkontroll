@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { httpsCallable } from 'firebase/functions';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { functionsClient } from '../components/firebase';
+import { ConfirmModal } from '../components/common/Modals';
+import { functionsClient, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -59,24 +60,44 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
 
   void project;
 
-  const [backendStatus, setBackendStatus] = useState(''); // success | partial | error | analyzing
-  const [summaryText, setSummaryText] = useState('');
-  const [requirements, setRequirements] = useState([]);
-  const [risks, setRisks] = useState([]);
-  const [questions, setQuestions] = useState([]);
-  const [meta, setMeta] = useState(null);
+  // Single source of truth: render ONLY from Firestore snapshot.
+  const [analysisDoc, setAnalysisDoc] = useState(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [snapshotExists, setSnapshotExists] = useState(false);
 
   const [runError, setRunError] = useState('');
   const [analysisRunning, setAnalysisRunning] = useState(false);
 
-  const effectiveStatus = analysisRunning ? 'analyzing' : (safeText(backendStatus) || '');
-  const hasResult = Boolean(summaryText || (Array.isArray(requirements) && requirements.length) || (Array.isArray(risks) && risks.length) || (Array.isArray(questions) && questions.length));
+  const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
+  const subKeyRef = useRef('');
+
+  const hasSavedAnalysis = snapshotExists;
+
+  const effectiveStatus = safeText(analysisDoc?.status);
+  const meta = analysisDoc?.meta && typeof analysisDoc.meta === 'object' ? analysisDoc.meta : null;
+  const analyzedAt = analysisDoc?.analyzedAt || null;
+  const model = safeText(analysisDoc?.model);
+
+  const analyzedAtLabel = useMemo(() => {
+    try {
+      if (!analyzedAt) return '';
+      if (typeof analyzedAt?.toDate === 'function') {
+        return analyzedAt.toDate().toLocaleString('sv-SE');
+      }
+      if (analyzedAt instanceof Date) {
+        return analyzedAt.toLocaleString('sv-SE');
+      }
+      return '';
+    } catch (_e) {
+      return '';
+    }
+  }, [analyzedAt]);
 
   const statusLabel = effectiveStatus === 'analyzing'
     ? 'Analyseras'
     : effectiveStatus === 'error'
       ? 'Misslyckad'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasResult)
+      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
         ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
         : 'Ej analyserad';
 
@@ -84,55 +105,112 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     ? 'warning'
     : effectiveStatus === 'error'
       ? 'warning'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasResult)
+      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
         ? 'success'
         : 'neutral';
 
-  const canRun = Boolean(cid && pid && !analysisRunning);
+  const canRun = Boolean(cid && pid && !analysisRunning && !snapshotLoading && !rerunConfirm?.busy);
 
-  const onRunAnalysis = useCallback(async () => {
+  useEffect(() => {
+    if (!cid || !pid) {
+      setAnalysisDoc(null);
+      setSnapshotExists(false);
+      return;
+    }
+
+    const subKey = `${cid}::${pid}`;
+    subKeyRef.current = subKey;
+    setSnapshotLoading(true);
+
+    const unsubscribe = subscribeLatestProjectFFUAnalysis(cid, pid, {
+      onNext: (data, snap) => {
+        if (subKeyRef.current !== subKey) return;
+        console.log('[FFU] Snapshot loaded', snap?.exists?.() === true, snap?.data?.());
+        const exists = !!(snap && typeof snap.exists === 'function' && snap.exists());
+        setSnapshotExists(exists);
+        setAnalysisDoc(exists ? (data || {}) : null);
+        setSnapshotLoading(false);
+      },
+      onError: (err) => {
+        if (subKeyRef.current !== subKey) return;
+        const code = safeText(err?.code);
+        if (code.includes('permission-denied')) {
+          console.warn('[FFU] Permission denied loading analysis', { companyId: cid, projectId: pid, code });
+        } else {
+          console.warn('[FFU] Failed loading analysis', { companyId: cid, projectId: pid, code, message: safeText(err?.message) });
+        }
+        setSnapshotLoading(false);
+      },
+    });
+
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch (_e) {}
+    };
+  }, [cid, pid]);
+
+  const runAnalysisAndPersist = useCallback(async () => {
     if (!canRun) return;
     if (!cid || !pid) return;
 
     setAnalysisRunning(true);
     setRunError('');
-    setBackendStatus('analyzing');
 
     try {
-      console.log('AI analysis started');
+      console.log('[FFU] Analysis started', { companyId: cid, projectId: pid });
       const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
       const res = await analyzeFFU({ companyId: cid, projectId: pid });
-      console.log('AI analysis result', res?.data);
-
       const data = res?.data || {};
-      const status = safeText(data?.status);
-      setBackendStatus(status || 'success');
-
-      const s = safeText(data?.summary) || 'AI kunde inte skapa en sammanfattning, men analysen kördes.';
-      setSummaryText(s);
-      setRequirements(Array.isArray(data?.requirements) ? data.requirements.filter((x) => safeText(x)) : []);
-      setRisks(Array.isArray(data?.risks) ? data.risks.filter((x) => safeText(x)) : []);
-      setQuestions(Array.isArray(data?.questions) ? data.questions.filter((x) => safeText(x)) : []);
-      setMeta(data?.meta && typeof data.meta === 'object' ? data.meta : null);
+      console.log('[FFU] Analysis saved', { companyId: cid, projectId: pid, status: safeText(data?.status) || null });
     } catch (e) {
       console.error('❌ analyzeFFUFromFiles failed:', e);
-      const msg = String(e?.message || e?.details || e?.code || '').trim();
+      const msg = String(e?.details || e?.message || e?.code || '').trim();
       setRunError(msg || 'Kunde inte köra AI-analys. Försök igen.');
-      setBackendStatus('error');
+      throw e;
     } finally {
       setAnalysisRunning(false);
     }
   }, [canRun, cid, pid]);
 
-  const analysis = hasResult ? {
+  const onRunAnalysis = useCallback(() => {
+    if (!canRun) return;
+    if (!cid || !pid) return;
+    if (!hasSavedAnalysis) {
+      void runAnalysisAndPersist().catch(() => {});
+      return;
+    }
+    setRerunConfirm({ visible: true, busy: false, error: '' });
+  }, [canRun, cid, hasSavedAnalysis, pid, runAnalysisAndPersist]);
+
+  const onConfirmRerun = useCallback(async () => {
+    if (!canRun) return;
+    setRerunConfirm((prev) => ({ ...prev, busy: true, error: '' }));
+    try {
+      await runAnalysisAndPersist();
+      setRerunConfirm({ visible: false, busy: false, error: '' });
+    } catch (e) {
+      const msg = String(e?.message || e?.details || e?.code || e || '').trim();
+      setRerunConfirm((prev) => ({ ...prev, busy: false, error: msg || 'Kunde inte uppdatera analysen.' }));
+    }
+  }, [canRun, runAnalysisAndPersist]);
+
+  const summaryText = safeText(analysisDoc?.summary);
+  const reqObj = analysisDoc?.requirements && typeof analysisDoc.requirements === 'object' ? analysisDoc.requirements : null;
+  const ska = Array.isArray(reqObj?.ska) ? reqObj.ska : (Array.isArray(reqObj?.must) ? reqObj.must : []);
+  const bor = Array.isArray(reqObj?.bor) ? reqObj.bor : (Array.isArray(reqObj?.should) ? reqObj.should : []);
+  const risks = Array.isArray(analysisDoc?.risks) ? analysisDoc.risks : [];
+  const questions = Array.isArray(analysisDoc?.questions) ? analysisDoc.questions : [];
+
+  const analysis = analysisDoc ? {
     summary: {
       text: summaryText,
       projectType: '',
       procurementForm: '',
     },
     requirements: {
-      must: Array.isArray(requirements) ? requirements : [],
-      should: [],
+      ska: Array.isArray(ska) ? ska : [],
+      bor: Array.isArray(bor) ? bor : [],
     },
     risks: (Array.isArray(risks) ? risks : []).map((t, idx) => ({ title: `Risk ${idx + 1}`, details: safeText(t) })),
     openQuestions: Array.isArray(questions) ? questions : [],
@@ -146,6 +224,9 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.title}>AI-sammanställning – Förfrågningsunderlag</Text>
             <Text style={styles.subtitle}>AI-analys baserad på uppladdade dokument i förfrågningsunderlaget</Text>
+            {analyzedAtLabel ? (
+              <Text style={[styles.metaText, { marginTop: 6 }]}>Senast analyserad: {analyzedAtLabel}</Text>
+            ) : null}
           </View>
           <View style={{ marginLeft: 12, alignItems: 'flex-end' }}>
             <Badge label={statusLabel} tone={statusTone} />
@@ -171,8 +252,14 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
               ]}
               accessibilityRole="button"
             >
-              <Text style={styles.primaryButtonText}>Kör AI-analys</Text>
+              <Text style={styles.primaryButtonText}>{hasSavedAnalysis ? 'Uppdatera analys' : 'Kör AI-analys'}</Text>
             </Pressable>
+            {snapshotLoading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#64748b" />
+                <Text style={styles.hintText}>Laddar sparad analys…</Text>
+              </View>
+            ) : null}
             {analysisRunning ? (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <ActivityIndicator size="small" color="#64748b" />
@@ -195,6 +282,10 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
             <Text style={styles.metaText}>
               Underlag: {String(meta.totalChars)} tecken{meta.truncated ? ' (trunkerat)' : ''}
             </Text>
+          ) : null}
+
+          {model ? (
+            <Text style={styles.metaText}>Modell: {model}</Text>
           ) : null}
         </View>
 
@@ -223,8 +314,8 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
               <View style={{ gap: 14 }}>
                 <View>
                   <SectionLabel>SKA-krav</SectionLabel>
-                  {(Array.isArray(analysis?.requirements?.must) ? analysis.requirements.must : []).length ? (
-                    (analysis.requirements.must || []).map((txt, idx) => (
+                  {(Array.isArray(analysis?.requirements?.ska) ? analysis.requirements.ska : []).length ? (
+                    (analysis.requirements.ska || []).map((txt, idx) => (
                       <Text key={`must-${idx}`} style={styles.bullet}>• {safeText(txt)}</Text>
                     ))
                   ) : (
@@ -233,8 +324,8 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
                 </View>
                 <View>
                   <SectionLabel>BÖR-krav</SectionLabel>
-                  {(Array.isArray(analysis?.requirements?.should) ? analysis.requirements.should : []).length ? (
-                    (analysis.requirements.should || []).map((txt, idx) => (
+                  {(Array.isArray(analysis?.requirements?.bor) ? analysis.requirements.bor : []).length ? (
+                    (analysis.requirements.bor || []).map((txt, idx) => (
                       <Text key={`should-${idx}`} style={styles.bullet}>• {safeText(txt)}</Text>
                     ))
                   ) : (
@@ -283,6 +374,19 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
           </Card>
         </View>
       </View>
+
+      <ConfirmModal
+        visible={!!rerunConfirm?.visible}
+        title="Uppdatera analys?"
+        message="Detta ersätter tidigare sparad AI-analys för FFU. Vill du fortsätta?"
+        cancelLabel="Avbryt"
+        confirmLabel="Kör ny AI-analys"
+        danger
+        busy={!!rerunConfirm?.busy}
+        error={safeText(rerunConfirm?.error)}
+        onCancel={() => setRerunConfirm({ visible: false, busy: false, error: '' })}
+        onConfirm={onConfirmRerun}
+      />
     </ScrollView>
   );
 }

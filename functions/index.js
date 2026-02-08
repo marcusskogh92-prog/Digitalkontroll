@@ -807,6 +807,69 @@ function uiFriendlyFFUResult({ status, analysis, meta, fallbackSummary }) {
   };
 }
 
+function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary, model }) {
+  const a = analysis && typeof analysis === 'object' ? analysis : null;
+  const summary = a ? String(a?.summary?.description || '').trim() : '';
+
+  const must = Array.isArray(a?.requirements?.must) ? a.requirements.must : [];
+  const should = Array.isArray(a?.requirements?.should) ? a.requirements.should : [];
+  const ska = must.map((r) => String(r?.text || '').trim()).filter(Boolean);
+  const bor = should.map((r) => String(r?.text || '').trim()).filter(Boolean);
+
+  const risks = (Array.isArray(a?.risks) ? a.risks : [])
+    .map((r) => {
+      const issue = String(r?.issue || '').trim();
+      const reason = String(r?.reason || '').trim();
+      if (!issue && !reason) return '';
+      if (issue && reason) return `${issue} — ${reason}`;
+      return issue || reason;
+    })
+    .filter(Boolean);
+
+  const questions = (Array.isArray(a?.openQuestions) ? a.openQuestions : [])
+    .map((q) => {
+      const question = String(q?.question || '').trim();
+      const reason = String(q?.reason || '').trim();
+      if (!question && !reason) return '';
+      if (question && reason) return `${question} — ${reason}`;
+      return question || reason;
+    })
+    .filter(Boolean);
+
+  const safeSummary = summary || String(fallbackSummary || 'AI kunde inte skapa en sammanfattning, men analysen kördes.').trim();
+  const m = String(model || '').trim();
+
+  return {
+    status: status || 'success',
+    summary: safeSummary,
+    requirements: {
+      ska,
+      bor,
+    },
+    risks,
+    questions,
+    meta: {
+      totalChars: Number(meta?.totalChars) || 0,
+      filesUsed: Number(meta?.filesUsed) || 0,
+      truncated: Boolean(meta?.truncated),
+    },
+    analyzedAt: FieldValue.serverTimestamp(),
+    model: m || 'gpt-4.1-mini',
+  };
+}
+
+async function persistFFUAnalysisLatest({ companyId, projectId, doc }) {
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+
+  await canonicalRef.set(doc, { merge: false });
+  // Mirror write for older clients/paths (best-effort).
+  await legacyRef.set(doc, { merge: false }).catch(() => null);
+
+  const snap = await canonicalRef.get();
+  return snap && snap.exists ? (snap.data() || {}) : (doc || {});
+}
+
 // AI: Analyze FFU from uploaded files (Storage paths)
 // Input: { companyId, projectId, files: [{ path, name, mimeType }] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
@@ -831,6 +894,17 @@ exports.analyzeFFUFromFiles = functions
   }
 
   assertAnalyzeFFUPermission({ companyId, context });
+
+  // Mark analysis as running in Firestore (merge to preserve any previous content).
+  try {
+    const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+    const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+    await canonicalRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true });
+    await legacyRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+  } catch (e) {
+    console.warn('[FFU] Failed to set analyzing status', { message: String(e && e.message ? e.message : e) });
+  }
 
   // Debug (temporary): verify what SharePoint config is visible in runtime.
   // NOTE: never log secrets, only presence.
@@ -1039,21 +1113,52 @@ exports.analyzeFFUFromFiles = functions
     const msg = String(e && e.message ? e.message : e);
     console.error('[FFU] analyzeFFUCore failed', { message: msg, companyId, projectId });
     console.log('[FFU] Step 4: OpenAI response received', { ms: Date.now() - startedAtMs, ok: false });
-    return uiFriendlyFFUResult({
+
+    // If we already have a successful analysis saved, keep the content but flip status -> error.
+    let existing = null;
+    try {
+      const existingCanonical = await db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`).get().catch(() => null);
+      if (existingCanonical && existingCanonical.exists) existing = existingCanonical.data() || null;
+      if (!existing) {
+        const existingLegacy = await db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`).get().catch(() => null);
+        if (existingLegacy && existingLegacy.exists) existing = existingLegacy.data() || null;
+      }
+    } catch (_e) {}
+
+    const fallbackDoc = buildPersistedFFUAnalysisDoc({
       status: 'error',
       analysis: null,
-      fallbackSummary: 'AI kunde inte skapa en sammanfattning, men analysen kördes.',
+      fallbackSummary: msg || 'AI-körningen misslyckades.',
       meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+      model,
     });
+
+    const docToSave = existing && typeof existing === 'object'
+      ? {
+          ...existing,
+          status: 'error',
+          meta: fallbackDoc.meta,
+          analyzedAt: fallbackDoc.analyzedAt,
+          model: fallbackDoc.model,
+        }
+      : fallbackDoc;
+
+    const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+    console.log('[FFU] Analysis saved', { companyId, projectId, status: 'error' });
+    return saved;
   }
 
   console.log('[FFU] Step 4: OpenAI response received', { ms: Date.now() - startedAtMs, ok: true });
-  // Cache write is performed inside analyzeFFUCore (best-effort).
-  return uiFriendlyFFUResult({
+  // Cache write is performed inside analyzeFFUCore (best-effort). Persist latest analysis for UI.
+  const docToSave = buildPersistedFFUAnalysisDoc({
     status,
     analysis,
     meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+    model,
   });
+  const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+  console.log('[FFU] Analysis saved', { companyId, projectId, status });
+  return saved;
 });
 
 function encodeGraphPath(path) {
