@@ -67,6 +67,11 @@ function RecursiveFolderView({
   const lockTrigger = lockTickSubs?.[folder.id] || 0;
   const showChevron = !folderIsProject && !folderLocked && (!folder?.childrenLoaded || visibleChildren.length > 0);
 
+  const marginLeft = Math.max(0, Number(level) || 0) * 12;
+
+  const isExpanded = !!expandedSubs?.[folder.id];
+  const folderSpin = spinSubs?.[folder.id] || 0;
+
   const extractedMeta = folderIsProject ? extractProjectMetadata(folder) : null;
   const projectPath = extractedMeta?.path || folder.path || folder.name || '';
   const siteId =
