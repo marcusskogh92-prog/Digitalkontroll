@@ -1230,6 +1230,67 @@ export async function checkSharePointConnection(companyId) {
 }
 
 /**
+ * Check a single SharePoint site by ID (for dropdown/status list).
+ * @param {string} siteId - SharePoint Site ID
+ * @returns {Promise<{connected: boolean, siteId: string|null, siteUrl: string|null, siteName: string|null, error: string|null}>}
+ */
+export async function checkSharePointSiteById(siteId) {
+  if (!siteId || !String(siteId).trim()) {
+    return { connected: false, siteId: null, siteUrl: null, siteName: null, error: 'No site ID provided' };
+  }
+  const sid = String(siteId).trim();
+  try {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return { connected: false, siteId: sid, siteUrl: null, siteName: null, error: 'Failed to get access token' };
+    }
+    const siteEndpoint = `${GRAPH_API_BASE}/sites/${sid}`;
+    const siteResponse = await fetch(siteEndpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    let siteUrl = null;
+    let siteName = null;
+    if (siteResponse.ok) {
+      try {
+        const siteData = await siteResponse.json();
+        siteUrl = siteData.webUrl || null;
+        siteName = siteData.displayName || siteData.name || null;
+      } catch (_e) {}
+    }
+    const endpoint = `${GRAPH_API_BASE}/sites/${sid}/drive/root`;
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      return {
+        connected: false,
+        siteId: sid,
+        siteUrl,
+        siteName,
+        error: `Kan inte nå siten: ${response.status} ${response.statusText}`,
+      };
+    }
+    return { connected: true, siteId: sid, siteUrl, siteName, error: null };
+  } catch (error) {
+    return {
+      connected: false,
+      siteId: sid,
+      siteUrl: null,
+      siteName: null,
+      error: error?.message || 'Okänt fel',
+    };
+  }
+}
+
+/**
  * Create a new folder in SharePoint
  * @param {string} companyId - Company ID
  * @param {string} parentPath - Parent folder path (empty string for root)

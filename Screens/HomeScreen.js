@@ -13,7 +13,7 @@ import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
-import { auth, saveControlToFirestore, saveDraftToFirestore } from '../components/firebase';
+import { auth, saveControlToFirestore, saveDraftToFirestore, subscribeUserNotifications } from '../components/firebase';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
@@ -430,6 +430,39 @@ export default function HomeScreen({ navigation, route }) {
   const [afRelativePath, setAfRelativePath] = useState('');
   const [afSelectedItemId, setAfSelectedItemId] = useState(null);
   const [afMirrorRefreshNonce, setAfMirrorRefreshNonce] = useState(0);
+
+  // Notiser (för banner-dropdown; tidigare i WebMainPane som högerpanel)
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [notificationsError, setNotificationsError] = useState(null);
+  const effectiveCompanyIdForNotif = (companyId != null && String(companyId).trim()) ? String(companyId).trim() : (routeCompanyId != null && String(routeCompanyId).trim()) ? String(routeCompanyId).trim() : (authClaims?.companyId != null && String(authClaims.companyId).trim()) ? String(authClaims.companyId).trim() : '';
+  const currentUserId = auth?.currentUser?.uid ?? null;
+  React.useEffect(() => {
+    if (!effectiveCompanyIdForNotif || !currentUserId) {
+      setUserNotifications([]);
+      setNotificationsError(null);
+      return () => {};
+    }
+    setNotificationsError(null);
+    const unsub = subscribeUserNotifications(effectiveCompanyIdForNotif, currentUserId, {
+      onData: (list) => {
+        setUserNotifications(Array.isArray(list) ? list : []);
+        setNotificationsError(null);
+      },
+      onError: (err) => {
+        setUserNotifications([]);
+        const msg = err?.message || '';
+        const isPermission = msg.toLowerCase().includes('permission') || err?.code === 'permission-denied';
+        setNotificationsError(
+          isPermission
+            ? 'Behörighet saknas. Deploya regler: firebase deploy --only firestore:rules. Logga sedan ut och in igen.'
+            : (msg || 'Kunde inte ladda notiser')
+        );
+      },
+      limitCount: 30,
+    });
+    return () => { try { unsub?.(); } catch (_e) {} };
+  }, [effectiveCompanyIdForNotif, currentUserId]);
+  const notificationsUnreadCount = userNotifications.filter((n) => !n?.read).length;
 
   const derivePhaseKeyFromProjectRootPath = React.useCallback((rootPath) => {
     const p = String(rootPath || '').trim().replace(/^\/+/, '');
@@ -1549,6 +1582,10 @@ export default function HomeScreen({ navigation, route }) {
                   saveDraftToFirestore={saveDraftToFirestore}
                   searchSpinAnim={searchSpinAnim}
                   sharePointStatus={sharePointStatus}
+                  userNotifications={userNotifications}
+                  notificationsUnreadCount={notificationsUnreadCount}
+                  notificationsError={notificationsError}
+                  formatRelativeTime={formatRelativeTime}
                 />
 
                 {/* Web: scroll ägs av HomeMainPaneContainer/WebMainPane (inte här) */}
@@ -1797,6 +1834,10 @@ export default function HomeScreen({ navigation, route }) {
                   saveDraftToFirestore={saveDraftToFirestore}
                   searchSpinAnim={searchSpinAnim}
                   sharePointStatus={sharePointStatus}
+                  userNotifications={userNotifications}
+                  notificationsUnreadCount={notificationsUnreadCount}
+                  notificationsError={notificationsError}
+                  formatRelativeTime={formatRelativeTime}
                 />
 
                 {/* Allt under headern är skrollbart */}

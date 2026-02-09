@@ -242,6 +242,22 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontWeight: '400',
   },
+  contactBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 999,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  contactBadgeText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
+  },
 });
 
 function safeText(value?: string): string {
@@ -603,7 +619,7 @@ export default function LeverantorerTable({
                 }
               : {})}
           >
-            <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <Ionicons
                 name="chevron-forward"
                 size={14}
@@ -615,6 +631,22 @@ export default function LeverantorerTable({
               <Text style={styles.cellText} numberOfLines={1}>
                 {supplier.companyName || '—'}
               </Text>
+              {(() => {
+                const list = contactMap[supplier.id] || [];
+                const count = list.length;
+                const tooltip =
+                  Platform.OS === 'web' && list.length > 0
+                    ? `Kontakter: ${list.map((c) => c.name || '—').join(', ')}`
+                    : undefined;
+                return (
+                  <View
+                    style={styles.contactBadge}
+                    {...(tooltip && Platform.OS === 'web' ? { title: tooltip } : {})}
+                  >
+                    <Text style={styles.contactBadgeText}>👤 {count}</Text>
+                  </View>
+                );
+              })()}
             </View>
             <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
               {supplier.organizationNumber || '—'}
