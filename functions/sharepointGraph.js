@@ -30,12 +30,16 @@ async function graphGetSiteByUrl({ hostname, siteSlug, accessToken }) {
 }
 
 async function graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
+  const host = String(hostname || '').trim().toLowerCase();
+  const slug = String(siteSlug || '').trim();
+  const webUrl = `https://${host}/sites/${slug}`;
   const payload = {
-    displayName: String(displayName || '').trim(),
-    name: String(siteSlug || '').trim(),
-    description: String(description || '').trim(),
-    siteCollection: { hostname: String(hostname || '').trim() },
-    template: 'teamSite',
+    name: String(displayName || '').trim() || slug,
+    webUrl,
+    description: String(description || '').trim() || 'Digitalkontroll site',
+    template: 'sts',
+    locale: 'en-US',
+    shareByEmailEnabled: false,
     ownerIdentityToResolve: { email: String(ownerEmail || '').trim() },
   };
 
@@ -48,10 +52,52 @@ async function graphCreateTeamSite({ hostname, siteSlug, displayName, descriptio
     body: JSON.stringify(payload),
   });
 
+  if (res.status === 202) {
+    const location = res.headers.get('Location');
+    if (location) {
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const statusRes = await fetch(location.startsWith('http') ? location : `https://graph.microsoft.com/beta${location.startsWith('/') ? '' : '/'}${location}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!statusRes.ok) continue;
+        const statusJson = await statusRes.json().catch(() => ({}));
+        if (statusJson?.status === 'completed') {
+          const resourceUrl = statusJson?.resourceLocation || statusJson?.targetResourceLocation;
+          if (resourceUrl) {
+            const getUrl = resourceUrl.startsWith('http') ? resourceUrl : `https://graph.microsoft.com/beta${resourceUrl.startsWith('/') ? '' : '/'}${resourceUrl}`;
+            const getRes = await fetch(getUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+            if (getRes.ok) {
+              const siteData = await getRes.json();
+              return { siteId: siteData.id, webUrl: siteData.webUrl };
+            }
+          }
+          const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
+          if (byPath) return byPath;
+        }
+        if (statusJson?.status === 'failed') {
+          const errMsg = statusJson?.error?.message || 'Site creation failed';
+          throw new Error(errMsg);
+        }
+      }
+    }
+    const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
+    if (byPath) return byPath;
+    throw new Error('Site skapades inte inom avvänt tid (202).');
+  }
+
   if (!res.ok) {
     const txt = await res.text();
-    if (res.status === 409 || res.status === 400) {
-      return null;
+    let graphMsg = txt;
+    try {
+      const errJson = JSON.parse(txt);
+      graphMsg = errJson?.error?.message || errJson?.error?.innerError?.message || txt;
+    } catch (_e) {}
+    if (res.status === 409) {
+      throw new Error(`Siten finns redan (409). ${graphMsg}`);
+    }
+    if (res.status === 400) {
+      throw new Error(`Graph avvisade skapandet (400): ${graphMsg}`);
     }
     throw new Error(`Graph createSite failed: ${res.status} - ${txt}`);
   }

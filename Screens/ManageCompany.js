@@ -5,7 +5,8 @@ import { ActivityIndicator, Alert, Animated, Image, KeyboardAvoidingView, Modal,
 import AdminQuickActionsGrid from '../components/common/AdminQuickActionsGrid';
 import CompanyOverviewCard from '../components/common/CompanyOverviewCard';
 import { HomeHeader } from '../components/common/HomeHeader';
-import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, fetchCompanySharePointSiteMetas, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, getSharePointNavigationConfig, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, saveSharePointNavigationConfig, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, syncSharePointSiteVisibilityRemote, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
+import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, fetchCompanySharePointSiteMetas, functionsClient, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, getSharePointNavigationConfig, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, saveSharePointNavigationConfig, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, syncSharePointSiteVisibilityRemote, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
+import ContextMenu from '../components/ContextMenu';
 import MainLayout from '../components/MainLayout';
 import { PROJECT_PHASES } from '../features/projects/constants';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
@@ -67,6 +68,9 @@ export default function ManageCompany({ navigation, route }) {
   const [sharePointRenameSiteId, setSharePointRenameSiteId] = useState('');
   const [sharePointRenameCurrentName, setSharePointRenameCurrentName] = useState('');
   const [sharePointRenameDraft, setSharePointRenameDraft] = useState('');
+  const [spKebabSiteId, setSpKebabSiteId] = useState(null);
+  const [spKebabPosition, setSpKebabPosition] = useState({ x: 0, y: 0 });
+  const spKebabButtonRefs = useRef({});
   const [phaseSharePointConfigs, setPhaseSharePointConfigs] = useState({});
   const [phaseConfigModalVisible, setPhaseConfigModalVisible] = useState(false);
   const [selectedPhaseForConfig, setSelectedPhaseForConfig] = useState(null);
@@ -1151,14 +1155,6 @@ export default function ManageCompany({ navigation, route }) {
       return { backgroundColor: '#F3F4F6', color: '#374151', borderColor: '#E5E7EB' };
     };
 
-    const normalizeSiteSlug = (value) => {
-      return String(value || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 50);
-    };
-
     const createCustomSharePointSite = async () => {
       const cid = String(companyId || '').trim();
       if (!cid) return;
@@ -1170,60 +1166,23 @@ export default function ManageCompany({ navigation, route }) {
       const baseName = String(companyName || cid).trim();
       const namePart = String(window.prompt('Namn på ny site', '') || '').trim();
       if (!namePart) return;
-      const displayName = `${baseName} – DK ${namePart}`;
-      const slug = normalizeSiteSlug(displayName);
-      if (!slug) {
-        try { window.alert('Ogiltigt namn. Prova ett enklare namn.'); } catch (_e) {}
-        return;
-      }
 
       setSharePointSiteCreating(true);
       try {
-        const { getAccessToken } = await import('../services/azure/authService');
-        const { getAzureConfig } = await import('../services/azure/config');
-        const accessToken = await getAccessToken();
-        const cfg = getAzureConfig();
-        const hostname = cfg?.sharePointSiteUrl ? new URL(cfg.sharePointSiteUrl).hostname : '';
-        if (!accessToken || !hostname) throw new Error('Saknar SharePoint-konfiguration eller access token.');
-
-        const ownerEmail = String(auth?.currentUser?.email || '').trim();
-        const createRes = await fetch('https://graph.microsoft.com/beta/sites', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            displayName,
-            name: slug,
-            description: `Digitalkontroll site for ${baseName}`,
-            siteCollection: { hostname },
-            template: 'teamSite',
-            ownerIdentityToResolve: ownerEmail ? { email: ownerEmail } : undefined,
-          }),
+        if (!auth?.currentUser) throw new Error('Du måste vara inloggad för att skapa en site.');
+        try { await auth.currentUser.getIdToken(true); } catch (_t) { /* force refresh token */ }
+        if (!functionsClient) throw new Error('Functions client inte tillgänglig');
+        const { httpsCallable } = await import('firebase/functions');
+        const createSharePointSite = httpsCallable(functionsClient, 'createSharePointSite');
+        const result = await createSharePointSite({
+          companyId: cid,
+          companyName: baseName,
+          siteNamePart: namePart,
         });
-
-        let siteData = null;
-        if (createRes.ok) {
-          siteData = await createRes.json();
-        } else {
-          const txt = await createRes.text();
-          if (createRes.status === 409 || createRes.status === 400) {
-            const getRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${hostname}:/sites/${slug}`, {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            if (getRes.ok) {
-              siteData = await getRes.json();
-            } else {
-              throw new Error(`Kunde inte hitta befintlig site: ${txt}`);
-            }
-          } else {
-            throw new Error(`Kunde inte skapa site: ${txt}`);
-          }
-        }
-
-        const createdId = String(siteData?.id || '').trim();
-        const createdUrl = String(siteData?.webUrl || '').trim();
+        const data = result?.data;
+        const createdId = data?.siteId ? String(data.siteId).trim() : '';
+        const createdUrl = data?.webUrl ? String(data.webUrl).trim() : null;
+        const displayName = data?.siteName || `${baseName} – DK ${namePart}`;
         if (!createdId) throw new Error('Skapad site saknar id.');
 
         await upsertCompanySharePointSiteMeta(cid, {
@@ -1236,7 +1195,12 @@ export default function ManageCompany({ navigation, route }) {
 
         await reloadCompanySharePointSites(cid, { silent: false });
       } catch (e) {
-        try { window.alert('Kunde inte skapa site: ' + (e?.message || e)); } catch (_e) {}
+        const msg = e?.message || String(e);
+        const code = e?.code || e?.details?.code || '';
+        const codeStr = String(code);
+        const isServerError = /failed-precondition|permission-denied|unauthenticated|invalid-argument|functions\//.test(codeStr);
+        const userMsg = isServerError ? msg : 'Kunde inte skapa site: ' + msg;
+        try { window.alert(userMsg); } catch (_a) {}
       } finally {
         setSharePointSiteCreating(false);
       }
@@ -1598,14 +1562,36 @@ export default function ManageCompany({ navigation, route }) {
                         <Ionicons name="cloud-outline" size={20} color="#1976D2" />
                         <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>SharePoint</Text>
                       </View>
-                      <TouchableOpacity
-                        onPress={() => { setSpinSpSitesRefresh((n) => n + 1); reloadCompanySharePointSites(companyId, { silent: false }); }}
-                        disabled={companySharePointSiteMetasLoading || busyCount > 0}
-                        style={{ padding: 6, borderRadius: 8, opacity: (companySharePointSiteMetasLoading || busyCount > 0) ? 0.6 : 1 }}
-                        accessibilityLabel="Uppdatera listan"
-                      >
-                        <Ionicons name="refresh" size={20} color="#1976D2" style={Platform.OS === 'web' ? { transform: `rotate(${spinSpSitesRefresh * 360}deg)`, transition: 'transform 0.4s ease' } : { transform: [{ rotate: `${spinSpSitesRefresh * 360}deg` }] }} />
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <TouchableOpacity
+                          onPress={createCustomSharePointSite}
+                          disabled={sharePointSiteCreating || busyCount > 0}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: 8,
+                            backgroundColor: (sharePointSiteCreating || busyCount > 0) ? '#E5E7EB' : '#EFF6FF',
+                            borderWidth: 1,
+                            borderColor: (sharePointSiteCreating || busyCount > 0) ? '#D1D5DB' : '#BFDBFE',
+                            opacity: (sharePointSiteCreating || busyCount > 0) ? 0.7 : 1,
+                          }}
+                          accessibilityLabel="Lägg till ny site"
+                        >
+                          <Ionicons name="add" size={18} color={(sharePointSiteCreating || busyCount > 0) ? '#9CA3AF' : '#1976D2'} />
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: (sharePointSiteCreating || busyCount > 0) ? '#9CA3AF' : '#1976D2' }}>Ny site</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => { setSpinSpSitesRefresh((n) => n + 1); reloadCompanySharePointSites(companyId, { silent: false }); }}
+                          disabled={companySharePointSiteMetasLoading || busyCount > 0}
+                          style={{ padding: 6, borderRadius: 8, opacity: (companySharePointSiteMetasLoading || busyCount > 0) ? 0.6 : 1 }}
+                          accessibilityLabel="Uppdatera listan"
+                        >
+                          <Ionicons name="refresh" size={20} color="#1976D2" style={Platform.OS === 'web' ? { transform: `rotate(${spinSpSitesRefresh * 360}deg)`, transition: 'transform 0.4s ease' } : { transform: [{ rotate: `${spinSpSitesRefresh * 360}deg` }] }} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                     <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 6 }}>
                       Siter som företaget har tillgång till. DK Bas och DK Site är låsta och kan inte tas bort.
@@ -1624,14 +1610,17 @@ export default function ManageCompany({ navigation, route }) {
                           if (entries.length === 0) {
                             return (
                               <View style={{ padding: 16 }}>
-                                <Text style={{ fontSize: 13, color: '#6B7280' }}>Inga siter ännu. Klicka på &quot;Skapa ny site&quot; nedan.</Text>
+                                <Text style={{ fontSize: 13, color: '#6B7280' }}>Inga siter ännu. Klicka på &quot;+ Ny site&quot; ovan för att lägga till.</Text>
                               </View>
                             );
                           }
-                          const typLabel = (role) => {
-                            const r = normalizeRoleLabel(role);
-                            if (r === 'system') return 'System (DK Bas) · Låst';
-                            if (r === 'projects') return 'Projekt (DK Site)';
+                          const typLabel = (entry) => {
+                            const r = normalizeRoleLabel(entry?.role);
+                            const name = String(entry?.siteName || '').trim();
+                            if (r === 'system') return 'System låst';
+                            if (r === 'projects') return 'System låst';
+                            if (/dk\s*bas/i.test(name)) return 'System låst';
+                            if (/dk\s*site/i.test(name)) return 'System låst';
                             return 'Extra';
                           };
                           return entries.map((entry) => {
@@ -1653,77 +1642,32 @@ export default function ManageCompany({ navigation, route }) {
                                   <Text style={{ fontSize: 13, fontWeight: '500', color: '#111827' }} numberOfLines={1}>{siteName}</Text>
                                   <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }} numberOfLines={1}>{sid}</Text>
                                 </View>
-                                <Text style={{ fontSize: 12, color: '#374151', width: 140 }} numberOfLines={1}>{typLabel(entry?.role)}</Text>
+                                <Text style={{ fontSize: 12, color: '#374151', width: 140 }} numberOfLines={1}>{typLabel(entry)}</Text>
                                 <View style={{ width: 72 }}>
                                   <View style={{ paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1, borderColor: pill.borderColor, backgroundColor: pill.backgroundColor, alignSelf: 'flex-start' }}>
                                     <Text style={{ fontSize: 11, fontWeight: '600', color: pill.color }}>{status.label}</Text>
                                   </View>
                                 </View>
-                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: 140 }}>
-                                  {isSystem ? (
-                                    canOpenSystem ? (
-                                      <TouchableOpacity onPress={() => openInSharePoint(siteUrl)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#f0f7ff', borderWidth: 1, borderColor: '#cfe3ff' }}>
-                                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#1976D2' }}>Öppna</Text>
-                                      </TouchableOpacity>
-                                    ) : (
-                                      <Text style={{ fontSize: 11, color: '#9CA3AF' }}>—</Text>
-                                    )
-                                  ) : null}
-                                  {isProjects ? (
-                                    siteUrl ? (
-                                      <TouchableOpacity onPress={() => openInSharePoint(siteUrl)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#f0f7ff', borderWidth: 1, borderColor: '#cfe3ff' }}>
-                                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#1976D2' }}>Öppna</Text>
-                                      </TouchableOpacity>
-                                    ) : (
-                                      <Text style={{ fontSize: 11, color: '#9CA3AF' }}>—</Text>
-                                    )
-                                  ) : null}
-                                  {isCustom ? (
-                                    <>
-                                      {siteUrl ? (
-                                        <TouchableOpacity onPress={() => openInSharePoint(siteUrl)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#f0f7ff', borderWidth: 1, borderColor: '#cfe3ff' }}>
-                                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#1976D2' }}>Öppna</Text>
-                                        </TouchableOpacity>
-                                      ) : null}
-                                      <TouchableOpacity
-                                        onPress={() => { setSharePointRenameSiteId(sid); setSharePointRenameCurrentName(siteName); setSharePointRenameDraft(siteName); }}
-                                        disabled={busyCount > 0}
-                                        style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB', opacity: busyCount > 0 ? 0.6 : 1 }}
-                                      >
-                                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#374151' }}>Byt namn</Text>
-                                      </TouchableOpacity>
-                                      <TouchableOpacity
-                                        onPress={async () => {
-                                          if (!companyId) return;
-                                          const compId = String(companyId).trim();
-                                          const conf = (typeof window !== 'undefined') ? window.confirm(`Ta bort kopplingen till "${siteName}"?\n\nDetta tar bort siten från företaget i Digitalkontroll. Siten raderas inte i SharePoint.`) : true;
-                                          if (!conf) return;
-                                          const endBusy = beginBusy('Tar bort…', { silent: false });
-                                          try {
-                                            const { deleteDoc, doc } = await import('firebase/firestore');
-                                            const { db } = await import('../components/firebase');
-                                            await deleteDoc(doc(db, 'foretag', compId, 'sharepoint_sites', sid));
-                                            try {
-                                              const cfg = await getSharePointNavigationConfig(compId).catch(() => null);
-                                              const enabledSites = Array.isArray(cfg?.enabledSites) ? cfg.enabledSites : [];
-                                              const nextEnabled = enabledSites.filter((x) => String(x || '').trim() !== sid);
-                                              await saveSharePointNavigationConfig(compId, { ...(cfg || {}), enabledSites: nextEnabled });
-                                            } catch (_e) {}
-                                            await reloadCompanySharePointSites(compId, { silent: true });
-                                          } catch (e) {
-                                            console.error('[ManageCompany] Delete custom site meta failed:', e);
-                                            try { if (typeof window !== 'undefined') window.alert('Kunde inte ta bort: ' + (e?.message || e)); } catch (_e) {}
-                                          } finally {
-                                            endBusy();
-                                          }
-                                        }}
-                                        disabled={busyCount > 0}
-                                        style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FECACA', opacity: busyCount > 0 ? 0.6 : 1 }}
-                                      >
-                                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#C62828' }}>Ta bort</Text>
-                                      </TouchableOpacity>
-                                    </>
-                                  ) : null}
+                                <View style={{ width: 140, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                                  <TouchableOpacity
+                                    ref={(el) => { spKebabButtonRefs.current[sid] = el; }}
+                                    onPress={() => {
+                                      const node = spKebabButtonRefs.current[sid];
+                                      if (node && typeof node.measureInWindow === 'function') {
+                                        node.measureInWindow((x, y, w, h) => {
+                                          setSpKebabPosition({ x, y: y + (h || 0) + 4 });
+                                          setSpKebabSiteId(sid);
+                                        });
+                                      } else {
+                                        setSpKebabPosition({ x: 0, y: 0 });
+                                        setSpKebabSiteId(sid);
+                                      }
+                                    }}
+                                    style={{ padding: 8, borderRadius: 8, opacity: busyCount > 0 ? 0.6 : 1 }}
+                                    accessibilityLabel="Åtgärder"
+                                  >
+                                    <Ionicons name="ellipsis-vertical" size={20} color="#6B7280" />
+                                  </TouchableOpacity>
                                 </View>
                               </View>
                             );
@@ -1732,13 +1676,67 @@ export default function ManageCompany({ navigation, route }) {
                       </ScrollView>
                     </View>
 
-                    <TouchableOpacity
-                      onPress={createCustomSharePointSite}
-                      disabled={sharePointSiteCreating || busyCount > 0}
-                      style={{ marginTop: 16, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, backgroundColor: (sharePointSiteCreating || busyCount > 0) ? '#9CA3AF' : '#1976D2', opacity: (sharePointSiteCreating || busyCount > 0) ? 0.7 : 1 }}
-                    >
-                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Skapa ny site</Text>
-                    </TouchableOpacity>
+                    {(() => {
+                      const kebabEntry = spKebabSiteId ? buildZone3SiteEntries().find((e) => String(e?.siteId || '').trim() === String(spKebabSiteId || '').trim()) : null;
+                      const role = kebabEntry ? normalizeRoleLabel(kebabEntry?.role) : null;
+                      const isSystemRole = role === 'system';
+                      const isProjectsRole = role === 'projects';
+                      const isCustomRole = role === 'custom';
+                      const kebabSiteUrl = String(kebabEntry?.siteUrl || '').trim();
+                      const kebabSiteName = String(kebabEntry?.siteName || 'SharePoint-site').trim();
+                      const kebabItems = [];
+                      if (kebabSiteUrl) kebabItems.push({ key: 'open', label: 'Öppna' });
+                      if (isCustomRole) {
+                        kebabItems.push({ key: 'rename', label: 'Byt namn' });
+                        kebabItems.push({ key: 'delete', label: 'Ta bort', danger: true });
+                      }
+                      return (
+                        <ContextMenu
+                          visible={!!spKebabSiteId && kebabItems.length > 0}
+                          x={spKebabPosition.x}
+                          y={spKebabPosition.y}
+                          items={kebabItems}
+                          onSelect={(item) => {
+                            const key = item?.key;
+                            if (key === 'open' && kebabSiteUrl) openInSharePoint(kebabSiteUrl);
+                            if (key === 'rename' && spKebabSiteId) {
+                              setSharePointRenameSiteId(spKebabSiteId);
+                              setSharePointRenameCurrentName(kebabSiteName);
+                              setSharePointRenameDraft(kebabSiteName);
+                            }
+                            if (key === 'delete' && spKebabSiteId && companyId) {
+                              const compId = String(companyId).trim();
+                              const conf = (typeof window !== 'undefined') ? window.confirm(`Ta bort kopplingen till "${kebabSiteName}"?\n\nDetta tar bort siten från företaget i Digitalkontroll. Siten raderas inte i SharePoint.`) : true;
+                              if (!conf) { setSpKebabSiteId(null); return; }
+                              const endBusy = beginBusy('Tar bort…', { silent: false });
+                              (async () => {
+                                try {
+                                  const { deleteDoc, doc } = await import('firebase/firestore');
+                                  const { db } = await import('../components/firebase');
+                                  await deleteDoc(doc(db, 'foretag', compId, 'sharepoint_sites', spKebabSiteId));
+                                  try {
+                                    const cfg = await getSharePointNavigationConfig(compId).catch(() => null);
+                                    const enabledSites = Array.isArray(cfg?.enabledSites) ? cfg.enabledSites : [];
+                                    const nextEnabled = enabledSites.filter((x) => String(x || '').trim() !== spKebabSiteId);
+                                    await saveSharePointNavigationConfig(compId, { ...(cfg || {}), enabledSites: nextEnabled });
+                                  } catch (_e) {}
+                                  await reloadCompanySharePointSites(compId, { silent: true });
+                                } catch (e) {
+                                  console.error('[ManageCompany] Delete custom site meta failed:', e);
+                                  try { if (typeof window !== 'undefined') window.alert('Kunde inte ta bort: ' + (e?.message || e)); } catch (_e) {}
+                                } finally {
+                                  endBusy();
+                                  setSpKebabSiteId(null);
+                                }
+                              })();
+                              return;
+                            }
+                            setSpKebabSiteId(null);
+                          }}
+                          onClose={() => setSpKebabSiteId(null)}
+                        />
+                      );
+                    })()}
                   </View>
                 ) : null}
 

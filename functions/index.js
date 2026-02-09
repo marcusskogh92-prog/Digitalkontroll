@@ -10,6 +10,7 @@ const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
 const { syncSharePointSiteVisibility, upsertCompanySharePointSiteMeta } = require('./sharepointVisibility');
 const { provisionCompanyImpl } = require('./companyProvisioning');
+const { createSharePointSiteImpl } = require('./sharepointProvisioning');
 const { createUser, deleteUser, updateUser } = require('./userAdmin');
 const { requestSubscriptionUpgrade } = require('./billing');
 const { setSuperadmin } = require('./superadmin');
@@ -23,6 +24,7 @@ exports.upsertCompanySharePointSiteMeta = functions.https.onCall(upsertCompanySh
 
 exports.provisionCompany = functions.https.onCall(provisionCompanyImpl);
 exports.provisionCompanyImpl = provisionCompanyImpl;
+exports.createSharePointSite = functions.https.onCall(createSharePointSiteImpl);
 
 exports.createUser = functions.https.onCall(createUser);
 exports.requestSubscriptionUpgrade = functions.https.onCall(requestSubscriptionUpgrade);
