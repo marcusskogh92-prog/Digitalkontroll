@@ -6,9 +6,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
+import { AdminModalContext } from './AdminModalContext';
 import { auth, fetchCompanies } from '../firebase';
 
 const dispatchWindowEvent = (name, detail) => {
@@ -33,6 +34,7 @@ export default function AdminSidebar({
   showCompanySelector = true,
 }) {
   const navigation = useNavigation();
+  const { openAIPromptsModal } = useContext(AdminModalContext) || {};
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -171,6 +173,7 @@ export default function AdminSidebar({
       items.push(
         { key: 'manage_users', label: 'Användare', icon: 'person', color: '#1976D2', screen: 'ManageUsers' },
         { key: 'contact_registry', label: 'Kontaktregister', icon: 'book-outline', color: '#1976D2', screen: 'ContactRegistry' },
+        { key: 'ai_prompts', label: 'AI-analys', icon: 'sparkles-outline', color: '#1976D2', screen: 'AIPrompts' },
         { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#1976D2', screen: 'Suppliers' },
         { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#1976D2', screen: 'Customers' },
         { key: 'sharepoint_sites', label: 'SharePoint', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageCompany', focus: 'sharepoint' },
@@ -238,6 +241,9 @@ export default function AdminSidebar({
         navigation.navigate('Suppliers', { companyId: cid });
       } else if (item.screen === 'Customers') {
         navigation.navigate('Customers', { companyId: cid });
+      } else if (item.screen === 'AIPrompts') {
+        if (openAIPromptsModal) openAIPromptsModal(cid);
+        else navigation.navigate('AIPrompts', { companyId: cid });
       } else if (item.screen === 'ManageSharePointNavigation') {
         navigation.navigate('ManageSharePointNavigation', { companyId: cid });
       }

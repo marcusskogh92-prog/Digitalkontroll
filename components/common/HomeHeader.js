@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Platform, Pressable, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { showAlert } from '../../utils/alerts';
 import { fetchCompanySharePointSiteMetas } from '../firebase';
 import { checkSharePointSiteById } from '../../services/azure/hierarchyService';
+import { AdminModalContext } from './AdminModalContext';
 import ContextMenu from '../ContextMenu';
 import HeaderDisplayName from '../HeaderDisplayName';
 import HeaderUserMenu from '../HeaderUserMenu';
@@ -41,12 +42,17 @@ export function HomeHeader({
   saveControlToFirestore,
   saveDraftToFirestore,
   searchSpinAnim,
-  sharePointStatus,
+  sharePointStatus: sharePointStatusProp,
   userNotifications = [],
   notificationsUnreadCount = 0,
   notificationsError = null,
   formatRelativeTime,
 }) {
+  const sharePointStatus = sharePointStatusProp && typeof sharePointStatusProp === 'object'
+    ? sharePointStatusProp
+    : { checking: false, connected: false };
+  const hasSharePointAnim = searchSpinAnim != null && typeof searchSpinAnim?.interpolate === 'function';
+
   const userBtnRef = useRef(null);
   const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
@@ -65,6 +71,29 @@ export function HomeHeader({
   const [notificationDropdownPosition, setNotificationDropdownPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const notificationBellRef = useRef(null);
   const [notificationBellHover, setNotificationBellHover] = useState(false);
+  const [registerHover, setRegisterHover] = useState(false);
+  const [adminDropdownVisible, setAdminDropdownVisible] = useState(false);
+  const [adminDropdownPosition, setAdminDropdownPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const adminButtonRef = useRef(null);
+  const [registerDropdownVisible, setRegisterDropdownVisible] = useState(false);
+  const [registerDropdownPosition, setRegisterDropdownPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const registerButtonRef = useRef(null);
+  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal } = useContext(AdminModalContext) || {};
+
+  /** Samma logik som Kunder/Kontakter: använd inloggat företag (companyId/route eller token). */
+  const getEffectiveCompanyIdForRegister = useCallback(async () => {
+    const fromProps = String(companyId || routeCompanyId || '').trim();
+    if (fromProps) return fromProps;
+    try {
+      const user = auth?.currentUser;
+      if (user && typeof user.getIdTokenResult === 'function') {
+        const tokenRes = await user.getIdTokenResult(false).catch(() => null);
+        const cid = String(tokenRes?.claims?.companyId || '').trim();
+        if (cid) return cid;
+      }
+    } catch (_e) {}
+    return '';
+  }, [auth, companyId, routeCompanyId]);
 
   const email = route?.params?.email || '';
   const firstName = formatPersonName(email);
@@ -239,6 +268,7 @@ export function HomeHeader({
             setLeftHeaderWidth(w);
           }
         }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
       >
         {Platform.OS !== 'web' ? (() => {
           let displayName = '';
@@ -257,14 +287,11 @@ export function HomeHeader({
           const colors = ['#F44336','#E91E63','#9C27B0','#3F51B5','#2196F3','#03A9F4','#009688','#4CAF50','#FF9800','#FFC107'];
           const avatarBg = colors[Math.abs(hash) % colors.length];
 
-          const menuItems = [];
-          if (isSuperAdmin) {
-            menuItems.push({ key: 'manage_company', label: 'Hantera företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-            menuItems.push({ key: 'manage_users', label: 'Hantera användare', icon: <Ionicons name="person-add" size={16} color="#1976D2" /> });
-            menuItems.push({ key: 'admin_audit', label: 'Adminlogg', icon: <Ionicons name="list" size={16} color="#1565C0" /> });
-          }
-
-          menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
+          const menuItems = [
+            { key: 'switch_company', label: 'Byta företag', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> },
+            { key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> },
+            { key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> },
+          ];
 
           return (
             <>
@@ -295,16 +322,12 @@ export function HomeHeader({
                   try {
                     setUserMenuVisible(false);
                     if (!it) return;
-                    if (it.key === 'manage_company') {
-                      try { navigation.navigate('ManageCompany'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna Hantera företag'); }
+                    if (it.key === 'switch_company') {
+                      try { navigation.navigate('Home'); } catch(_e) {}
                       return;
                     }
-                    if (it.key === 'admin_audit') {
-                      try { navigation.navigate('AdminAuditLog'); } catch(_e) { Alert.alert('Fel', 'Kunde inte öppna adminlogg'); }
-                      return;
-                    }
-                    if (it.key === 'manage_users') {
-                      try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) { Alert.alert('Valt', it.label); }
+                    if (it.key === 'my_profile') {
+                      try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) {}
                       return;
                     }
                     if (it.key === 'logout') {
@@ -319,32 +342,19 @@ export function HomeHeader({
                       }
                       return;
                     }
-                    Alert.alert('Valt', it.label);
                   } catch(_e) {}
                 }}
               />
             </>
           );
         })() : null}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8, marginLeft: 8 }}>
-          {Platform.OS === 'web' ? (
-            <>
-              <View style={{ marginRight: 6 }}>
-                {showHeaderUserMenu ? (
-                  <HeaderUserMenu />
-                ) : <HeaderDisplayName />}
-              </View>
-              {allowedTools ? (
-                <TouchableOpacity
-                  style={{ backgroundColor: '#f0f0f0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, alignSelf: 'flex-start' }}
-                  onPress={() => setSupportMenuOpen(s => !s)}
-                >
-                  <Text style={{ color: '#222', fontWeight: '700' }}>{supportMenuOpen ? 'Stäng verktyg' : 'Verktyg'}</Text>
-                </TouchableOpacity>
-              ) : null}
-            </>
-          ) : null}
-        </View>
+        {Platform.OS === 'web' ? (
+          <View style={{ marginRight: 6 }}>
+            {showHeaderUserMenu ? (
+              <HeaderUserMenu />
+            ) : <HeaderDisplayName />}
+          </View>
+        ) : null}
       </View>
 
       <View
@@ -357,10 +367,150 @@ export function HomeHeader({
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 8,
+          gap: 10,
         }}
       >
-        <UploadPanelTrigger />
+        {canShowSharePointNav ? (
+          <TouchableOpacity
+            onPress={() => {
+              try {
+                const cid = String(companyId || routeCompanyId || '').trim();
+                navigation.navigate('ManageSharePointNavigation', cid ? { companyId: cid } : undefined);
+              } catch (_e) {}
+            }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 8,
+              borderRadius: 8,
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+            }}
+            accessibilityLabel="SharePoint Nav"
+          >
+            <Ionicons name="git-branch-outline" size={20} color="#1976D2" />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Nav</Text>
+          </TouchableOpacity>
+        ) : null}
+        {(showAdminButton || canShowSharePointNav) ? (
+          <View style={{ position: 'relative' }}>
+            <View ref={adminButtonRef} collapsable={false}>
+              <TouchableOpacity
+                onPress={() => {
+                  const next = !adminDropdownVisible;
+                  if (!next) {
+                    setAdminDropdownVisible(false);
+                    return;
+                  }
+                  setRegisterDropdownVisible(false);
+                  const node = adminButtonRef.current;
+                  if (node && typeof node.measureInWindow === 'function') {
+                    node.measureInWindow((x, y, w, h) => {
+                      setAdminDropdownPosition({ left: x, top: y + (h || 0) + 4, width: w || 0, height: h || 0 });
+                      setAdminDropdownVisible(true);
+                    });
+                  } else {
+                    setAdminDropdownVisible(true);
+                  }
+                }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingVertical: 6,
+                  paddingHorizontal: 8,
+                  borderRadius: 8,
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                }}
+                accessibilityLabel="Administration"
+              >
+                <Ionicons name="settings-outline" size={20} color="#1976D2" />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Administration</Text>
+                <Ionicons name="chevron-down" size={14} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            {adminDropdownVisible && Platform.OS !== 'web' && (
+              <>
+                <Pressable style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 9998 }} onPress={() => setAdminDropdownVisible(false)} />
+                <View style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 200, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#ddd', zIndex: 9999, paddingVertical: 8 }}>
+                  <Text style={{ paddingHorizontal: 12, paddingBottom: 6, fontSize: 12, fontWeight: '700', color: '#333' }}>Administration</Text>
+                  <TouchableOpacity onPress={async () => { setAdminDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openContactRegistryModal) openContactRegistryModal(cid); else navigation.navigate('ContactRegistry', { companyId: cid, allCompanies: !!isSuperAdminResolved }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Kontaktregister</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setAdminDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openSuppliersModal) openSuppliersModal(cid); else navigation.navigate('Suppliers', { companyId: cid }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Leverantörer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setAdminDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openCustomersModal) openCustomersModal(cid); else navigation.navigate('Customers', { companyId: cid }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Kunder</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setAdminDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openAIPromptsModal) openAIPromptsModal(cid); else navigation.navigate('AIPrompts', { companyId: cid }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>AI-analys</Text>
+                </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        ) : null}
+        <View style={{ position: 'relative' }}>
+          <View ref={registerButtonRef} collapsable={false}>
+            <TouchableOpacity
+              onPress={() => {
+                const next = !registerDropdownVisible;
+                if (!next) {
+                  setRegisterDropdownVisible(false);
+                  setAdminDropdownVisible(false);
+                  return;
+                }
+                setAdminDropdownVisible(false);
+                const node = registerButtonRef.current;
+                if (node && typeof node.measureInWindow === 'function') {
+                  node.measureInWindow((x, y, w, h) => {
+                    setRegisterDropdownPosition({ left: x, top: y + (h || 0) + 4, width: w || 0, height: h || 0 });
+                    setRegisterDropdownVisible(true);
+                  });
+                } else {
+                  setRegisterDropdownVisible(true);
+                }
+              }}
+              onMouseEnter={() => Platform.OS === 'web' && setRegisterHover(true)}
+              onMouseLeave={() => Platform.OS === 'web' && setRegisterHover(false)}
+              style={{
+                position: 'relative',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingVertical: 6,
+                paddingHorizontal: 8,
+                borderRadius: 8,
+                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                ...(registerHover && Platform.OS === 'web' ? { opacity: 0.85, backgroundColor: 'rgba(0,0,0,0.06)' } : {}),
+              }}
+              accessibilityLabel="Register"
+            >
+              <Ionicons name="grid-outline" size={20} color="#1976D2" />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Register</Text>
+              <Ionicons name="chevron-down" size={14} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+          {registerDropdownVisible && Platform.OS !== 'web' && (
+            <>
+              <Pressable style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 9998 }} onPress={() => setRegisterDropdownVisible(false)} />
+              <View style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, minWidth: 200, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#ddd', zIndex: 9999, paddingVertical: 8 }}>
+                <Text style={{ paddingHorizontal: 12, paddingBottom: 6, fontSize: 12, fontWeight: '700', color: '#333' }}>Register</Text>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openByggdelModal) openByggdelModal(cid); else navigation.navigate('ManageCompany', { focus: 'byggdel' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Byggdelstabell</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKontoplanModal) openKontoplanModal(cid); else navigation.navigate('ManageCompany', { focus: 'kontoplan' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Kontoplan</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openMallarModal) openMallarModal(cid); else showAlert('Utveckling pågår', 'Denna del är under utveckling.'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Mallar</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
         <View ref={notificationBellRef} collapsable={false} style={{ position: 'relative' }}>
           <TouchableOpacity
             onPress={() => {
@@ -383,34 +533,41 @@ export function HomeHeader({
             onMouseLeave={() => Platform.OS === 'web' && setNotificationBellHover(false)}
             style={{
               position: 'relative',
-              padding: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 8,
               borderRadius: 8,
               ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
               ...(notificationBellHover && Platform.OS === 'web' ? { opacity: 0.85, backgroundColor: 'rgba(0,0,0,0.06)' } : {}),
             }}
             accessibilityLabel="Notiser"
           >
-            <Ionicons name="notifications-outline" size={26} color="#1976D2" />
-            {notificationsUnreadCount > 0 ? (
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 4,
-                  right: 4,
-                  backgroundColor: '#D32F2F',
-                  borderRadius: 10,
-                  minWidth: 18,
-                  height: 18,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  paddingHorizontal: 5,
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                  {notificationsUnreadCount > 99 ? '99+' : notificationsUnreadCount}
-                </Text>
-              </View>
-            ) : null}
+            <View style={{ position: 'relative' }}>
+              <Ionicons name="notifications-outline" size={20} color="#1976D2" />
+              {notificationsUnreadCount > 0 ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -6,
+                    backgroundColor: '#D32F2F',
+                    borderRadius: 10,
+                    minWidth: 18,
+                    height: 18,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    paddingHorizontal: 5,
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                    {notificationsUnreadCount > 9 ? '9+' : notificationsUnreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Notiser</Text>
           </TouchableOpacity>
         </View>
         {notificationDropdownVisible && Platform.OS !== 'web' && (
@@ -447,29 +604,6 @@ export function HomeHeader({
             </View>
           </>
         )}
-        {canShowSharePointNav ? (
-          <TouchableOpacity
-            onPress={() => {
-              try {
-                const cid = String(companyId || routeCompanyId || '').trim();
-                navigation.navigate('ManageSharePointNavigation', cid ? { companyId: cid } : undefined);
-              } catch (_e) {}
-            }}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: '#CFE3FF',
-              backgroundColor: '#F0F7FF',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            accessibilityLabel="SharePoint Nav"
-          >
-            <Ionicons name="git-branch-outline" size={18} color="#1976D2" />
-          </TouchableOpacity>
-        ) : null}
         <View style={{ position: 'relative' }} ref={sharePointCloudRef} collapsable={false}>
           <TouchableOpacity
             onPress={async () => {
@@ -510,7 +644,11 @@ export function HomeHeader({
             onMouseEnter={() => Platform.OS === 'web' && setSharePointCloudHover(true)}
             onMouseLeave={() => Platform.OS === 'web' && setSharePointCloudHover(false)}
             style={{
-              padding: 4,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 8,
               borderRadius: 8,
               ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
               ...(sharePointCloudHover && Platform.OS === 'web' ? { opacity: 0.85, backgroundColor: 'rgba(0,0,0,0.06)' } : {}),
@@ -519,90 +657,107 @@ export function HomeHeader({
           >
             <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
               {sharePointStatus.checking ? (
-                <Animated.View
-                  style={{
-                    opacity: searchSpinAnim.interpolate({
-                      inputRange: [0, 0.5, 1],
-                      outputRange: [0.5, 1, 0.5],
-                    }),
-                  }}
-                >
+                hasSharePointAnim ? (
+                  <Animated.View
+                    style={{
+                      opacity: searchSpinAnim.interpolate({
+                        inputRange: [0, 0.5, 1],
+                        outputRange: [0.5, 1, 0.5],
+                      }),
+                    }}
+                  >
+                    <Ionicons name="hourglass-outline" size={24} color="#888" />
+                  </Animated.View>
+                ) : (
                   <Ionicons name="hourglass-outline" size={24} color="#888" />
-                </Animated.View>
+                )
               ) : sharePointStatus.connected ? (
                 <>
                   <Ionicons name="cloud" size={32} color="#1976D2" />
-                  <Animated.View
-                    style={{
-                      position: 'absolute',
-                      bottom: -2,
-                      right: -2,
-                      opacity: searchSpinAnim.interpolate({
-                        inputRange: [0, 0.5, 1],
-                        outputRange: [0.6, 1, 0.6],
-                      }),
-                      transform: [{
-                        scale: searchSpinAnim.interpolate({
-                          inputRange: [0, 0.5, 1],
-                          outputRange: [0.9, 1.1, 0.9],
-                        }),
-                      }],
-                    }}
-                  >
-                    <View
+                  {hasSharePointAnim ? (
+                    <Animated.View
                       style={{
-                        backgroundColor: '#43A047',
-                        borderRadius: 10,
-                        width: 20,
-                        height: 20,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: 2,
-                        borderColor: '#fff',
+                        position: 'absolute',
+                        bottom: -2,
+                        right: -2,
+                        opacity: searchSpinAnim.interpolate({
+                          inputRange: [0, 0.5, 1],
+                          outputRange: [0.6, 1, 0.6],
+                        }),
+                        transform: [{
+                          scale: searchSpinAnim.interpolate({
+                            inputRange: [0, 0.5, 1],
+                            outputRange: [0.9, 1.1, 0.9],
+                          }),
+                        }],
                       }}
                     >
+                      <View
+                        style={{
+                          backgroundColor: '#43A047',
+                          borderRadius: 10,
+                          width: 20,
+                          height: 20,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: 2,
+                          borderColor: '#fff',
+                        }}
+                      >
+                        <Ionicons name="sync" size={12} color="#fff" />
+                      </View>
+                    </Animated.View>
+                  ) : (
+                    <View style={{ position: 'absolute', bottom: -2, right: -2, backgroundColor: '#43A047', borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
                       <Ionicons name="sync" size={12} color="#fff" />
                     </View>
-                  </Animated.View>
+                  )}
                 </>
               ) : (
                 <>
                   <Ionicons name="cloud" size={32} color="#999" />
-                  <Animated.View
-                    style={{
-                      position: 'absolute',
-                      bottom: -2,
-                      right: -2,
-                      opacity: searchSpinAnim.interpolate({
-                        inputRange: [0, 0.5, 1],
-                        outputRange: [0.6, 1, 0.6],
-                      }),
-                      transform: [{
-                        scale: searchSpinAnim.interpolate({
-                          inputRange: [0, 0.5, 1],
-                          outputRange: [0.9, 1.1, 0.9],
-                        }),
-                      }],
-                    }}
-                  >
-                    <View
+                  {hasSharePointAnim ? (
+                    <Animated.View
                       style={{
-                        backgroundColor: '#D32F2F',
-                        borderRadius: 10,
-                        width: 20,
-                        height: 20,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: 2,
-                        borderColor: '#fff',
+                        position: 'absolute',
+                        bottom: -2,
+                        right: -2,
+                        opacity: searchSpinAnim.interpolate({
+                          inputRange: [0, 0.5, 1],
+                          outputRange: [0.6, 1, 0.6],
+                        }),
+                        transform: [{
+                          scale: searchSpinAnim.interpolate({
+                            inputRange: [0, 0.5, 1],
+                            outputRange: [0.9, 1.1, 0.9],
+                          }),
+                        }],
                       }}
                     >
+                      <View
+                        style={{
+                          backgroundColor: '#D32F2F',
+                          borderRadius: 10,
+                          width: 20,
+                          height: 20,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: 2,
+                          borderColor: '#fff',
+                        }}
+                      >
+                        <Ionicons name="close" size={12} color="#fff" />
+                      </View>
+                    </Animated.View>
+                  ) : (
+                    <View style={{ position: 'absolute', bottom: -2, right: -2, backgroundColor: '#D32F2F', borderRadius: 10, width: 20, height: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
                       <Ionicons name="close" size={12} color="#fff" />
                     </View>
-                  </Animated.View>
+                  )}
                 </>
               )}
             </View>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>SharePoint</Text>
           </TouchableOpacity>
 
           {sharePointDropdownVisible && Platform.OS !== 'web' && (
@@ -766,7 +921,7 @@ export function HomeHeader({
             document.body
           );
         })()}
-
+        <UploadPanelTrigger />
         {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && notificationDropdownVisible && (() => {
           const dropMinW = 280;
           const dropMaxW = 400;
@@ -828,6 +983,109 @@ export function HomeHeader({
                     );
                   })
                 )}
+              </View>
+            </View>,
+            document.body
+          );
+        })()}
+
+        {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && registerDropdownVisible && (() => {
+          const dropMinW = 200;
+          const dropMaxW = 280;
+          const pad = 8;
+          const vw = typeof window !== 'undefined' ? window.innerWidth : windowWidth;
+          let left = registerDropdownPosition.left;
+          const top = registerDropdownPosition.top;
+          if (left + dropMaxW > vw - pad) left = Math.max(pad, vw - dropMaxW - pad);
+          if (left < pad) left = pad;
+          const items = [
+            { key: 'byggdelstabell', label: 'Byggdelstabell', screen: 'ManageCompany', params: { focus: 'byggdel' } },
+            { key: 'kontoplan', label: 'Kontoplan', screen: 'ManageCompany', params: { focus: 'kontoplan' } },
+            { key: 'mallar', label: 'Mallar', screen: 'ManageControlTypes' },
+          ];
+          return createPortal(
+            <View>
+              <Pressable style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, zIndex: 2147483646 }} onPress={() => setRegisterDropdownVisible(false)} />
+              <View style={{ position: 'fixed', left, top, minWidth: dropMinW, maxWidth: dropMaxW, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB', zIndex: 2147483647, paddingVertical: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)' }}>
+                <Text style={{ paddingHorizontal: 12, paddingVertical: 6, fontSize: 11, fontWeight: '700', color: '#64748B' }}>Register</Text>
+                {items.map((it) => (
+                  <TouchableOpacity
+                    key={it.key}
+                    onPress={async () => {
+                      setRegisterDropdownVisible(false);
+                      try {
+                        const cid = await getEffectiveCompanyIdForRegister();
+                        if (it.key === 'byggdelstabell' && openByggdelModal) {
+                          openByggdelModal(cid);
+                        } else if (it.key === 'kontoplan' && openKontoplanModal) {
+                          openKontoplanModal(cid);
+                        } else if (it.screen === 'ManageControlTypes') {
+                          if (openMallarModal) openMallarModal(cid);
+                          else showAlert('Utveckling pågår', 'Denna del är under utveckling.');
+                        } else {
+                          navigation.navigate(it.screen, it.params || {});
+                        }
+                      } catch (_e) {}
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, gap: 8 }}
+                  >
+                    <Ionicons name="document-text-outline" size={16} color="#475569" />
+                    <Text style={{ fontSize: 12, color: '#334155' }}>{it.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>,
+            document.body
+          );
+        })()}
+
+        {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && adminDropdownVisible && (() => {
+          const dropMinW = 200;
+          const dropMaxW = 280;
+          const pad = 8;
+          const vw = typeof window !== 'undefined' ? window.innerWidth : windowWidth;
+          let left = adminDropdownPosition.left;
+          const top = adminDropdownPosition.top;
+          if (left + dropMaxW > vw - pad) left = Math.max(pad, vw - dropMaxW - pad);
+          if (left < pad) left = pad;
+          const items = [
+            { key: 'contact_registry', label: 'Kontaktregister', screen: 'ContactRegistry', params: { companyId: String(companyId || routeCompanyId || '').trim(), allCompanies: !!isSuperAdmin } },
+            { key: 'suppliers', label: 'Leverantörer', screen: 'Suppliers', params: { companyId: String(companyId || routeCompanyId || '').trim() } },
+            { key: 'customers', label: 'Kunder', screen: 'Customers', params: { companyId: String(companyId || routeCompanyId || '').trim() } },
+            { key: 'ai_prompts', label: 'AI-analys', screen: 'AIPrompts', params: { companyId: String(companyId || routeCompanyId || '').trim() } },
+          ];
+          return createPortal(
+            <View>
+              <Pressable style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, zIndex: 2147483646 }} onPress={() => setAdminDropdownVisible(false)} />
+              <View style={{ position: 'fixed', left, top, minWidth: dropMinW, maxWidth: dropMaxW, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB', zIndex: 2147483647, paddingVertical: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)' }}>
+                <Text style={{ paddingHorizontal: 12, paddingVertical: 6, fontSize: 11, fontWeight: '700', color: '#64748B' }}>Administration</Text>
+                {items.map((it) => (
+                  <TouchableOpacity
+                    key={it.key}
+                    onPress={async () => {
+                      setAdminDropdownVisible(false);
+                      try {
+                        const cid = await getEffectiveCompanyIdForRegister();
+                        if (it.key === 'customers' && openCustomersModal) {
+                          openCustomersModal(cid);
+                        } else if (it.key === 'contact_registry' && openContactRegistryModal) {
+                          openContactRegistryModal(cid);
+                        } else if (it.key === 'suppliers' && openSuppliersModal) {
+                          openSuppliersModal(cid);
+                        } else if (it.key === 'ai_prompts') {
+                          if (openAIPromptsModal) openAIPromptsModal(cid);
+                          else navigation.navigate('AIPrompts', { companyId: cid });
+                        } else {
+                          navigation.navigate(it.screen, { ...(it.params || {}), companyId: cid || it.params?.companyId } || {});
+                        }
+                      } catch (_e) {}
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, gap: 8 }}
+                  >
+                    <Ionicons name={it.key === 'contact_registry' ? 'book-outline' : it.key === 'suppliers' ? 'business-outline' : it.key === 'ai_prompts' ? 'sparkles-outline' : 'people-outline'} size={16} color="#475569" />
+                    <Text style={{ fontSize: 12, color: '#334155' }}>{it.label}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>,
             document.body

@@ -85,33 +85,11 @@ export default function HeaderUserMenu() {
   }, []);
 
   const menuItems = [];
-  
-  // Lägg till admin-funktioner först (flyttat från HeaderAdminMenu)
-  const isSuperOrMsAdmin = isOwner || isMsAdmin;
 
-  // Superadmin (ägare/MS-admin) får hantera företag
-  if (isSuperadmin && isSuperOrMsAdmin) {
-    menuItems.push({ key: 'manage_company', label: 'Företag', icon: <Ionicons name="business" size={16} color="#2E7D32" /> });
-  }
-
-  // Både företags-admin och superadmin ska kunna hantera användare
-  if (isCompanyAdmin || isSuperadmin) {
-    menuItems.push({ key: 'manage_users', label: 'Användare', icon: <Ionicons name="person" size={16} color="#1976D2" /> });
-  }
-
-  // Admin + superadmin: kontaktregister
-  if (isCompanyAdmin || isSuperadmin) {
-    menuItems.push({ key: 'contact_registry', label: 'Kontaktregister', icon: <Ionicons name="book-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'suppliers', label: 'Leverantörer', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> });
-    menuItems.push({ key: 'customers', label: 'Kunder', icon: <Ionicons name="people-outline" size={16} color="#1976D2" /> });
-  }
-
-  // Separator om det finns admin-funktioner
-  if (menuItems.length > 0) {
-    menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
-  }
-
-  // Alla roller (superadmin, admin, användare) ska kunna logga ut här
+  // Namndropdown: ENDAST Byta företag, Min profil, Logga ut (inga Register/Administration)
+  menuItems.push({ key: 'switch_company', label: 'Byta företag', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> });
+  menuItems.push({ key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> });
+  menuItems.push({ key: 'menu_separator', label: '', isSeparator: true });
   menuItems.push({ key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> });
 
   const PortalContent = (
@@ -139,30 +117,13 @@ export default function HeaderUserMenu() {
             return;
           }
 
-          // Hantera admin-funktioner (flyttat från HeaderAdminMenu)
-          if (it.key === 'manage_company') {
-            return navigation.navigate('ManageCompany');
+          if (it.key === 'switch_company') {
+            try { navigation.navigate('Home'); } catch(_e) {}
+            return;
           }
-          if (it.key === 'manage_users') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ManageUsers', { companyId: cid });
-          }
-          if (it.key === 'contact_registry') {
-            const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-            return navigation.navigate('ContactRegistry', {
-              companyId: cid,
-              allCompanies: !!isSuperadmin,
-            });
-          }
-          if (it.key === 'suppliers') {
-            return navigation.navigate('Suppliers', {
-              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
-            });
-          }
-          if (it.key === 'customers') {
-            return navigation.navigate('Customers', {
-              companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim(),
-            });
+          if (it.key === 'my_profile') {
+            try { navigation.navigate('ManageUsers', { companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim() }); } catch(_e) {}
+            return;
           }
         } catch(_e) {}
       }}

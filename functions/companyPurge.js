@@ -103,6 +103,7 @@ async function purgeCompany(data, context) {
       `foretag/${companyId}/hierarki`,
       `foretag/${companyId}/mallar`,
       `foretag/${companyId}/byggdel_mallar`,
+      `foretag/${companyId}/byggdelar`,
       `foretag/${companyId}/byggdel_hierarki`,
     ];
 

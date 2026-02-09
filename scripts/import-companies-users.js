@@ -151,6 +151,10 @@ async function ensureCompanyBase(db, companyId, companyName, dryRun) {
     );
   }
 
+  // Seed grundregister byggdelar (idempotent)
+  const { ensureCompanyByggdelar } = require('./lib/seedByggdelar');
+  await ensureCompanyByggdelar(db, companyId, { dryRun });
+
   // Ensure at least one template exists
   const templatesRef = companyRef.collection('mallar');
   if (!dryRun) {

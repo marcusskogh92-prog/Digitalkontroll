@@ -1,14 +1,19 @@
 /**
- * Tabell för leverantörer – kolumner: Företagsnamn, Organisationsnummer, Adress, Postnr + Ort, Kategori.
- * Sorterbar, diskreta separators, font-weight max 500.
+ * Tabell för leverantörer – samma DataGrid-pattern som Kunder/Kontaktregister.
+ * Kolumner: Leverantörsnamn, Orgnr, Adress, Postnr, Ort, Kategori, Åtgärder (sticky kebab).
+ * Inline-redigering med Enter/Esc och diskreta ✔ ✕.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import SelectDropdown, { SelectDropdownChip } from '../../components/common/SelectDropdown';
 import type { Supplier } from './leverantorerService';
 import { LEVERANTOR_KATEGORIER } from '../../constants/leverantorKategorier';
+
+/** Samma grid som Kunder: flexibla + fasta kolumner, sticky kebab 48px med divider. */
+const FLEX = { companyName: 1.5, address: 1.6, city: 1.1 } as const;
+const FIXED = { organizationNumber: 160, postalCode: 110, category: 120, actions: 48 } as const;
 
 export type SortColumn =
   | 'companyName'
@@ -24,13 +29,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
     borderRadius: 12,
-    overflow: 'visible',
+    overflow: 'hidden',
     backgroundColor: '#fff',
+    minWidth: '100%',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    gap: 8,
+    paddingVertical: 5,
     paddingHorizontal: 14,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
@@ -40,16 +47,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 0,
+    minWidth: 0,
   },
   headerText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#475569',
   },
+  cellFlex: { flexShrink: 0, minWidth: 0 },
+  cellFixed: { flexShrink: 0 },
+  actionsCol: {
+    width: FIXED.actions,
+    flexShrink: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: '#e2e8f0',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  actionsColHeader: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 5,
+  },
+  actionsColInline: { backgroundColor: '#eff6ff' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    gap: 8,
+    paddingVertical: 3,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
@@ -85,10 +112,11 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   rowMenuBtn: {
-    padding: 6,
-    borderRadius: 8,
+    padding: 4,
+    borderRadius: 6,
     backgroundColor: 'transparent',
-    marginLeft: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contactRow: {
     flexDirection: 'row',
@@ -197,7 +225,8 @@ const styles = StyleSheet.create({
   inlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
+    gap: 8,
+    paddingVertical: 2,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
@@ -206,12 +235,43 @@ const styles = StyleSheet.create({
   inlineInput: {
     fontSize: 13,
     color: '#111',
-    paddingVertical: 6,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     borderRadius: 6,
     backgroundColor: '#fff',
+    flexShrink: 0,
+    minWidth: 0,
+  },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eef0f3',
+    backgroundColor: '#eff6ff',
+  },
+  editRowBtn: {
+    width: 24,
+    height: 24,
+    padding: 0,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editRowBtnPrimary: {
+    backgroundColor: '#16a34a',
+    borderColor: '#16a34a',
+  },
+  editRowBtnCancel: {
+    borderColor: '#cbd5e1',
+    backgroundColor: 'transparent',
   },
   inlineSelectField: {
     height: 32,
@@ -297,6 +357,20 @@ interface LeverantorerTableProps {
   inlineSaving?: boolean;
   onInlineChange?: (field: keyof LeverantorerTableProps['inlineValues'], value: string) => void;
   onInlineSave?: () => void;
+  editingId?: string | null;
+  inlineSavingCustomer?: boolean;
+  onSaveEdit?: (
+    supplierId: string,
+    values: {
+      companyName: string;
+      organizationNumber: string;
+      address: string;
+      postalCode: string;
+      city: string;
+      category: string;
+    }
+  ) => void;
+  onCancelEdit?: () => void;
 }
 
 export default function LeverantorerTable({
@@ -320,13 +394,45 @@ export default function LeverantorerTable({
   inlineSaving = false,
   onInlineChange,
   onInlineSave,
+  editingId = null,
+  inlineSavingCustomer = false,
+  onSaveEdit,
+  onCancelEdit,
 }: LeverantorerTableProps): React.ReactElement {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string }>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
+  const [editDraft, setEditDraft] = useState<{
+    companyName: string;
+    organizationNumber: string;
+    address: string;
+    postalCode: string;
+    city: string;
+    category: string;
+  } | null>(null);
 
+  const kebabRefs = useRef<Record<string, { focus?: () => void } | null>>({});
   const contactMap = useMemo(() => contactsBySupplierId, [contactsBySupplierId]);
+
+  const editingSupplier = editingId ? (suppliers.find((s) => s.id === editingId) || null) : null;
+  React.useEffect(() => {
+    if (editingSupplier) {
+      const cat = Array.isArray(editingSupplier.categories) && editingSupplier.categories.length
+        ? editingSupplier.categories[0]
+        : editingSupplier.category ?? '';
+      setEditDraft({
+        companyName: String(editingSupplier.companyName ?? ''),
+        organizationNumber: String(editingSupplier.organizationNumber ?? ''),
+        address: String(editingSupplier.address ?? ''),
+        postalCode: String(editingSupplier.postalCode ?? ''),
+        city: String(editingSupplier.city ?? ''),
+        category: String(cat),
+      });
+    } else {
+      setEditDraft(null);
+    }
+  }, [editingId, editingSupplier?.id]);
 
   const formatCategories = (supplier: Supplier): { label: string; full: string } => {
     const list = Array.isArray(supplier.categories) && supplier.categories.length
@@ -383,6 +489,32 @@ export default function LeverantorerTable({
       });
     }
   };
+  const handleEditKeyDown = (e: React.KeyboardEvent, supplier: Supplier) => {
+    if (Platform.OS !== 'web') return;
+    const key = (e.nativeEvent as KeyboardEvent).key;
+    if (key === 'Enter') {
+      e.preventDefault();
+      if (editDraft?.companyName?.trim() && onSaveEdit && !inlineSavingCustomer) {
+        onSaveEdit(supplier.id, {
+          companyName: editDraft.companyName.trim(),
+          organizationNumber: editDraft.organizationNumber.trim(),
+          address: editDraft.address.trim(),
+          postalCode: editDraft.postalCode.trim(),
+          city: editDraft.city.trim(),
+          category: editDraft.category.trim(),
+        });
+      }
+    } else if (key === 'Escape') {
+      e.preventDefault();
+      const id = editingId;
+      onCancelEdit?.();
+      setTimeout(() => {
+        const el = id ? kebabRefs.current[id] : null;
+        if (el && typeof el.focus === 'function') el.focus();
+      }, 0);
+    }
+  };
+
   const SortIcon = ({ col }: { col: SortColumn }) => {
     if (sortColumn !== col) {
       return <Ionicons name="swap-vertical-outline" size={14} color="#cbd5e1" />;
@@ -396,20 +528,22 @@ export default function LeverantorerTable({
     );
   };
 
+  const stickyRight = Platform.OS === 'web' ? { position: 'sticky' as const, right: 0 } : {};
+
   return (
     <View style={styles.tableWrap}>
       <View style={styles.header}>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 2 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.companyName }]}
           onPress={() => onSort('companyName')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Företagsnamn</Text>
+          <Text style={styles.headerText}>Leverantörsnamn</Text>
           <SortIcon col="companyName" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1 }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.organizationNumber }]}
           onPress={() => onSort('organizationNumber')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -418,7 +552,7 @@ export default function LeverantorerTable({
           <SortIcon col="organizationNumber" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.5 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.address }]}
           onPress={() => onSort('address')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -427,16 +561,16 @@ export default function LeverantorerTable({
           <SortIcon col="address" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 0.8 }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.postalCode }]}
           onPress={() => onSort('postalCode')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Postnummer</Text>
+          <Text style={styles.headerText}>Postnr</Text>
           <SortIcon col="postalCode" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.2 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.city }]}
           onPress={() => onSort('city')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -444,134 +578,68 @@ export default function LeverantorerTable({
           <Text style={styles.headerText}>Ort</Text>
           <SortIcon col="city" />
         </TouchableOpacity>
-        <View style={[styles.headerCell, { flex: 1.2, flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-            onPress={() => onSort('category')}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-          >
-            <Text style={styles.headerText}>Kategori</Text>
-            <SortIcon col="category" />
-          </TouchableOpacity>
-          {Platform.OS === 'web' ? (
-            <SelectDropdown
-              value={categoryFilters}
-              options={LEVERANTOR_KATEGORIER}
-              placeholder="Filtrera…"
-              multiple
-              searchable
-              keepOpenOnSelect
-              onChange={(next) => onCategoryFiltersChange?.(next)}
-              usePortal={true}
-              fieldStyle={styles.inlineSelectField}
-              listStyle={styles.inlineSelectList}
-              inputStyle={{ fontSize: 13, color: '#111' }}
-            />
-          ) : null}
-        </View>
+        <TouchableOpacity
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.category }]}
+          onPress={() => onSort('category')}
+          activeOpacity={0.7}
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <Text style={styles.headerText}>Kategori</Text>
+          <SortIcon col="category" />
+        </TouchableOpacity>
+        <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
       {inlineEnabled ? (
         <View style={styles.inlineRow}>
           <TextInput
             value={inlineValues?.companyName ?? ''}
             onChangeText={(v) => onInlineChange?.('companyName', v)}
-            placeholder="Företagsnamn (ny)"
+            placeholder="Leverantörsnamn (ny)"
             returnKeyType="done"
             blurOnSubmit={true}
-            onSubmitEditing={() => {
-              if (!inlineSaving) onInlineSave?.();
-            }}
-            style={[styles.inlineInput, { flex: 2 }]}
+            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.companyName }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           <TextInput
             value={inlineValues?.organizationNumber ?? ''}
             onChangeText={(v) => onInlineChange?.('organizationNumber', v)}
             placeholder="Orgnr (ny)"
-            returnKeyType="next"
-            blurOnSubmit={false}
-            onSubmitEditing={() => {
-              if (Platform.OS === 'web') {
-                setTimeout(() => {
-                  try {
-                    const nextInput = document.querySelector('input[placeholder="Adress (ny)"]');
-                    if (nextInput) nextInput.focus();
-                  } catch (_e) {}
-                }, 50);
-              }
-            }}
-            style={[styles.inlineInput, { flex: 1, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.organizationNumber }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           <TextInput
             value={inlineValues?.address ?? ''}
             onChangeText={(v) => onInlineChange?.('address', v)}
             placeholder="Adress (ny)"
-            returnKeyType="next"
-            blurOnSubmit={false}
-            onSubmitEditing={() => {
-              if (Platform.OS === 'web') {
-                setTimeout(() => {
-                  try {
-                    const nextInput = document.querySelector('input[placeholder="Postnummer (ny)"]');
-                    if (nextInput) nextInput.focus();
-                  } catch (_e) {}
-                }, 50);
-              }
-            }}
-            style={[styles.inlineInput, { flex: 1.5, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           <TextInput
             value={inlineValues?.postalCode ?? ''}
             onChangeText={(v) => onInlineChange?.('postalCode', v)}
-            placeholder="Postnummer (ny)"
-            returnKeyType="next"
-            blurOnSubmit={false}
-            onSubmitEditing={() => {
-              if (Platform.OS === 'web') {
-                setTimeout(() => {
-                  try {
-                    const nextInput = document.querySelector('input[placeholder="Ort (ny)"]');
-                    if (nextInput) nextInput.focus();
-                  } catch (_e) {}
-                }, 50);
-              }
-            }}
-            style={[styles.inlineInput, { flex: 0.8, marginLeft: 8 }]}
+            placeholder="Postnr (ny)"
+            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           <TextInput
             value={inlineValues?.city ?? ''}
             onChangeText={(v) => onInlineChange?.('city', v)}
             placeholder="Ort (ny)"
-            returnKeyType="next"
-            blurOnSubmit={false}
-            onSubmitEditing={() => {
-              if (Platform.OS === 'web') {
-                setTimeout(() => {
-                  try {
-                          const nextInput = document.querySelector('input[data-field="kategori-ny"]');
-                    if (nextInput) nextInput.focus();
-                  } catch (_e) {}
-                }, 50);
-              }
-            }}
-            style={[styles.inlineInput, { flex: 1.2, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           {Platform.OS === 'web' ? (
-            <View style={{ flex: 1.2, marginLeft: 8 }}>
+            <View style={[styles.cellFixed, { width: FIXED.category }]}>
               <SelectDropdown
                 value={inlineValues?.category ?? ''}
                 options={LEVERANTOR_KATEGORIER}
-                placeholder="Välj kategori"
+                placeholder="Kategori"
                 searchable
                 onSelect={(next) => onInlineChange?.('category', String(next))}
                 usePortal={true}
@@ -584,99 +652,186 @@ export default function LeverantorerTable({
             <TextInput
               value={inlineValues?.category ?? ''}
               onChangeText={(v) => onInlineChange?.('category', v)}
-              placeholder="Välj kategori"
+              placeholder="Kategori"
               returnKeyType="done"
               blurOnSubmit={true}
-              onSubmitEditing={() => {
-                if (!inlineSaving) onInlineSave?.();
-              }}
-              style={[styles.inlineInput, { flex: 1.2, marginLeft: 8 }]}
+              onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+              style={[styles.inlineInput, styles.cellFixed, { width: FIXED.category }]}
               placeholderTextColor="#94a3b8"
             />
           )}
+          <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
       ) : null}
       {suppliers.map((supplier, idx) => (
         <View key={supplier.id}>
-          <TouchableOpacity
-            style={[
-              styles.row,
-              idx % 2 === 1 ? styles.rowAlt : null,
-              hoveredId === supplier.id ? styles.rowHover : null,
-              expandedIds[supplier.id] ? styles.rowActive : null,
-            ]}
-            onPress={() => {
-              setExpandedIds((prev) => ({ ...prev, [supplier.id]: !prev[supplier.id] }));
-              onRowPress(supplier);
-            }}
-            onLongPress={(e) => onRowContextMenu?.(e, supplier)}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web'
-              ? {
-                  cursor: 'pointer',
-                  onMouseEnter: () => setHoveredId(supplier.id),
-                  onMouseLeave: () => setHoveredId(null),
-                }
-              : {})}
-          >
-            <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <Ionicons
-                name="chevron-forward"
-                size={14}
-                color="#94a3b8"
-                style={{
-                  transform: [{ rotate: expandedIds[supplier.id] ? '90deg' : '0deg' }],
-                }}
+          {editingId === supplier.id && editDraft ? (
+            <View style={styles.editRow}>
+              <TextInput
+                value={editDraft.companyName}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, companyName: v } : d))}
+                placeholder="Leverantörsnamn"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.companyName }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
               />
-              <Text style={styles.cellText} numberOfLines={1}>
-                {supplier.companyName || '—'}
-              </Text>
-              {(() => {
-                const list = contactMap[supplier.id] || [];
-                const count = list.length;
-                const tooltip =
-                  Platform.OS === 'web' && list.length > 0
-                    ? `Kontakter: ${list.map((c) => c.name || '—').join(', ')}`
-                    : undefined;
-                return (
-                  <View
-                    style={styles.contactBadge}
-                    {...(tooltip && Platform.OS === 'web' ? { title: tooltip } : {})}
-                  >
-                    <Text style={styles.contactBadgeText}>👤 {count}</Text>
-                  </View>
-                );
-              })()}
+              <TextInput
+                value={editDraft.organizationNumber}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, organizationNumber: v } : d))}
+                placeholder="Orgnr"
+                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.organizationNumber }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+              />
+              <TextInput
+                value={editDraft.address}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, address: v } : d))}
+                placeholder="Adress"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+              />
+              <TextInput
+                value={editDraft.postalCode}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, postalCode: v } : d))}
+                placeholder="Postnr"
+                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+              />
+              <TextInput
+                value={editDraft.city}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, city: v } : d))}
+                placeholder="Ort"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+              />
+              {Platform.OS === 'web' ? (
+                <View style={[styles.cellFixed, { width: FIXED.category }]}>
+                  <SelectDropdown
+                    value={editDraft.category}
+                    options={LEVERANTOR_KATEGORIER as unknown as string[]}
+                    placeholder="Kategori"
+                    searchable
+                    onSelect={(next) => setEditDraft((d) => (d ? { ...d, category: String(next) } : d))}
+                    usePortal={true}
+                    fieldStyle={[styles.inlineSelectField, { minHeight: 28 }]}
+                    listStyle={styles.inlineSelectList}
+                    inputStyle={{ fontSize: 13, color: '#111' }}
+                  />
+                </View>
+              ) : (
+                <TextInput
+                  value={editDraft.category}
+                  onChangeText={(v) => setEditDraft((d) => (d ? { ...d, category: v } : d))}
+                  placeholder="Kategori"
+                  style={[styles.inlineInput, styles.cellFixed, { width: FIXED.category }]}
+                  placeholderTextColor="#94a3b8"
+                />
+              )}
+              <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
+                <TouchableOpacity
+                  style={[styles.editRowBtn, styles.editRowBtnPrimary]}
+                  onPress={() => {
+                    if (!editDraft?.companyName?.trim() || !onSaveEdit) return;
+                    onSaveEdit(supplier.id, {
+                      companyName: editDraft.companyName.trim(),
+                      organizationNumber: editDraft.organizationNumber.trim(),
+                      address: editDraft.address.trim(),
+                      postalCode: editDraft.postalCode.trim(),
+                      city: editDraft.city.trim(),
+                      category: editDraft.category.trim(),
+                    });
+                  }}
+                  disabled={inlineSavingCustomer}
+                  accessibilityLabel="Spara"
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.editRowBtn, styles.editRowBtnCancel]}
+                  onPress={() => onCancelEdit?.()}
+                  disabled={inlineSavingCustomer}
+                  accessibilityLabel="Avbryt"
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="close" size={14} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
-              {supplier.organizationNumber || '—'}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 1.5 }]} numberOfLines={1}>
-              {safeText(supplier.address)}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 0.8 }]} numberOfLines={1}>
-              {safeText(supplier.postalCode)}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 1.2 }]} numberOfLines={1}>
-              {safeText(supplier.city)}
-            </Text>
-            {(() => {
-              const { label } = formatCategories(supplier);
-              return (
-                <Text style={[styles.cellMuted, { flex: 1.2 }]} numberOfLines={1}>
-                  {label}
-                </Text>
-              );
-            })()}
+          ) : (
             <TouchableOpacity
-              style={styles.rowMenuBtn}
-              onPress={(e) => onRowMenu?.(e, supplier)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              style={[
+                styles.row,
+                idx % 2 === 1 ? styles.rowAlt : null,
+                hoveredId === supplier.id ? styles.rowHover : null,
+                expandedIds[supplier.id] ? styles.rowActive : null,
+              ]}
+              onPress={() => {
+                setExpandedIds((prev) => ({ ...prev, [supplier.id]: !prev[supplier.id] }));
+                onRowPress(supplier);
+              }}
+              onLongPress={(e) => onRowContextMenu?.(e, supplier)}
+              activeOpacity={0.7}
+              {...(Platform.OS === 'web'
+                ? {
+                    cursor: 'pointer',
+                    onMouseEnter: () => setHoveredId(supplier.id),
+                    onMouseLeave: () => setHoveredId(null),
+                  }
+                : {})}
             >
-              <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
+              <View style={[styles.cellFlex, { flex: FLEX.companyName, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color="#94a3b8"
+                  style={{ transform: [{ rotate: expandedIds[supplier.id] ? '90deg' : '0deg' }] }}
+                />
+                <Text style={styles.cellText} numberOfLines={1}>
+                  {supplier.companyName || '—'}
+                </Text>
+                {(() => {
+                  const list = contactMap[supplier.id] || [];
+                  const count = list.length;
+                  const tooltip = Platform.OS === 'web' && list.length > 0 ? `Kontakter: ${list.map((c) => c.name || '—').join(', ')}` : undefined;
+                  return (
+                    <View style={styles.contactBadge} {...(tooltip && Platform.OS === 'web' ? { title: tooltip } : {})}>
+                      <Text style={styles.contactBadgeText}>👤 {count}</Text>
+                    </View>
+                  );
+                })()}
+              </View>
+              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.organizationNumber }]} numberOfLines={1}>
+                {supplier.organizationNumber || '—'}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.address }]} numberOfLines={1}>
+                {safeText(supplier.address)}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.postalCode }]} numberOfLines={1}>
+                {safeText(supplier.postalCode)}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.city }]} numberOfLines={1}>
+                {safeText(supplier.city)}
+              </Text>
+              <View style={[styles.chipRow, styles.cellFixed, { width: FIXED.category }]}>
+                <SelectDropdownChip label={formatCategories(supplier).label} removable={false} />
+              </View>
+              <View style={[styles.actionsCol, stickyRight]}>
+                <TouchableOpacity
+                  ref={(r) => { kebabRefs.current[supplier.id] = r as { focus?: () => void } | null; }}
+                  style={styles.rowMenuBtn}
+                  onPress={(e) => onRowMenu?.(e, supplier)}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer', tabIndex: 0 } : {})}
+                >
+                  <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
-          </TouchableOpacity>
+          )}
           {expandedIds[supplier.id] ? (
             <View style={styles.detailsRow}>
               <View style={styles.detailsInner}>

@@ -1168,6 +1168,7 @@ export default function ManageCompany({ navigation, route }) {
       if (!namePart) return;
 
       setSharePointSiteCreating(true);
+      const endBusy = beginBusy('Skapar SharePoint-site…', { silent: false });
       try {
         if (!auth?.currentUser) throw new Error('Du måste vara inloggad för att skapa en site.');
         try { await auth.currentUser.getIdToken(true); } catch (_t) { /* force refresh token */ }
@@ -1193,7 +1194,14 @@ export default function ManageCompany({ navigation, route }) {
           visibleInLeftPanel: true,
         });
 
+        try { await syncSharePointSiteVisibilityRemote({ companyId: cid }); } catch (_e) {}
         await reloadCompanySharePointSites(cid, { silent: false });
+
+        try {
+          if (typeof window !== 'undefined') {
+            window.alert(`Siten "${displayName}" skapades och är kopplad till ${baseName}.\n\nDen syns i listan nedan.`);
+          }
+        } catch (_a) {}
       } catch (e) {
         const msg = e?.message || String(e);
         const code = e?.code || e?.details?.code || '';
@@ -1202,6 +1210,7 @@ export default function ManageCompany({ navigation, route }) {
         const userMsg = isServerError ? msg : 'Kunde inte skapa site: ' + msg;
         try { window.alert(userMsg); } catch (_a) {}
       } finally {
+        endBusy();
         setSharePointSiteCreating(false);
       }
     };

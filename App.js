@@ -10,11 +10,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from './components/ErrorBoundary';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import { AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
+import AIPromptsScreen from './Screens/AIPromptsScreen';
 import CameraCapture from './Screens/CameraCapture';
 import ContactRegistryScreen from './Screens/ContactRegistryScreen';
 import ControlDetails from './Screens/ControlDetails';
@@ -149,8 +151,9 @@ const WebGlobalBreadcrumb = ({ navigation, route, titleFallback = '' }) => {
   const fallbackTitle = String(titleFallback || '').trim() || (
     currentRouteName === 'ManageCompany' ? 'Företag'
       : currentRouteName === 'ManageUsers' ? 'Användare'
-        : currentRouteName === 'ManageControlTypes' ? 'Kontrolltyper'
-          : currentRouteName === 'ContactRegistry' ? 'Kontaktregister'
+      : currentRouteName === 'ManageControlTypes' ? 'Kontrolltyper'
+        : currentRouteName === 'ContactRegistry' ? 'Kontaktregister'
+          : currentRouteName === 'AIPrompts' ? 'AI-analys'
           : currentRouteName === 'AdminAuditLog' ? 'Adminlogg'
             : currentRouteName === 'TemplateControlScreen' ? 'Kontroll'
               : currentRouteName === 'ControlForm' ? 'Kontroll'
@@ -306,7 +309,8 @@ export default function App() {
             route={{ name: currentRoute }}
           />
         )}
-        <SystemModalProvider>
+        <AdminModalProvider>
+          <SystemModalProvider>
           <UploadManagerProvider>
             <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
               <NavigationContainer
@@ -590,6 +594,31 @@ export default function App() {
                 ),
               });
             }} />
+            <Stack.Screen name="AIPrompts" component={AIPromptsScreen} options={({ navigation }) => {
+              const isWeb = Platform.OS === 'web';
+              if (isWeb) {
+                return ({
+                  title: 'AI-analys',
+                  headerBackTitleVisible: false,
+                  headerBackTitle: '',
+                });
+              }
+              return ({
+                title: 'AI-analys',
+                headerBackTitleVisible: false,
+                headerBackTitle: '',
+                headerLeft: () => (
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    accessibilityLabel="Tillbaka"
+                    hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+                    style={{ width: 56, height: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 6 }}
+                  >
+                    <Ionicons name="chevron-back" size={30} color="#000" />
+                  </TouchableOpacity>
+                ),
+              });
+            }} />
             <Stack.Screen name="ContactRegistry" component={ContactRegistryScreen} options={({ navigation }) => {
               const isWeb = Platform.OS === 'web';
               if (isWeb) {
@@ -702,6 +731,7 @@ export default function App() {
             </View>
           </UploadManagerProvider>
         </SystemModalProvider>
+        </AdminModalProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
   );

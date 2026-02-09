@@ -226,6 +226,34 @@ export async function fetchLatestProjectFFUAnalysis(companyId, projectId) {
   return { id: legacySnap.id, ...legacyData };
 }
 
+/** Company AI prompts (Förfrågningsunderlag, Ritningar, etc.). promptKey: 'ffu' | 'ritningar' */
+export async function getCompanyAIPrompt(companyId, promptKey) {
+  const cid = String(companyId || '').trim();
+  const key = String(promptKey || '').trim();
+  if (!cid || !key) return null;
+  const ref = doc(db, 'companies', cid, 'ai_prompts', key);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const data = snap.data() || {};
+  return { id: snap.id, instruction: String(data.instruction || data.customInstruction || '').trim(), ...data };
+}
+
+/** Save company AI prompt. payload: { instruction: string } */
+export async function setCompanyAIPrompt(companyId, promptKey, payload) {
+  const cid = String(companyId || '').trim();
+  const key = String(promptKey || '').trim();
+  if (!cid || !key) throw new Error('companyId and promptKey are required');
+  const ref = doc(db, 'companies', cid, 'ai_prompts', key);
+  const instruction = String((payload && payload.instruction) != null ? payload.instruction : '').trim();
+  const uid = auth?.currentUser?.uid || null;
+  await setDoc(ref, {
+    instruction,
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+  }, { merge: true });
+  return getCompanyAIPrompt(companyId, promptKey);
+}
+
 export async function saveLatestProjectFFUAnalysis(companyId, projectId, analysis) {
   const { canonical } = getLatestFFUAnalysisDocRefs(companyId, projectId);
   const a = analysis && typeof analysis === 'object' ? analysis : {};
@@ -2452,7 +2480,7 @@ export async function fetchAllCompanyContacts({ max = 2000 } = {}) {
 }
 
 export async function createCompanyContact(
-  { name, companyName, contactCompanyName, role, phone, email, linkedSupplierId, companyId: contactCompanyId, customerId, companyType },
+  { name, companyName, contactCompanyName, role, phone, workPhone, email, linkedSupplierId, companyId: contactCompanyId, customerId, companyType },
   companyIdOverride
 ) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -2472,10 +2500,11 @@ export async function createCompanyContact(
     companyName: String(companyName || '').trim() || String(companyId || '').trim(), // Systemföretag som äger kontakten
     contactCompanyName: String(contactCompanyName || '').trim(), // Företag som kontakten jobbar på (kan vara externt)
     role: String(role || '').trim(),
-    phone: String(phone || '').trim(),
+    phone: String(phone || '').trim().replace(/\D/g, ''), // Mobil: endast siffror
     email: String(email || '').trim(),
     createdAt: serverTimestamp(),
   };
+  if (workPhone !== undefined) payload.workPhone = String(workPhone || '').trim();
   if (contactCompanyId !== undefined) payload.companyId = contactCompanyId;
   if (customerId !== undefined) payload.customerId = customerId;
   if (companyType !== undefined) payload.companyType = companyType;
@@ -2533,7 +2562,10 @@ export async function updateCompanyContact({ id, patch }, companyIdOverride) {
     safePatch.role = String(safePatch.role || '').trim();
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'phone')) {
-    safePatch.phone = String(safePatch.phone || '').trim();
+    safePatch.phone = String(safePatch.phone || '').trim().replace(/\D/g, '');
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'workPhone')) {
+    safePatch.workPhone = String(safePatch.workPhone || '').trim();
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'email')) {
     safePatch.email = String(safePatch.email || '').trim();
@@ -3183,6 +3215,134 @@ export async function updateByggdelMall({ mallId, patch }, companyIdOverride) {
 
     throw e;
   }
+}
+
+// ============================================================================
+// BYGGDELAR (grundregister) per företag
+// foretag/{companyId}/byggdelar/{id} – code, name, notes, isDefault, createdAt, updatedAt
+// ============================================================================
+
+export async function fetchByggdelar(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride, null);
+    if (!companyId) return [];
+    const colRef = collection(db, 'foretag', companyId, 'byggdelar');
+    const snap = await getDocs(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const ac = String(a.code ?? '').trim();
+      const bc = String(b.code ?? '').trim();
+      return (ac || '').localeCompare(bc || '', 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createByggdel({ code, name, notes }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const normalizedCode = String(code ?? '').replace(/\D/g, '').slice(0, 3);
+  if (!normalizedCode) throw new Error('Kod är obligatoriskt (1–3 siffror).');
+  const payload = {
+    code: normalizedCode,
+    name: String(name ?? '').trim(),
+    notes: String(notes ?? '').trim(),
+    isDefault: false,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  const colRef = collection(db, 'foretag', companyId, 'byggdelar');
+  const docRef = await addDoc(colRef, payload);
+  return docRef.id;
+}
+
+export async function updateByggdel(companyIdOverride, byggdelId, patch) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(byggdelId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt byggdel-id');
+  const ref = doc(db, 'foretag', companyId, 'byggdelar', id);
+  const safePatch = sanitizeForFirestore(patch || {});
+  await setDoc(ref, { ...safePatch, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function deleteByggdel(companyIdOverride, byggdelId) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(byggdelId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt byggdel-id');
+  const ref = doc(db, 'foretag', companyId, 'byggdelar', id);
+  await deleteDoc(ref);
+}
+
+// ============================================================================
+// KONTOPLAN (chart of accounts) per företag
+// foretag/{companyId}/kontoplan/{accountId} – konto, benamning, beskrivning
+// ============================================================================
+
+export async function fetchKontoplan(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride || null, null);
+    if (!companyId) return [];
+    const colRef = collection(db, 'foretag', companyId, 'kontoplan');
+    const snap = await getDocs(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const ak = String(a.konto ?? '').trim();
+      const bk = String(b.konto ?? '').trim();
+      return (ak || '').localeCompare(bk || '', 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createKontoplanAccount({ konto, benamning, beskrivning }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const k = String(konto ?? '').trim();
+  const b = String(benamning ?? '').trim();
+  if (!k) throw new Error('Konto är obligatoriskt.');
+  const payload = {
+    konto: k,
+    benamning: b,
+    beskrivning: String(beskrivning ?? '').trim(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  const colRef = collection(db, 'foretag', companyId, 'kontoplan');
+  const docRef = await addDoc(colRef, payload);
+  return docRef.id;
+}
+
+export async function updateKontoplanAccount(companyIdOverride, accountId, patch) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(accountId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt konto-id');
+  const ref = doc(db, 'foretag', companyId, 'kontoplan', id);
+  const safePatch = sanitizeForFirestore(patch || {});
+  await setDoc(ref, { ...safePatch, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function deleteKontoplanAccount(companyIdOverride, accountId) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(accountId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt konto-id');
+  const ref = doc(db, 'foretag', companyId, 'kontoplan', id);
+  await deleteDoc(ref);
 }
 
 // ============================================================================

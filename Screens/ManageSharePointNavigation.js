@@ -12,7 +12,7 @@ try {
 } catch (_e) {
   createPortal = null;
 }
-import { collectionGroup, deleteDoc, doc, getDocs, getDocsFromServer, updateDoc } from 'firebase/firestore';
+import { collectionGroup, deleteDoc, doc, getDocs, getDocsFromServer, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { HomeHeader } from '../components/common/HomeHeader';
 import SharePointSiteIcon from '../components/common/SharePointSiteIcon';
 import MainLayout from '../components/MainLayout';
@@ -59,6 +59,31 @@ const extractCompanyIdFromPath = (path) => {
   const safe = String(path || '');
   const match = safe.match(/foretag\/([^/]+)\/sharepoint_sites/i);
   return match && match[1] ? String(match[1]).trim() : '';
+};
+
+/**
+ * Normalize webUrl for stable comparison (same site from Graph vs Firestore).
+ * SharePoint can return the same site with different path formats, e.g.:
+ * .../sites/ms-byggsystem-dk-entreprenad vs .../sites/msbyggsystemdkentreprenad
+ * We normalize the segment after /sites/ by lowercasing and removing hyphens/underscores.
+ */
+const normalizeWebUrl = (url) => {
+  const s = String(url || '').trim().toLowerCase();
+  if (!s) return '';
+  try {
+    const u = new URL(s);
+    let path = (u.pathname || '').replace(/\/+$/, '') || '/';
+    const sitesMatch = path.match(/^(\/sites\/)([^/]+)(\/.*)?$/i);
+    if (sitesMatch) {
+      const prefix = sitesMatch[1];
+      const segment = (sitesMatch[2] || '').replace(/[-_]+/g, '');
+      const rest = sitesMatch[3] || '';
+      path = `${prefix}${segment}${rest}`;
+    }
+    return `${u.hostname}${path}`;
+  } catch (_e) {
+    return s.replace(/\/+$/, '');
+  }
 };
 
 /** Normaliserar företags-id för matchning (t.ex. "MS Byggsystem" och "ms-byggsystem" → samma). */
@@ -511,6 +536,16 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       .filter(([id]) => id)
   ), [availableSites]);
 
+  /** Fallback lookup by normalized webUrl when siteId from Firestore doesn't match Graph id. */
+  const availableSiteByWebUrl = useMemo(() => new Map(
+    (Array.isArray(availableSites) ? availableSites : [])
+      .map((site) => {
+        const key = normalizeWebUrl(site?.webUrl);
+        return key ? [key, site] : null;
+      })
+      .filter(Boolean)
+  ), [availableSites]);
+
   const siteOwnerMap = useMemo(() => {
     const map = {};
     Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => {
@@ -523,13 +558,30 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     return map;
   }, [allCompanySiteMetas]);
 
+  /** Map normalized webUrl -> company id so we treat a site as owned if either id or webUrl matches. */
+  const webUrlToOwnerMap = useMemo(() => {
+    const map = {};
+    Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => {
+      (Array.isArray(metas) ? metas : []).forEach((m) => {
+        const url = String(m?.siteUrl || m?.webUrl || '').trim();
+        const key = normalizeWebUrl(url);
+        if (!key) return;
+        map[key] = cid;
+      });
+    });
+    return map;
+  }, [allCompanySiteMetas]);
+
   const unassignedSites = useMemo(() => {
     return (Array.isArray(availableSites) ? availableSites : []).filter((site) => {
       const sid = String(site?.id || '').trim();
       if (!sid) return false;
-      return !siteOwnerMap[sid];
+      if (siteOwnerMap[sid]) return false;
+      const urlKey = normalizeWebUrl(site?.webUrl);
+      if (urlKey && webUrlToOwnerMap[urlKey]) return false;
+      return true;
     });
-  }, [availableSites, siteOwnerMap]);
+  }, [availableSites, siteOwnerMap, webUrlToOwnerMap]);
 
   const getStatusInfo = (siteId, isPaused = false) => {
     if (isPaused) {
@@ -550,6 +602,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
 
   // company.id är foretag-dokumentets id; allCompanySiteMetas nycklas med id från sökvägen foretag/{id}/sharepoint_sites.
   // En site får bara tillhöra ETT företag (en site = en ägare). DK Site/DK Bas visas bara under det företag som matchar sitnamnet.
+  // Metas med deletedAt visas inte under företaget utan under "Raderade siter".
   const companyRows = useMemo(() => {
     const list = Array.isArray(companies) ? companies : [];
     const metaByNormalized = new Map();
@@ -557,7 +610,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       const norm = normalizeCompanyIdForMatch(key);
       if (!norm) return;
       const existing = metaByNormalized.get(norm) || [];
-      const add = Array.isArray(arr) ? arr : [];
+      const add = (Array.isArray(arr) ? arr : []).filter((m) => !m?.deletedAt);
       const seen = new Set((existing || []).map((m) => String(m?.siteId || m?.id || '').trim()).filter(Boolean));
       add.forEach((m) => {
         const sid = String(m?.siteId || m?.id || '').trim();
@@ -627,10 +680,16 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       siteIdToCanonicalNorm[siteId] = sorted[0];
     });
 
+    const digitalkontrollNorm = normalizeCompanyIdForMatch('Digitalkontroll');
+    const isDigitalkontrollCompany = (id, name, n) =>
+      n === digitalkontrollNorm || normalizeCompanyIdForMatch(name || '') === digitalkontrollNorm;
+
     const rows = list.map((company) => {
       const cid = String(company?.id || '').trim();
       const cname = getCompanyLabel(cid);
       const norm = normalizeCompanyIdForMatch(cid);
+      const showUnassignedOnly = isDigitalkontrollCompany(cid, cname, norm);
+
       const fromGroup = (norm ? metaByNormalized.get(norm) : null) || [];
       const fromSupplemental = Array.isArray(supplementalSiteMetas[cid]) ? supplementalSiteMetas[cid] : [];
       const owned = (arr) => arr.filter((m) => siteIdToCanonicalNorm[String(m?.siteId || m?.id || '').trim()] === norm);
@@ -644,12 +703,34 @@ export default function ManageSharePointNavigation({ navigation, route }) {
           merged.push(m);
         }
       });
-      const metas = merged;
-      const siteRows = metas
+      const metas = showUnassignedOnly ? [] : merged;
+      const siteRows = showUnassignedOnly
+        ? unassignedSites.map((site) => {
+            const siteId = String(site?.id || '').trim();
+            const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(siteId);
+            const displayName = String(site?.displayName || site?.name || site?.webUrl || siteId).trim();
+            return {
+              siteId,
+              site,
+              displayName,
+              role: 'unassigned',
+              isLinked: false,
+              isLocked: false,
+              statusValue,
+              statusLabel,
+              statusColor,
+              statusBg,
+              roleLabel: 'Ej kopplad',
+              visibleInLeftPanel: false,
+              sortName: displayName,
+            };
+          })
+        : metas
         .map((meta) => {
           const siteId = String(meta?.siteId || meta?.id || '').trim();
           if (!siteId) return null;
-          const site = availableSiteMap.get(siteId) || {};
+          const site = availableSiteMap.get(siteId) || availableSiteByWebUrl.get(normalizeWebUrl(meta?.siteUrl || meta?.webUrl)) || {};
+          const statusSiteId = (site?.id && String(site.id).trim()) || siteId;
           const role = String(meta?.role || '').trim();
           const displayNameForCheck = String(meta?.siteName || site?.displayName || site?.name || site?.webUrl || '').toLowerCase();
           const isDkBasByName = /dk\s*[- ]?ba(s)?/.test(displayNameForCheck) || /dk\s*bas/.test(displayNameForCheck);
@@ -659,7 +740,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
           const isLinked = true;
           const isLocked = isSystem || isProjects;
           const isPaused = meta?.visibleInLeftPanel === false;
-          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(siteId, isPaused);
+          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(statusSiteId, isPaused);
           const roleLabel = isSystem ? 'Låst' : isProjects ? 'Låst' : '';
           let displayName = String(meta?.siteName || site?.displayName || site?.name || site?.webUrl || siteId).trim();
           if (isDkBasByName && /dk\s*[- ]?ba\s*$/i.test(displayName)) {
@@ -714,48 +795,103 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       };
     });
 
-    // Add Digitalkontroll group for unassigned sites
-    rows.unshift({
-      id: 'digitalkontroll-unassigned',
-      name: 'Digitalkontroll',
-      rows: unassignedSites.map((site) => {
-        const siteId = String(site?.id || '').trim();
-        const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(siteId);
-        const displayName = String(site?.displayName || site?.name || site?.webUrl || siteId).trim();
-        return {
-          siteId,
-          site,
-          displayName,
-          role: 'unassigned',
-          isLinked: false,
-          isLocked: false,
-          statusValue,
-          statusLabel,
-          statusColor,
-          statusBg,
-          roleLabel: 'Ej kopplad',
-          visibleInLeftPanel: false,
-        };
-      }),
-      total: unassignedSites.length,
-      statusKind: unassignedSites.some((s) => getStatusInfo(String(s?.id || '').trim()).statusValue === 'error') ? 'error' : (unassignedSites.length ? 'ok' : 'warning'),
-      statusLabel: unassignedSites.length ? 'OK' : 'Varning',
-      statusColor: unassignedSites.length ? '#2E7D32' : '#B45309',
-      statusBg: unassignedSites.length ? '#E8F5E9' : '#FEF3C7',
+    // Add Digitalkontroll group for unassigned sites only if no real company "Digitalkontroll" exists (avoid duplicate row)
+    const hasDigitalkontrollCompany = list.some((c) => {
+      const id = String(c?.id || '').trim();
+      const name = getCompanyLabel(id);
+      const n = normalizeCompanyIdForMatch(id);
+      return isDigitalkontrollCompany(id, name, n);
     });
+    if (!hasDigitalkontrollCompany) {
+      rows.unshift({
+        id: 'digitalkontroll-unassigned',
+        name: 'Digitalkontroll',
+        rows: unassignedSites.map((site) => {
+          const siteId = String(site?.id || '').trim();
+          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(siteId);
+          const displayName = String(site?.displayName || site?.name || site?.webUrl || siteId).trim();
+          return {
+            siteId,
+            site,
+            displayName,
+            role: 'unassigned',
+            isLinked: false,
+            isLocked: false,
+            statusValue,
+            statusLabel,
+            statusColor,
+            statusBg,
+            roleLabel: 'Ej kopplad',
+            visibleInLeftPanel: false,
+          };
+        }),
+        total: unassignedSites.length,
+        statusKind: unassignedSites.some((s) => getStatusInfo(String(s?.id || '').trim()).statusValue === 'error') ? 'error' : (unassignedSites.length ? 'ok' : 'warning'),
+        statusLabel: unassignedSites.length ? 'OK' : 'Varning',
+        statusColor: unassignedSites.length ? '#2E7D32' : '#B45309',
+        statusBg: unassignedSites.length ? '#E8F5E9' : '#FEF3C7',
+      });
+    }
+
+    const deletedSitesRows = [];
+    Object.entries(allCompanySiteMetas || {}).forEach(([deletedCompanyId, arr]) => {
+      (Array.isArray(arr) ? arr : [])
+        .filter((m) => m?.deletedAt)
+        .forEach((meta) => {
+          const siteId = String(meta?.siteId || meta?.id || '').trim();
+          if (!siteId) return;
+          const site = availableSiteMap.get(siteId) || availableSiteByWebUrl.get(normalizeWebUrl(meta?.siteUrl || meta?.webUrl)) || {};
+          const statusSiteId = (site?.id && String(site.id).trim()) || siteId;
+          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(statusSiteId);
+          const displayName = String(meta?.siteName || site?.displayName || site?.name || site?.webUrl || siteId).trim();
+          deletedSitesRows.push({
+            siteId,
+            site,
+            displayName,
+            deletedCompanyId,
+            deletedAt: meta.deletedAt,
+            role: 'deleted',
+            isLinked: false,
+            isLocked: false,
+            statusValue,
+            statusLabel,
+            statusColor,
+            statusBg,
+            roleLabel: 'Raderad',
+            visibleInLeftPanel: false,
+          });
+        });
+    });
+    if (deletedSitesRows.length > 0) {
+      rows.push({
+        id: 'deleted-sites',
+        name: 'Raderade siter',
+        rows: deletedSitesRows,
+        total: deletedSitesRows.length,
+        statusKind: deletedSitesRows.some((r) => r.statusValue === 'error') ? 'error' : 'ok',
+        statusLabel: 'OK',
+        statusColor: '#B45309',
+        statusBg: '#FEF3C7',
+      });
+    }
 
     return rows;
-  }, [companies, allCompanySiteMetas, metasVersion, supplementalSiteMetas, availableSiteMap, unassignedSites, getCompanyLabel, getStatusInfo]);
+  }, [companies, allCompanySiteMetas, metasVersion, supplementalSiteMetas, availableSiteMap, availableSiteByWebUrl, unassignedSites, getCompanyLabel, getStatusInfo]);
 
   const filteredCompanyRows = useMemo(() => {
     return companyRows;
   }, [companyRows]);
 
+  const isUnassignedGroup = (groupId) =>
+    groupId === 'digitalkontroll-unassigned' || normalizeCompanyIdForMatch(groupId) === normalizeCompanyIdForMatch('Digitalkontroll');
+
+  const isDeletedSitesGroup = (groupId) => groupId === 'deleted-sites';
+
   const filterRows = (rows, groupId) => {
     if (statusFilter === 'all') return rows;
     if (statusFilter === 'error') return rows.filter((r) => r.statusValue === 'error');
-    if (statusFilter === 'linked') return groupId === 'digitalkontroll-unassigned' ? [] : rows;
-    if (statusFilter === 'available') return groupId === 'digitalkontroll-unassigned' ? rows : [];
+    if (statusFilter === 'linked') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? [] : rows;
+    if (statusFilter === 'available') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? rows : [];
     return rows;
   };
 
@@ -971,6 +1107,71 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       showSimpleAlert('Fel', friendlyMsg);
     } finally {
       setAssigningSiteId('');
+    }
+  };
+
+  const handleRemoveSiteFromCompany = async (row, companyId) => {
+    const cid = String(companyId || '').trim();
+    const siteId = String(row?.siteId || '').trim();
+    if (!cid || !siteId) return;
+    const displayName = String(row?.displayName || row?.site?.displayName || row?.site?.name || row?.siteId).trim();
+    let ok = false;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      ok = window.confirm(`Ta bort "${displayName}" från företaget? Siten hamnar under "Raderade siter" så du kan koppla tillbaka den om det var ett misstag, eller ta bort den manuellt i SharePoint.`);
+    } else {
+      ok = await new Promise((resolve) => {
+        Alert.alert('Ta bort från företag', `Ta bort "${displayName}"? Siten hamnar under "Raderade siter".`, [
+          { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Ta bort', onPress: () => resolve(true) },
+        ]);
+      });
+    }
+    if (!ok) return;
+    setActionInProgressKey(`${cid}-${siteId}`);
+    try {
+      await updateDoc(doc(db, 'foretag', cid, 'sharepoint_sites', siteId), {
+        deletedAt: serverTimestamp(),
+        deletedBy: auth?.currentUser?.uid || null,
+      });
+      await refreshAllCompanySiteMetas({ afterWrite: true });
+      showSimpleAlert('Borttagen', 'Siten har tagits bort från företaget och visas nu under "Raderade siter".');
+    } catch (e) {
+      showSimpleAlert('Fel', e?.message || String(e));
+    } finally {
+      setActionInProgressKey(null);
+    }
+  };
+
+  const restoreDeletedSiteToCompany = async (siteId, deletedCompanyId, targetCompanyId, row) => {
+    const toId = String(targetCompanyId || '').trim();
+    const fromId = String(deletedCompanyId || '').trim();
+    if (!toId || !siteId) return;
+    setAssigningSiteId(siteId);
+    try {
+      const toName = getCompanyLabel(toId);
+      if (toId === fromId) {
+        await updateDoc(doc(db, 'foretag', fromId, 'sharepoint_sites', siteId), {
+          deletedAt: deleteField(),
+          deletedBy: deleteField(),
+        });
+        await refreshAllCompanySiteMetas({ afterWrite: true });
+        showSimpleAlert('Återställd', `Siten är igen kopplad till ${toName}.`);
+      } else {
+        await deleteDoc(doc(db, 'foretag', fromId, 'sharepoint_sites', siteId));
+        await upsertCompanySharePointSiteMeta(toId, {
+          siteId,
+          siteName: row?.displayName || row?.site?.displayName || row?.site?.name || null,
+          siteUrl: row?.site?.webUrl || null,
+          role: 'custom',
+          visibleInLeftPanel: true,
+        });
+        await refreshAllCompanySiteMetas({ afterWrite: true });
+        showSimpleAlert('Kopplad', `Siten är nu kopplad till ${toName}.`);
+      }
+    } catch (e) {
+      showSimpleAlert('Fel', e?.message || String(e));
+    } finally {
+      setAssigningSiteId(null);
     }
   };
 
@@ -1274,7 +1475,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
                         <Text style={{ width: 200, fontSize: 11, fontWeight: '700', color: '#6B7280', textAlign: 'right' }}>Åtgärd</Text>
                       </View>
 
-                      {isSuperadmin && company.id !== 'digitalkontroll-unassigned' ? (
+                      {isSuperadmin && !isUnassignedGroup(company.id) && !isDeletedSitesGroup(company.id) ? (
                         <View style={{ paddingHorizontal: 8, paddingTop: 6 }}>
                           <TouchableOpacity
                             onPress={() => createCustomSiteForCompany(company.id, company.name)}
@@ -1322,7 +1523,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
                                 ) : null}
                               </View>
                               <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }} numberOfLines={1}>
-                                Tillhör företag: {company.id === 'digitalkontroll-unassigned' ? 'Ej kopplad' : (company.name || company.id)}
+                                Tillhör företag: {isDeletedSitesGroup(company.id) ? 'Raderad – koppla till företag igen om det var ett misstag' : (isUnassignedGroup(company.id) ? 'Ej kopplad' : (company.name || company.id))}
                               </Text>
                             </View>
                             <View style={{ flex: 1 }}>
@@ -1355,11 +1556,19 @@ export default function ManageSharePointNavigation({ navigation, route }) {
                                   <ActivityIndicator size="small" color="#2563EB" />
                                   <Text style={{ fontSize: 11, color: '#6B7280' }}>Uppdaterar...</Text>
                                 </View>
-                              ) : company.id === 'digitalkontroll-unassigned' ? (
+                              ) : (isUnassignedGroup(company.id) || isDeletedSitesGroup(company.id)) ? (
                                 Platform.OS === 'web' ? (
                                   <select
                                     disabled={assigningSiteId === row.siteId}
-                                    onChange={(e) => assignSiteToCompany(row.siteId, String(e.target.value || ''))}
+                                    onChange={(e) => {
+                                      const val = String(e.target.value || '').trim();
+                                      if (!val) return;
+                                      if (isDeletedSitesGroup(company.id)) {
+                                        restoreDeletedSiteToCompany(row.siteId, row.deletedCompanyId, val, row);
+                                      } else {
+                                        assignSiteToCompany(row.siteId, val);
+                                      }
+                                    }}
                                     style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11 }}
                                     defaultValue=""
                                   >
@@ -1503,6 +1712,15 @@ export default function ManageSharePointNavigation({ navigation, route }) {
                 Aktivera site
               </button>
             )}
+            {!kebabMenuContent.row.isLocked ? (
+              <button
+                type="button"
+                onClick={() => { handleRemoveSiteFromCompany(kebabMenuContent.row, kebabMenuContent.company.id); closeKebabMenu(); }}
+                style={{ display: 'block', width: '100%', padding: '10px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: 12, cursor: 'pointer', color: '#B45309', borderTop: '1px solid #F3F4F6' }}
+              >
+                Ta bort från företag
+              </button>
+            ) : null}
           </div>,
           document.body
         ) : null}

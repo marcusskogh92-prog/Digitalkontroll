@@ -18,6 +18,11 @@ const { adminFetchCompanyMembers, setCompanyStatus, setCompanyUserLimit, setComp
 const { purgeCompany } = require('./companyPurge');
 const { devResetAdmin } = require('./devReset');
 const { deleteProject, deleteFolder } = require('./deleteOperations');
+const {
+  getSharePointGraphAccessToken,
+  getSharePointHostname,
+  getSharePointProvisioningAccessToken,
+} = require('./sharedConfig');
 
 exports.syncSharePointSiteVisibility = functions.https.onCall(syncSharePointSiteVisibility);
 exports.upsertCompanySharePointSiteMeta = functions.https.onCall(upsertCompanySharePointSiteMeta);
@@ -73,13 +78,17 @@ function sha256Hex(input) {
   return crypto.createHash('sha256').update(String(input || ''), 'utf8').digest('hex');
 }
 
-function buildFFUPrompt({ companyId, projectId, files }) {
+function buildFFUPrompt({ companyId, projectId, files, customInstruction }) {
   const safeFiles = (Array.isArray(files) ? files : []).map((f) => ({
     id: f && f.id != null ? String(f.id) : '',
     name: f && f.name != null ? String(f.name) : '',
     type: f && f.type != null ? String(f.type) : '',
     extractedText: f && f.extractedText != null ? String(f.extractedText) : '',
   }));
+
+  const customBlock = (customInstruction && String(customInstruction).trim())
+    ? `\n\nFöretagets extra instruktion (följ denna särskilt):\n${String(customInstruction).trim()}\n`
+    : '';
 
   const system = [
     'Du är en noggrann assistent som analyserar svenska förfrågningsunderlag (FFU).',
@@ -123,6 +132,7 @@ function buildFFUPrompt({ companyId, projectId, files }) {
     '  "risks": [ { "issue": "", "reason": "" } ],',
     '  "openQuestions": [ { "question": "", "reason": "" } ]',
     '}',
+    customBlock,
   ].join('\n');
 
   return { system, user };
@@ -278,7 +288,7 @@ async function callOpenAIForFFUAnalysis({ apiKey, system, user }) {
 // AI: Analyze FFU (förfrågningsunderlag)
 // Input: { companyId, projectId, files: [{id,name,type,extractedText}] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
-async function analyzeFFUCore({ companyId, projectId, files, uid }) {
+async function analyzeFFUCore({ companyId, projectId, files, uid, customInstruction }) {
   const normalizedFiles = (files || []).map((f) => ({
     id: f && f.id != null ? String(f.id).trim() : '',
     name: f && f.name != null ? String(f.name).trim() : '',
@@ -333,7 +343,7 @@ async function analyzeFFUCore({ companyId, projectId, files, uid }) {
     return emptyFFUAnalysisResult('AI-analys är inte konfigurerad (saknar API-nyckel).');
   }
 
-  const { system, user } = buildFFUPrompt({ companyId, projectId, files: normalizedFiles });
+  const { system, user } = buildFFUPrompt({ companyId, projectId, files: normalizedFiles, customInstruction });
 
   let analysis;
   try {
@@ -405,7 +415,17 @@ exports.analyzeFFU = functions.https.onCall(async (data, context) => {
   }
 
   assertAnalyzeFFUPermission({ companyId, context });
-  return analyzeFFUCore({ companyId, projectId, files, uid: context.auth.uid });
+
+  let customInstruction = '';
+  try {
+    const promptSnap = await db.doc(`companies/${companyId}/ai_prompts/ffu`).get().catch(() => null);
+    if (promptSnap && promptSnap.exists) {
+      const data = promptSnap.data() || {};
+      customInstruction = String(data.instruction || data.customInstruction || '').trim();
+    }
+  } catch (_e) {}
+
+  return analyzeFFUCore({ companyId, projectId, files, uid: context.auth.uid, customInstruction });
 });
 
 function parseGsPath(raw) {
@@ -1109,9 +1129,18 @@ exports.analyzeFFUFromFiles = functions
   const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
   console.log('[FFU] Step 3: Calling OpenAI', { ms: Date.now() - startedAtMs, model, status });
 
+  let customInstruction = '';
+  try {
+    const promptSnap = await db.doc(`companies/${companyId}/ai_prompts/ffu`).get().catch(() => null);
+    if (promptSnap && promptSnap.exists) {
+      const data = promptSnap.data() || {};
+      customInstruction = String(data.instruction || data.customInstruction || '').trim();
+    }
+  } catch (_e) {}
+
   let analysis;
   try {
-    analysis = await analyzeFFUCore({ companyId, projectId, files: trunc.files, uid: context.auth.uid });
+    analysis = await analyzeFFUCore({ companyId, projectId, files: trunc.files, uid: context.auth.uid, customInstruction });
   } catch (e) {
     const msg = String(e && e.message ? e.message : e);
     console.error('[FFU] analyzeFFUCore failed', { message: msg, companyId, projectId });
@@ -1327,6 +1356,7 @@ async function purgeCompanyFirestore(companyId) {
     `foretag/${companyId}/hierarki`,
     `foretag/${companyId}/mallar`,
     `foretag/${companyId}/byggdel_mallar`,
+    `foretag/${companyId}/byggdelar`,
     `foretag/${companyId}/byggdel_hierarki`,
     `foretag/${companyId}/sharepoint_sites`,
     `foretag/${companyId}/sharepoint_navigation`,

@@ -3,7 +3,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SelectDropdownChip } from '../../components/common/SelectDropdown';
 import type { Customer } from './kunderService';
@@ -17,6 +17,10 @@ export type SortColumn =
   | 'customerType';
 export type SortDirection = 'asc' | 'desc';
 
+/** Samma DataGrid-pattern som Kontaktregister: flexibla + fasta kolumner, sticky kebab med divider. */
+const FLEX = { name: 1.5, address: 1.6, city: 1.1 } as const;
+const FIXED = { personalOrOrgNumber: 160, postalCode: 110, customerType: 120, actions: 48 } as const;
+
 const styles = StyleSheet.create({
   tableWrap: {
     borderWidth: 1,
@@ -24,11 +28,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#fff',
+    minWidth: '100%',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    gap: 8,
+    paddingVertical: 5,
     paddingHorizontal: 14,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
@@ -38,16 +44,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 0,
+    minWidth: 0,
   },
   headerText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#475569',
   },
+  cellFlex: { flexShrink: 0, minWidth: 0 },
+  cellFixed: { flexShrink: 0 },
+  actionsCol: {
+    width: FIXED.actions,
+    flexShrink: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: '#e2e8f0',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  actionsColHeader: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 5,
+  },
+  actionsColInline: { backgroundColor: '#eff6ff' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    gap: 8,
+    paddingVertical: 3,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
@@ -63,26 +89,28 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
-    padding: 12,
-    paddingLeft: 26,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingLeft: 22,
   },
   detailsInner: {
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#f1f5f9',
-    padding: 10,
+    padding: 8,
   },
   rowMenuBtn: {
-    padding: 6,
-    borderRadius: 8,
+    padding: 4,
+    borderRadius: 6,
     backgroundColor: 'transparent',
-    marginLeft: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   contactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
@@ -93,14 +121,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#475569',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   contactHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   chipRow: {
     flexDirection: 'row',
@@ -180,7 +208,8 @@ const styles = StyleSheet.create({
   inlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
+    gap: 8,
+    paddingVertical: 2,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
@@ -189,12 +218,14 @@ const styles = StyleSheet.create({
   inlineInput: {
     fontSize: 13,
     color: '#111',
-    paddingVertical: 6,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     borderRadius: 6,
     backgroundColor: '#fff',
+    flexShrink: 0,
+    minWidth: 0,
   },
   cellText: {
     fontSize: 13,
@@ -205,6 +236,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     fontWeight: '400',
+  },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eef0f3',
+    backgroundColor: '#eff6ff',
+  },
+  editRowBtn: {
+    width: 24,
+    height: 24,
+    padding: 0,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editRowBtnPrimary: {
+    backgroundColor: '#1976D2',
+    borderColor: '#1976D2',
+  },
+  editRowBtnCancel: {
+    borderColor: '#cbd5e1',
+    backgroundColor: 'transparent',
   },
 });
 
@@ -243,6 +303,20 @@ interface KunderTableProps {
   inlineSaving?: boolean;
   onInlineChange?: (field: keyof KunderTableProps['inlineValues'], value: string) => void;
   onInlineSave?: () => void;
+  editingId?: string | null;
+  inlineSavingCustomer?: boolean;
+  onSaveEdit?: (
+    customerId: string,
+    values: {
+      name: string;
+      personalOrOrgNumber: string;
+      address: string;
+      postalCode: string;
+      city: string;
+      customerType: string;
+    }
+  ) => void;
+  onCancelEdit?: () => void;
 }
 
 export default function KunderTable({
@@ -264,13 +338,42 @@ export default function KunderTable({
   inlineSaving = false,
   onInlineChange,
   onInlineSave,
+  editingId = null,
+  inlineSavingCustomer = false,
+  onSaveEdit,
+  onCancelEdit,
 }: KunderTableProps): React.ReactElement {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string }>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
+  const [editDraft, setEditDraft] = useState<{
+    name: string;
+    personalOrOrgNumber: string;
+    address: string;
+    postalCode: string;
+    city: string;
+    customerType: string;
+  } | null>(null);
 
+  const kebabRefs = useRef<Record<string, { focus?: () => void } | null>>({});
   const contactMap = useMemo(() => contactsByCustomerId, [contactsByCustomerId]);
+
+  const editingCustomer = editingId ? (customers.find((c) => c.id === editingId) || null) : null;
+  React.useEffect(() => {
+    if (editingCustomer) {
+      setEditDraft({
+        name: String(editingCustomer.name ?? ''),
+        personalOrOrgNumber: String(editingCustomer.personalOrOrgNumber ?? ''),
+        address: String(editingCustomer.address ?? ''),
+        postalCode: String(editingCustomer.postalCode ?? ''),
+        city: String(editingCustomer.city ?? ''),
+        customerType: String(editingCustomer.customerType ?? ''),
+      });
+    } else {
+      setEditDraft(null);
+    }
+  }, [editingId, editingCustomer?.id]);
 
   const submitDraft = (customer: Customer) => {
     const draft = contactDrafts[customer.id];
@@ -307,6 +410,32 @@ export default function KunderTable({
     }
   };
 
+  const handleEditKeyDown = (e: React.KeyboardEvent, customer: Customer) => {
+    if (Platform.OS !== 'web') return;
+    const key = (e.nativeEvent as KeyboardEvent).key;
+    if (key === 'Enter') {
+      e.preventDefault();
+      if (editDraft?.name?.trim() && onSaveEdit && !inlineSavingCustomer) {
+        onSaveEdit(customer.id, {
+          name: editDraft.name.trim(),
+          personalOrOrgNumber: editDraft.personalOrOrgNumber.trim(),
+          address: editDraft.address.trim(),
+          postalCode: editDraft.postalCode.trim(),
+          city: editDraft.city.trim(),
+          customerType: editDraft.customerType.trim(),
+        });
+      }
+    } else if (key === 'Escape') {
+      e.preventDefault();
+      const id = editingId;
+      onCancelEdit?.();
+      setTimeout(() => {
+        const el = id ? kebabRefs.current[id] : null;
+        if (el && typeof el.focus === 'function') el.focus();
+      }, 0);
+    }
+  };
+
   const SortIcon = ({ col }: { col: SortColumn }) => {
     if (sortColumn !== col) {
       return <Ionicons name="swap-vertical-outline" size={14} color="#cbd5e1" />;
@@ -320,63 +449,66 @@ export default function KunderTable({
     );
   };
 
+  const stickyRight = Platform.OS === 'web' ? { position: 'sticky' as const, right: 0 } : {};
+
   return (
     <View style={styles.tableWrap}>
       <View style={styles.header}>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 2 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.name }]}
           onPress={() => onSort('name')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Kundnamn</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Kundnamn</Text>
           <SortIcon col="name" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.2 }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]}
           onPress={() => onSort('personalOrOrgNumber')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Personnummer / Organisationsnummer</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Personnr / Orgnr</Text>
           <SortIcon col="personalOrOrgNumber" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.5 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.address }]}
           onPress={() => onSort('address')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Adress</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Adress</Text>
           <SortIcon col="address" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 0.8 }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.postalCode }]}
           onPress={() => onSort('postalCode')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Postnummer</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Postnr</Text>
           <SortIcon col="postalCode" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.0 }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.city }]}
           onPress={() => onSort('city')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Ort</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Ort</Text>
           <SortIcon col="city" />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, { flex: 1.0 }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.customerType }]}
           onPress={() => onSort('customerType')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Kundtyp</Text>
+          <Text style={styles.headerText} numberOfLines={1}>Kundtyp</Text>
           <SortIcon col="customerType" />
         </TouchableOpacity>
+        <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
 
       {inlineEnabled ? (
@@ -390,7 +522,7 @@ export default function KunderTable({
             onSubmitEditing={() => {
               if (!inlineSaving) onInlineSave?.();
             }}
-            style={[styles.inlineInput, { flex: 2 }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.name }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
           />
@@ -410,7 +542,7 @@ export default function KunderTable({
                 }, 50);
               }
             }}
-            style={[styles.inlineInput, { flex: 1.2, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
           />
@@ -430,7 +562,7 @@ export default function KunderTable({
                 }, 50);
               }
             }}
-            style={[styles.inlineInput, { flex: 1.5, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
           />
@@ -450,7 +582,7 @@ export default function KunderTable({
                 }, 50);
               }
             }}
-            style={[styles.inlineInput, { flex: 0.8, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
           />
@@ -470,14 +602,14 @@ export default function KunderTable({
                 }, 50);
               }
             }}
-            style={[styles.inlineInput, { flex: 1.0, marginLeft: 8 }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
           />
           {Platform.OS === 'web' ? (
             // @ts-ignore - web-only select
             <select
-              style={StyleSheet.flatten([styles.inlineInput, { flex: 1.0, marginLeft: 8, height: 32 }])}
+              style={StyleSheet.flatten([styles.inlineInput, styles.cellFixed, { width: FIXED.customerType, height: 32 }])}
               value={inlineValues?.customerType ?? ''}
               onChange={(e) => onInlineChange?.('customerType', e.target.value)}
               data-field="kundtyp-ny"
@@ -496,76 +628,176 @@ export default function KunderTable({
               onSubmitEditing={() => {
                 if (!inlineSaving) onInlineSave?.();
               }}
-              style={[styles.inlineInput, { flex: 1.0, marginLeft: 8 }]}
+              style={[styles.inlineInput, styles.cellFixed, { width: FIXED.customerType }]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
             />
           )}
+          <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
       ) : null}
 
       {customers.map((customer, idx) => (
         <View key={customer.id}>
-          <TouchableOpacity
-            style={[
-              styles.row,
-              idx % 2 === 1 ? styles.rowAlt : null,
-              hoveredId === customer.id ? styles.rowHover : null,
-            ]}
-            onPress={() => {
-              setExpandedIds((prev) => ({ ...prev, [customer.id]: !prev[customer.id] }));
-              onRowPress(customer);
-            }}
-            onLongPress={(e) => onRowContextMenu?.(e, customer)}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web'
-              ? {
-                  cursor: 'pointer',
-                  onMouseEnter: () => setHoveredId(customer.id),
-                  onMouseLeave: () => setHoveredId(null),
-                }
-              : {})}
-          >
-            <View style={{ flex: 2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons
-                name="chevron-forward"
-                size={14}
-                color="#94a3b8"
-                style={{
-                  transform: [{ rotate: expandedIds[customer.id] ? '90deg' : '0deg' }],
-                }}
+          {editingId === customer.id && editDraft ? (
+            <View style={styles.editRow}>
+              <TextInput
+                value={editDraft.name}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, name: v } : d))}
+                placeholder="Kundnamn"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.name }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, customer) } : {})}
               />
-              <Text style={styles.cellText} numberOfLines={1}>
-                {customer.name || '—'}
-              </Text>
-            </View>
-            <Text style={[styles.cellMuted, { flex: 1.2 }]} numberOfLines={1}>
-              {safeText(customer.personalOrOrgNumber)}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 1.5 }]} numberOfLines={1}>
-              {safeText(customer.address)}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 0.8 }]} numberOfLines={1}>
-              {safeText(customer.postalCode)}
-            </Text>
-            <Text style={[styles.cellMuted, { flex: 1.0 }]} numberOfLines={1}>
-              {safeText(customer.city)}
-            </Text>
-            <View style={[styles.chipRow, { flex: 1.0 }]}>
-              <SelectDropdownChip
-                label={safeText(customer.customerType)}
-                removable={false}
+              <TextInput
+                value={editDraft.personalOrOrgNumber}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, personalOrOrgNumber: v } : d))}
+                placeholder="Personnr/Orgnr"
+                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, customer) } : {})}
               />
+              <TextInput
+                value={editDraft.address}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, address: v } : d))}
+                placeholder="Adress"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, customer) } : {})}
+              />
+              <TextInput
+                value={editDraft.postalCode}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, postalCode: v } : d))}
+                placeholder="Postnr"
+                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, customer) } : {})}
+              />
+              <TextInput
+                value={editDraft.city}
+                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, city: v } : d))}
+                placeholder="Ort"
+                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, customer) } : {})}
+              />
+              {Platform.OS === 'web' ? (
+                <select
+                  style={StyleSheet.flatten([styles.inlineInput, styles.cellFixed, { width: FIXED.customerType, height: 28 }])}
+                  value={editDraft.customerType}
+                  onChange={(e) => setEditDraft((d) => (d ? { ...d, customerType: e.target.value } : d))}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLSelectElement>) => handleEditKeyDown(e as unknown as React.KeyboardEvent, customer)}
+                >
+                  <option value="">Typ</option>
+                  <option value="Privatperson">Privatperson</option>
+                  <option value="Företag">Företag</option>
+                </select>
+              ) : (
+                <TextInput
+                  value={editDraft.customerType}
+                  onChangeText={(v) => setEditDraft((d) => (d ? { ...d, customerType: v } : d))}
+                  placeholder="Typ"
+                  style={[styles.inlineInput, styles.cellFixed, { width: FIXED.customerType }]}
+                  placeholderTextColor="#94a3b8"
+                  {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                />
+              )}
+              <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
+                <TouchableOpacity
+                  style={[styles.editRowBtn, styles.editRowBtnPrimary]}
+                  onPress={() => {
+                    if (!editDraft?.name?.trim() || !onSaveEdit) return;
+                    onSaveEdit(customer.id, {
+                      name: editDraft.name.trim(),
+                      personalOrOrgNumber: editDraft.personalOrOrgNumber.trim(),
+                      address: editDraft.address.trim(),
+                      postalCode: editDraft.postalCode.trim(),
+                      city: editDraft.city.trim(),
+                      customerType: editDraft.customerType.trim(),
+                    });
+                  }}
+                  disabled={inlineSavingCustomer}
+                  accessibilityLabel="Spara"
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.editRowBtn, styles.editRowBtnCancel]}
+                  onPress={() => onCancelEdit?.()}
+                  disabled={inlineSavingCustomer}
+                  accessibilityLabel="Avbryt"
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="close" size={14} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </View>
+          ) : (
             <TouchableOpacity
-              style={styles.rowMenuBtn}
-              onPress={(e) => onRowMenu?.(e, customer)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              style={[
+                styles.row,
+                idx % 2 === 1 ? styles.rowAlt : null,
+                hoveredId === customer.id ? styles.rowHover : null,
+              ]}
+              onPress={() => {
+                setExpandedIds((prev) => ({ ...prev, [customer.id]: !prev[customer.id] }));
+                onRowPress(customer);
+              }}
+              onLongPress={(e) => onRowContextMenu?.(e, customer)}
+              activeOpacity={0.7}
+              {...(Platform.OS === 'web'
+                ? {
+                    cursor: 'pointer',
+                    onMouseEnter: () => setHoveredId(customer.id),
+                    onMouseLeave: () => setHoveredId(null),
+                  }
+                : {})}
             >
-              <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
+              <View style={[styles.cellFlex, { flex: FLEX.name, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color="#94a3b8"
+                  style={{
+                    transform: [{ rotate: expandedIds[customer.id] ? '90deg' : '0deg' }],
+                  }}
+                />
+                <Text style={styles.cellText} numberOfLines={1}>
+                  {customer.name || '—'}
+                </Text>
+              </View>
+              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]} numberOfLines={1}>
+                {safeText(customer.personalOrOrgNumber)}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.address }]} numberOfLines={1}>
+                {safeText(customer.address)}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.postalCode }]} numberOfLines={1}>
+                {safeText(customer.postalCode)}
+              </Text>
+              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.city }]} numberOfLines={1}>
+                {safeText(customer.city)}
+              </Text>
+              <View style={[styles.chipRow, styles.cellFixed, { width: FIXED.customerType }]}>
+                <SelectDropdownChip
+                  label={safeText(customer.customerType)}
+                  removable={false}
+                />
+              </View>
+              <View style={[styles.actionsCol, stickyRight]}>
+                <TouchableOpacity
+                  ref={(r) => { kebabRefs.current[customer.id] = r as { focus?: () => void } | null; }}
+                  style={styles.rowMenuBtn}
+                  onPress={(e) => onRowMenu?.(e, customer)}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer', tabIndex: 0 } : {})}
+                >
+                  <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </TouchableOpacity>
-          </TouchableOpacity>
+          )}
           {expandedIds[customer.id] ? (
             <View style={styles.detailsRow}>
               <View style={styles.detailsInner}>

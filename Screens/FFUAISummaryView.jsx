@@ -183,16 +183,13 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     setRerunConfirm({ visible: true, busy: false, error: '' });
   }, [canRun, cid, hasSavedAnalysis, pid, runAnalysisAndPersist]);
 
-  const onConfirmRerun = useCallback(async () => {
+  const onConfirmRerun = useCallback(() => {
     if (!canRun) return;
-    setRerunConfirm((prev) => ({ ...prev, busy: true, error: '' }));
-    try {
-      await runAnalysisAndPersist();
-      setRerunConfirm({ visible: false, busy: false, error: '' });
-    } catch (e) {
+    setRerunConfirm({ visible: false, busy: false, error: '' });
+    runAnalysisAndPersist().catch((e) => {
       const msg = String(e?.message || e?.details || e?.code || e || '').trim();
-      setRerunConfirm((prev) => ({ ...prev, busy: false, error: msg || 'Kunde inte uppdatera analysen.' }));
-    }
+      setRunError(msg || 'Kunde inte uppdatera analysen.');
+    });
   }, [canRun, runAnalysisAndPersist]);
 
   const summaryText = safeText(analysisDoc?.summary);

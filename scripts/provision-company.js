@@ -32,6 +32,7 @@ async function main() {
   const db = admin.firestore();
   const auth = admin.auth();
   const formatPersonName = require('./lib/formatPersonName');
+  const { ensureCompanyByggdelar } = require('./lib/seedByggdelar');
 
   const company = args.company;
   if (!company) { console.error('--company is required'); process.exit(1); }
@@ -44,6 +45,10 @@ async function main() {
     const companyRef = db.collection('foretag').doc(company);
     await companyRef.set({ name: company, createdAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     console.log('Created or updated company doc:', company);
+
+    // seed grundregister byggdelar (idempotent)
+    const byggdelResult = await ensureCompanyByggdelar(db, company);
+    console.log('Byggdelar:', byggdelResult.created, 'created,', byggdelResult.skipped, 'skipped');
 
     // create default templates
     const templatesRef = companyRef.collection('mallar');

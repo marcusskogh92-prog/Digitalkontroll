@@ -98,6 +98,7 @@ export default function WebMainPane(props) {
   } = props;
 
   const isWeb = Platform.OS === 'web';
+  const effectiveCompanyId = String(companyId ?? routeCompanyId ?? authClaims?.companyId ?? '').trim();
   const PANE_PADDING = 18;
 
   // Avoid nested vertical ScrollViews on web.

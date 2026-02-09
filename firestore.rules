@@ -126,6 +126,14 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Byggdelar grundregister (company-scoped). Default-byggdelar får inte raderas (kontroll i app).
+    // Globala admins kan hantera alla företags byggdelar.
+    match /foretag/{company}/byggdelar/{byggdelId} {
+      allow read: if isSignedIn() && (isCompanyMember(company) || isGlobalAdmin());
+      allow create, update: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
+      allow delete: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
+    }
+
     // Byggdel hierarki (company-scoped)
     match /foretag/{company}/byggdel_hierarki/state {
       allow read, write: if isCompanyMember(company);
@@ -190,6 +198,12 @@ service cloud.firestore {
     match /foretag/{company}/kunder/{customerId} {
       allow read: if isSignedIn() && isCompanyMember(company);
       allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
+    }
+
+    // Kontoplan (chart of accounts, company-scoped). Globala admins kan hantera alla företag.
+    match /foretag/{company}/kontoplan/{accountId} {
+      allow read: if isSignedIn() && (isCompanyMember(company) || isGlobalAdmin());
+      allow create, update, delete: if isSignedIn() && (hasWriteAccess(company) || isGlobalAdmin());
     }
 
     // Company members directory (company-scoped)
@@ -340,6 +354,12 @@ service cloud.firestore {
     // FFU AI analysis (canonical path)
     // Path: companies/{companyId}/projects/{projectId}/ai_ffu_analysis/latest
     match /companies/{company}/projects/{projectId}/ai_ffu_analysis/{docId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
+    // Company AI prompts (Förfrågningsunderlag, Ritningar, etc.) – företagsbaserade instruktioner för AI-analys
+    match /companies/{company}/ai_prompts/{promptId} {
       allow read: if isCompanyMember(company) || isGlobalAdmin();
       allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
     }
