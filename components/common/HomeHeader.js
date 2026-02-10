@@ -78,7 +78,7 @@ export function HomeHeader({
   const [registerDropdownVisible, setRegisterDropdownVisible] = useState(false);
   const [registerDropdownPosition, setRegisterDropdownPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const registerButtonRef = useRef(null);
-  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal } = useContext(AdminModalContext) || {};
+  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal, openKategoriModal } = useContext(AdminModalContext) || {};
 
   /** Samma logik som Kunder/Kontakter: använd inloggat företag (companyId/route eller token). */
   const getEffectiveCompanyIdForRegister = useCallback(async () => {
@@ -506,6 +506,9 @@ export function HomeHeader({
                 </TouchableOpacity>
                 <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openMallarModal) openMallarModal(cid); else showAlert('Utveckling pågår', 'Denna del är under utveckling.'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>Mallar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKategoriModal) openKategoriModal(cid); else navigation.navigate('ManageCompany', { focus: 'kategorier' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>Kategorier</Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -1002,6 +1005,7 @@ export function HomeHeader({
             { key: 'byggdelstabell', label: 'Byggdelstabell', screen: 'ManageCompany', params: { focus: 'byggdel' } },
             { key: 'kontoplan', label: 'Kontoplan', screen: 'ManageCompany', params: { focus: 'kontoplan' } },
             { key: 'mallar', label: 'Mallar', screen: 'ManageControlTypes' },
+            { key: 'kategorier', label: 'Kategorier', screen: null },
           ];
           return createPortal(
             <View>
@@ -1019,6 +1023,8 @@ export function HomeHeader({
                           openByggdelModal(cid);
                         } else if (it.key === 'kontoplan' && openKontoplanModal) {
                           openKontoplanModal(cid);
+                        } else if (it.key === 'kategorier' && openKategoriModal) {
+                          openKategoriModal(cid);
                         } else if (it.screen === 'ManageControlTypes') {
                           if (openMallarModal) openMallarModal(cid);
                           else showAlert('Utveckling pågår', 'Denna del är under utveckling.');

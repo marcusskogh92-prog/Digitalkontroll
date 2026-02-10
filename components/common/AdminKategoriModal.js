@@ -1,8 +1,7 @@
 /**
- * Admin modal: Byggdelstabell. Opens from Register → Byggdelstabell.
- * Smalare modal, samma UX som Kunder/Leverantörer: fast header, toolbar, scroll endast i tabellen.
- * Använder grundregistret foretag/{companyId}/byggdelar (code, name, notes, isDefault).
- * Grundbyggdelar (isDefault) kan redigeras fullt ut (kod, namn, anteckningar) men får inte raderas.
+ * Admin modal: Kategorier. Opens from Register → Kategorier.
+ * Samma UX som Kontoplan/Byggdelar: fast header, toolbar, scroll endast i listan.
+ * Data: companies/{companyId}/categories/{categoryId} – name, note.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -22,19 +21,19 @@ import {
 } from 'react-native';
 import {
     buildAndDownloadExcel,
-    BYGGDELAR_EXCEL,
     computeSyncPlan,
+    KATEGORIER_EXCEL,
     parseExcelFromBuffer,
     validateHeaders,
 } from '../../utils/registerExcel';
 import ContextMenu from '../ContextMenu';
 import {
-    createByggdel,
-    deleteByggdel,
-    fetchByggdelar,
-    updateByggdel,
+    createCategory,
+    deleteCategory,
+    fetchCategories,
+    updateCategory,
 } from '../firebase';
-import ByggdelTable from './ByggdelTable';
+import KategoriTable from './KategoriTable';
 import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
@@ -194,30 +193,27 @@ const styles = StyleSheet.create({
   },
 });
 
-function normalizeCode(v) {
-  return String(v ?? '').replace(/\D/g, '').slice(0, 3);
-}
-
-export default function AdminByggdelModal({ visible, companyId, onClose }) {
+export default function AdminKategoriModal({ visible, companyId, onClose }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [allByggdelar, setAllByggdelar] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState('');
-  const [sortColumn, setSortColumn] = useState('code');
+  const [sortColumn, setSortColumn] = useState('name');
   const [sortDirection, setSortDirection] = useState('asc');
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [inlineByggdel, setInlineByggdel] = useState('');
-  const [inlineBeskrivning, setInlineBeskrivning] = useState('');
-  const [inlineAnteckningar, setInlineAnteckningar] = useState('');
+  const [inlineName, setInlineName] = useState('');
+  const [inlineNote, setInlineNote] = useState('');
   const [inlineSaving, setInlineSaving] = useState(false);
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuItem, setRowMenuItem] = useState(null);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [excelMenuVisible, setExcelMenuVisible] = useState(false);
   const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
   const excelInputRef = useRef(null);
@@ -227,22 +223,22 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
+  const tableScrollRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      // Vid tomt companyId använder fetchByggdelar resolveCompanyId som fallback till token (t.ex. MS Byggsystem)
-      const list = await fetchByggdelar(cid || null);
-      setAllByggdelar(Array.isArray(list) ? list : []);
+      const list = await fetchCategories(cid || null);
+      setCategories(Array.isArray(list) ? list : []);
     } catch (e) {
-      setError(e?.message || 'Kunde inte ladda byggdelstabellen.');
+      setError(e?.message || 'Kunde inte ladda kategorier.');
     } finally {
       setLoading(false);
     }
   }, [cid]);
 
-  const showContent = hasCompany || allByggdelar.length > 0;
+  const showContent = hasCompany || categories.length > 0;
 
   useEffect(() => {
     if (!visible) return;
@@ -254,9 +250,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     if (visible) {
       const prev = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = prev;
-      };
+      return () => { document.body.style.overflow = prev; };
     }
   }, [visible]);
 
@@ -276,9 +270,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
       });
       statusTimeoutRef.current = null;
     }, delay);
-    return () => {
-      if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
-    };
+    return () => { if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current); };
   }, [notice, error, statusOpacity]);
 
   const showNotice = (msg) => {
@@ -292,30 +284,26 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
   };
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return allByggdelar;
+    if (!search.trim()) return categories;
     const s = search.toLowerCase().trim();
-    return allByggdelar.filter((m) => {
-      const code = String(m.code ?? '').toLowerCase();
-      const name = String(m.name ?? '').toLowerCase();
-      const notes = String(m.notes ?? '').toLowerCase();
-      return code.includes(s) || name.includes(s) || notes.includes(s);
+    return categories.filter((c) => {
+      const n = String(c.name ?? '').toLowerCase();
+      const no = String(c.note ?? '').toLowerCase();
+      return n.includes(s) || no.includes(s);
     });
-  }, [allByggdelar, search]);
+  }, [categories, search]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
     list.sort((a, b) => {
       let aVal = '';
       let bVal = '';
-      if (sortColumn === 'code' || sortColumn === 'moment') {
-        aVal = String(a.code ?? '').trim();
-        bVal = String(b.code ?? '').trim();
-      } else if (sortColumn === 'name') {
+      if (sortColumn === 'name') {
         aVal = String(a.name ?? '').trim();
         bVal = String(b.name ?? '').trim();
-      } else if (sortColumn === 'anteckningar' || sortColumn === 'notes') {
-        aVal = String(a.notes ?? '').trim();
-        bVal = String(b.notes ?? '').trim();
+      } else if (sortColumn === 'note') {
+        aVal = String(a.note ?? '').trim();
+        bVal = String(b.note ?? '').trim();
       }
       const cmp = (aVal || '').localeCompare(bVal || '', 'sv');
       return sortDirection === 'asc' ? cmp : -cmp;
@@ -323,43 +311,29 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     return list;
   }, [filtered, sortColumn, sortDirection]);
 
-  /** Tabell förväntar moment/name/anteckningar; API ger code/name/notes */
-  const tableItems = useMemo(
-    () =>
-      sorted.map((i) => ({
-        ...i,
-        moment: i.code,
-        anteckningar: i.notes,
-      })),
-    [sorted]
-  );
-
   const handleSort = (col) => {
-    const internalCol = col === 'moment' ? 'code' : col === 'anteckningar' ? 'notes' : col;
-    if (sortColumn === internalCol) {
+    if (sortColumn === col) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
-      setSortColumn(internalCol);
+      setSortColumn(col);
       setSortDirection('asc');
     }
   };
 
   const handleInlineSave = async () => {
     if (!cid) return;
-    const code = normalizeCode(inlineByggdel);
-    const name = String(inlineBeskrivning || '').trim();
-    if (!code || !name) return;
+    const name = String(inlineName ?? '').trim();
+    if (!name) return;
     setInlineSaving(true);
     try {
-      await createByggdel(
-        { code, name, notes: String(inlineAnteckningar || '').trim() },
+      await createCategory(
+        { name, note: String(inlineNote ?? '').trim() },
         cid
       );
-      setInlineByggdel('');
-      setInlineBeskrivning('');
-      setInlineAnteckningar('');
+      setInlineName('');
+      setInlineNote('');
       await load();
-      showNotice('Byggdel tillagd');
+      showNotice('Kategori tillagd');
     } catch (e) {
       setError(formatWriteError(e));
     } finally {
@@ -367,21 +341,16 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     }
   };
 
-  const handleSaveEdit = async (byggdelId, values) => {
+  const handleSaveEdit = async (categoryId, values) => {
     if (!cid) return;
-    const patch = {
-      name: String(values.beskrivning ?? '').trim(),
-      notes: String(values.anteckningar ?? '').trim(),
-    };
-    if (values.byggdel != null) {
-      const code = normalizeCode(values.byggdel);
-      if (code) patch.code = code;
-    }
     setSaving(true);
     setError('');
     try {
-      await updateByggdel(cid, byggdelId, patch);
-      showNotice('Byggdel uppdaterad');
+      await updateCategory(cid, categoryId, {
+        name: values.name,
+        note: values.note,
+      });
+      showNotice('Kategori uppdaterad');
       setEditingId(null);
       await load();
     } catch (e) {
@@ -391,29 +360,24 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     }
   };
 
-  const handleDelete = async (item) => {
-    if (item.isDefault) return;
-    if (!cid) return;
-    const code = String(item.code ?? '').trim();
-    const name = String(item.name ?? '').trim();
-    const msg = `Vill du verkligen ta bort byggdel ${code}${name ? ` – ${name}` : ''}?`;
-    const ok =
-      Platform.OS === 'web'
-        ? window.confirm(msg)
-        : await new Promise((resolve) => {
-            Alert.alert('Ta bort byggdel', msg, [
-              { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Ta bort', style: 'destructive', onPress: () => resolve(true) },
-            ]);
-          });
-    if (!ok) return;
+  const requestDelete = (item) => {
+    setDeleteConfirmItem(item);
+  };
+
+  const confirmDelete = async () => {
+    const item = deleteConfirmItem;
+    if (!cid || !item) return;
+    setDeleting(true);
     try {
-      await deleteByggdel(cid, item.id);
-      showNotice('Byggdel borttagen');
+      await deleteCategory(cid, item.id);
+      showNotice('Kategori raderad');
       if (editingId === item.id) setEditingId(null);
+      setDeleteConfirmItem(null);
       await load();
     } catch (e) {
-      setError(e?.message || 'Kunde inte ta bort.');
+      setError(e?.message || 'Kunde inte radera.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -423,12 +387,12 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
       Alert.alert('Info', 'Excel-export är endast tillgängligt i webbversionen.');
       return;
     }
-    const rows = (allByggdelar || []).map((a) => BYGGDELAR_EXCEL.itemToRow(a));
+    const rows = (categories || []).map((c) => KATEGORIER_EXCEL.itemToRow(c));
     buildAndDownloadExcel(
-      BYGGDELAR_EXCEL.sheetName,
-      BYGGDELAR_EXCEL.headers,
+      KATEGORIER_EXCEL.sheetName,
+      KATEGORIER_EXCEL.headers,
       rows,
-      BYGGDELAR_EXCEL.filenamePrefix
+      KATEGORIER_EXCEL.filenamePrefix
     );
     showNotice('Excel-mall nedladdad');
   };
@@ -445,18 +409,15 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
         setError(errors[0]);
         return;
       }
-      const { valid, missing } = validateHeaders(headers, BYGGDELAR_EXCEL.headers);
+      const { valid, missing } = validateHeaders(headers, KATEGORIER_EXCEL.headers);
       if (!valid) {
         setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Använd Excel-mallen.`);
         return;
       }
-      const plan = computeSyncPlan(rows, allByggdelar, {
-        keyField: BYGGDELAR_EXCEL.keyField,
-        getKeyFromRow: (row) => {
-          const raw = row[BYGGDELAR_EXCEL.keyField] ?? '';
-          return String(raw).replace(/\D/g, '').slice(0, 3);
-        },
-        getKeyFromItem: (item) => BYGGDELAR_EXCEL.itemToKey(item),
+      const plan = computeSyncPlan(rows, categories, {
+        keyField: KATEGORIER_EXCEL.keyField,
+        getKeyFromRow: (row) => row[KATEGORIER_EXCEL.keyField] ?? '',
+        getKeyFromItem: (item) => KATEGORIER_EXCEL.itemToKey(item),
       });
       setImportPlan(plan);
       setImportConfirmVisible(true);
@@ -472,32 +433,27 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     const failed = [];
     try {
       for (const row of importPlan.toCreate) {
-        const payload = BYGGDELAR_EXCEL.rowToPayload(row);
-        if (!payload.code) continue;
+        const payload = KATEGORIER_EXCEL.rowToPayload(row);
+        if (!payload.name) continue;
         try {
-          await createByggdel({ code: payload.code, name: payload.name, notes: payload.notes }, cid);
+          await createCategory(payload, cid);
         } catch (e) {
-          failed.push(`Skapa ${payload.code}: ${e?.message || 'fel'}`);
+          failed.push(`Skapa ${payload.name}: ${e?.message || 'fel'}`);
         }
       }
       for (const { id, row } of importPlan.toUpdate) {
-        const payload = BYGGDELAR_EXCEL.rowToPayload(row);
+        const payload = KATEGORIER_EXCEL.rowToPayload(row);
         try {
-          await updateByggdel(cid, id, {
-            code: payload.code,
-            name: payload.name,
-            notes: payload.notes,
-            isDefault: payload.isDefault,
-          });
+          await updateCategory(cid, id, payload);
         } catch (e) {
-          failed.push(`Uppdatera ${payload.code}: ${e?.message || 'fel'}`);
+          failed.push(`Uppdatera ${payload.name}: ${e?.message || 'fel'}`);
         }
       }
       for (const item of importPlan.toDelete) {
         try {
-          await deleteByggdel(cid, item.id);
+          await deleteCategory(cid, item.id);
         } catch (e) {
-          failed.push(`Radera ${item.code}: ${e?.message || 'fel'}`);
+          failed.push(`Radera ${item.name}: ${e?.message || 'fel'}`);
         }
       }
       setImportConfirmVisible(false);
@@ -517,14 +473,12 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
   };
 
   const openRowMenu = (e, item) => {
-    const allowDelete = !item.isDefault;
     if (Platform.OS !== 'web') {
-      const buttons = [
+      Alert.alert('Kategori', `${item.name ?? ''}`.trim(), [
         { text: 'Avbryt', style: 'cancel' },
         { text: 'Redigera', onPress: () => setEditingId(item.id) },
-      ];
-      if (allowDelete) buttons.push({ text: 'Ta bort', style: 'destructive', onPress: () => handleDelete(item) });
-      Alert.alert('Byggdel', `${item.code ?? ''} ${item.name ?? ''}`.trim(), buttons);
+        { text: 'Ta bort', style: 'destructive', onPress: () => requestDelete(item) },
+      ]);
       return;
     }
     const ne = e?.nativeEvent || e;
@@ -535,13 +489,10 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     setRowMenuVisible(true);
   };
 
-  const rowMenuItems = useMemo(() => {
-    const items = [{ key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> }];
-    if (rowMenuItem && !rowMenuItem.isDefault) {
-      items.push({ key: 'delete', label: 'Ta bort', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> });
-    }
-    return items;
-  }, [rowMenuItem]);
+  const rowMenuItems = [
+    { key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
+    { key: 'delete', label: 'Ta bort', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
+  ];
 
   if (!visible) return null;
 
@@ -552,11 +503,11 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="layers-outline" size={22} color="#1976D2" />
+                <Ionicons name="pricetag-outline" size={22} color="#1976D2" />
               </View>
               <View>
-                <Text style={styles.title}>Byggdelstabell</Text>
-                <Text style={styles.subtitle}>Register över byggdelar</Text>
+                <Text style={styles.title}>Kategorier</Text>
+                <Text style={styles.subtitle}>Register över kategorier</Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
@@ -580,7 +531,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
                       style={styles.searchInput}
                       value={search}
                       onChangeText={setSearch}
-                      placeholder="Sök byggdel, beskrivning, anteckningar…"
+                      placeholder="Sök kategori, anteckning…"
                       placeholderTextColor="#94a3b8"
                       {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
                     />
@@ -610,7 +561,11 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
                     <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => {}}
+                      onPress={() => {
+                        const r = tableScrollRef.current;
+                        if (r && typeof r.scrollTo === 'function') r.scrollTo({ y: 0, animated: true });
+                      }}
+                      accessibilityLabel="Lägg till kategori"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
                       <Ionicons name="add" size={18} color="#fff" />
@@ -630,6 +585,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
           </View>
 
           <ScrollView
+            ref={tableScrollRef}
             style={styles.tableScroll}
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
@@ -638,12 +594,12 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
               <View>
                 {loading ? (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>Laddar byggdelar…</Text>
+                    <Text style={styles.emptyTitle}>Laddar kategorier…</Text>
                   </View>
                 ) : (
-                  <ByggdelTable
-                    items={tableItems}
-                    sortColumn={sortColumn === 'code' ? 'moment' : sortColumn === 'notes' ? 'anteckningar' : sortColumn}
+                  <KategoriTable
+                    items={sorted}
+                    sortColumn={sortColumn}
                     sortDirection={sortDirection}
                     onSort={handleSort}
                     editingId={editingId}
@@ -654,14 +610,12 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
                     inlineEnabled={showContent}
                     inlineSaving={inlineSaving}
                     inlineValues={{
-                      byggdel: inlineByggdel,
-                      beskrivning: inlineBeskrivning,
-                      anteckningar: inlineAnteckningar,
+                      name: inlineName,
+                      note: inlineNote,
                     }}
                     onInlineChange={(field, value) => {
-                      if (field === 'byggdel') setInlineByggdel(normalizeCode(value));
-                      if (field === 'beskrivning') setInlineBeskrivning(value);
-                      if (field === 'anteckningar') setInlineAnteckningar(value);
+                      if (field === 'name') setInlineName(value);
+                      if (field === 'note') setInlineNote(value);
                     }}
                     onInlineSave={handleInlineSave}
                   />
@@ -707,8 +661,20 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
           const item = rowMenuItem;
           if (!item || !it) return;
           if (it.key === 'edit') setEditingId(item.id);
-          else if (it.key === 'delete' && !item.isDefault) handleDelete(item);
+          else if (it.key === 'delete') requestDelete(item);
         }}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmItem}
+        title="Radera kategori"
+        message="Vill du verkligen radera denna kategori?"
+        cancelLabel="Avbryt"
+        confirmLabel="Radera"
+        danger
+        busy={deleting}
+        onCancel={() => setDeleteConfirmItem(null)}
+        onConfirm={confirmDelete}
       />
 
       {Platform.OS === 'web' && (
@@ -742,7 +708,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
 
       <ConfirmModal
         visible={importConfirmVisible}
-        title="Importera byggdelar"
+        title="Importera kategorier"
         message={
           importPlan
             ? `Importen ersätter hela registret.\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}, Raderas: ${importPlan.toDelete.length}`

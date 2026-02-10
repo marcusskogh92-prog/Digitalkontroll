@@ -1,6 +1,6 @@
 /**
- * Tabell för Kontoplan – kolumner: Konto, Benämning, Beskrivning/Anteckning, Åtgärder (sticky kebab).
- * Samma DataGrid-pattern som Kunder/Byggdelstabell: inline-redigering, Enter/Esc, diskreta ✔ ✕.
+ * Tabell för Kategoriregister – kolumner: Kategori, Anteckning, Åtgärder (sticky kebab).
+ * Inline-redigering, Enter/Esc, diskreta ✔ ✕. Samma mönster som KontoplanTable.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -8,8 +8,8 @@ import React, { useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
-const FLEX = { benamning: 1.5, beskrivning: 1.5 };
-const FIXED = { konto: 90, actions: 30 };
+const FLEX = { name: 1, note: 1.5 };
+const FIXED = { actions: 30 };
 
 const styles = StyleSheet.create({
   tableWrap: {
@@ -49,7 +49,6 @@ const styles = StyleSheet.create({
   headerText: { fontSize: 12, fontWeight: '500', color: '#475569' },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
-  cellMono: { fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
   inlineInputCell: {
     paddingHorizontal: 0,
     margin: 0,
@@ -146,7 +145,7 @@ function safeText(v) {
   return s || '—';
 }
 
-export default function KontoplanTable({
+export default function KategoriTable({
   items,
   sortColumn,
   sortDirection,
@@ -163,19 +162,18 @@ export default function KontoplanTable({
   onInlineSave,
 }) {
   const [hoveredId, setHoveredId] = useState(null);
-  const [editDraft, setEditDraft] = useState({ konto: '', benamning: '', beskrivning: '' });
+  const [editDraft, setEditDraft] = useState({ name: '', note: '' });
   const kebabRefs = useRef({});
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
   React.useEffect(() => {
     if (editingItem) {
       setEditDraft({
-        konto: String(editingItem.konto ?? '').trim(),
-        benamning: String(editingItem.benamning ?? '').trim(),
-        beskrivning: String(editingItem.beskrivning ?? '').trim(),
+        name: String(editingItem.name ?? '').trim(),
+        note: String(editingItem.note ?? '').trim(),
       });
     } else {
-      setEditDraft({ konto: '', benamning: '', beskrivning: '' });
+      setEditDraft({ name: '', note: '' });
     }
   }, [editingId, editingItem?.id]);
 
@@ -184,11 +182,10 @@ export default function KontoplanTable({
     const key = e.nativeEvent?.key;
     if (key === 'Enter') {
       e.preventDefault();
-      if (onSaveEdit && !saving && editDraft.konto.trim()) {
+      if (onSaveEdit && !saving && editDraft.name.trim()) {
         onSaveEdit(item.id, {
-          konto: editDraft.konto.trim(),
-          benamning: editDraft.benamning.trim(),
-          beskrivning: editDraft.beskrivning.trim(),
+          name: editDraft.name.trim(),
+          note: editDraft.note.trim(),
         });
       }
     } else if (key === 'Escape') {
@@ -215,36 +212,25 @@ export default function KontoplanTable({
     <View style={styles.tableWrap}>
       <View style={styles.header}>
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.konto }]}
-          onPress={() => onSort('konto')}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.name }]}
+          onPress={() => onSort('name')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
           <View style={styles.columnContent}>
-            <Text style={[styles.headerText, styles.cellMono]}>Konto</Text>
-            <SortIcon col="konto" />
+            <Text style={styles.headerText}>Kategori</Text>
+            <SortIcon col="name" />
           </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.benamning }]}
-          onPress={() => onSort('benamning')}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.note }]}
+          onPress={() => onSort('note')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
           <View style={styles.columnContent}>
-            <Text style={styles.headerText}>Benämning</Text>
-            <SortIcon col="benamning" />
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.beskrivning }]}
-          onPress={() => onSort('beskrivning')}
-          activeOpacity={0.7}
-          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-        >
-          <View style={styles.columnContent}>
-            <Text style={styles.headerText}>Beskrivning / Anteckning</Text>
-            <SortIcon col="beskrivning" />
+            <Text style={styles.headerText}>Anteckning</Text>
+            <SortIcon col="note" />
           </View>
         </TouchableOpacity>
         <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
@@ -253,29 +239,21 @@ export default function KontoplanTable({
       {inlineEnabled && (
         <View style={styles.inlineRow}>
           <TextInput
-            value={inlineValues?.konto ?? ''}
-            onChangeText={(v) => onInlineChange?.('konto', v)}
-            placeholder="t.ex. 4510"
-            style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.konto }]}
+            value={inlineValues?.name ?? ''}
+            onChangeText={(v) => onInlineChange?.('name', v)}
+            placeholder="t.ex. Golv, Mark, Måleri"
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.name }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
           <TextInput
-            value={inlineValues?.benamning ?? ''}
-            onChangeText={(v) => onInlineChange?.('benamning', v)}
-            placeholder="Benämning (ny)"
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.benamning }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          <TextInput
-            value={inlineValues?.beskrivning ?? ''}
-            onChangeText={(v) => onInlineChange?.('beskrivning', v)}
-            placeholder="Beskrivning (ny)"
+            value={inlineValues?.note ?? ''}
+            onChangeText={(v) => onInlineChange?.('note', v)}
+            placeholder="Anteckning (valfritt)"
             returnKeyType="done"
             blurOnSubmit={true}
             onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
+            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.note }]}
             placeholderTextColor="#94a3b8"
             {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
           />
@@ -287,26 +265,18 @@ export default function KontoplanTable({
         editingId === item.id && editDraft ? (
           <View key={item.id} style={styles.editRow}>
             <TextInput
-              value={editDraft.konto}
-              onChangeText={(v) => setEditDraft((d) => ({ ...d, konto: v }))}
-              placeholder="t.ex. 4510"
-              style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.konto }]}
+              value={editDraft.name}
+              onChangeText={(v) => setEditDraft((d) => ({ ...d, name: v }))}
+              placeholder="Kategori"
+              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.name }]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
             />
             <TextInput
-              value={editDraft.benamning}
-              onChangeText={(v) => setEditDraft((d) => ({ ...d, benamning: v }))}
-              placeholder="Benämning"
-              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.benamning }]}
-              placeholderTextColor="#94a3b8"
-              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
-            />
-            <TextInput
-              value={editDraft.beskrivning}
-              onChangeText={(v) => setEditDraft((d) => ({ ...d, beskrivning: v }))}
-              placeholder="Beskrivning"
-              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
+              value={editDraft.note}
+              onChangeText={(v) => setEditDraft((d) => ({ ...d, note: v }))}
+              placeholder="Anteckning"
+              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.note }]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
             />
@@ -314,11 +284,10 @@ export default function KontoplanTable({
               <TouchableOpacity
                 style={[styles.editRowBtn, styles.editRowBtnPrimary]}
                 onPress={() => {
-                  if (editDraft.konto.trim() && onSaveEdit) {
+                  if (editDraft.name.trim() && onSaveEdit) {
                     onSaveEdit(item.id, {
-                      konto: editDraft.konto.trim(),
-                      benamning: editDraft.benamning.trim(),
-                      beskrivning: editDraft.beskrivning.trim(),
+                      name: editDraft.name.trim(),
+                      note: editDraft.note.trim(),
                     });
                   }
                 }}
@@ -347,19 +316,14 @@ export default function KontoplanTable({
             activeOpacity={0.7}
             {...(Platform.OS === 'web' ? { cursor: 'default', onMouseEnter: () => setHoveredId(item.id), onMouseLeave: () => setHoveredId(null) } : {})}
           >
-            <View style={[styles.cellFixed, { width: FIXED.konto }]}>
+            <View style={[styles.cellFlex, { flex: FLEX.name }]}>
               <View style={styles.columnContent}>
-                <Text style={[styles.cellText, styles.cellMono]} numberOfLines={1}>{safeText(item.konto)}</Text>
+                <Text style={styles.cellText} numberOfLines={1}>{safeText(item.name)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.benamning }]}>
+            <View style={[styles.cellFlex, { flex: FLEX.note }]}>
               <View style={styles.columnContent}>
-                <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.benamning)}</Text>
-              </View>
-            </View>
-            <View style={[styles.cellFlex, { flex: FLEX.beskrivning }]}>
-              <View style={styles.columnContent}>
-                <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.beskrivning)}</Text>
+                <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.note)}</Text>
               </View>
             </View>
             <View style={[styles.actionsCol, stickyRight]}>

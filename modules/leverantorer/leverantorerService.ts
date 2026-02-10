@@ -4,21 +4,20 @@
  */
 
 import {
-  createCompanySupplier,
-  deleteCompanySupplier,
-  fetchByggdelMallar,
-  fetchCompanyContacts,
-  fetchCompanySuppliers,
-  updateCompanyContact,
-  updateCompanySupplier,
+    createCompanySupplier,
+    deleteCompanySupplier,
+    fetchByggdelMallar,
+    fetchCompanyContacts,
+    fetchCompanySuppliers,
+    updateCompanyContact,
+    updateCompanySupplier,
 } from '../../components/firebase';
 import {
-  addCompanyByggdelTag,
-  linkContactToCompany,
-  removeCompanyByggdelTag,
-  unlinkContactFromCompany,
-  updateCompany,
-  upsertContactInRegistry,
+    addCompanyByggdelTag,
+    linkContactToCompany,
+    removeCompanyByggdelTag,
+    unlinkContactFromCompany,
+    upsertContactInRegistry
 } from '../companyDirectory/companyDirectoryService';
 
 export type Supplier = {
@@ -32,6 +31,8 @@ export type Supplier = {
   categories?: string[];
   byggdelTags?: string[];
   contactIds?: string[];
+  /** Konto-koder från företagets kontoplan (för filtrering i offerter). */
+  konton?: string[];
   createdAt?: unknown;
   updatedAt?: unknown;
 };
@@ -79,6 +80,7 @@ export async function createSupplier(
     categories?: string[];
     byggdelTags?: string[];
     contactIds?: string[];
+    konton?: string[];
   }
 ): Promise<string> {
   const cid = safeCompanyId(companyId);
@@ -95,6 +97,7 @@ export async function createSupplier(
       categories: data.categories,
       byggdelTags: data.byggdelTags,
       contactIds: data.contactIds,
+      konton: data.konton,
     },
     cid
   );
@@ -113,6 +116,7 @@ export async function updateSupplier(
     categories: string[];
     byggdelTags: string[];
     contactIds: string[];
+    konton: string[];
   }>
 ): Promise<void> {
   const cid = safeCompanyId(companyId);

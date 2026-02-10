@@ -48,6 +48,17 @@ exports.devResetAdmin = functions.https.onCall(devResetAdmin);
 exports.deleteProject = functions.https.onCall(deleteProject);
 exports.deleteFolder = functions.https.onCall(deleteFolder);
 
+exports.getDefaultAIPrompt = functions.https.onCall((data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  const promptKey = String((data && data.promptKey) || '').trim();
+  if (promptKey === 'ffu') {
+    return getDefaultFFUPromptForDisplay();
+  }
+  return { system: '', userTemplate: '' };
+});
+
 function readFunctionsConfigValue(path, fallback = null) {
   try {
     const cfg = functions.config && typeof functions.config === 'function' ? functions.config() : {};
@@ -136,6 +147,46 @@ function buildFFUPrompt({ companyId, projectId, files, customInstruction }) {
   ].join('\n');
 
   return { system, user };
+}
+
+/** Return default FFU prompt text for display in admin UI (system + user template with placeholder for documents). */
+function getDefaultFFUPromptForDisplay() {
+  const system = [
+    'Du är en noggrann assistent som analyserar svenska förfrågningsunderlag (FFU).',
+    'Du får ENDAST använda texten som tillhandahålls i detta anrop. Om något inte framgår av texten ska du skriva tom sträng eller utelämna det genom att inte hitta något (t.ex. tomma listor).',
+    'Du får INTE göra antaganden om AF/AB/TB, entreprenadform, juridik eller praxis om det inte uttryckligen står i texten.',
+    'Om källhänvisning inte går att avgöra exakt: ange dokumentnamn och en kort beskrivning av var i texten (t.ex. "Bilaga 2 – Kravspec, avsnitt 3") eller lämna "source" som tom sträng.',
+    'Returnera ENDAST giltig JSON som exakt matchar det efterfrågade formatet. Ingen Markdown. Inga extra nycklar.',
+  ].join('\n');
+
+  const userTemplate = [
+    'Analysera följande FFU som ett sammanhängande underlag.',
+    '',
+    'companyId: [väljs vid körning]',
+    'projectId: [väljs vid körning]',
+    '',
+    'Dokument (med extraherad text):',
+    '[Dokumenten från förfrågningsunderlaget läggs in här vid analys]',
+    '',
+    'Krav på output:',
+    '- summary.description: kort sammanfattning av vad upphandlingen avser.',
+    '- summary.projectType: projekt-/uppdragstyp om den står i texten, annars "".',
+    '- summary.procurementForm: entreprenad-/upphandlingsform endast om explicit angiven, annars "".',
+    '- requirements.must: endast obligatoriska SKA-krav.',
+    '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
+    '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
+    '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '',
+    'Returnera JSON i exakt detta format:',
+    '{',
+    '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
+    '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
+    '  "risks": [ { "issue": "", "reason": "" } ],',
+    '  "openQuestions": [ { "question": "", "reason": "" } ]',
+    '}',
+  ].join('\n');
+
+  return { system, userTemplate };
 }
 
 function emptyFFUAnalysisResult(message) {

@@ -7,27 +7,34 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import ContextMenu from '../ContextMenu';
-import ConfirmModal from './Modals/ConfirmModal';
-import KontoplanTable from './KontoplanTable';
 import {
-  createKontoplanAccount,
-  deleteKontoplanAccount,
-  fetchKontoplan,
-  updateKontoplanAccount,
+    buildAndDownloadExcel,
+    computeSyncPlan,
+    KONTOPLAN_EXCEL,
+    parseExcelFromBuffer,
+    validateHeaders,
+} from '../../utils/registerExcel';
+import ContextMenu from '../ContextMenu';
+import {
+    createKontoplanAccount,
+    deleteKontoplanAccount,
+    fetchKontoplan,
+    updateKontoplanAccount,
 } from '../firebase';
+import KontoplanTable from './KontoplanTable';
+import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -144,6 +151,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  excelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
   emptyState: {
     padding: 32,
     alignItems: 'center',
@@ -197,6 +215,13 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
   const [rowMenuItem, setRowMenuItem] = useState(null);
   const [deleteConfirmItem, setDeleteConfirmItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [excelMenuVisible, setExcelMenuVisible] = useState(false);
+  const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
+  const excelBtnRef = useRef(null);
+  const excelInputRef = useRef(null);
+  const [importPlan, setImportPlan] = useState(null);
+  const [importConfirmVisible, setImportConfirmVisible] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -369,6 +394,97 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
     }
   };
 
+  const exportExcel = () => {
+    setExcelMenuVisible(false);
+    if (Platform.OS !== 'web') {
+      Alert.alert('Info', 'Excel-export är endast tillgängligt i webbversionen.');
+      return;
+    }
+    const rows = (accounts || []).map((a) => KONTOPLAN_EXCEL.itemToRow(a));
+    buildAndDownloadExcel(
+      KONTOPLAN_EXCEL.sheetName,
+      KONTOPLAN_EXCEL.headers,
+      rows,
+      KONTOPLAN_EXCEL.filenamePrefix
+    );
+    showNotice('Excel-mall nedladdad');
+  };
+
+  const handleExcelFileChange = (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file || !cid) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const ab = ev?.target?.result;
+      if (!ab) return;
+      const { headers, rows, errors } = parseExcelFromBuffer(ab);
+      if (errors.length > 0) {
+        setError(errors[0]);
+        return;
+      }
+      const { valid, missing } = validateHeaders(headers, KONTOPLAN_EXCEL.headers);
+      if (!valid) {
+        setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Använd Excel-mallen.`);
+        return;
+      }
+      const plan = computeSyncPlan(rows, accounts, {
+        keyField: KONTOPLAN_EXCEL.keyField,
+        getKeyFromRow: (row) => row[KONTOPLAN_EXCEL.keyField] ?? '',
+        getKeyFromItem: (item) => KONTOPLAN_EXCEL.itemToKey(item),
+      });
+      setImportPlan(plan);
+      setImportConfirmVisible(true);
+    };
+    reader.readAsArrayBuffer(file);
+    if (excelInputRef.current) excelInputRef.current.value = '';
+  };
+
+  const runImport = async () => {
+    if (!cid || !importPlan) return;
+    setImportBusy(true);
+    setError('');
+    const failed = [];
+    try {
+      for (const row of importPlan.toCreate) {
+        const payload = KONTOPLAN_EXCEL.rowToPayload(row);
+        if (!payload.konto) continue;
+        try {
+          await createKontoplanAccount(payload, cid);
+        } catch (e) {
+          failed.push(`Skapa ${payload.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const { id, row } of importPlan.toUpdate) {
+        const payload = KONTOPLAN_EXCEL.rowToPayload(row);
+        try {
+          await updateKontoplanAccount(cid, id, payload);
+        } catch (e) {
+          failed.push(`Uppdatera ${payload.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const item of importPlan.toDelete) {
+        try {
+          await deleteKontoplanAccount(cid, item.id);
+        } catch (e) {
+          failed.push(`Radera ${item.konto}: ${e?.message || 'fel'}`);
+        }
+      }
+      setImportConfirmVisible(false);
+      setImportPlan(null);
+      await load();
+      if (editingId) setEditingId(null);
+      if (failed.length > 0) {
+        setError(`Import klar. ${failed.length} rad(er) misslyckades: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? '…' : ''}`);
+      } else {
+        showNotice('Import genomförd');
+      }
+    } catch (e) {
+      setError(e?.message || 'Import misslyckades.');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   const openRowMenu = (e, item) => {
     if (Platform.OS !== 'web') {
       Alert.alert('Konto', `${item.konto ?? ''} ${item.benamning ?? ''}`.trim(), [
@@ -434,6 +550,29 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {Platform.OS === 'web' && (
+                      <TouchableOpacity
+                        ref={excelBtnRef}
+                        style={styles.excelBtn}
+                        onPress={(ev) => {
+                          const ne = ev?.nativeEvent || ev;
+                          const target = ne?.target;
+                          if (target && typeof target.getBoundingClientRect === 'function') {
+                            const r = target.getBoundingClientRect();
+                            setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
+                          } else {
+                            setExcelMenuPos({ x: 20, y: 200 });
+                          }
+                          setExcelMenuVisible(true);
+                        }}
+                        accessibilityLabel="Importera / exportera Excel"
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
+                      >
+                        <Ionicons name="grid-outline" size={18} color="#167534" />
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                      </TouchableOpacity>
+                    )}
+                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => {
@@ -552,6 +691,50 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
         busy={deleting}
         onCancel={() => setDeleteConfirmItem(null)}
         onConfirm={confirmDelete}
+      />
+
+      {Platform.OS === 'web' && (
+        <>
+          <View style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+            <input
+              ref={excelInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleExcelFileChange}
+              style={{ width: 0, height: 0 }}
+            />
+          </View>
+          <ContextMenu
+            visible={excelMenuVisible}
+            x={excelMenuPos.x}
+            y={excelMenuPos.y}
+            items={[
+              { key: 'export', label: 'Exportera Excel' },
+              { key: 'import', label: 'Importera Excel' },
+            ]}
+            onClose={() => setExcelMenuVisible(false)}
+            onSelect={(it) => {
+              setExcelMenuVisible(false);
+              if (it?.key === 'export') exportExcel();
+              else if (it?.key === 'import') setTimeout(() => excelInputRef.current?.click(), 0);
+            }}
+          />
+        </>
+      )}
+
+      <ConfirmModal
+        visible={importConfirmVisible}
+        title="Importera kontoplan"
+        message={
+          importPlan
+            ? `Importen ersätter hela registret.\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}, Raderas: ${importPlan.toDelete.length}`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Importera"
+        busy={importBusy}
+        onCancel={() => { setImportConfirmVisible(false); setImportPlan(null); }}
+        onConfirm={runImport}
       />
     </Modal>
   );

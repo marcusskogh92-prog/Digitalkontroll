@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SelectDropdownChip } from '../../components/common/SelectDropdown';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 import type { Customer } from './kunderService';
 
 export type SortColumn =
@@ -19,7 +20,7 @@ export type SortDirection = 'asc' | 'desc';
 
 /** Samma DataGrid-pattern som Kontaktregister: flexibla + fasta kolumner, sticky kebab med divider. */
 const FLEX = { name: 1.5, address: 1.6, city: 1.1 } as const;
-const FIXED = { personalOrOrgNumber: 160, postalCode: 110, customerType: 120, actions: 48 } as const;
+const FIXED = { personalOrOrgNumber: 160, postalCode: 110, customerType: 120, actions: 30 } as const;
 
 const styles = StyleSheet.create({
   tableWrap: {
@@ -47,15 +48,33 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     minWidth: 0,
   },
+  columnContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
   headerText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#475569',
   },
+  inlineInputCell: {
+    paddingHorizontal: 0,
+    margin: 0,
+    flex: 1,
+    alignSelf: 'stretch',
+    minWidth: 0,
+  },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
   actionsCol: {
     width: FIXED.actions,
+    minWidth: FIXED.actions,
+    maxWidth: FIXED.actions,
     flexShrink: 0,
     borderLeftWidth: 1,
     borderLeftColor: '#e2e8f0',
@@ -63,6 +82,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 3,
+    paddingLeft: 0,
+    paddingRight: 0,
   },
   actionsColHeader: {
     backgroundColor: '#f1f5f9',
@@ -460,8 +481,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Kundnamn</Text>
-          <SortIcon col="name" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Kundnamn</Text>
+            <SortIcon col="name" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]}
@@ -469,8 +492,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Personnr / Orgnr</Text>
-          <SortIcon col="personalOrOrgNumber" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Personnr / Orgnr</Text>
+            <SortIcon col="personalOrOrgNumber" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.address }]}
@@ -478,8 +503,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Adress</Text>
-          <SortIcon col="address" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Adress</Text>
+            <SortIcon col="address" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFixed, { width: FIXED.postalCode }]}
@@ -487,8 +514,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Postnr</Text>
-          <SortIcon col="postalCode" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Postnr</Text>
+            <SortIcon col="postalCode" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.city }]}
@@ -496,8 +525,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Ort</Text>
-          <SortIcon col="city" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Ort</Text>
+            <SortIcon col="city" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFixed, { width: FIXED.customerType }]}
@@ -505,8 +536,10 @@ export default function KunderTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText} numberOfLines={1}>Kundtyp</Text>
-          <SortIcon col="customerType" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText} numberOfLines={1}>Kundtyp</Text>
+            <SortIcon col="customerType" />
+          </View>
         </TouchableOpacity>
         <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
@@ -755,35 +788,49 @@ export default function KunderTable({
                 : {})}
             >
               <View style={[styles.cellFlex, { flex: FLEX.name, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                <Ionicons
-                  name="chevron-forward"
-                  size={14}
-                  color="#94a3b8"
-                  style={{
-                    transform: [{ rotate: expandedIds[customer.id] ? '90deg' : '0deg' }],
-                  }}
-                />
-                <Text style={styles.cellText} numberOfLines={1}>
-                  {customer.name || '—'}
-                </Text>
+                <View style={styles.columnContent}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={14}
+                      color="#94a3b8"
+                      style={{
+                        transform: [{ rotate: expandedIds[customer.id] ? '90deg' : '0deg' }],
+                      }}
+                    />
+                    <Text style={styles.cellText} numberOfLines={1}>
+                      {customer.name || '—'}
+                    </Text>
+                  </View>
+                </View>
               </View>
-              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.personalOrOrgNumber }]} numberOfLines={1}>
-                {safeText(customer.personalOrOrgNumber)}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.address }]} numberOfLines={1}>
-                {safeText(customer.address)}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.postalCode }]} numberOfLines={1}>
-                {safeText(customer.postalCode)}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.city }]} numberOfLines={1}>
-                {safeText(customer.city)}
-              </Text>
+              <View style={[styles.cellFixed, { width: FIXED.personalOrOrgNumber }]}>
+                <View style={styles.columnContent}>
+                  <Text style={styles.cellMuted} numberOfLines={1}>{safeText(customer.personalOrOrgNumber)}</Text>
+                </View>
+              </View>
+              <View style={[styles.cellFlex, { flex: FLEX.address }]}>
+                <View style={styles.columnContent}>
+                  <Text style={styles.cellMuted} numberOfLines={1}>{safeText(customer.address)}</Text>
+                </View>
+              </View>
+              <View style={[styles.cellFixed, { width: FIXED.postalCode }]}>
+                <View style={styles.columnContent}>
+                  <Text style={styles.cellMuted} numberOfLines={1}>{safeText(customer.postalCode)}</Text>
+                </View>
+              </View>
+              <View style={[styles.cellFlex, { flex: FLEX.city }]}>
+                <View style={styles.columnContent}>
+                  <Text style={styles.cellMuted} numberOfLines={1}>{safeText(customer.city)}</Text>
+                </View>
+              </View>
               <View style={[styles.chipRow, styles.cellFixed, { width: FIXED.customerType }]}>
-                <SelectDropdownChip
-                  label={safeText(customer.customerType)}
-                  removable={false}
-                />
+                <View style={styles.columnContent}>
+                  <SelectDropdownChip
+                    label={safeText(customer.customerType)}
+                    removable={false}
+                  />
+                </View>
               </View>
               <View style={[styles.actionsCol, stickyRight]}>
                 <TouchableOpacity

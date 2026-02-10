@@ -364,6 +364,12 @@ service cloud.firestore {
       allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
     }
 
+    // Company categories (Kategoriregister) – företagsbaserade kategorier (t.ex. Golv, Mark, Måleri)
+    match /companies/{company}/categories/{categoryId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
     // External inquiries build parts (legacy/new path)
     match /projects/{projectId}/inquiries/{inquiryId}/buildParts/{buildPartId} {
       allow read, write: if request.auth != null;

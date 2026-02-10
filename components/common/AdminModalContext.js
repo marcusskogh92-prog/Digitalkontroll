@@ -11,6 +11,7 @@ import AdminByggdelModal from './AdminByggdelModal';
 import AdminKontoplanModal from './AdminKontoplanModal';
 import MallarModal from './MallarModal';
 import AdminAIPromptsModal from './AdminAIPromptsModal';
+import AdminKategoriModal from './AdminKategoriModal';
 
 const defaultContext = {
   openCustomersModal: () => {},
@@ -27,6 +28,8 @@ const defaultContext = {
   closeMallarModal: () => {},
   openAIPromptsModal: () => {},
   closeAIPromptsModal: () => {},
+  openKategoriModal: () => {},
+  closeKategoriModal: () => {},
 };
 
 export const AdminModalContext = React.createContext(defaultContext);
@@ -46,6 +49,8 @@ export function AdminModalProvider({ children }) {
   const [mallarCompanyId, setMallarCompanyId] = useState('');
   const [aiPromptsOpen, setAiPromptsOpen] = useState(false);
   const [aiPromptsCompanyId, setAiPromptsCompanyId] = useState('');
+  const [kategoriOpen, setKategoriOpen] = useState(false);
+  const [kategoriCompanyId, setKategoriCompanyId] = useState('');
 
   const openCustomersModal = useCallback((companyId) => {
     setCustomersCompanyId(String(companyId || '').trim());
@@ -117,6 +122,16 @@ export function AdminModalProvider({ children }) {
     setAiPromptsCompanyId('');
   }, []);
 
+  const openKategoriModal = useCallback((companyId) => {
+    setKategoriCompanyId(String(companyId || '').trim());
+    setKategoriOpen(true);
+  }, []);
+
+  const closeKategoriModal = useCallback(() => {
+    setKategoriOpen(false);
+    setKategoriCompanyId('');
+  }, []);
+
   const value = {
     openCustomersModal,
     closeCustomersModal,
@@ -132,6 +147,8 @@ export function AdminModalProvider({ children }) {
     closeMallarModal,
     openAIPromptsModal,
     closeAIPromptsModal,
+    openKategoriModal,
+    closeKategoriModal,
   };
 
   return (
@@ -171,6 +188,11 @@ export function AdminModalProvider({ children }) {
         visible={aiPromptsOpen}
         companyId={aiPromptsCompanyId}
         onClose={closeAIPromptsModal}
+      />
+      <AdminKategoriModal
+        visible={kategoriOpen}
+        companyId={kategoriCompanyId}
+        onClose={closeKategoriModal}
       />
     </AdminModalContext.Provider>
   );

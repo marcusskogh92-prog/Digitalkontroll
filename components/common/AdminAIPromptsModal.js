@@ -17,7 +17,44 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { fetchCompanyProfile, getCompanyAIPrompt, setCompanyAIPrompt } from '../firebase';
+import { fetchCompanyProfile, getCompanyAIPrompt, getDefaultAIPrompt, setCompanyAIPrompt } from '../firebase';
+
+/** Fallback om Cloud Function inte svarar – samma innehåll som getDefaultFFUPromptForDisplay i functions. */
+const DEFAULT_FFU_PROMPT_FALLBACK = {
+  system: [
+    'Du är en noggrann assistent som analyserar svenska förfrågningsunderlag (FFU).',
+    'Du får ENDAST använda texten som tillhandahålls i detta anrop. Om något inte framgår av texten ska du skriva tom sträng eller utelämna det genom att inte hitta något (t.ex. tomma listor).',
+    'Du får INTE göra antaganden om AF/AB/TB, entreprenadform, juridik eller praxis om det inte uttryckligen står i texten.',
+    'Om källhänvisning inte går att avgöra exakt: ange dokumentnamn och en kort beskrivning av var i texten (t.ex. "Bilaga 2 – Kravspec, avsnitt 3") eller lämna "source" som tom sträng.',
+    'Returnera ENDAST giltig JSON som exakt matchar det efterfrågade formatet. Ingen Markdown. Inga extra nycklar.',
+  ].join('\n'),
+  userTemplate: [
+    'Analysera följande FFU som ett sammanhängande underlag.',
+    '',
+    'companyId: [väljs vid körning]',
+    'projectId: [väljs vid körning]',
+    '',
+    'Dokument (med extraherad text):',
+    '[Dokumenten från förfrågningsunderlaget läggs in här vid analys]',
+    '',
+    'Krav på output:',
+    '- summary.description: kort sammanfattning av vad upphandlingen avser.',
+    '- summary.projectType: projekt-/uppdragstyp om den står i texten, annars "".',
+    '- summary.procurementForm: entreprenad-/upphandlingsform endast om explicit angiven, annars "".',
+    '- requirements.must: endast obligatoriska SKA-krav.',
+    '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
+    '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
+    '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '',
+    'Returnera JSON i exakt detta format:',
+    '{',
+    '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
+    '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
+    '  "risks": [ { "issue": "", "reason": "" } ],',
+    '  "openQuestions": [ { "question": "", "reason": "" } ]',
+    '}',
+  ].join('\n'),
+};
 
 const AI_PROMPT_TYPES = [
   { key: 'ffu', label: 'Förfrågningsunderlag', description: 'Extra instruktion till AI när den analyserar dokument i förfrågningsunderlaget.' },
@@ -93,11 +130,15 @@ const styles = StyleSheet.create({
   footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
 
   innerModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  innerModalBox: { width: '100%', maxWidth: 560, backgroundColor: '#fff', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  innerModalBox: { width: '100%', maxWidth: 640, maxHeight: '90%', backgroundColor: '#fff', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: '#E2E8F0' },
   innerModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   innerModalTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a', flex: 1 },
   innerModalClose: { padding: 4 },
+  defaultPromptSection: { marginBottom: 16 },
+  defaultPromptLabel: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8 },
+  defaultPromptText: { fontSize: 12, color: '#334155', lineHeight: 18, padding: 12, backgroundColor: '#f1f5f9', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', maxHeight: 220 },
   innerModalInput: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, padding: 12, fontSize: 14, color: '#0f172a', minHeight: 120, marginBottom: 16 },
+  extraInstructionLabel: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8 },
   innerModalError: { fontSize: 13, color: '#dc2626', marginBottom: 12 },
   innerModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   innerModalBtnSecondary: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: '#E2E8F0' },
@@ -113,6 +154,9 @@ export default function AdminAIPromptsModal({ visible, companyId, onClose }) {
   const [prompts, setPrompts] = useState({});
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState({ visible: false, key: '', label: '', instruction: '', saving: false, error: '' });
+  const [defaultPrompt, setDefaultPrompt] = useState(null);
+  const [defaultPromptLoading, setDefaultPromptLoading] = useState(false);
+  const [defaultPromptError, setDefaultPromptError] = useState('');
 
   const loadPrompts = useCallback(async () => {
     if (!cid) {
@@ -157,7 +201,35 @@ export default function AdminAIPromptsModal({ visible, companyId, onClose }) {
 
   const closeEdit = () => {
     setEditModal({ visible: false, key: '', label: '', instruction: '', saving: false, error: '' });
+    setDefaultPrompt(null);
+    setDefaultPromptLoading(false);
+    setDefaultPromptError('');
   };
+
+  useEffect(() => {
+    if (!editModal.visible || editModal.key !== 'ffu') return;
+    setDefaultPromptLoading(true);
+    setDefaultPrompt(null);
+    setDefaultPromptError('');
+    let cancelled = false;
+    getDefaultAIPrompt('ffu')
+      .then((data) => {
+        if (!cancelled) {
+          setDefaultPrompt(data);
+          setDefaultPromptLoading(false);
+          setDefaultPromptError('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          const msg = err?.message || (typeof err === 'string' ? err : '');
+          setDefaultPromptError(String(msg).trim() || 'Servern svarade inte. Visar lokal kopia.');
+          setDefaultPrompt(DEFAULT_FFU_PROMPT_FALLBACK);
+          setDefaultPromptLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [editModal.visible, editModal.key]);
 
   const savePrompt = async () => {
     const { key, instruction } = editModal;
@@ -251,16 +323,60 @@ export default function AdminAIPromptsModal({ visible, companyId, onClose }) {
                 <Ionicons name="close" size={24} color="#475569" />
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={styles.innerModalInput}
-              value={editModal.instruction}
-              onChangeText={(t) => setEditModal((prev) => ({ ...prev, instruction: t }))}
-              placeholder="T.ex. Fokusera särskilt på krav kopplade till miljö och arbetsmiljö."
-              multiline
-              numberOfLines={6}
-              textAlignVertical="top"
-              {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-            />
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator contentContainerStyle={{ paddingRight: 8 }}>
+              {editModal.key === 'ffu' ? (
+                <>
+                  <View style={styles.defaultPromptSection}>
+                    <Text style={styles.defaultPromptLabel}>Standardprompt (används alltid)</Text>
+                    {defaultPromptLoading ? (
+                      <View style={{ padding: 16, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#64748b" />
+                        <Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Laddar…</Text>
+                      </View>
+                    ) : defaultPromptError && !defaultPrompt ? (
+                      <View style={[styles.defaultPromptText, { padding: 12 }]}>
+                        <Text style={{ fontSize: 12, color: '#b91c1c' }}>{defaultPromptError}</Text>
+                      </View>
+                    ) : defaultPrompt && (defaultPrompt.system || defaultPrompt.userTemplate) ? (
+                      <>
+                        {defaultPromptError ? (
+                          <Text style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>{defaultPromptError}</Text>
+                        ) : null}
+                        <ScrollView style={styles.defaultPromptText} nestedScrollEnabled>
+                          {defaultPrompt.system ? (
+                            <>
+                              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>System:</Text>
+                              <Text style={{ fontSize: 12, color: '#334155', lineHeight: 18, marginBottom: 12 }}>{defaultPrompt.system}</Text>
+                            </>
+                          ) : null}
+                          {defaultPrompt.userTemplate ? (
+                            <>
+                              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Användarprompt (mall):</Text>
+                              <Text style={{ fontSize: 12, color: '#334155', lineHeight: 18 }}>{defaultPrompt.userTemplate}</Text>
+                            </>
+                          ) : null}
+                        </ScrollView>
+                      </>
+                    ) : defaultPrompt && !defaultPromptLoading ? (
+                      <View style={[styles.defaultPromptText, { padding: 12 }]}>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Ingen standardprompt returnerades.</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.extraInstructionLabel}>Företagets extra instruktion (valfritt)</Text>
+                </>
+              ) : null}
+              <TextInput
+                style={styles.innerModalInput}
+                value={editModal.instruction}
+                onChangeText={(t) => setEditModal((prev) => ({ ...prev, instruction: t }))}
+                placeholder={editModal.key === 'ffu' ? 'T.ex. Fokusera särskilt på krav kopplade till miljö och arbetsmiljö.' : 'Extra instruktion…'}
+                multiline
+                numberOfLines={6}
+                textAlignVertical="top"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+              />
+            </ScrollView>
             {editModal.error ? <Text style={styles.innerModalError}>{editModal.error}</Text> : null}
             <View style={styles.innerModalFooter}>
               <TouchableOpacity onPress={closeEdit} style={styles.innerModalBtnSecondary} disabled={editModal.saving}>

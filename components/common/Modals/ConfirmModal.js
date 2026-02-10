@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ConfirmModal({
   visible,
@@ -139,18 +139,8 @@ export default function ConfirmModal({
               }}
             >
               {busy ? (
-                <View
-                  style={{
-                    width: 16,
-                    height: 16,
-                    borderWidth: 2,
-                    borderColor: '#fff',
-                    borderTopColor: 'transparent',
-                    borderRadius: 8,
-                  }}
-                />
+                <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
               ) : null}
-              {busy ? <View style={{ width: 8 }} /> : null}
               <Text style={{ color: '#fff', fontWeight: '500', fontSize: 14 }}>{confirmLabel}</Text>
             </TouchableOpacity>
           </View>

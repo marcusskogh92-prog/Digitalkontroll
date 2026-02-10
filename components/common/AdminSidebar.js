@@ -34,7 +34,7 @@ export default function AdminSidebar({
   showCompanySelector = true,
 }) {
   const navigation = useNavigation();
-  const { openAIPromptsModal } = useContext(AdminModalContext) || {};
+  const { openAIPromptsModal, openKategoriModal } = useContext(AdminModalContext) || {};
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -176,6 +176,7 @@ export default function AdminSidebar({
         { key: 'ai_prompts', label: 'AI-analys', icon: 'sparkles-outline', color: '#1976D2', screen: 'AIPrompts' },
         { key: 'suppliers', label: 'Leverantörer', icon: 'business-outline', color: '#1976D2', screen: 'Suppliers' },
         { key: 'customers', label: 'Kunder', icon: 'people-outline', color: '#1976D2', screen: 'Customers' },
+        { key: 'kategorier', label: 'Kategorier', icon: 'pricetag-outline', color: '#1976D2', screen: 'Kategorier' },
         { key: 'sharepoint_sites', label: 'SharePoint', icon: 'cloud-outline', color: '#1976D2', screen: 'ManageCompany', focus: 'sharepoint' },
       );
     }
@@ -244,6 +245,9 @@ export default function AdminSidebar({
       } else if (item.screen === 'AIPrompts') {
         if (openAIPromptsModal) openAIPromptsModal(cid);
         else navigation.navigate('AIPrompts', { companyId: cid });
+      } else if (item.screen === 'Kategorier') {
+        if (openKategoriModal) openKategoriModal(cid);
+        else navigation.navigate('ManageCompany', { companyId: cid, focus: 'kategorier' });
       } else if (item.screen === 'ManageSharePointNavigation') {
         navigation.navigate('ManageSharePointNavigation', { companyId: cid });
       }

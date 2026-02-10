@@ -1,25 +1,38 @@
 /**
  * Tabell för leverantörer – samma DataGrid-pattern som Kunder/Kontaktregister.
- * Kolumner: Leverantörsnamn, Orgnr, Adress, Postnr, Ort, Kategori, Åtgärder (sticky kebab).
+ *
+ * KOLUMNORDNING (LÅST – FÅR INTE ÄNDRAS):
+ * 1. Leverantör (vänster)
+ * 2. Org-nr
+ * 3. Ort
+ * 4. Kategori
+ * 5. Kebab (alltid längst till höger, fast)
+ *
  * Inline-redigering med Enter/Esc och diskreta ✔ ✕.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import SelectDropdown, { SelectDropdownChip } from '../../components/common/SelectDropdown';
-import type { Supplier } from './leverantorerService';
+import { type ViewStyle, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import SelectDropdownOrig, { SelectDropdownChip } from '../../components/common/SelectDropdown';
+/** Cast så att SelectDropdown accepterar våra props (keepOpenOnSelect/visible/onToggleVisible är inte krävda i körning – .js-komponenten). */
+const SelectDropdown = SelectDropdownOrig as unknown as React.ComponentType<Record<string, unknown>>;
 import { LEVERANTOR_KATEGORIER } from '../../constants/leverantorKategorier';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
+import type { Supplier } from './leverantorerService';
 
-/** Samma grid som Kunder: flexibla + fasta kolumner, sticky kebab 48px med divider. */
-const FLEX = { companyName: 1.5, address: 1.6, city: 1.1 } as const;
-const FIXED = { organizationNumber: 160, postalCode: 110, category: 120, actions: 48 } as const;
+/** Kolumnordning: Leverantör, Org-nr, Ort, Kategori, Kebab. Bredder: Leverantör 0.9, Org-nr 170px, Ort 160px, Kategori 1 (huvudyta), Kebab 30px + divider. */
+const FLEX = { companyName: 0.9, category: 1 } as const;
+const FIXED = { organizationNumber: 170, city: 160, actions: 30 } as const;
+/** Edit-rad (öppet läge) använder även adress och postnr. */
+const FLEX_FULL = { companyName: 0.9, category: 1, address: 1.6, city: 0.75 } as const;
+const FIXED_FULL = { organizationNumber: 170, postalCode: 110, actions: 30 } as const;
+/** Max antal kategori-chips i stängt läge innan "+X"; ingen horisontell scroll. */
+const MAX_VISIBLE_CATEGORY_CHIPS = 5;
 
 export type SortColumn =
   | 'companyName'
   | 'organizationNumber'
-  | 'address'
-  | 'postalCode'
   | 'city'
   | 'category';
 export type SortDirection = 'asc' | 'desc';
@@ -36,8 +49,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 8,
-    paddingVertical: 5,
+    paddingVertical: 4,
     paddingHorizontal: 14,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
@@ -46,37 +60,61 @@ const styles = StyleSheet.create({
   headerCell: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 4,
     flexShrink: 0,
     minWidth: 0,
+  },
+  /** Gemensam kolumn-wrapper: padding 4/6 så rubrik, input och data har samma start-X. Ingen extra padding per kolumn. */
+  columnContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  columnContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 6,
+    alignSelf: 'stretch',
   },
   headerText: {
     fontSize: 12,
     fontWeight: '500',
     color: '#475569',
+    textAlign: 'left',
   },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
   actionsCol: {
     width: FIXED.actions,
+    minWidth: FIXED.actions,
+    maxWidth: FIXED.actions,
     flexShrink: 0,
     borderLeftWidth: 1,
     borderLeftColor: '#e2e8f0',
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 3,
+    paddingVertical: 2,
+    paddingLeft: 0,
+    paddingRight: 0,
   },
   actionsColHeader: {
     backgroundColor: '#f1f5f9',
-    paddingVertical: 5,
+    paddingVertical: 4,
   },
   actionsColInline: { backgroundColor: '#eff6ff' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 8,
-    paddingVertical: 3,
+    paddingVertical: 2,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
@@ -225,12 +263,26 @@ const styles = StyleSheet.create({
   inlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 8,
     paddingVertical: 2,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#eff6ff',
+  },
+  categoryChipsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    flexWrap: 'nowrap',
+    gap: 4,
+    minWidth: 0,
+    flex: 1,
+  },
+  categoryChip: {
+    flexShrink: 0,
+    maxWidth: 120,
   },
   inlineInput: {
     fontSize: 13,
@@ -242,6 +294,15 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#fff',
     flexShrink: 0,
+    minWidth: 0,
+    textAlign: 'left',
+  },
+  /** Input i tabellcell: fyll hela kolumnytan. Ingen egen padding/margin – padding ligger på columnContent. */
+  inlineInputCell: {
+    paddingHorizontal: 0,
+    margin: 0,
+    flex: 1,
+    alignSelf: 'stretch',
     minWidth: 0,
   },
   editRow: {
@@ -296,11 +357,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1e293b',
     fontWeight: '500',
+    textAlign: 'left',
   },
   cellMuted: {
     fontSize: 13,
     color: '#64748b',
     fontWeight: '400',
+    textAlign: 'left',
   },
   contactBadge: {
     flexDirection: 'row',
@@ -325,6 +388,9 @@ function safeText(value?: string): string {
   return v || '—';
 }
 
+/** Fältnamn för inline-rad (skapa/redigera). Används så att onInlineChange inte får typen never. */
+export type InlineFieldKey = 'companyName' | 'organizationNumber' | 'address' | 'postalCode' | 'city' | 'category' | 'categories';
+
 interface LeverantorerTableProps {
   suppliers: Supplier[];
   sortColumn: SortColumn;
@@ -345,17 +411,28 @@ interface LeverantorerTableProps {
     contactId: string,
     patch?: { role?: string; phone?: string; email?: string; contactCompanyName?: string }
   ) => void;
+  /** Företagets kategorier (companies/{id}/categories) – används i expanderad rad. */
+  companyCategories?: { id: string; name?: string }[];
+  /** Företagets byggdelar (foretag/{id}/byggdelar) – används i expanderad rad. */
+  companyByggdelar?: { id: string; code?: string; name?: string }[];
+  /** Företagets kontoplan – används i expanderad rad. */
+  companyKontoplan?: { id: string; konto?: string; benamning?: string }[];
+  onCategoriesChange?: (supplier: Supplier, categoryIds: string[]) => void;
+  onByggdelarChange?: (supplier: Supplier, byggdelCodes: string[]) => void;
+  onKontonChange?: (supplier: Supplier, konton: string[]) => void;
   inlineEnabled?: boolean;
   inlineValues?: {
     companyName: string;
     organizationNumber: string;
-    address: string;
-    postalCode: string;
+    address?: string;
+    postalCode?: string;
     city: string;
-    category: string;
+    category?: string;
+    /** Kategori-ids från kategoriregistret (create-row när companyCategories används). */
+    categories?: string[];
   };
   inlineSaving?: boolean;
-  onInlineChange?: (field: keyof LeverantorerTableProps['inlineValues'], value: string) => void;
+  onInlineChange?: (field: InlineFieldKey, value: string | string[]) => void;
   onInlineSave?: () => void;
   editingId?: string | null;
   inlineSavingCustomer?: boolean;
@@ -389,6 +466,12 @@ export default function LeverantorerTable({
   onAddContact,
   onRemoveContact,
   onLinkContact,
+  companyCategories = [],
+  companyByggdelar = [],
+  companyKontoplan = [],
+  onCategoriesChange,
+  onByggdelarChange,
+  onKontonChange,
   inlineEnabled = false,
   inlineValues,
   inlineSaving = false,
@@ -434,25 +517,30 @@ export default function LeverantorerTable({
     }
   }, [editingId, editingSupplier?.id]);
 
-  const formatCategories = (supplier: Supplier): { label: string; full: string } => {
-    const list = Array.isArray(supplier.categories) && supplier.categories.length
+  /** Resolverar kategori-ids till namn om companyCategories finns; annars används värden som namn (legacy). */
+  const getCategoryNames = (supplier: Supplier): string[] => {
+    const raw = Array.isArray(supplier.categories) && supplier.categories.length
       ? supplier.categories
       : supplier.category
         ? [supplier.category]
         : [];
-    if (!list.length) return { label: '—', full: '' };
-    if (list.length === 1) return { label: list[0], full: list[0] };
-    return { label: `${list.length}+`, full: list.join(', ') };
+    if (!raw.length) return [];
+    if (companyCategories.length > 0) {
+      return raw.map((id) => companyCategories.find((c) => c.id === id)?.name ?? id);
+    }
+    return raw;
   };
 
-  const getCategoryList = (supplier: Supplier): string[] => {
-    const list = Array.isArray(supplier.categories) && supplier.categories.length
-      ? supplier.categories
-      : supplier.category
-        ? [supplier.category]
-        : [];
-    return list;
+  /** I stängt läge: visa upp till MAX_VISIBLE_CATEGORY_CHIPS chips, sedan "+X" för resten. */
+  const getCategoryChipsForRow = (supplier: Supplier): { visible: string[]; overflow: number } => {
+    const list = getCategoryNames(supplier);
+    if (!list.length) return { visible: [], overflow: 0 };
+    const visible = list.slice(0, MAX_VISIBLE_CATEGORY_CHIPS);
+    const overflow = Math.max(0, list.length - MAX_VISIBLE_CATEGORY_CHIPS);
+    return { visible, overflow };
   };
+
+  const getCategoryList = (supplier: Supplier): string[] => getCategoryNames(supplier);
 
 
   const submitDraft = (supplier: Supplier) => {
@@ -528,10 +616,12 @@ export default function LeverantorerTable({
     );
   };
 
-  const stickyRight = Platform.OS === 'web' ? { position: 'sticky' as const, right: 0 } : {};
+  /** Web: sticky kebab-kolumn. RN ViewStyle saknar 'sticky' – cast så TS godtar det på web. */
+  const stickyRight: ViewStyle = Platform.OS === 'web' ? ({ position: 'sticky', right: 0 } as unknown as ViewStyle) : {};
 
   return (
     <View style={styles.tableWrap}>
+      {/* Kolumnordning LÅST: 1 Leverantör, 2 Org-nr, 3 Ort, 4 Kategori, 5 Kebab. columnContent = samma startpunkt för rubrik/input/cell. */}
       <View style={styles.header}>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.companyName }]}
@@ -539,8 +629,10 @@ export default function LeverantorerTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Leverantörsnamn</Text>
-          <SortIcon col="companyName" />
+          <View style={[styles.columnContent, styles.columnContentRow]}>
+            <Text style={styles.headerText}>Leverantör</Text>
+            <SortIcon col="companyName" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFixed, { width: FIXED.organizationNumber }]}
@@ -548,117 +640,124 @@ export default function LeverantorerTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Organisationsnummer</Text>
-          <SortIcon col="organizationNumber" />
+          <View style={[styles.columnContent, styles.columnContentRow]}>
+            <Text style={styles.headerText}>Org-nr</Text>
+            <SortIcon col="organizationNumber" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.address }]}
-          onPress={() => onSort('address')}
-          activeOpacity={0.7}
-          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-        >
-          <Text style={styles.headerText}>Adress</Text>
-          <SortIcon col="address" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.postalCode }]}
-          onPress={() => onSort('postalCode')}
-          activeOpacity={0.7}
-          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-        >
-          <Text style={styles.headerText}>Postnr</Text>
-          <SortIcon col="postalCode" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.city }]}
+          style={[styles.headerCell, styles.cellFixed, { width: FIXED.city }]}
           onPress={() => onSort('city')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Ort</Text>
-          <SortIcon col="city" />
+          <View style={[styles.columnContent, styles.columnContentRow]}>
+            <Text style={styles.headerText}>Ort</Text>
+            <SortIcon col="city" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.category }]}
+          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.category }]}
           onPress={() => onSort('category')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Kategori</Text>
-          <SortIcon col="category" />
+          <View style={[styles.columnContent, styles.columnContentRow]}>
+            <Text style={styles.headerText}>Kategori</Text>
+            <SortIcon col="category" />
+          </View>
         </TouchableOpacity>
         <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
       {inlineEnabled ? (
         <View style={styles.inlineRow}>
-          <TextInput
-            value={inlineValues?.companyName ?? ''}
-            onChangeText={(v) => onInlineChange?.('companyName', v)}
-            placeholder="Leverantörsnamn (ny)"
-            returnKeyType="done"
-            blurOnSubmit={true}
-            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.companyName }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          <TextInput
-            value={inlineValues?.organizationNumber ?? ''}
-            onChangeText={(v) => onInlineChange?.('organizationNumber', v)}
-            placeholder="Orgnr (ny)"
-            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.organizationNumber }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          <TextInput
-            value={inlineValues?.address ?? ''}
-            onChangeText={(v) => onInlineChange?.('address', v)}
-            placeholder="Adress (ny)"
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          <TextInput
-            value={inlineValues?.postalCode ?? ''}
-            onChangeText={(v) => onInlineChange?.('postalCode', v)}
-            placeholder="Postnr (ny)"
-            style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          <TextInput
-            value={inlineValues?.city ?? ''}
-            onChangeText={(v) => onInlineChange?.('city', v)}
-            placeholder="Ort (ny)"
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
-          {Platform.OS === 'web' ? (
-            <View style={[styles.cellFixed, { width: FIXED.category }]}>
-              <SelectDropdown
-                value={inlineValues?.category ?? ''}
-                options={LEVERANTOR_KATEGORIER}
-                placeholder="Kategori"
-                searchable
-                onSelect={(next) => onInlineChange?.('category', String(next))}
-                usePortal={true}
-                fieldStyle={styles.inlineSelectField}
-                listStyle={styles.inlineSelectList}
-                inputStyle={{ fontSize: 13, color: '#111' }}
+          <View style={[styles.cellFlex, { flex: FLEX.companyName }]}>
+            <View style={styles.columnContent}>
+              <TextInput
+                value={inlineValues?.companyName ?? ''}
+                onChangeText={(v) => onInlineChange?.('companyName', v)}
+                placeholder="Leverantör (ny)"
+                returnKeyType="done"
+                blurOnSubmit={true}
+                onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+                style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
               />
             </View>
+          </View>
+          <View style={[styles.cellFixed, { width: FIXED.organizationNumber }]}>
+            <View style={styles.columnContent}>
+              <TextInput
+                value={inlineValues?.organizationNumber ?? ''}
+                onChangeText={(v) => onInlineChange?.('organizationNumber', v)}
+                placeholder="Org-nr (ny)"
+                style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+              />
+            </View>
+          </View>
+          <View style={[styles.cellFixed, { width: FIXED.city }]}>
+            <View style={styles.columnContent}>
+              <TextInput
+                value={inlineValues?.city ?? ''}
+                onChangeText={(v) => onInlineChange?.('city', v)}
+                placeholder="Ort (ny)"
+                style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+              />
+            </View>
+          </View>
+          {companyCategories.length > 0 ? (
+            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+              <View style={styles.columnContent}>
+                <SelectDropdown
+                  value={Array.isArray(inlineValues?.categories) ? inlineValues.categories : []}
+                  options={companyCategories.map((c) => ({ value: c.id, label: c.name ?? c.id }))}
+                  multiple
+                  searchable
+                  placeholder="Kategorier"
+                  onChange={(next: string[]) => onInlineChange?.('categories', next)}
+                  usePortal={true}
+                  fieldStyle={[styles.inlineSelectField, { minHeight: 26, height: 26 }]}
+                  listStyle={styles.inlineSelectList}
+                  inputStyle={{ fontSize: 13, color: '#111' }}
+                />
+              </View>
+            </View>
+          ) : Platform.OS === 'web' ? (
+            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+              <View style={styles.columnContent}>
+                <SelectDropdown
+                  value={inlineValues?.category ?? ''}
+                  options={LEVERANTOR_KATEGORIER}
+                  placeholder="Kategori"
+                  searchable
+                  onSelect={(next: string) => onInlineChange?.('category', String(next))}
+                  usePortal={true}
+                  fieldStyle={[styles.inlineSelectField, { minHeight: 26, height: 26 }]}
+                  listStyle={styles.inlineSelectList}
+                  inputStyle={{ fontSize: 13, color: '#111' }}
+                />
+              </View>
+            </View>
           ) : (
-            <TextInput
-              value={inlineValues?.category ?? ''}
-              onChangeText={(v) => onInlineChange?.('category', v)}
-              placeholder="Kategori"
-              returnKeyType="done"
-              blurOnSubmit={true}
-              onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-              style={[styles.inlineInput, styles.cellFixed, { width: FIXED.category }]}
-              placeholderTextColor="#94a3b8"
-            />
+            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+              <View style={styles.columnContent}>
+                <TextInput
+                  value={inlineValues?.category ?? ''}
+                  onChangeText={(v) => onInlineChange?.('category', v)}
+                  placeholder="Kategori"
+                  returnKeyType="done"
+                  blurOnSubmit={true}
+                  onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+                  style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+            </View>
           )}
           <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
@@ -667,68 +766,94 @@ export default function LeverantorerTable({
         <View key={supplier.id}>
           {editingId === supplier.id && editDraft ? (
             <View style={styles.editRow}>
-              <TextInput
-                value={editDraft.companyName}
-                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, companyName: v } : d))}
-                placeholder="Leverantörsnamn"
-                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.companyName }]}
-                placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
-              />
-              <TextInput
-                value={editDraft.organizationNumber}
-                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, organizationNumber: v } : d))}
-                placeholder="Orgnr"
-                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.organizationNumber }]}
-                placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
-              />
-              <TextInput
-                value={editDraft.address}
-                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, address: v } : d))}
-                placeholder="Adress"
-                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.address }]}
-                placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
-              />
-              <TextInput
-                value={editDraft.postalCode}
-                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, postalCode: v } : d))}
-                placeholder="Postnr"
-                style={[styles.inlineInput, styles.cellFixed, { width: FIXED.postalCode }]}
-                placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
-              />
-              <TextInput
-                value={editDraft.city}
-                onChangeText={(v) => setEditDraft((d) => (d ? { ...d, city: v } : d))}
-                placeholder="Ort"
-                style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.city }]}
-                placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
-              />
+              <View style={[styles.cellFlex, { flex: FLEX_FULL.companyName }]}>
+                <View style={styles.columnContent}>
+                  <TextInput
+                    value={editDraft.companyName}
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, companyName: v } : d))}
+                    placeholder="Leverantör"
+                    style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+                  />
+                </View>
+              </View>
+              <View style={[styles.cellFixed, { width: FIXED_FULL.organizationNumber }]}>
+                <View style={styles.columnContent}>
+                  <TextInput
+                    value={editDraft.organizationNumber}
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, organizationNumber: v } : d))}
+                    placeholder="Org-nr"
+                    style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+                  />
+                </View>
+              </View>
+              <View style={[styles.cellFlex, { flex: FLEX_FULL.address }]}>
+                <View style={styles.columnContent}>
+                  <TextInput
+                    value={editDraft.address}
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, address: v } : d))}
+                    placeholder="Adress"
+                    style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+                  />
+                </View>
+              </View>
+              <View style={[styles.cellFixed, { width: FIXED_FULL.postalCode }]}>
+                <View style={styles.columnContent}>
+                  <TextInput
+                    value={editDraft.postalCode}
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, postalCode: v } : d))}
+                    placeholder="Postnr"
+                    style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+                  />
+                </View>
+              </View>
+              <View style={[styles.cellFlex, { flex: FLEX_FULL.city }]}>
+                <View style={styles.columnContent}>
+                  <TextInput
+                    value={editDraft.city}
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, city: v } : d))}
+                    placeholder="Ort"
+                    style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
+                  />
+                </View>
+              </View>
               {Platform.OS === 'web' ? (
-                <View style={[styles.cellFixed, { width: FIXED.category }]}>
-                  <SelectDropdown
+                <View style={[styles.cellFlex, { flex: FLEX_FULL.category }]}>
+                  <View style={styles.columnContent}>
+                    <SelectDropdown
                     value={editDraft.category}
                     options={LEVERANTOR_KATEGORIER as unknown as string[]}
                     placeholder="Kategori"
                     searchable
-                    onSelect={(next) => setEditDraft((d) => (d ? { ...d, category: String(next) } : d))}
+                    onSelect={(next: string) => setEditDraft((d) => (d ? { ...d, category: String(next) } : d))}
                     usePortal={true}
                     fieldStyle={[styles.inlineSelectField, { minHeight: 28 }]}
                     listStyle={styles.inlineSelectList}
                     inputStyle={{ fontSize: 13, color: '#111' }}
                   />
+                  </View>
                 </View>
               ) : (
-                <TextInput
-                  value={editDraft.category}
-                  onChangeText={(v) => setEditDraft((d) => (d ? { ...d, category: v } : d))}
-                  placeholder="Kategori"
-                  style={[styles.inlineInput, styles.cellFixed, { width: FIXED.category }]}
-                  placeholderTextColor="#94a3b8"
-                />
+                <View style={[styles.cellFlex, { flex: FLEX_FULL.category }]}>
+                  <View style={styles.columnContent}>
+                    <TextInput
+                      value={editDraft.category}
+                      onChangeText={(v) => setEditDraft((d) => (d ? { ...d, category: v } : d))}
+                      placeholder="Kategori"
+                      style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                </View>
               )}
               <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
                 <TouchableOpacity
@@ -783,41 +908,56 @@ export default function LeverantorerTable({
                   }
                 : {})}
             >
-              <View style={[styles.cellFlex, { flex: FLEX.companyName, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                <Ionicons
-                  name="chevron-forward"
-                  size={14}
-                  color="#94a3b8"
-                  style={{ transform: [{ rotate: expandedIds[supplier.id] ? '90deg' : '0deg' }] }}
-                />
-                <Text style={styles.cellText} numberOfLines={1}>
-                  {supplier.companyName || '—'}
-                </Text>
+              <View style={[styles.cellFlex, { flex: FLEX.companyName }]}>
+                <View style={[styles.columnContent, styles.columnContentRow]}>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color="#94a3b8"
+                    style={{ transform: [{ rotate: expandedIds[supplier.id] ? '90deg' : '0deg' }] }}
+                  />
+                  <Text style={styles.cellText} numberOfLines={1}>
+                    {supplier.companyName || '—'}
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.cellFixed, { width: FIXED.organizationNumber }]}>
+                <View style={styles.columnContent}>
+                  <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
+                    {supplier.organizationNumber || '—'}
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.cellFixed, { width: FIXED.city }]}>
+                <View style={styles.columnContent}>
+                  <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
+                    {safeText(supplier.city)}
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+                <View style={[styles.columnContent, styles.categoryChipsWrap]}>
                 {(() => {
-                  const list = contactMap[supplier.id] || [];
-                  const count = list.length;
-                  const tooltip = Platform.OS === 'web' && list.length > 0 ? `Kontakter: ${list.map((c) => c.name || '—').join(', ')}` : undefined;
+                  const { visible, overflow } = getCategoryChipsForRow(supplier);
+                  if (!visible.length && !overflow) {
+                    return <SelectDropdownChip label="—" removable={false} onRemove={() => {}} title="—" />;
+                  }
                   return (
-                    <View style={styles.contactBadge} {...(tooltip && Platform.OS === 'web' ? { title: tooltip } : {})}>
-                      <Text style={styles.contactBadgeText}>👤 {count}</Text>
-                    </View>
+                    <>
+                      {visible.map((name) => (
+                        <View key={name} style={styles.categoryChip}>
+                          <SelectDropdownChip label={name} removable={false} onRemove={() => {}} title={name} />
+                        </View>
+                      ))}
+                      {overflow > 0 ? (
+                        <View style={styles.categoryChip}>
+                          <SelectDropdownChip label={`+${overflow}`} removable={false} onRemove={() => {}} title={`+${overflow}`} />
+                        </View>
+                      ) : null}
+                    </>
                   );
                 })()}
-              </View>
-              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.organizationNumber }]} numberOfLines={1}>
-                {supplier.organizationNumber || '—'}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.address }]} numberOfLines={1}>
-                {safeText(supplier.address)}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFixed, { width: FIXED.postalCode }]} numberOfLines={1}>
-                {safeText(supplier.postalCode)}
-              </Text>
-              <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.city }]} numberOfLines={1}>
-                {safeText(supplier.city)}
-              </Text>
-              <View style={[styles.chipRow, styles.cellFixed, { width: FIXED.category }]}>
-                <SelectDropdownChip label={formatCategories(supplier).label} removable={false} />
+                </View>
               </View>
               <View style={[styles.actionsCol, stickyRight]}>
                 <TouchableOpacity
@@ -835,17 +975,82 @@ export default function LeverantorerTable({
           {expandedIds[supplier.id] ? (
             <View style={styles.detailsRow}>
               <View style={styles.detailsInner}>
+                {/* 1. Kategorier – företagets kategoriregister */}
                 <View style={styles.contactHeaderRow}>
                   <Text style={styles.detailsMeta}>Kategorier</Text>
-                  <View style={styles.chipRow}>
-                    {getCategoryList(supplier).length
-                      ? getCategoryList(supplier).map((c) => (
-                          <SelectDropdownChip key={c} label={c} removable={false} />
-                        ))
-                      : <SelectDropdownChip label="—" removable={false} />}
-                  </View>
+                  {companyCategories.length > 0 && onCategoriesChange ? (
+                    <View style={{ minWidth: 200, maxWidth: 400 }}>
+                      <SelectDropdown
+                        value={Array.isArray(supplier.categories) ? supplier.categories : []}
+                        options={companyCategories.map((c) => ({ value: c.id, label: c.name ?? c.id }))}
+                        multiple
+                        searchable
+                        placeholder="Välj kategorier"
+                        onChange={(next: string[]) => onCategoriesChange(supplier, next)}
+                        usePortal={true}
+                        fieldStyle={styles.inlineSelectField}
+                        listStyle={styles.inlineSelectList}
+                        inputStyle={{ fontSize: 13, color: '#111' }}
+                      />
+                    </View>
+                  ) : (
+                    <View style={styles.chipRow}>
+                      {getCategoryList(supplier).length
+                        ? getCategoryList(supplier).map((c) => (
+                            <SelectDropdownChip key={c} label={c} removable={false} onRemove={() => {}} title={c} />
+                          ))
+                        : <SelectDropdownChip label="—" removable={false} onRemove={() => {}} title="—" />}
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.contactHeader}>Kontakter</Text>
+                {/* 2. Byggdelar – företagets byggdelar */}
+                {companyByggdelar.length > 0 && onByggdelarChange ? (
+                  <View style={[styles.contactHeaderRow, { marginTop: 10 }]}>
+                    <Text style={styles.detailsMeta}>Byggdelar</Text>
+                    <View style={{ minWidth: 200, maxWidth: 400 }}>
+                      <SelectDropdown
+                        value={Array.isArray(supplier.byggdelTags) ? supplier.byggdelTags : []}
+                        options={companyByggdelar.map((b) => ({
+                          value: b.code ?? b.id,
+                          label: [b.code, b.name].filter(Boolean).join(' – ') || b.id,
+                        }))}
+                        multiple
+                        searchable
+                        placeholder="Välj byggdelar"
+                        onChange={(next: string[]) => onByggdelarChange(supplier, next)}
+                        usePortal={true}
+                        fieldStyle={styles.inlineSelectField}
+                        listStyle={styles.inlineSelectList}
+                        inputStyle={{ fontSize: 13, color: '#111' }}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+                {/* 3. Kontoplan – företagets kontoplan */}
+                {companyKontoplan.length > 0 && onKontonChange ? (
+                  <View style={[styles.contactHeaderRow, { marginTop: 10 }]}>
+                    <Text style={styles.detailsMeta}>Kontoplan</Text>
+                    <View style={{ minWidth: 200, maxWidth: 400 }}>
+                      <SelectDropdown
+                        value={Array.isArray(supplier.konton) ? supplier.konton : []}
+                        options={companyKontoplan.map((k) => ({
+                          value: k.konto ?? k.id,
+                          label: [k.konto, k.benamning].filter(Boolean).join(' – ') || k.id,
+                        }))}
+                        multiple
+                        searchable
+                        placeholder="Välj konton"
+                        onChange={(next: string[]) => onKontonChange(supplier, next)}
+                        usePortal={true}
+                        fieldStyle={styles.inlineSelectField}
+                        listStyle={styles.inlineSelectList}
+                        inputStyle={{ fontSize: 13, color: '#111' }}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+                {/* 4. Kontaktpersoner */}
+                <Text style={styles.contactHeader}>Kontaktpersoner</Text>
                 {(contactMap[supplier.id] || []).map((contact, cIdx) => (
                   <View key={contact.id} style={[styles.contactRow, cIdx % 2 === 1 ? styles.contactRowAlt : null]}>
                     <Text style={[styles.contactCell, { flex: 1.2 }]} numberOfLines={1}>
@@ -1038,6 +1243,15 @@ export default function LeverantorerTable({
                     </TouchableOpacity>
                   </View>
                 ) : null}
+                {/* 5. Adressuppgifter */}
+                <View style={[styles.contactHeaderRow, { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0' }]}>
+                  <Text style={styles.detailsMeta}>Adressuppgifter</Text>
+                  <View style={styles.chipRow}>
+                    <Text style={styles.contactCell}>
+                      {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </View>
           ) : null}

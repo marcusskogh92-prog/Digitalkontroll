@@ -254,6 +254,19 @@ export async function setCompanyAIPrompt(companyId, promptKey, payload) {
   return getCompanyAIPrompt(companyId, promptKey);
 }
 
+/** Hämta standardprompt för en analystyp (t.ex. ffu) – för visning i admin. */
+export async function getDefaultAIPrompt(promptKey) {
+  const key = String(promptKey || '').trim();
+  if (!key) return { system: '', userTemplate: '' };
+  const fn = httpsCallable(functionsClient, 'getDefaultAIPrompt');
+  const res = await fn({ promptKey: key });
+  const data = res?.data || {};
+  return {
+    system: String(data.system || '').trim(),
+    userTemplate: String(data.userTemplate || '').trim(),
+  };
+}
+
 export async function saveLatestProjectFFUAnalysis(companyId, projectId, analysis) {
   const { canonical } = getLatestFFUAnalysisDocRefs(companyId, projectId);
   const a = analysis && typeof analysis === 'object' ? analysis : {};
@@ -2624,7 +2637,7 @@ export async function fetchCompanySuppliers(companyIdOverride) {
 }
 
 export async function createCompanySupplier(
-  { companyName, organizationNumber, address, postalCode, city, category, categories, byggdelTags, contactIds },
+  { companyName, organizationNumber, address, postalCode, city, category, categories, byggdelTags, contactIds, konton },
   companyIdOverride
 ) {
   const companyId = await resolveCompanyId(companyIdOverride, null);
@@ -2659,6 +2672,9 @@ export async function createCompanySupplier(
   }
   if (Array.isArray(contactIds) && contactIds.length > 0) {
     payload.contactIds = contactIds.map((id) => String(id || '').trim()).filter(Boolean);
+  }
+  if (Array.isArray(konton) && konton.length > 0) {
+    payload.konton = konton.map((k) => String(k || '').trim()).filter(Boolean);
   }
   let createdBy = null;
   try {
@@ -2731,6 +2747,11 @@ export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
   if (Object.prototype.hasOwnProperty.call(safePatch, 'contactIds')) {
     safePatch.contactIds = Array.isArray(safePatch.contactIds)
       ? safePatch.contactIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'konton')) {
+    safePatch.konton = Array.isArray(safePatch.konton)
+      ? safePatch.konton.map((k) => String(k || '').trim()).filter(Boolean)
       : [];
   }
   delete safePatch.vatNumber;
@@ -3342,6 +3363,70 @@ export async function deleteKontoplanAccount(companyIdOverride, accountId) {
   const id = String(accountId ?? '').trim();
   if (!id) throw new Error('Ogiltigt konto-id');
   const ref = doc(db, 'foretag', companyId, 'kontoplan', id);
+  await deleteDoc(ref);
+}
+
+// ============================================================================
+// KATEGORIER (categories) per företag – companies/{companyId}/categories/{categoryId}
+// ============================================================================
+
+export async function fetchCategories(companyIdOverride) {
+  try {
+    const companyId = await resolveCompanyId(companyIdOverride || null, null);
+    if (!companyId) return [];
+    const colRef = collection(db, 'companies', companyId, 'categories');
+    const snap = await getDocs(colRef);
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a.name ?? '').trim();
+      const bn = String(b.name ?? '').trim();
+      return (an || '').localeCompare(bn || '', 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+export async function createCategory({ name, note, skapadVia }, companyIdOverride) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const n = String(name ?? '').trim();
+  if (!n) throw new Error('Kategori är obligatoriskt.');
+  const payload = {
+    name: n,
+    note: String(note ?? '').trim(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (skapadVia != null && String(skapadVia).trim() !== '') {
+    payload.skapadVia = String(skapadVia).trim();
+  }
+  const colRef = collection(db, 'companies', companyId, 'categories');
+  const docRef = await addDoc(colRef, payload);
+  return docRef.id;
+}
+
+export async function updateCategory(companyIdOverride, categoryId, patch) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(categoryId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt kategori-id');
+  const ref = doc(db, 'companies', companyId, 'categories', id);
+  const safePatch = sanitizeForFirestore(patch || {});
+  await setDoc(ref, { ...safePatch, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function deleteCategory(companyIdOverride, categoryId) {
+  const companyId = await resolveCompanyId(companyIdOverride, null);
+  if (!companyId) throw new Error('Saknar företag');
+  const id = String(categoryId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt kategori-id');
+  const ref = doc(db, 'companies', companyId, 'categories', id);
   await deleteDoc(ref);
 }
 

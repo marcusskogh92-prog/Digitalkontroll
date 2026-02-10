@@ -6,9 +6,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 const FLEX = { beskrivning: 1.5, anteckningar: 1.5 };
-const FIXED = { byggdel: 80, actions: 48 };
+const FIXED = { byggdel: 80, actions: 30 };
 
 const styles = StyleSheet.create({
   tableWrap: {
@@ -36,12 +37,30 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     minWidth: 0,
   },
+  columnContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
   headerText: { fontSize: 12, fontWeight: '500', color: '#475569' },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
   cellMono: { fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
+  inlineInputCell: {
+    paddingHorizontal: 0,
+    margin: 0,
+    flex: 1,
+    alignSelf: 'stretch',
+    minWidth: 0,
+  },
   actionsCol: {
     width: FIXED.actions,
+    minWidth: FIXED.actions,
+    maxWidth: FIXED.actions,
     flexShrink: 0,
     borderLeftWidth: 1,
     borderLeftColor: '#e2e8f0',
@@ -49,6 +68,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 3,
+    paddingLeft: 0,
+    paddingRight: 0,
   },
   actionsColHeader: { backgroundColor: '#f1f5f9', paddingVertical: 5 },
   actionsColInline: { backgroundColor: '#eff6ff' },
@@ -208,8 +229,10 @@ export default function ByggdelTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={[styles.headerText, styles.cellMono]}>Kod</Text>
-          <SortIcon col="moment" />
+          <View style={styles.columnContent}>
+            <Text style={[styles.headerText, styles.cellMono]}>Kod</Text>
+            <SortIcon col="moment" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.beskrivning }]}
@@ -217,8 +240,10 @@ export default function ByggdelTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Namn</Text>
-          <SortIcon col="name" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText}>Namn</Text>
+            <SortIcon col="name" />
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.anteckningar }]}
@@ -226,8 +251,10 @@ export default function ByggdelTable({
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <Text style={styles.headerText}>Anteckningar</Text>
-          <SortIcon col="anteckningar" />
+          <View style={styles.columnContent}>
+            <Text style={styles.headerText}>Anteckningar</Text>
+            <SortIcon col="anteckningar" />
+          </View>
         </TouchableOpacity>
         <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
@@ -334,15 +361,21 @@ export default function ByggdelTable({
             activeOpacity={0.7}
             {...(Platform.OS === 'web' ? { cursor: 'default', onMouseEnter: () => setHoveredId(item.id), onMouseLeave: () => setHoveredId(null) } : {})}
           >
-            <Text style={[styles.cellText, styles.cellFixed, styles.cellMono, { width: FIXED.byggdel }]} numberOfLines={1}>
-              {safeText(item.moment ?? item.byggdel)}
-            </Text>
-            <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.beskrivning }]} numberOfLines={1}>
-              {safeText(item.name)}
-            </Text>
-            <Text style={[styles.cellMuted, styles.cellFlex, { flex: FLEX.anteckningar }]} numberOfLines={1}>
-              {safeText(item.anteckningar)}
-            </Text>
+            <View style={[styles.cellFixed, { width: FIXED.byggdel }]}>
+              <View style={styles.columnContent}>
+                <Text style={[styles.cellText, styles.cellMono]} numberOfLines={1}>{safeText(item.moment ?? item.byggdel)}</Text>
+              </View>
+            </View>
+            <View style={[styles.cellFlex, { flex: FLEX.beskrivning }]}>
+              <View style={styles.columnContent}>
+                <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.name)}</Text>
+              </View>
+            </View>
+            <View style={[styles.cellFlex, { flex: FLEX.anteckningar }]}>
+              <View style={styles.columnContent}>
+                <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.anteckningar)}</Text>
+              </View>
+            </View>
             <View style={[styles.actionsCol, stickyRight]}>
               <TouchableOpacity
                 ref={(r) => {
