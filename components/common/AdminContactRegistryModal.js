@@ -23,8 +23,10 @@ import ContactRegistryTable from './ContactRegistryTable';
 import {
   createCompanyContact,
   deleteCompanyContact,
+  ensureCompaniesFromKunderAndLeverantorer,
   fetchCompanyContacts,
   fetchCompanyProfile,
+  searchCompanies,
   updateCompanyContact,
 } from '../firebase';
 
@@ -97,6 +99,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [inlineName, setInlineName] = useState('');
+  const [inlineCompanyId, setInlineCompanyId] = useState('');
   const [inlineCompanyName, setInlineCompanyName] = useState('');
   const [inlineRole, setInlineRole] = useState('');
   const [inlinePhone, setInlinePhone] = useState('');
@@ -106,6 +109,10 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuContact, setRowMenuContact] = useState(null);
+  const [companySearchResults, setCompanySearchResults] = useState([]);
+  const [companySearchOpen, setCompanySearchOpen] = useState(false);
+  const [companySearchActive, setCompanySearchActive] = useState(null);
+  const companySearchDebounceRef = useRef(null);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -132,6 +139,45 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     if (!visible) return;
     loadContacts();
   }, [visible, loadContacts]);
+
+  useEffect(() => {
+    if (!visible || !cid) return;
+    ensureCompaniesFromKunderAndLeverantorer(cid).catch(() => {});
+  }, [visible, cid]);
+
+  const handleCompanySearch = useCallback(
+    (query, context) => {
+      if (companySearchDebounceRef.current) clearTimeout(companySearchDebounceRef.current);
+      const q = String(query ?? '').trim();
+      if (q.length < 3) {
+        setCompanySearchResults([]);
+        setCompanySearchOpen(false);
+        setCompanySearchActive(null);
+        return;
+      }
+      setCompanySearchActive(context || 'inline');
+      companySearchDebounceRef.current = setTimeout(async () => {
+        try {
+          const results = await searchCompanies(cid, q);
+          setCompanySearchResults(results || []);
+          setCompanySearchOpen(true);
+        } catch {
+          setCompanySearchResults([]);
+        }
+        companySearchDebounceRef.current = null;
+      }, 300);
+    },
+    [cid]
+  );
+
+  const handleSelectCompany = useCallback((company) => {
+    if (!company) return;
+    setInlineCompanyId(company.id || '');
+    setInlineCompanyName(company.name || '');
+    setCompanySearchResults([]);
+    setCompanySearchOpen(false);
+    setCompanySearchActive(null);
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -243,20 +289,16 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     setSaving(true);
     setError('');
     try {
-      await updateCompanyContact(
-        {
-          id: contactId,
-          patch: {
-            name: values.name.trim(),
-            contactCompanyName: values.contactCompanyName.trim(),
-            role: values.role.trim(),
-            phone: String(values.phone ?? '').replace(/\D/g, ''),
-            workPhone: String(values.workPhone ?? '').trim(),
-            email: values.email.trim(),
-          },
-        },
-        cid
-      );
+      const patch = {
+        name: values.name.trim(),
+        contactCompanyName: values.contactCompanyName.trim(),
+        role: values.role.trim(),
+        phone: String(values.phone ?? '').replace(/\D/g, ''),
+        workPhone: String(values.workPhone ?? '').trim(),
+        email: values.email.trim(),
+      };
+      if (values.companyId != null) patch.companyId = String(values.companyId || '').trim() || null;
+      await updateCompanyContact({ id: contactId, patch }, cid);
       showNotice('Kontakt uppdaterad');
       setEditingId(null);
       await loadContacts();
@@ -302,6 +344,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
           name,
           companyName: companyName || cid,
           contactCompanyName: inlineCompanyName.trim(),
+          companyId: inlineCompanyId.trim() || undefined,
           role: inlineRole.trim(),
           phone: String(inlinePhone ?? '').replace(/\D/g, ''),
           workPhone: inlineWorkPhone.trim(),
@@ -310,6 +353,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         cid
       );
       setInlineName('');
+      setInlineCompanyId('');
       setInlineCompanyName('');
       setInlineRole('');
       setInlinePhone('');
@@ -426,6 +470,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       name: inlineName,
+                      companyId: inlineCompanyId,
                       contactCompanyName: inlineCompanyName,
                       role: inlineRole,
                       phone: inlinePhone,
@@ -434,12 +479,20 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                     }}
                     onInlineChange={(field, value) => {
                       if (field === 'name') setInlineName(value);
+                      if (field === 'companyId') setInlineCompanyId(value);
                       if (field === 'contactCompanyName') setInlineCompanyName(value);
                       if (field === 'role') setInlineRole(value);
                       if (field === 'phone') setInlinePhone(value);
                       if (field === 'workPhone') setInlineWorkPhone(value);
                       if (field === 'email') setInlineEmail(value);
                     }}
+                    companySearchResults={companySearchResults}
+                    companySearchOpen={companySearchOpen}
+                    companySearchActive={companySearchActive}
+                    setCompanySearchOpen={setCompanySearchOpen}
+                    setCompanySearchActive={setCompanySearchActive}
+                    onCompanySearch={handleCompanySearch}
+                    onSelectCompany={handleSelectCompany}
                     onInlineSave={handleInlineSave}
                   />
                 )}

@@ -33,6 +33,7 @@ import {
     deleteByggdel,
     fetchByggdelar,
     updateByggdel,
+    updateCompanySupplier,
 } from '../firebase';
 import ByggdelTable from './ByggdelTable';
 import ConfirmModal from './Modals/ConfirmModal';
@@ -178,6 +179,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderTopWidth: 1,
@@ -192,15 +195,20 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
+  footerBtnPrimary: {
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+  },
 });
 
 function normalizeCode(v) {
   return String(v ?? '').replace(/\D/g, '').slice(0, 3);
 }
 
-export default function AdminByggdelModal({ visible, companyId, onClose }) {
+export default function AdminByggdelModal({ visible, companyId, selectionContext, onClose, onSelectionSaved }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
+  const isSelectionMode = Boolean(selectionContext?.entityId);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -224,6 +232,11 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
   const [importPlan, setImportPlan] = useState(null);
   const [importConfirmVisible, setImportConfirmVisible] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  /** Vid öppnad från leverantör/kund: visa endast valda (filter) */
+  const [filterOnlySelected, setFilterOnlySelected] = useState(false);
+  /** Lokala val för leverantör/kund (koder) */
+  const [localSelectedCodes, setLocalSelectedCodes] = useState([]);
+  const [savingSelection, setSavingSelection] = useState(false);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -248,6 +261,13 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     if (!visible) return;
     load();
   }, [visible, load]);
+
+  useEffect(() => {
+    if (visible && selectionContext?.selectedCodes) {
+      setLocalSelectedCodes(Array.isArray(selectionContext.selectedCodes) ? [...selectionContext.selectedCodes] : []);
+      setFilterOnlySelected(false);
+    }
+  }, [visible, selectionContext?.entityId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -323,16 +343,41 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
     return list;
   }, [filtered, sortColumn, sortDirection]);
 
+  /** Vid leverantör/kund: filtrera till endast valda om användaren valt det */
+  const sortedForDisplay = useMemo(() => {
+    if (!isSelectionMode || !filterOnlySelected || localSelectedCodes.length === 0) return sorted;
+    const set = new Set(localSelectedCodes);
+    return sorted.filter((item) => set.has(String(item.code ?? item.id ?? '').trim()));
+  }, [sorted, isSelectionMode, filterOnlySelected, localSelectedCodes]);
+
   /** Tabell förväntar moment/name/anteckningar; API ger code/name/notes */
   const tableItems = useMemo(
     () =>
-      sorted.map((i) => ({
+      sortedForDisplay.map((i) => ({
         ...i,
         moment: i.code,
         anteckningar: i.notes,
       })),
-    [sorted]
+    [sortedForDisplay]
   );
+
+  const handleSaveSelection = async () => {
+    if (!cid || !selectionContext?.entityId) return;
+    setSavingSelection(true);
+    setError('');
+    try {
+      await updateCompanySupplier(
+        { id: selectionContext.entityId, patch: { byggdelTags: localSelectedCodes } },
+        cid
+      );
+      showNotice('Val sparade för leverantör');
+      onSelectionSaved?.();
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setSavingSelection(false);
+    }
+  };
 
   const handleSort = (col) => {
     const internalCol = col === 'moment' ? 'code' : col === 'anteckningar' ? 'notes' : col;
@@ -573,6 +618,39 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
               </View>
             ) : (
               <>
+                {isSelectionMode && (
+                  <View style={[styles.toolbar, { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Text style={{ fontSize: 13, color: '#64748b' }}>Visa:</Text>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(false)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: !filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: !filterOnlySelected ? '#2563eb' : '#64748b' }}>Se alla</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(true)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: filterOnlySelected ? '#2563eb' : '#64748b' }}>
+                          Endast valda för {selectionContext?.entityName || 'leverantör'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
                 <View style={styles.toolbar}>
                   <View style={styles.searchWrap}>
                     <Ionicons name="search" size={16} color="#64748b" />
@@ -651,7 +729,7 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={() => setEditingId(null)}
                     onRowMenu={openRowMenu}
-                    inlineEnabled={showContent}
+                    inlineEnabled={showContent && !isSelectionMode}
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       byggdel: inlineByggdel,
@@ -664,6 +742,9 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
                       if (field === 'anteckningar') setInlineAnteckningar(value);
                     }}
                     onInlineSave={handleInlineSave}
+                    selectionMode={isSelectionMode}
+                    selectedCodes={localSelectedCodes}
+                    onSelectionChange={isSelectionMode ? setLocalSelectedCodes : undefined}
                   />
                 )}
               </View>
@@ -671,6 +752,16 @@ export default function AdminByggdelModal({ visible, companyId, onClose }) {
           </ScrollView>
 
           <View style={styles.footer}>
+            {isSelectionMode ? (
+              <TouchableOpacity
+                style={[styles.footerBtn, styles.footerBtnPrimary]}
+                onPress={handleSaveSelection}
+                disabled={savingSelection}
+                {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
               <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
             </TouchableOpacity>

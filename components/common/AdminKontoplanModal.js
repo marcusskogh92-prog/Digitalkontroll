@@ -32,6 +32,7 @@ import {
     deleteKontoplanAccount,
     fetchKontoplan,
     updateKontoplanAccount,
+    updateCompanySupplier,
 } from '../firebase';
 import KontoplanTable from './KontoplanTable';
 import ConfirmModal from './Modals/ConfirmModal';
@@ -177,6 +178,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderTopWidth: 1,
@@ -191,11 +194,16 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
+  footerBtnPrimary: {
+    borderColor: '#2563eb',
+    backgroundColor: '#2563eb',
+  },
 });
 
-export default function AdminKontoplanModal({ visible, companyId, onClose }) {
+export default function AdminKontoplanModal({ visible, companyId, selectionContext, onClose, onSelectionSaved }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
+  const isSelectionMode = Boolean(selectionContext?.entityId);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -222,6 +230,9 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
   const [importPlan, setImportPlan] = useState(null);
   const [importConfirmVisible, setImportConfirmVisible] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [filterOnlySelected, setFilterOnlySelected] = useState(false);
+  const [localSelectedKonton, setLocalSelectedKonton] = useState([]);
+  const [savingSelection, setSavingSelection] = useState(false);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -247,6 +258,13 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
     if (!visible) return;
     load();
   }, [visible, load]);
+
+  useEffect(() => {
+    if (visible && selectionContext?.selectedKonton) {
+      setLocalSelectedKonton(Array.isArray(selectionContext.selectedKonton) ? [...selectionContext.selectedKonton] : []);
+      setFilterOnlySelected(false);
+    }
+  }, [visible, selectionContext?.entityId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -317,6 +335,30 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
     });
     return list;
   }, [filtered, sortColumn, sortDirection]);
+
+  const sortedForDisplay = useMemo(() => {
+    if (!isSelectionMode || !filterOnlySelected || localSelectedKonton.length === 0) return sorted;
+    const set = new Set(localSelectedKonton);
+    return sorted.filter((item) => set.has(String(item.konto ?? item.id ?? '').trim()));
+  }, [sorted, isSelectionMode, filterOnlySelected, localSelectedKonton]);
+
+  const handleSaveSelection = async () => {
+    if (!cid || !selectionContext?.entityId) return;
+    setSavingSelection(true);
+    setError('');
+    try {
+      await updateCompanySupplier(
+        { id: selectionContext.entityId, patch: { konton: localSelectedKonton } },
+        cid
+      );
+      showNotice('Val sparade för leverantör');
+      onSelectionSaved?.();
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setSavingSelection(false);
+    }
+  };
 
   const handleSort = (col) => {
     if (sortColumn === col) {
@@ -537,6 +579,39 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
               </View>
             ) : (
               <>
+                {isSelectionMode && (
+                  <View style={[styles.toolbar, { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Text style={{ fontSize: 13, color: '#64748b' }}>Visa:</Text>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(false)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: !filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: !filterOnlySelected ? '#2563eb' : '#64748b' }}>Se alla</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setFilterOnlySelected(true)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: filterOnlySelected ? '#eff6ff' : 'transparent',
+                        }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: filterOnlySelected ? '#2563eb' : '#64748b' }}>
+                          Endast valda för {selectionContext?.entityName || 'leverantör'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
                 <View style={styles.toolbar}>
                   <View style={styles.searchWrap}>
                     <Ionicons name="search" size={16} color="#64748b" />
@@ -612,7 +687,7 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
                   </View>
                 ) : (
                   <KontoplanTable
-                    items={sorted}
+                    items={sortedForDisplay}
                     sortColumn={sortColumn}
                     sortDirection={sortDirection}
                     onSort={handleSort}
@@ -621,7 +696,7 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={() => setEditingId(null)}
                     onRowMenu={openRowMenu}
-                    inlineEnabled={showContent}
+                    inlineEnabled={showContent && !isSelectionMode}
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       konto: inlineKonto,
@@ -634,6 +709,9 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
                       if (field === 'beskrivning') setInlineBeskrivning(value);
                     }}
                     onInlineSave={handleInlineSave}
+                    selectionMode={isSelectionMode}
+                    selectedKonton={localSelectedKonton}
+                    onSelectionChange={isSelectionMode ? setLocalSelectedKonton : undefined}
                   />
                 )}
               </View>
@@ -641,6 +719,16 @@ export default function AdminKontoplanModal({ visible, companyId, onClose }) {
           </ScrollView>
 
           <View style={styles.footer}>
+            {isSelectionMode ? (
+              <TouchableOpacity
+                style={[styles.footerBtn, styles.footerBtnPrimary]}
+                onPress={handleSaveSelection}
+                disabled={savingSelection}
+                {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
               <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
             </TouchableOpacity>

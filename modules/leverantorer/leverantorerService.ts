@@ -23,6 +23,8 @@ import {
 export type Supplier = {
   id: string;
   companyName: string;
+  /** Företagsentitet (companies-dokument) – kontakter med samma companyId visas automatiskt här. */
+  companyId?: string | null;
   organizationNumber?: string;
   address?: string;
   postalCode?: string;

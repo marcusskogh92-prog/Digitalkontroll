@@ -2587,6 +2587,9 @@ export async function updateCompanyContact({ id, patch }, companyIdOverride) {
     safePatch.linkedSupplierId =
       safePatch.linkedSupplierId === null ? null : String(safePatch.linkedSupplierId || '').trim();
   }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyId')) {
+    safePatch.companyId = safePatch.companyId == null ? null : String(safePatch.companyId).trim() || null;
+  }
   safePatch.updatedAt = serverTimestamp();
 
   const ref = doc(db, 'foretag', companyId, 'kontakter', contactId);
@@ -2693,7 +2696,16 @@ export async function createCompanySupplier(
 
   const colRef = collection(db, 'foretag', companyId, 'leverantorer');
   const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
-  return docRef.id;
+  const supplierId = docRef.id;
+  try {
+    const company = await getOrCreateCompanyByName(companyId, n, { supplierId });
+    if (company?.id) {
+      await updateCompanySupplier({ id: supplierId, patch: { companyId: company.id } }, companyId);
+    }
+  } catch (_e) {
+    // Best-effort; leverantör är redan skapad
+  }
+  return supplierId;
 }
 
 export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
@@ -2753,6 +2765,9 @@ export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
     safePatch.konton = Array.isArray(safePatch.konton)
       ? safePatch.konton.map((k) => String(k || '').trim()).filter(Boolean)
       : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyId')) {
+    safePatch.companyId = safePatch.companyId == null ? null : String(safePatch.companyId).trim() || null;
   }
   delete safePatch.vatNumber;
   safePatch.updatedAt = serverTimestamp();
@@ -2848,7 +2863,16 @@ export async function createCompanyCustomer(
 
   const colRef = collection(db, 'foretag', companyId, 'kunder');
   const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
-  return docRef.id;
+  const customerId = docRef.id;
+  try {
+    const company = await getOrCreateCompanyByName(companyId, n, { customerId });
+    if (company?.id) {
+      await updateCompanyCustomer({ id: customerId, patch: { companyId: company.id } }, companyId);
+    }
+  } catch (_e) {
+    // Best-effort; kund är redan skapad
+  }
+  return customerId;
 }
 
 export async function updateCompanyCustomer({ id, patch }, companyIdOverride) {
@@ -2891,6 +2915,9 @@ export async function updateCompanyCustomer({ id, patch }, companyIdOverride) {
       ? safePatch.contactIds.map((id) => String(id || '').trim()).filter(Boolean)
       : [];
   }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'companyId')) {
+    safePatch.companyId = safePatch.companyId == null ? null : String(safePatch.companyId).trim() || null;
+  }
   safePatch.updatedAt = serverTimestamp();
 
   const ref = doc(db, 'foretag', companyId, 'kunder', customerId);
@@ -2913,6 +2940,184 @@ export async function deleteCompanyCustomer({ id }, companyIdOverride) {
   }
   await deleteDoc(doc(db, 'foretag', companyId, 'kunder', customerId));
   return true;
+}
+
+// Företagsentiteter (kund + leverantör samlat) – foretag/{tenantId}/companies/{companyDocId}
+// Kontakter kopplas till companyId; samma företag kan vara både kund och leverantör.
+const COMPANIES_COLLECTION = 'companies';
+const MAX_SEARCH_COMPANIES = 15;
+
+/** Hämtar företagsentiteter (companies) för en tenant – kund/leverantör-register. */
+export async function fetchTenantCompanies(companyIdOverride) {
+  try {
+    const tenantId = await resolveCompanyId(companyIdOverride, null);
+    if (!tenantId) return [];
+    const snap = await getDocs(collection(db, 'foretag', tenantId, COMPANIES_COLLECTION));
+    const out = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      out.push({ ...d, id: docSnap.id });
+    });
+    out.sort((a, b) => {
+      const an = String(a?.name ?? '').trim().toLowerCase();
+      const bn = String(b?.name ?? '').trim().toLowerCase();
+      return an.localeCompare(bn, 'sv');
+    });
+    return out;
+  } catch (_e) {
+    return [];
+  }
+}
+
+/** Sök företag efter namn (min 3 tecken), case-insensitive includes. Max 15 träffar. */
+export async function searchCompanies(companyIdOverride, queryString) {
+  const q = String(queryString ?? '').trim();
+  if (q.length < 3) return [];
+  const tenantId = await resolveCompanyId(companyIdOverride, null);
+  if (!tenantId) return [];
+  const all = await fetchTenantCompanies(tenantId);
+  const lower = q.toLowerCase();
+  const filtered = all.filter((c) => {
+    const name = String(c?.name ?? '').trim().toLowerCase();
+    return name.includes(lower);
+  });
+  return filtered.slice(0, MAX_SEARCH_COMPANIES);
+}
+
+export async function createCompany({ name, roles = {}, customerId, supplierId }, companyIdOverride) {
+  const tenantId = await resolveCompanyId(companyIdOverride, null);
+  if (!tenantId) throw new Error('Saknar företag');
+  const n = String(name ?? '').trim();
+  if (!n) throw new Error('Företagsnamn är obligatoriskt.');
+  const payload = {
+    name: n,
+    roles: {
+      customer: Boolean(roles?.customer),
+      supplier: Boolean(roles?.supplier),
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (customerId != null && String(customerId).trim()) payload.customerId = String(customerId).trim();
+  if (supplierId != null && String(supplierId).trim()) payload.supplierId = String(supplierId).trim();
+  const colRef = collection(db, 'foretag', tenantId, COMPANIES_COLLECTION);
+  const docRef = await addDoc(colRef, sanitizeForFirestore(payload));
+  return docRef.id;
+}
+
+export async function updateCompany(companyIdOverride, companyDocId, patch) {
+  const tenantId = await resolveCompanyId(companyIdOverride, null);
+  if (!tenantId) throw new Error('Saknar företag');
+  const id = String(companyDocId ?? '').trim();
+  if (!id) throw new Error('Ogiltigt företagsdokument-id');
+  const safePatch = patch && typeof patch === 'object' ? { ...patch } : {};
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'name')) {
+    safePatch.name = String(safePatch.name ?? '').trim();
+    if (!safePatch.name) throw new Error('Företagsnamn är obligatoriskt.');
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'roles')) {
+    safePatch.roles = {
+      customer: Boolean(safePatch.roles?.customer),
+      supplier: Boolean(safePatch.roles?.supplier),
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'customerId')) {
+    safePatch.customerId = safePatch.customerId == null ? null : String(safePatch.customerId).trim() || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'supplierId')) {
+    safePatch.supplierId = safePatch.supplierId == null ? null : String(safePatch.supplierId).trim() || null;
+  }
+  safePatch.updatedAt = serverTimestamp();
+  const ref = doc(db, 'foretag', tenantId, COMPANIES_COLLECTION, id);
+  await updateDoc(ref, sanitizeForFirestore(safePatch));
+  return true;
+}
+
+/** Hitta eller skapa företagsentitet efter namn (case-insensitive). Returnerar { id, name, roles }. */
+export async function getOrCreateCompanyByName(companyIdOverride, name, { customerId, supplierId } = {}) {
+  const tenantId = await resolveCompanyId(companyIdOverride, null);
+  if (!tenantId) throw new Error('Saknar företag');
+  const n = String(name ?? '').trim();
+  if (!n) return null;
+  const all = await fetchTenantCompanies(tenantId);
+  const key = n.toLowerCase();
+  const existing = all.find((c) => (String(c?.name ?? '').trim().toLowerCase()) === key);
+  if (existing) {
+    const updates = {};
+    if (customerId != null) updates.customerId = String(customerId).trim();
+    if (supplierId != null) updates.supplierId = String(supplierId).trim();
+    const roles = { ...(existing.roles || {}), customer: existing.roles?.customer || Boolean(customerId), supplier: existing.roles?.supplier || Boolean(supplierId) };
+    if (Object.keys(updates).length || JSON.stringify(roles) !== JSON.stringify(existing.roles)) {
+      if (Object.keys(updates).length) await updateCompany(tenantId, existing.id, updates);
+      if (JSON.stringify(roles) !== JSON.stringify(existing.roles)) await updateCompany(tenantId, existing.id, { roles });
+    }
+    return { id: existing.id, name: existing.name || n, roles: roles };
+  }
+  const newId = await createCompany(
+    { name: n, roles: { customer: Boolean(customerId), supplier: Boolean(supplierId) }, customerId: customerId || undefined, supplierId: supplierId || undefined },
+    tenantId
+  );
+  return { id: newId, name: n, roles: { customer: Boolean(customerId), supplier: Boolean(supplierId) } };
+}
+
+/** Säkerställ att alla kunder och leverantörer har companyId; skapa/uppdatera companies-dokument. */
+export async function ensureCompaniesFromKunderAndLeverantorer(companyIdOverride) {
+  const tenantId = await resolveCompanyId(companyIdOverride, null);
+  if (!tenantId) return { customersUpdated: 0, suppliersUpdated: 0 };
+  const [kunder, leverantorer, companies] = await Promise.all([
+    getDocs(collection(db, 'foretag', tenantId, 'kunder')),
+    getDocs(collection(db, 'foretag', tenantId, 'leverantorer')),
+    getDocs(collection(db, 'foretag', tenantId, COMPANIES_COLLECTION)),
+  ]);
+  const companyByName = new Map();
+  companies.forEach((docSnap) => {
+    const d = docSnap.data() || {};
+    const name = String(d?.name ?? '').trim().toLowerCase();
+    if (name) companyByName.set(name, { ...d, id: docSnap.id });
+  });
+  let customersUpdated = 0;
+  let suppliersUpdated = 0;
+  for (const docSnap of kunder.docs || []) {
+    const d = docSnap.data() || {};
+    const customerId = docSnap.id;
+    const name = String(d?.name ?? '').trim();
+    if (!name || d.companyId) continue;
+    const key = name.toLowerCase();
+    let company = companyByName.get(key);
+    if (!company) {
+      const newId = await createCompany({ name, roles: { customer: true, supplier: false }, customerId }, tenantId);
+      company = { id: newId, name, roles: { customer: true, supplier: false }, customerId };
+      companyByName.set(key, company);
+    } else {
+      const updates = { roles: { ...(company.roles || {}), customer: true }, customerId };
+      await updateCompany(tenantId, company.id, updates);
+      company.roles = { ...company.roles, customer: true };
+      company.customerId = customerId;
+    }
+    await updateCompanyCustomer({ id: customerId, patch: { companyId: company.id } }, tenantId);
+    customersUpdated += 1;
+  }
+  for (const docSnap of leverantorer.docs || []) {
+    const d = docSnap.data() || {};
+    const supplierId = docSnap.id;
+    const name = String(d?.companyName ?? d?.name ?? '').trim();
+    if (!name || d.companyId) continue;
+    const key = name.toLowerCase();
+    let company = companyByName.get(key);
+    if (!company) {
+      const newId = await createCompany({ name, roles: { customer: false, supplier: true }, supplierId }, tenantId);
+      company = { id: newId, name, roles: { customer: false, supplier: true }, supplierId };
+      companyByName.set(key, company);
+    } else {
+      const updates = { roles: { ...(company.roles || {}), supplier: true }, supplierId };
+      await updateCompany(tenantId, company.id, updates);
+      company.roles = { ...company.roles, supplier: true };
+      company.supplierId = supplierId;
+    }
+    await updateCompanySupplier({ id: supplierId, patch: { companyId: company.id } }, tenantId);
+    suppliersUpdated += 1;
+  }
+  return { customersUpdated, suppliersUpdated };
 }
 
 // Byggdel mall-register per företag

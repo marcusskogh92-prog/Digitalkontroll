@@ -3,7 +3,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Animated,
@@ -18,9 +18,10 @@ import {
     View,
 } from 'react-native';
 import * as XLSX from 'xlsx-js-style';
+import { AdminModalContext } from '../../components/common/AdminModalContext';
 import { HomeHeader } from '../../components/common/HomeHeader';
 import ContextMenu from '../../components/ContextMenu';
-import { auth, deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../../components/firebase';
+import { auth, deleteCompanyContact, ensureCompaniesFromKunderAndLeverantorer, fetchCategories, fetchCompanyProfile, updateCompanyContact } from '../../components/firebase';
 import MainLayout from '../../components/MainLayout';
 import { useSharePointStatus } from '../../hooks/useSharePointStatus';
 import type { Supplier } from './leverantorerService';
@@ -247,6 +248,7 @@ export default function LeverantorerView({
     companyId,
     searchSpinAnim,
   });
+  const { openByggdelModal, openKontoplanModal, openKategoriModal, registerSelectionSavedListener } = useContext(AdminModalContext);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -266,6 +268,9 @@ export default function LeverantorerView({
   const [inlinePostalCode, setInlinePostalCode] = useState('');
   const [inlineCity, setInlineCity] = useState('');
   const [inlineCategory, setInlineCategory] = useState('');
+  const [inlineCategoryIds, setInlineCategoryIds] = useState<string[]>([]);
+  const [companyCategories, setCompanyCategories] = useState<{ id: string; name?: string }[]>([]);
+  const [formCategoryIds, setFormCategoryIds] = useState<string[]>([]);
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [inlineSaving, setInlineSaving] = useState(false);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
@@ -291,6 +296,7 @@ export default function LeverantorerView({
     setLoading(true);
     setError('');
     try {
+      await ensureCompaniesFromKunderAndLeverantorer(companyId).catch(() => {});
       const data = await fetchSuppliers(companyId);
       setSuppliers(data ?? []);
     } catch (e) {
@@ -325,6 +331,37 @@ export default function LeverantorerView({
       setByggdelar([]);
     }
   }, [companyId]);
+
+  const loadCompanyCategories = useCallback(async () => {
+    if (!companyId?.trim()) {
+      setCompanyCategories([]);
+      return;
+    }
+    try {
+      const data = await fetchCategories(companyId);
+      setCompanyCategories(Array.isArray(data) ? data : []);
+    } catch {
+      setCompanyCategories([]);
+    }
+  }, [companyId]);
+
+  const categoryModalSourceRef = useRef<'form' | 'inline' | null>(null);
+  useEffect(() => {
+    if (!registerSelectionSavedListener) return;
+    registerSelectionSavedListener((payload: unknown) => {
+      if (Array.isArray(payload)) {
+        if (categoryModalSourceRef.current === 'inline') {
+          setInlineCategoryIds(payload);
+        } else {
+          setFormCategoryIds(payload);
+        }
+        categoryModalSourceRef.current = null;
+      } else {
+        loadSuppliers();
+      }
+    });
+    return () => registerSelectionSavedListener(null);
+  }, [registerSelectionSavedListener, loadSuppliers]);
 
   // Web: listen for global home/refresh events from the left sidebar.
   // SuppliersScreen returns this module directly on web, so it won't mount the legacy listeners.
@@ -370,6 +407,9 @@ export default function LeverantorerView({
   useEffect(() => {
     loadByggdelar();
   }, [loadByggdelar]);
+  useEffect(() => {
+    loadCompanyCategories();
+  }, [loadCompanyCategories]);
 
   useEffect(() => {
     let cancelled = false;
@@ -569,6 +609,7 @@ export default function LeverantorerView({
     setInlinePostalCode('');
     setInlineCity('');
     setInlineCategory('');
+    setInlineCategoryIds([]);
   };
 
   const handleInlineSave = async (): Promise<void> => {
@@ -577,13 +618,15 @@ export default function LeverantorerView({
     if (!name) return;
     setInlineSaving(true);
     try {
+      const categoryIds = Array.isArray(inlineCategoryIds) ? inlineCategoryIds : [];
       await createSupplier(companyId, {
         companyName: name,
         organizationNumber: inlineOrganizationNumber.trim(),
         address: inlineAddress.trim(),
         postalCode: inlinePostalCode.trim(),
         city: inlineCity.trim(),
-        category: inlineCategory.trim(),
+        category: categoryIds[0] ?? inlineCategory.trim(),
+        categories: categoryIds,
       });
       clearInlineForm();
       await loadSuppliers();
@@ -731,6 +774,12 @@ export default function LeverantorerView({
   const editingSupplier = editingId
     ? suppliers.find((s) => s.id === editingId) ?? null
     : null;
+
+  useEffect(() => {
+    if (modalVisible) {
+      setFormCategoryIds(Array.isArray(editingSupplier?.categories) ? editingSupplier.categories : []);
+    }
+  }, [modalVisible, editingId, editingSupplier]);
 
   const handleSaveForm = async (values: LeverantorFormValues): Promise<void> => {
     if (!companyId?.trim()) return;
@@ -1130,6 +1179,39 @@ export default function LeverantorerView({
                       setError(formatWriteError(e));
                     }
                   }}
+                  onOpenByggdelar={(s) =>
+                    openByggdelModal(companyId, {
+                      entityType: 'supplier',
+                      entityId: s.id,
+                      entityName: s.companyName ?? '',
+                      selectedCodes: (s.byggdelTags ?? []) as string[],
+                    })
+                  }
+                  onOpenKonton={(s) =>
+                    openKontoplanModal(companyId, {
+                      entityType: 'supplier',
+                      entityId: s.id,
+                      entityName: s.companyName ?? '',
+                      selectedKonton: (s.konton ?? []) as string[],
+                    })
+                  }
+                  onOpenKategorier={(s) =>
+                    openKategoriModal(companyId, {
+                      entityType: 'supplier',
+                      entityId: s.id,
+                      entityName: s.companyName ?? '',
+                      selectedCategoryIds: (s.categories ?? []) as string[],
+                    })
+                  }
+                  onOpenKategoriForInlineAdd={() => {
+                    categoryModalSourceRef.current = 'inline';
+                    openKategoriModal(companyId ?? '', {
+                      forForm: true,
+                      selectedCategoryIds: inlineCategoryIds,
+                      entityName: 'formulär',
+                    });
+                  }}
+                  companyCategories={companyCategories}
                   inlineEnabled={hasCompany}
                   inlineSaving={inlineSaving}
                   inlineValues={{
@@ -1139,6 +1221,7 @@ export default function LeverantorerView({
                     postalCode: inlinePostalCode,
                     city: inlineCity,
                     category: inlineCategory,
+                    categories: inlineCategoryIds,
                   }}
                   onInlineChange={(field, value) => {
                     if (field === 'companyName') setInlineCompanyName(value);
@@ -1146,7 +1229,8 @@ export default function LeverantorerView({
                     if (field === 'address') setInlineAddress(value);
                     if (field === 'postalCode') setInlinePostalCode(value);
                     if (field === 'city') setInlineCity(value);
-                    if (field === 'category') setInlineCategory(value);
+                    if (field === 'category') setInlineCategory(value as string);
+                    if (field === 'categories') setInlineCategoryIds(Array.isArray(value) ? value : []);
                   }}
                   onInlineSave={handleInlineSave}
                 />
@@ -1200,6 +1284,16 @@ export default function LeverantorerView({
                 saving={saving}
                 onSave={handleSaveForm}
                 onCancel={() => !saving && (setModalVisible(false), setEditingId(null))}
+                onOpenKategoriRequest={() => {
+                  categoryModalSourceRef.current = 'form';
+                  openKategoriModal(companyId ?? '', {
+                    forForm: true,
+                    selectedCategoryIds: formCategoryIds,
+                    entityName: 'formulär',
+                  });
+                }}
+                categoryIdsForForm={formCategoryIds}
+                onCategoryIdsChange={setFormCategoryIds}
               />
             </ScrollView>
           </Pressable>

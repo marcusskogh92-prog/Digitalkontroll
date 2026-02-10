@@ -3,7 +3,7 @@
  * instead of navigating away. Used by Administration and Register menus in the top banner.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import AdminContactRegistryModal from './AdminContactRegistryModal';
 import AdminCustomersModal from './AdminCustomersModal';
 import AdminSuppliersModal from './AdminSuppliersModal';
@@ -30,6 +30,7 @@ const defaultContext = {
   closeAIPromptsModal: () => {},
   openKategoriModal: () => {},
   closeKategoriModal: () => {},
+  registerSelectionSavedListener: () => {},
 };
 
 export const AdminModalContext = React.createContext(defaultContext);
@@ -43,14 +44,19 @@ export function AdminModalProvider({ children }) {
   const [suppliersCompanyId, setSuppliersCompanyId] = useState('');
   const [byggdelOpen, setByggdelOpen] = useState(false);
   const [byggdelCompanyId, setByggdelCompanyId] = useState('');
+  /** När öppnad från leverantör/kund: { entityType, entityId, entityName, selectedCodes } */
+  const [byggdelSelectionContext, setByggdelSelectionContext] = useState(null);
   const [kontoplanOpen, setKontoplanOpen] = useState(false);
   const [kontoplanCompanyId, setKontoplanCompanyId] = useState('');
+  const [kontoplanSelectionContext, setKontoplanSelectionContext] = useState(null);
   const [mallarOpen, setMallarOpen] = useState(false);
   const [mallarCompanyId, setMallarCompanyId] = useState('');
   const [aiPromptsOpen, setAiPromptsOpen] = useState(false);
   const [aiPromptsCompanyId, setAiPromptsCompanyId] = useState('');
   const [kategoriOpen, setKategoriOpen] = useState(false);
   const [kategoriCompanyId, setKategoriCompanyId] = useState('');
+  const [kategoriSelectionContext, setKategoriSelectionContext] = useState(null);
+  const selectionSavedListenerRef = useRef(null);
 
   const openCustomersModal = useCallback((companyId) => {
     setCustomersCompanyId(String(companyId || '').trim());
@@ -82,24 +88,28 @@ export function AdminModalProvider({ children }) {
     setSuppliersCompanyId('');
   }, []);
 
-  const openByggdelModal = useCallback((companyId) => {
+  const openByggdelModal = useCallback((companyId, selectionContext = null) => {
     setByggdelCompanyId(String(companyId || '').trim());
+    setByggdelSelectionContext(selectionContext ?? null);
     setByggdelOpen(true);
   }, []);
 
   const closeByggdelModal = useCallback(() => {
     setByggdelOpen(false);
     setByggdelCompanyId('');
+    setByggdelSelectionContext(null);
   }, []);
 
-  const openKontoplanModal = useCallback((companyId) => {
+  const openKontoplanModal = useCallback((companyId, selectionContext = null) => {
     setKontoplanCompanyId(String(companyId || '').trim());
+    setKontoplanSelectionContext(selectionContext ?? null);
     setKontoplanOpen(true);
   }, []);
 
   const closeKontoplanModal = useCallback(() => {
     setKontoplanOpen(false);
     setKontoplanCompanyId('');
+    setKontoplanSelectionContext(null);
   }, []);
 
   const openMallarModal = useCallback((companyId) => {
@@ -122,14 +132,26 @@ export function AdminModalProvider({ children }) {
     setAiPromptsCompanyId('');
   }, []);
 
-  const openKategoriModal = useCallback((companyId) => {
+  const openKategoriModal = useCallback((companyId, selectionContext = null) => {
     setKategoriCompanyId(String(companyId || '').trim());
+    setKategoriSelectionContext(selectionContext ?? null);
     setKategoriOpen(true);
   }, []);
 
   const closeKategoriModal = useCallback(() => {
     setKategoriOpen(false);
     setKategoriCompanyId('');
+    setKategoriSelectionContext(null);
+  }, []);
+
+  const registerSelectionSavedListener = useCallback((fn) => {
+    selectionSavedListenerRef.current = fn;
+  }, []);
+
+  const notifySelectionSaved = useCallback((...args) => {
+    if (typeof selectionSavedListenerRef.current === 'function') {
+      selectionSavedListenerRef.current(...args);
+    }
   }, []);
 
   const value = {
@@ -147,8 +169,9 @@ export function AdminModalProvider({ children }) {
     closeMallarModal,
     openAIPromptsModal,
     closeAIPromptsModal,
-    openKategoriModal,
-    closeKategoriModal,
+  openKategoriModal,
+  closeKategoriModal,
+  registerSelectionSavedListener,
   };
 
   return (
@@ -172,12 +195,16 @@ export function AdminModalProvider({ children }) {
       <AdminByggdelModal
         visible={byggdelOpen}
         companyId={byggdelCompanyId}
+        selectionContext={byggdelSelectionContext}
         onClose={closeByggdelModal}
+        onSelectionSaved={notifySelectionSaved}
       />
       <AdminKontoplanModal
         visible={kontoplanOpen}
         companyId={kontoplanCompanyId}
+        selectionContext={kontoplanSelectionContext}
         onClose={closeKontoplanModal}
+        onSelectionSaved={notifySelectionSaved}
       />
       <MallarModal
         visible={mallarOpen}
@@ -192,7 +219,9 @@ export function AdminModalProvider({ children }) {
       <AdminKategoriModal
         visible={kategoriOpen}
         companyId={kategoriCompanyId}
+        selectionContext={kategoriSelectionContext}
         onClose={closeKategoriModal}
+        onSelectionSaved={notifySelectionSaved}
       />
     </AdminModalContext.Provider>
   );

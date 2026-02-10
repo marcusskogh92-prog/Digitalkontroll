@@ -7,7 +7,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 // Flexandelar för flexibla kolumner (Namn, Företag, Roll, E-post). Fasta bredder för Mobil, Arbete, Åtgärder.
@@ -167,11 +167,67 @@ const styles = StyleSheet.create({
   editRowBtnCancel: { borderColor: '#cbd5e1', backgroundColor: 'transparent' },
   cellText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
+  emailLink: { color: '#2563eb', fontSize: 13, fontWeight: '400' },
+  emailLinkHover: { textDecorationLine: 'underline' },
+});
+
+const companyDropdownStyles = StyleSheet.create({
+  wrap: { flex: 1, alignSelf: 'stretch', minWidth: 0, position: 'relative' },
+  dropdown: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '100%',
+    marginTop: 2,
+    maxHeight: 280,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    zIndex: 1000,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  dropdownItemLast: { borderBottomWidth: 0 },
+  dropdownItemName: { fontSize: 13, color: '#1e293b', fontWeight: '500', flex: 1, minWidth: 0 },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  badge: { backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 11, color: '#0369a1', fontWeight: '500' },
 });
 
 function safeText(v) {
   const s = String(v ?? '').trim();
   return s || '—';
+}
+
+function CompanyRoleBadges({ roles }) {
+  if (!roles) return null;
+  const labels = [];
+  if (roles.customer) labels.push('Kund');
+  if (roles.supplier) labels.push('Leverantör');
+  if (labels.length === 0) return null;
+  return (
+    <View style={companyDropdownStyles.badges}>
+      {labels.map((l) => (
+        <View key={l} style={companyDropdownStyles.badge}>
+          <Text style={companyDropdownStyles.badgeText} numberOfLines={1}>{l}</Text>
+        </View>
+      ))}
+    </View>
+  );
 }
 
 export default function ContactRegistryTable({
@@ -189,17 +245,38 @@ export default function ContactRegistryTable({
   inlineSaving,
   onInlineChange,
   onInlineSave,
+  companySearchResults = [],
+  companySearchOpen,
+  companySearchActive,
+  setCompanySearchOpen,
+  setCompanySearchActive,
+  onCompanySearch,
+  onSelectCompany,
 }) {
   const [hoveredId, setHoveredId] = useState(null);
+  const [emailHoveredId, setEmailHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
   const [mobileDisplayFormatted, setMobileDisplayFormatted] = useState(false);
   const kebabRefs = useRef({});
+  const companyBlurTimerRef = useRef(null);
+
+  const closeCompanySearch = () => {
+    if (companyBlurTimerRef.current) clearTimeout(companyBlurTimerRef.current);
+    setCompanySearchOpen?.(false);
+    setCompanySearchActive?.(null);
+  };
+
+  const handleCompanyBlur = () => {
+    if (companyBlurTimerRef.current) clearTimeout(companyBlurTimerRef.current);
+    companyBlurTimerRef.current = setTimeout(() => closeCompanySearch(), 200);
+  };
 
   const editingContact = editingId ? (contacts.find((c) => c.id === editingId) || null) : null;
   React.useEffect(() => {
     if (editingContact) {
       setEditDraft({
         name: String(editingContact.name ?? ''),
+        companyId: editingContact.companyId ?? '',
         contactCompanyName: String(editingContact.contactCompanyName ?? editingContact.companyName ?? ''),
         role: String(editingContact.role ?? ''),
         phone: digitsOnly(editingContact.phone ?? ''),
@@ -288,8 +365,38 @@ export default function ContactRegistryTable({
             </View>
           </View>
           <View style={[styles.cellFlex, { flex: FLEX.company }]}>
-            <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.contactCompanyName ?? ''} onChangeText={(v) => onInlineChange?.('contactCompanyName', v)} placeholder="Företag (ny)" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+            <View style={[styles.columnContent, companyDropdownStyles.wrap]}>
+              <TextInput
+                value={inlineValues?.contactCompanyName ?? ''}
+                onChangeText={(v) => {
+                  onInlineChange?.('contactCompanyName', v);
+                  onCompanySearch?.(v, 'inline');
+                }}
+                onFocus={() => setCompanySearchActive?.('inline')}
+                onBlur={handleCompanyBlur}
+                placeholder="Företag (minst 3 tecken)"
+                style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                placeholderTextColor="#94a3b8"
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => { if (e?.nativeEvent?.key === 'Escape') closeCompanySearch(); } } : {})}
+              />
+              {companySearchOpen && companySearchActive === 'inline' && (companySearchResults?.length > 0) && (
+                <View style={companyDropdownStyles.dropdown}>
+                  {(companySearchResults || []).slice(0, 15).map((company, i) => (
+                    <TouchableOpacity
+                      key={company.id || i}
+                      style={[companyDropdownStyles.dropdownItem, i === (companySearchResults?.length || 0) - 1 ? companyDropdownStyles.dropdownItemLast : null]}
+                      onPress={() => {
+                        onSelectCompany?.(company);
+                        closeCompanySearch();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={companyDropdownStyles.dropdownItemName} numberOfLines={1}>{company.name || '—'}</Text>
+                      <CompanyRoleBadges roles={company.roles} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
           </View>
           <View style={[styles.cellFlex, { flex: FLEX.role }]}>
@@ -325,8 +432,38 @@ export default function ContactRegistryTable({
               </View>
             </View>
             <View style={[styles.cellFlex, { flex: FLEX.company }]}>
-              <View style={styles.columnContent}>
-                <TextInput value={editDraft.contactCompanyName} onChangeText={(v) => setEditDraft((d) => (d ? { ...d, contactCompanyName: v } : d))} placeholder="Företag" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, contact) } : {})} />
+              <View style={[styles.columnContent, companyDropdownStyles.wrap]}>
+                <TextInput
+                  value={editDraft.contactCompanyName}
+                  onChangeText={(v) => {
+                    setEditDraft((d) => (d ? { ...d, contactCompanyName: v } : d));
+                    onCompanySearch?.(v, 'edit');
+                  }}
+                  onFocus={() => setCompanySearchActive?.('edit')}
+                  onBlur={handleCompanyBlur}
+                  placeholder="Företag (minst 3 tecken)"
+                  style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
+                  placeholderTextColor="#94a3b8"
+                  {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => { if (e?.nativeEvent?.key === 'Escape') closeCompanySearch(); handleEditKeyDown(e, contact); } } : {})}
+                />
+                {companySearchOpen && companySearchActive === 'edit' && (companySearchResults?.length > 0) && (
+                  <View style={companyDropdownStyles.dropdown}>
+                    {(companySearchResults || []).slice(0, 15).map((company, i) => (
+                      <TouchableOpacity
+                        key={company.id || i}
+                        style={[companyDropdownStyles.dropdownItem, i === (companySearchResults?.length || 0) - 1 ? companyDropdownStyles.dropdownItemLast : null]}
+                        onPress={() => {
+                          setEditDraft((d) => (d ? { ...d, companyId: company.id ?? '', contactCompanyName: company.name ?? '' } : d));
+                          closeCompanySearch();
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={companyDropdownStyles.dropdownItemName} numberOfLines={1}>{company.name || '—'}</Text>
+                        <CompanyRoleBadges roles={company.roles} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
               </View>
             </View>
             <View style={[styles.cellFlex, { flex: FLEX.role }]}>
@@ -408,7 +545,27 @@ export default function ContactRegistryTable({
             </View>
             <View style={[styles.cellFlex, { flex: FLEX.email }]}>
               <View style={styles.columnContent}>
-                <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.email)}</Text>
+                {contact.email?.trim() ? (
+                  <TouchableOpacity
+                    onPress={() => Linking.openURL(`mailto:${contact.email.trim()}`)}
+                    style={{ alignSelf: 'flex-start' }}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer', onMouseEnter: () => setEmailHoveredId(contact.id), onMouseLeave: () => setEmailHoveredId(null) } : {})}
+                  >
+                    <Text
+                      style={[
+                        styles.emailLink,
+                        emailHoveredId === contact.id ? styles.emailLinkHover : null,
+                        { flex: 0 },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {contact.email.trim()}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>—</Text>
+                )}
               </View>
             </View>
             <View style={[styles.actionsCol, stickyRight]}>

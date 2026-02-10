@@ -160,9 +160,25 @@ export default function LeverantorContacts({
   const [saving, setSaving] = useState(false);
 
   const contactIds = supplier?.contactIds ?? [];
-  const contacts = contactIds
-    .map((id) => allContacts.find((c) => c.id === id))
-    .filter((c): c is Contact => !!c);
+  const supplierCompanyId = supplier?.companyId ? String(supplier.companyId).trim() : '';
+  const byId = new Set<string>();
+  const contacts: Contact[] = [];
+  for (const id of contactIds) {
+    const c = allContacts.find((x) => x.id === id);
+    if (c && !byId.has(c.id)) {
+      byId.add(c.id);
+      contacts.push(c);
+    }
+  }
+  if (supplierCompanyId) {
+    for (const c of allContacts) {
+      const cCid = c.companyId ? String(c.companyId).trim() : '';
+      if (cCid === supplierCompanyId && !byId.has(c.id)) {
+        byId.add(c.id);
+        contacts.push(c);
+      }
+    }
+  }
 
   const handleAdd = async (): Promise<void> => {
     const n = String(name ?? '').trim();

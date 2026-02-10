@@ -2,11 +2,9 @@
  * Formulär för leverantör: Företagsnamn, Orgnr, Adress (gata), Postnr, Ort, Kategori, Byggdelar (rekommendation).
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { LEVERANTOR_KATEGORIER } from '../../constants/leverantorKategorier';
 import type { ByggdelMall, Supplier } from './leverantorerService';
-import SelectDropdown from '../../components/common/SelectDropdown';
 
 const styles = StyleSheet.create({
   content: { padding: 20 },
@@ -57,6 +55,21 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: '#e2e8f0', borderColor: '#cbd5e1' },
   chipText: { fontSize: 12, color: '#475569', fontWeight: '400' },
   hint: { fontSize: 11, color: '#94a3b8', marginTop: 4, marginBottom: 12 },
+  categoryTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+  },
+  categoryTriggerText: { fontSize: 13, color: '#64748b' },
+  categoryTriggerTextPlaceholder: { color: '#94a3b8' },
   btnRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
   btnPrimary: {
     flex: 1,
@@ -107,6 +120,10 @@ interface LeverantorFormProps {
   saving: boolean;
   onSave: (values: LeverantorFormValues) => Promise<void>;
   onCancel: () => void;
+  /** När satt: kategorifältet öppnar Kategori-modalen vid klick/tab. Måste då även skicka categoryIdsForForm + onCategoryIdsChange. */
+  onOpenKategoriRequest?: () => void;
+  categoryIdsForForm?: string[];
+  onCategoryIdsChange?: (ids: string[]) => void;
 }
 
 function byggdelLabel(m: ByggdelMall): string {
@@ -120,6 +137,9 @@ export default function LeverantorForm({
   saving,
   onSave,
   onCancel,
+  onOpenKategoriRequest,
+  categoryIdsForForm,
+  onCategoryIdsChange,
 }: LeverantorFormProps): React.ReactElement {
   const [companyName, setCompanyName] = useState(initial?.companyName ?? '');
   const [organizationNumber, setOrganizationNumber] = useState(
@@ -135,6 +155,8 @@ export default function LeverantorForm({
         ? [initial.category]
         : []
   );
+  const useControlledCategories = typeof onOpenKategoriRequest === 'function' && Array.isArray(categoryIdsForForm);
+  const effectiveCategories = useControlledCategories ? categoryIdsForForm : categories;
   const [selectedByggdelIds, setSelectedByggdelIds] = useState<string[]>(
     initial?.byggdelTags ?? []
   );
@@ -180,16 +202,37 @@ export default function LeverantorForm({
       return;
     }
     setError('');
+    const cats = useControlledCategories ? effectiveCategories : categories;
     await onSave({
       companyName: cn,
       organizationNumber: organizationNumber.trim(),
       address: address.trim(),
       postalCode: postalCode.trim(),
       city: city.trim(),
-      categories,
-      category: categories[0] || '',
+      categories: cats,
+      category: cats[0] || '',
       byggdelTags: selectedByggdelIds,
     });
+  };
+
+  const categoryTriggerRef = useRef<View | null>(null);
+  const categoryModalJustOpenedRef = useRef(false);
+  const openKategoriModal = (fromFocus?: boolean): void => {
+    if (fromFocus && categoryModalJustOpenedRef.current) {
+      categoryModalJustOpenedRef.current = false;
+      return;
+    }
+    onOpenKategoriRequest?.();
+    categoryModalJustOpenedRef.current = true;
+    if (Platform.OS === 'web') {
+      setTimeout(() => {
+        const el = categoryTriggerRef.current as unknown as HTMLElement | null;
+        if (el?.blur) el.blur();
+        else if (typeof document !== 'undefined' && document.activeElement?.blur) {
+          (document.activeElement as HTMLElement).blur();
+        }
+      }, 0);
+    }
   };
 
   return (
@@ -250,17 +293,60 @@ export default function LeverantorForm({
       </View>
 
       <Text style={styles.label}>Kategorier</Text>
-      <SelectDropdown
-        options={LEVERANTOR_KATEGORIER}
-        value={categories}
-        onChange={setCategories}
-        placeholder="Välj kategorier"
-        multiple
-        searchable
-        keepOpenOnSelect
-        chipsPlacement="above"
-        variant="modal"
-      />
+      {typeof onOpenKategoriRequest === 'function' ? (
+        Platform.OS === 'web' ? (
+          <View
+            ref={categoryTriggerRef}
+            style={[styles.categoryTrigger, { cursor: 'pointer' }]}
+            tabIndex={0}
+            onFocus={() => openKategoriModal(true)}
+            onClick={() => openKategoriModal(false)}
+            onKeyDown={(e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openKategoriModal(false);
+              }
+            }}
+          >
+            <Text
+              style={[
+                styles.categoryTriggerText,
+                (effectiveCategories?.length ?? 0) === 0 && styles.categoryTriggerTextPlaceholder,
+              ]}
+              numberOfLines={1}
+            >
+              {(effectiveCategories?.length ?? 0) > 0
+                ? `${effectiveCategories.length} kategorier valda`
+                : 'Klicka eller tabba hit för att välja kategorier'}
+            </Text>
+            <Text style={[styles.categoryTriggerText, styles.categoryTriggerTextPlaceholder]}>▼</Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.categoryTrigger}
+            onPress={openKategoriModal}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.categoryTriggerText,
+                (effectiveCategories?.length ?? 0) === 0 && styles.categoryTriggerTextPlaceholder,
+              ]}
+              numberOfLines={1}
+            >
+              {(effectiveCategories?.length ?? 0) > 0
+                ? `${effectiveCategories.length} kategorier valda`
+                : 'Klicka för att välja kategorier'}
+            </Text>
+          </TouchableOpacity>
+        )
+      ) : (
+        <View style={styles.categoryTrigger}>
+          <Text style={[styles.categoryTriggerText, styles.categoryTriggerTextPlaceholder]}>
+            {(effectiveCategories?.length ?? 0) > 0 ? `${effectiveCategories.length} valda` : 'Inga kategorier'}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Byggdelar (rekommendation)</Text>

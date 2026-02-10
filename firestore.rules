@@ -200,6 +200,13 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
     }
 
+    // Företagsentiteter (kund/leverantör samlat) – en entitet kan vara både kund och leverantör.
+    // Kontakter kopplas till companyDocId; synk till kund-/leverantörsvy sker via denna referens.
+    match /foretag/{company}/companies/{companyDocId} {
+      allow read: if isSignedIn() && isCompanyMember(company);
+      allow create, update, delete: if isSignedIn() && hasWriteAccess(company);
+    }
+
     // Kontoplan (chart of accounts, company-scoped). Globala admins kan hantera alla företag.
     match /foretag/{company}/kontoplan/{accountId} {
       allow read: if isSignedIn() && (isCompanyMember(company) || isGlobalAdmin());

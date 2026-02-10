@@ -5,7 +5,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Animated,
@@ -19,6 +19,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { AdminModalContext } from './AdminModalContext';
 import LeverantorerTable from '../../modules/leverantorer/LeverantorerTable';
 import {
     addContactToSupplier,
@@ -210,6 +211,7 @@ const styles = StyleSheet.create({
 export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
+  const { openByggdelModal, openKontoplanModal, openKategoriModal, registerSelectionSavedListener } = useContext(AdminModalContext);
 
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -265,6 +267,18 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
       setLoading(false);
     }
   }, [cid]);
+
+  useEffect(() => {
+    if (!registerSelectionSavedListener) return;
+    registerSelectionSavedListener((payload) => {
+      if (Array.isArray(payload)) {
+        setInlineCategoryIds(payload);
+      } else {
+        loadSuppliers();
+      }
+    });
+    return () => registerSelectionSavedListener(null);
+  }, [registerSelectionSavedListener, loadSuppliers]);
 
   const loadContacts = useCallback(async () => {
     if (!cid) {
@@ -894,6 +908,37 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     onCategoriesChange={handleCategoriesChange}
                     onByggdelarChange={handleByggdelarChange}
                     onKontonChange={handleKontonChange}
+                    onOpenByggdelar={(s) =>
+                      openByggdelModal(cid, {
+                        entityType: 'supplier',
+                        entityId: s.id,
+                        entityName: s.companyName ?? '',
+                        selectedCodes: (s.byggdelTags ?? []) || [],
+                      })
+                    }
+                    onOpenKonton={(s) =>
+                      openKontoplanModal(cid, {
+                        entityType: 'supplier',
+                        entityId: s.id,
+                        entityName: s.companyName ?? '',
+                        selectedKonton: (s.konton ?? []) || [],
+                      })
+                    }
+                    onOpenKategorier={(s) =>
+                      openKategoriModal(cid, {
+                        entityType: 'supplier',
+                        entityId: s.id,
+                        entityName: s.companyName ?? '',
+                        selectedCategoryIds: (s.categories ?? []) || [],
+                      })
+                    }
+                    onOpenKategoriForInlineAdd={() =>
+                      openKategoriModal(cid, {
+                        forForm: true,
+                        selectedCategoryIds: inlineCategoryIds || [],
+                        entityName: 'formulär',
+                      })
+                    }
                     inlineEnabled={hasCompany}
                     inlineSaving={inlineSaving}
                     inlineValues={{

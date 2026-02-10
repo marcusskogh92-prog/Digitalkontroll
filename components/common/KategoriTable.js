@@ -9,7 +9,7 @@ import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'r
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 const FLEX = { name: 1, note: 1.5 };
-const FIXED = { actions: 30 };
+const FIXED = { actions: 30, select: 44 };
 
 const styles = StyleSheet.create({
   tableWrap: {
@@ -136,6 +136,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  selectCol: {
+    width: FIXED.select,
+    minWidth: FIXED.select,
+    maxWidth: FIXED.select,
+    flexShrink: 0,
+    borderRightWidth: 1,
+    borderRightColor: '#e2e8f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  selectColHeader: { backgroundColor: '#f1f5f9', paddingVertical: 5 },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   cellText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
 });
@@ -160,6 +182,9 @@ export default function KategoriTable({
   inlineSaving = false,
   onInlineChange,
   onInlineSave,
+  selectionMode = false,
+  selectedCategoryIds = [],
+  onSelectionChange,
 }) {
   const [hoveredId, setHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState({ name: '', note: '' });
@@ -207,10 +232,22 @@ export default function KategoriTable({
     );
 
   const stickyRight = Platform.OS === 'web' ? { position: 'sticky', right: 0 } : {};
+  const toggleSelection = (id) => {
+    if (!onSelectionChange) return;
+    const set = new Set(selectedCategoryIds);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    onSelectionChange(Array.from(set));
+  };
 
   return (
     <View style={styles.tableWrap}>
       <View style={styles.header}>
+        {selectionMode ? (
+          <View style={[styles.selectCol, styles.selectColHeader]}>
+            <Text style={[styles.headerText, { fontSize: 11 }]}>Val</Text>
+          </View>
+        ) : null}
         <TouchableOpacity
           style={[styles.headerCell, styles.cellFlex, { flex: FLEX.name }]}
           onPress={() => onSort('name')}
@@ -238,6 +275,7 @@ export default function KategoriTable({
 
       {inlineEnabled && (
         <View style={styles.inlineRow}>
+          {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f8fafc' }]} /> : null}
           <TextInput
             value={inlineValues?.name ?? ''}
             onChangeText={(v) => onInlineChange?.('name', v)}
@@ -261,9 +299,11 @@ export default function KategoriTable({
         </View>
       )}
 
-      {items.map((item, idx) =>
-        editingId === item.id && editDraft ? (
+      {items.map((item, idx) => {
+        const isSelected = selectionMode && selectedCategoryIds.includes(item.id);
+        return editingId === item.id && editDraft ? (
           <View key={item.id} style={styles.editRow}>
+            {selectionMode ? <View style={styles.selectCol} /> : null}
             <TextInput
               value={editDraft.name}
               onChangeText={(v) => setEditDraft((d) => ({ ...d, name: v }))}
@@ -316,6 +356,18 @@ export default function KategoriTable({
             activeOpacity={0.7}
             {...(Platform.OS === 'web' ? { cursor: 'default', onMouseEnter: () => setHoveredId(item.id), onMouseLeave: () => setHoveredId(null) } : {})}
           >
+            {selectionMode ? (
+              <View style={styles.selectCol}>
+                <TouchableOpacity
+                  onPress={() => toggleSelection(item.id)}
+                  activeOpacity={0.8}
+                  style={[styles.checkbox, isSelected ? styles.checkboxChecked : null]}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  {isSelected ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+                </TouchableOpacity>
+              </View>
+            ) : null}
             <View style={[styles.cellFlex, { flex: FLEX.name }]}>
               <View style={styles.columnContent}>
                 <Text style={styles.cellText} numberOfLines={1}>{safeText(item.name)}</Text>
@@ -338,8 +390,8 @@ export default function KategoriTable({
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
-        )
-      )}
+        );
+      })}
     </View>
   );
 }
