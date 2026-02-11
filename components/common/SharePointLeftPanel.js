@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
 import { ensureDkBasStructure, ensureFolderPath, ensureKalkylskedeProjectFolderStructure, moveDriveItemByIdGuarded, renameDriveItemByIdGuarded } from '../../services/azure/fileService';
@@ -10,6 +10,7 @@ import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFo
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
 import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
+import { SIDEBAR_BG, SIDEBAR_BORDER_COLOR } from './layoutConstants';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ConfirmModal } from './Modals';
 import { ProjectTree } from './ProjectTree';
@@ -17,6 +18,17 @@ import SharePointSiteIcon from './SharePointSiteIcon';
 import SidebarItem from './SidebarItem';
 
 const VERIFICATION_TTL_MS = 6 * 60 * 60 * 1000;
+
+const styles = StyleSheet.create({
+  leftPanelTreeRoot: { paddingHorizontal: 0 },
+  /** Samma scroll-content wrapper i Dashboard och Project – identisk layout-kontext. */
+  leftPanelScrollContent: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 0,
+  },
+});
+
 const STORAGE_KEYS = {
   verified: 'sharepointStructureVerified',
   verifiedAt: 'verifiedAt',
@@ -141,81 +153,69 @@ function RecursiveFolderView({
   };
 
   if (Platform.OS === 'web') {
+    const indent = LEFT_NAV.indentPerLevel * Math.max(0, level);
     return (
-      <div style={{ marginLeft, marginTop: 4 }}>
-        <div
-          onClick={handlePress}
+      <View style={{ marginTop: level > 0 ? 0 : 2 }}>
+        <SidebarItem
+          fullWidth
+          indentMode="padding"
+          indent={indent}
+          label={safeName}
+          labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+          labelWeight={folderIsProject ? '500' : '500'}
+          hovered={isHovered}
+          onPress={handlePress}
+          onHoverIn={() => setIsHovered(true)}
+          onHoverOut={() => setIsHovered(false)}
           onContextMenu={(e) => {
             try {
               if (typeof onOpenSpContextMenu === 'function') onOpenSpContextMenu(e, folder);
             } catch (_e) {}
           }}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '4px 8px',
-            cursor: 'pointer',
-            borderRadius: 4,
-            backgroundColor: isHovered ? LEFT_NAV.hoverBg : 'transparent',
-            transition: 'background-color 0.15s ease',
-          }}
-        >
-          {showChevron ? (
-            <View style={{ marginRight: 6 }}>
-              <AnimatedChevron
-                expanded={isExpanded}
-                spinTrigger={folderSpin}
-                size={Math.max(12, 16 - level)}
-                color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-              />
-            </View>
-          ) : (
-            <div style={{ width: Math.max(12, 16 - level), marginRight: 6 }} />
-          )}
-
-          {!folderIsProject && (
-            <MicroShake trigger={lockTrigger}>
-              <MicroPulse trigger={folderSpin}>
-                <Ionicons
-                  name={'folder-outline'}
-                  size={Math.max(12, 16 - level)}
-                  color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-                  style={{ marginRight: 6 }}
+          left={() => (
+            <>
+              {showChevron ? (
+                <View style={{ marginRight: 6 }}>
+                  <AnimatedChevron
+                    expanded={isExpanded}
+                    spinTrigger={folderSpin}
+                    size={LEFT_NAV.chevronSize}
+                    color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                  />
+                </View>
+              ) : (
+                <View style={{ width: LEFT_NAV.chevronSize, marginRight: 6 }} />
+              )}
+              {!folderIsProject && (
+                <MicroShake trigger={lockTrigger}>
+                  <MicroPulse trigger={folderSpin}>
+                    <Ionicons
+                      name="folder-outline"
+                      size={16}
+                      color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                      style={{ marginRight: 8 }}
+                    />
+                  </MicroPulse>
+                </MicroShake>
+              )}
+              {folderIsProject && (
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: indicatorColor,
+                    marginRight: 8,
+                    borderWidth: 1,
+                    borderColor: LEFT_NAV.phaseDotBorder,
+                  }}
                 />
-              </MicroPulse>
-            </MicroShake>
+              )}
+            </>
           )}
-
-          {folderIsProject && (
-            <div
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 5,
-                backgroundColor: indicatorColor,
-                marginRight: 8,
-                border: '1px solid #bbb',
-                display: 'inline-block',
-              }}
-            />
-          )}
-
-          <span
-            style={{
-              fontSize: 14,
-              color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
-              fontWeight: isHovered ? '600' : '500',
-              fontFamily: LEFT_NAV.webFontFamily,
-            }}
-          >
-            {safeName}
-          </span>
-        </div>
-
+        />
         {!folderIsProject && showChevron && isExpanded && visibleChildren.length > 0 && (
-          <div style={{ marginLeft: 8, marginTop: 2 }}>
+          <View style={{ marginLeft: LEFT_NAV.indentPerLevel }}>
             {visibleChildren.map(child => {
               const childIsProject = isProjectFolder(child);
               return (
@@ -241,35 +241,37 @@ function RecursiveFolderView({
                 />
               );
             })}
-          </div>
+          </View>
         )}
-
         {!folderIsProject && showChevron && isExpanded && visibleChildren.length === 0 && (folder?.loading || folder?.error) && (
-          <div style={{ marginLeft: 20, marginTop: 2 }}>
-            <span
+          <View style={{ marginLeft: LEFT_NAV.indentPerLevel * 2, marginTop: 2 }}>
+            <Text
               style={{
                 fontSize: 12,
-                color: '#888',
+                color: LEFT_NAV.textMuted,
                 fontStyle: 'italic',
               }}
             >
               {folder?.loading ? 'Laddar…' : folder?.error ? String(folder.error) : ''}
-            </span>
-          </div>
+            </Text>
+          </View>
         )}
-      </div>
+      </View>
     );
   }
 
   return (
     <View style={{ marginLeft, marginTop: 4 }}>
       <TouchableOpacity
-        style={{ 
-          flexDirection: 'row', 
-          alignItems: 'center', 
-          paddingVertical: 2, 
+        style={{
+          flexDirection: 'row',
+          flexWrap: 'nowrap',
+          alignItems: 'center',
+          paddingVertical: 2,
           paddingHorizontal: 4,
-          backgroundColor: folderIsProject ? 'transparent' : 'transparent',
+          backgroundColor: 'transparent',
+          overflow: 'hidden',
+          minWidth: 0,
         }}
         onPress={handlePress}
         onLongPress={(e) => {
@@ -283,7 +285,7 @@ function RecursiveFolderView({
           } catch (_e) {}
         } : undefined}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
           {showChevron ? (
             <View style={{ marginRight: 4 }}>
               <AnimatedChevron
@@ -325,10 +327,13 @@ function RecursiveFolderView({
           )}
 
           <Text
+            numberOfLines={1}
             style={{
               fontSize: 14,
               color: LEFT_NAV.textDefault,
               fontWeight: '500',
+              flex: 1,
+              minWidth: 0,
             }}
           >
             {safeName}
@@ -382,8 +387,14 @@ function RecursiveFolderView({
   );
 }
 
+const LEFT_RESIZE_MIN = 180;
+const LEFT_RESIZE_MAX = 480;
+
 export function SharePointLeftPanel({
   leftWidth,
+  setLeftWidth, // för web: mus-drag på resizer
+  leftPanelCollapsed = false,
+  onToggleLeftPanelCollapse,
   webPaneHeight,
   panResponder,
   spinSidebarHome,
@@ -432,6 +443,43 @@ export function SharePointLeftPanel({
   afMirrorRefreshNonce = 0,
 }) {
   const isWeb = Platform.OS === 'web';
+  const resizeStartRef = useRef({ x: 0, width: 0 });
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+
+  // Web: mus-drag på resizer för att ändra panelbredd (PanResponder fångar inte mus på web)
+  useEffect(() => {
+    if (!isWeb || !setLeftWidth || !isResizingLeft) return;
+    const onMove = (e) => {
+      const dx = e.clientX - resizeStartRef.current.x;
+      const newWidth = Math.max(LEFT_RESIZE_MIN, Math.min(LEFT_RESIZE_MAX, resizeStartRef.current.width + dx));
+      setLeftWidth(newWidth);
+    };
+    const onUp = () => {
+      setIsResizingLeft(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [isWeb, isResizingLeft, setLeftWidth]);
+
+  const handleWebResizeStart = useCallback((e) => {
+    if (!setLeftWidth || leftPanelCollapsed) return;
+    e.preventDefault();
+    resizeStartRef.current = { x: e.clientX, width: leftWidth };
+    setIsResizingLeft(true);
+  }, [leftWidth, leftPanelCollapsed, setLeftWidth]);
+
   const [filteredHierarchy, setFilteredHierarchy] = useState([]);
   const [, setNavConfig] = useState(null);
   const [navLoading, setNavLoading] = useState(false);
@@ -2720,65 +2768,93 @@ export function SharePointLeftPanel({
   return (
     <>
       <View
-        style={{
-          width: leftWidth,
-          // Web: when a project is open, the left panel must be edge-to-edge.
-          // Any outer padding makes every row highlight look inset/pill-like.
-          padding: isWeb && selectedProject ? 0 : 8,
-          borderRightWidth: 0,
-          borderColor: '#e6e6e6',
-          backgroundColor: '#f5f6f7',
-          flexShrink: 0,
-          alignSelf: 'stretch',
-          minHeight: 0,
-          position: 'relative',
-        }}
+        style={[
+          {
+            width: leftWidth,
+            padding: isWeb ? 0 : 8,
+            borderRightWidth: 0,
+            borderColor: '#e2e8f0',
+            backgroundColor: SIDEBAR_BG,
+            flexShrink: 0,
+            alignSelf: 'stretch',
+            minHeight: 0,
+            position: 'relative',
+          },
+          // Ingen transition under drag – bredd följer musen steglöst; annars mjuk övergång vid collapse/expand
+          isWeb ? { transition: isResizingLeft ? 'none' : 'width 0.2s ease' } : null,
+        ]}
       >
-        <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 1, backgroundColor: '#e6e6e6' }} />
-        <View
-          {...(panResponder && panResponder.panHandlers)}
-          style={
-            isWeb
-              ? {
-                  position: 'absolute',
-                  right: -8,
-                  top: 0,
-                  bottom: 0,
-                  width: 16,
-                  cursor: 'col-resize',
-                  zIndex: 9,
-                  pointerEvents: 'auto',
-                }
-              : {
-                  position: 'absolute',
-                  right: -12,
-                  top: 0,
-                  bottom: 0,
-                  width: 24,
-                  zIndex: 9,
-                }
-          }
-        />
+        {/* Resizer: dra för att justera panelbredd. Web: mus (onMouseDown); native: PanResponder */}
+        {!leftPanelCollapsed && (isWeb ? setLeftWidth : panResponder) && (
+          isWeb ? (
+            createElement('div', {
+              role: 'separator',
+              'aria-label': 'Justera panelbredd',
+              onMouseDown: handleWebResizeStart,
+              style: {
+                position: 'absolute',
+                right: -6,
+                top: 0,
+                bottom: 0,
+                width: 12,
+                cursor: 'col-resize',
+                zIndex: 9,
+                pointerEvents: 'auto',
+                borderLeft: '2px solid #cbd5e1',
+                backgroundColor: 'transparent',
+              },
+            })
+          ) : (
+            <View
+              {...panResponder.panHandlers}
+              style={{
+                position: 'absolute',
+                right: -12,
+                top: 0,
+                bottom: 0,
+                width: 24,
+                zIndex: 9,
+                backgroundColor: 'rgba(0,0,0,0.05)',
+              }}
+            />
+          )
+        )}
 
         <View
           style={{
-            paddingVertical: 8,
+            paddingVertical: 6,
             paddingHorizontal: 6,
             borderBottomWidth: 1,
-            borderColor: '#e0e0e0',
-            marginBottom: 8,
+            borderColor: '#e2e8f0',
+            marginBottom: 12,
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'flex-end',
-            gap: 8,
+            justifyContent: leftPanelCollapsed ? 'center' : 'flex-end',
+            gap: 6,
           }}
         >
+          {typeof onToggleLeftPanelCollapse === 'function' && (
+            <TouchableOpacity
+              style={{ padding: 6, borderRadius: 8 }}
+              onPress={onToggleLeftPanelCollapse}
+              activeOpacity={0.7}
+              accessibilityLabel={leftPanelCollapsed ? 'Expandera panel' : 'Kollapsa panel'}
+              {...(isWeb ? { title: leftPanelCollapsed ? 'Expandera panel' : 'Kollapsa panel' } : {})}
+            >
+              <Ionicons
+                name={leftPanelCollapsed ? 'chevron-forward' : 'chevron-back'}
+                size={18}
+                color="#475569"
+              />
+            </TouchableOpacity>
+          )}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
+              style={{ padding: 6, borderRadius: 8 }}
               onPress={onPressHome}
               activeOpacity={0.7}
               accessibilityLabel="Hem"
+              {...(isWeb ? { title: 'Hem' } : {})}
             >
               <Ionicons
                 name="home-outline"
@@ -2794,10 +2870,11 @@ export function SharePointLeftPanel({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8, marginRight: 6 }}
+              style={{ padding: 6, borderRadius: 8 }}
               onPress={onPressRefresh}
               activeOpacity={0.7}
               accessibilityLabel="Uppdatera"
+              {...(isWeb ? { title: 'Uppdatera' } : {})}
             >
               <Ionicons
                 name="refresh"
@@ -2824,16 +2901,20 @@ export function SharePointLeftPanel({
             if (selectedProject && projectPhaseKey) {
               if (phaseNavigationLoading) {
                 return (
-                  <View style={{ padding: 20, alignItems: 'center' }}>
-                    <Text style={{ color: '#888', fontSize: 14 }}>Laddar...</Text>
+                  <View style={styles.leftPanelScrollContent}>
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <Text style={{ color: '#888', fontSize: 14 }}>Laddar...</Text>
+                    </View>
                   </View>
                 );
               }
 
               if (selectedProjectFoldersLoading) {
                 return (
-                  <View style={{ padding: 20, alignItems: 'center' }}>
-                    <Text style={{ color: '#888', fontSize: 14 }}>Laddar mappar...</Text>
+                  <View style={styles.leftPanelScrollContent}>
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <Text style={{ color: '#888', fontSize: 14 }}>Laddar mappar...</Text>
+                    </View>
                   </View>
                 );
               }
@@ -2885,15 +2966,17 @@ export function SharePointLeftPanel({
                 : [];
 
               return (
-                <View style={{ flex: 1, minHeight: 0 }}>
+                <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                   <ProjectTree
                     hierarchy={projectHierarchy}
                     selectedProject={selectedProject}
                     selectedPhase={projectPhaseKey}
                     compact={isWeb}
+                    iconOnly={leftPanelCollapsed}
                     hideFolderIcons
                     staticRootHeader
                     edgeToEdge={Boolean(isWeb && selectedProject)}
+                    contentOnly={Boolean(isWeb && selectedProject)}
                     activePhaseSection={phaseActiveSection}
                     activePhaseItem={phaseActiveItem}
                     activeOverviewPrefix={activeOverviewPrefix}
@@ -2989,9 +3072,9 @@ export function SharePointLeftPanel({
 
             if (!selectedProject && sharepointSyncState === 'error') {
               return (
-                <View style={{ paddingHorizontal: 4 }}>
-                  <View style={{ paddingVertical: 16 }}>
-                    <Text style={{ paddingHorizontal: 4, color: '#D32F2F', fontSize: 14 }}>
+                <View style={styles.leftPanelScrollContent}>
+                  <View style={{ paddingVertical: 16, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal }}>
+                    <Text style={{ color: LEFT_NAV.errorText, fontSize: LEFT_NAV.rowFontSize }}>
                       {sharepointSyncError || 'SharePoint-synk misslyckades'}
                     </Text>
                   </View>
@@ -3001,9 +3084,9 @@ export function SharePointLeftPanel({
 
             if (!selectedProject && sharepointSyncState !== 'ready') {
               return (
-                <View style={{ paddingHorizontal: 4 }}>
-                  <View style={{ paddingVertical: 16 }}>
-                    <Text style={{ paddingHorizontal: 4, color: '#666', fontSize: 14 }}>
+                <View style={styles.leftPanelScrollContent}>
+                  <View style={{ paddingVertical: 16, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal }}>
+                    <Text style={{ color: LEFT_NAV.textMuted, fontSize: LEFT_NAV.rowFontSize }}>
                       Laddar mappar...
                     </Text>
                   </View>
@@ -3016,10 +3099,7 @@ export function SharePointLeftPanel({
             const displayHierarchy = filteredHierarchy || [];
             if (navLoading) {
               return (
-                <View
-                  style={{ paddingHorizontal: 4 }}
-                  nativeID={isWeb ? 'dk-tree-root' : undefined}
-                >
+                <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                   <View style={{ paddingVertical: 16 }}>
                     <Text
                       style={{
@@ -3045,8 +3125,8 @@ export function SharePointLeftPanel({
                   .sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
 
                 return (
-                  <View style={{ paddingHorizontal: 4 }} nativeID={isWeb ? 'dk-tree-root' : undefined}>
-                    <Text style={{ paddingVertical: 8, paddingHorizontal: 4, color: '#666', fontSize: 14 }}>
+                  <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
+                    <Text style={{ paddingVertical: 8, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal, color: LEFT_NAV.textMuted, fontSize: LEFT_NAV.rowFontSize }}>
                       Projekt (från Firestore)
                     </Text>
                     {items.map((p) => {
@@ -3093,54 +3173,57 @@ export function SharePointLeftPanel({
                       if (isWeb) {
                         const isHovered = hoveredProjectKey === rowKey;
                         return (
-                          <div
-                            key={number || p?.id || rowKey}
-                            onClick={onSelect}
-                            onContextMenu={onOpenMenu}
-                            onMouseEnter={() => setHoveredProjectKey(rowKey)}
-                            onMouseLeave={() => setHoveredProjectKey(null)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              padding: '6px 8px',
-                              cursor: 'pointer',
-                              borderRadius: 4,
-                              backgroundColor: isHovered ? LEFT_NAV.hoverBg : 'transparent',
-                              transition: 'background-color 0.15s ease',
-                            }}
-                          >
-                            <div style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: indicatorColor, marginRight: 8, border: '1px solid #bbb', display: 'inline-block' }} />
-                            <span
-                              style={{
-                                fontSize: 14,
-                                fontWeight: isHovered ? '600' : '500',
-                                color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
-                                fontFamily: LEFT_NAV.webFontFamily,
-                                flex: 1,
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {fullName || number}
-                            </span>
-                          </div>
+                          <View key={number || p?.id || rowKey}>
+                            <SidebarItem
+                              fullWidth
+                              label={fullName || number}
+                              labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+                              hovered={isHovered}
+                              onPress={onSelect}
+                              onHoverIn={() => setHoveredProjectKey(rowKey)}
+                              onHoverOut={() => setHoveredProjectKey(null)}
+                              onContextMenu={onOpenMenu}
+                              left={() => (
+                                <View
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    backgroundColor: indicatorColor,
+                                    marginRight: 8,
+                                    borderWidth: 1,
+                                    borderColor: LEFT_NAV.phaseDotBorder,
+                                  }}
+                                />
+                              )}
+                            />
+                          </View>
                         );
                       }
 
                       return (
-                        <TouchableOpacity
-                          key={number || p?.id || rowKey}
-                          onPress={onSelect}
-                          onLongPress={onOpenMenu}
-                          activeOpacity={0.8}
-                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 4 }}
-                        >
-                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: indicatorColor, marginRight: 8, borderWidth: 1, borderColor: '#bbb' }} />
-                          <Text style={{ fontSize: 14, fontWeight: '500', color: LEFT_NAV.textDefault, flex: 1 }} numberOfLines={1}>
-                            {fullName || number}
-                          </Text>
-                        </TouchableOpacity>
+                        <View key={number || p?.id || rowKey}>
+                          <SidebarItem
+                            fullWidth
+                            label={fullName || number}
+                            labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+                            onPress={onSelect}
+                            onLongPress={onOpenMenu}
+                            left={() => (
+                              <View
+                                style={{
+                                  width: 10,
+                                  height: 10,
+                                  borderRadius: 5,
+                                  backgroundColor: indicatorColor,
+                                  marginRight: 8,
+                                  borderWidth: 1,
+                                  borderColor: LEFT_NAV.phaseDotBorder,
+                                }}
+                              />
+                            )}
+                          />
+                        </View>
                       );
                     })}
                   </View>
@@ -3148,16 +3231,13 @@ export function SharePointLeftPanel({
               }
 
               return (
-                <View
-                  style={{ paddingHorizontal: 4 }}
-                  nativeID={isWeb ? 'dk-tree-root' : undefined}
-                >
+                <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                   <Text
                     style={{
                       paddingVertical: 8,
-                      paddingHorizontal: 4,
-                      color: '#666',
-                      fontSize: 14,
+                      paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+                      color: LEFT_NAV.textMuted,
+                      fontSize: LEFT_NAV.rowFontSize,
                     }}
                   >
                     {'Inga SharePoint-siter är synliga för detta företag. Be en superadmin koppla en SharePoint-site (Admin → Företag → "Koppla SharePoint Site").'}
@@ -3166,16 +3246,13 @@ export function SharePointLeftPanel({
               );
             }
 
-            // Show sites as root level, with their folders as children
+            // Show sites as root level, with their folders as children (samma wrapper som project för identisk layout)
             return (
-              <View
-                style={{ paddingHorizontal: 4 }}
-                nativeID={isWeb ? 'dk-tree-root' : undefined}
-              >
+              <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                 {displayHierarchy.map(siteItem => {
                   // Site items have type 'site' and contain folders as children
                   if (siteItem.type === 'site') {
-                    const isExpanded = expandedSites[siteItem.siteId] !== false; // default: expanded
+                    const isExpanded = expandedSites[siteItem.siteId] === true; // default: stängd vid inloggning
                     const siteSpin = spinSites[siteItem.siteId] || 0;
                     const isSiteHovered = hoveredSiteId === siteItem.siteId;
 
@@ -3190,10 +3267,18 @@ export function SharePointLeftPanel({
                       }));
                     };
 
+                    const siteSyncStatus = (() => {
+                      if (sharepointSyncState === 'error') return 'error';
+                      if (sharepointSyncState === 'syncing') return 'syncing';
+                      if (sharepointSyncState === 'ready' || sharepointSyncState === 'idle') return 'ok';
+                      return null;
+                    })();
+
                     return (
-                      <View key={siteItem.id} style={{ marginBottom: 8 }}>
-                        {/* Site header */}
+                      <View key={siteItem.id} style={{ marginBottom: 0 }}>
+                        {/* Site header – liten snurrbar chevron + moln, så det syns att raden är klickbar */}
                         <SidebarItem
+                          iconOnly={leftPanelCollapsed}
                           onPress={toggleSiteExpanded}
                           onLongPress={(e) => {
                             try { openSpContextMenu(e, siteItem); } catch (_e) {}
@@ -3204,272 +3289,74 @@ export function SharePointLeftPanel({
                           onHoverIn={() => setHoveredSiteId(siteItem.siteId)}
                           onHoverOut={() => setHoveredSiteId(null)}
                           hovered={isSiteHovered}
-                          style={{ marginBottom: 4 }}
+                          style={{ minHeight: LEFT_NAV.rowMinHeightCompact }}
                           left={() => (
                             <>
                               <View style={{ marginRight: 4 }}>
                                 <AnimatedChevron
                                   expanded={isExpanded}
                                   spinTrigger={siteSpin}
-                                  size={16}
+                                  size={12}
                                   color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
                                 />
                               </View>
-                              <MicroPulse trigger={siteSpin}>
-                                <SharePointSiteIcon
-                                  size={18}
-                                  color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-                                  style={{ marginRight: 6 }}
-                                />
-                              </MicroPulse>
+                              <SharePointSiteIcon
+                                size={18}
+                                color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                                status={siteSyncStatus}
+                                style={{ marginRight: 8 }}
+                              />
                             </>
                           )}
                           label={stripNumberPrefixForDisplay(siteItem.name)}
-                          labelWeight={isSiteHovered ? '600' : '500'}
+                          labelWeight="600"
                         />
                         
-                        {/* Site folders */}
+                        {/* Verklig mappstruktur – ingen fast "Projekt"/"Mappar", bara barn-mappar */}
                         {isExpanded && (
-                          <View style={{ marginLeft: 12 }}>
+                          <View style={{ marginLeft: 12, marginTop: 0 }}>
                             {(() => {
-                              const sid = String(siteItem?.siteId || '').trim();
-                              const projectsForSite = (() => {
-                                const list = (firestoreProjects || [])
-                                .filter((p) => String(p?.siteRole || '').trim().toLowerCase() === 'projects')
-                                .filter((p) => String(p?.status || '').trim().toLowerCase() !== 'archived')
-                                .filter((p) => String(p?.sharePointSiteId || '').trim() === sid)
-                                .sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
-
-                                // Defensive: avoid rendering duplicates (legacy docs or transient state).
-                                const seen = new Set();
-                                return list.filter((p) => {
-                                  const key = String(p?.projectNumber || p?.projectId || p?.id || '').trim();
-                                  if (!key) return true;
-                                  if (seen.has(key)) return false;
-                                  seen.add(key);
-                                  return true;
-                                });
-                              })();
-
                               const children = Array.isArray(siteItem?.children) ? siteItem.children : [];
-                              const nonProjectFolders = children.filter(
-                                (f) => f && !isProjectFolder(f) && !isHiddenSystemRootFolderName(f?.name),
+                              const visibleChildren = children.filter(
+                                (f) => f && !isHiddenSystemRootFolderName(f?.name),
                               );
-
-                              const projectsExpanded = isSiteSectionExpanded(sid, 'projects');
-                              const foldersExpanded = isSiteSectionExpanded(sid, 'folders');
-
-                              const renderSectionHeader = (sectionKey, label, count, expanded) => {
-                                const sectionIcon = sectionKey === 'projects' ? 'briefcase-outline' : 'folder-outline';
-                                const hoverKey = `${sid}|${sectionKey}`;
-                                const isHovered = hoveredSectionKey === hoverKey;
-                                const pulseTrigger = siteSectionToggleTick?.[hoverKey] || 0;
+                              if (visibleChildren.length === 0) {
                                 return (
-                                  <SidebarItem
-                                    key={`${sid}|hdr|${sectionKey}`}
-                                    onPress={() => toggleSiteSectionExpanded(sid, sectionKey)}
-                                    onHoverIn={() => setHoveredSectionKey(hoverKey)}
-                                    onHoverOut={() => setHoveredSectionKey(null)}
-                                    hovered={isHovered}
-                                    muted
-                                    style={{ marginTop: 4 }}
-                                    left={() => (
-                                      <>
-                                        <View style={{ marginRight: 6 }}>
-                                          <AnimatedChevron
-                                            expanded={expanded}
-                                            spinTrigger={pulseTrigger}
-                                            size={16}
-                                            color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
-                                          />
-                                        </View>
-                                        <MicroPulse trigger={pulseTrigger}>
-                                          <Ionicons
-                                            name={sectionIcon}
-                                            size={16}
-                                            color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted}
-                                            style={{ marginRight: 6 }}
-                                          />
-                                        </MicroPulse>
-                                      </>
-                                    )}
-                                    label={label}
-                                    labelWeight={'700'}
-                                    count={count}
-                                  />
+                                  <Text
+                                    style={{
+                                      fontSize: 12,
+                                      color: LEFT_NAV.textMuted,
+                                      fontStyle: 'italic',
+                                      marginTop: 4,
+                                      marginLeft: 50,
+                                    }}
+                                  >
+                                    Site är tom
+                                  </Text>
                                 );
-                              };
-
-                              return (
-                                <>
-                                  {renderSectionHeader('projects', 'Projekt', projectsForSite.length, projectsExpanded)}
-
-                                  {projectsExpanded ? (
-                                    (() => {
-                                      if (projectsLoading && projectsForSite.length === 0) {
-                                        return (
-                                          <Text style={{ fontSize: 12, color: '#888', fontStyle: 'italic', marginLeft: 20, paddingVertical: 6 }}>
-                                            Laddar projekt...
-                                          </Text>
-                                        );
-                                      }
-
-                                      if (projectsForSite.length > 0) {
-                                        return (
-                                          <View style={{ marginBottom: 6, marginLeft: 8 }}>
-                                            {projectsForSite.map((p) => {
-                                      const number = String(p?.projectNumber || p?.id || '').trim();
-                                      const name = String(p?.projectName || '').trim();
-                                      const fullName = String(p?.fullName || `${number} ${name}`.trim()).trim();
-                                      const path = String(p?.rootFolderPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
-                                      const metaKey = sid && path ? `${sid}|${path}` : null;
-                                      const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
-                                      const effectivePhaseKey =
-                                        (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) ||
-                                        (projectPhaseKey && projectPhaseKey !== 'all' ? String(projectPhaseKey).trim() : null) ||
-                                        DEFAULT_PHASE;
-                                      const phaseStatus = String(savedMeta?.status || (effectivePhaseKey === 'avslut' ? 'completed' : 'ongoing'));
-                                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#43A047';
-                                      const rowKey = `${sid || 'no-site'}|${number || p?.id || ''}`;
-                                      const isDisabled = archivingProjectId && String(archivingProjectId) === String(number);
-
-                                      const onSelect = () => {
-                                        const projectData = {
-                                          id: number || String(p?.id || '').trim(),
-                                          number,
-                                          name: name || fullName,
-                                          projectNumber: number,
-                                          projectName: name,
-                                          fullName,
-                                          siteId: sid,
-                                          sharePointSiteId: sid,
-                                          sharePointSiteUrl: p?.sharePointSiteUrl || siteItem?.webUrl || null,
-                                          path,
-                                          sharePointPath: path,
-                                          projectPath: path,
-                                          type: 'project',
-                                          phase: effectivePhaseKey,
-                                          status: phaseStatus,
-                                          lifecycleStatus: String(p?.status || 'active'),
-                                        };
-                                        if (onSelectProject) onSelectProject(projectData);
-                                      };
-
-                                      const onOpenMenu = (e) => {
-                                        try {
-                                          if (!canArchiveProjects) return;
-                                          openProjectContextMenu(e, { projectId: number, fullName, projectNumber: number, sharePointSiteId: sid, rootFolderPath: path });
-                                        } catch (_e) {}
-                                      };
-
-                                      if (isWeb) {
-                                        const isHovered = hoveredProjectKey === rowKey;
-                                        const selectedId = String(selectedProject?.id || selectedProject?.projectNumber || selectedProject?.number || '').trim();
-                                        const isActive = !!selectedId && String(selectedId) === String(number || p?.id || '').trim();
-                                        return (
-                                          <SidebarItem
-                                            key={number || p?.id || rowKey}
-                                            onPress={isDisabled ? undefined : onSelect}
-                                            onContextMenu={isDisabled ? undefined : onOpenMenu}
-                                            onHoverIn={() => setHoveredProjectKey(rowKey)}
-                                            onHoverOut={() => setHoveredProjectKey(null)}
-                                            hovered={isHovered}
-                                            active={isActive}
-                                            disabled={isDisabled}
-                                            left={() => (
-                                              <View
-                                                style={{
-                                                  width: 10,
-                                                  height: 10,
-                                                  borderRadius: 5,
-                                                  backgroundColor: indicatorColor,
-                                                  marginRight: 8,
-                                                  borderWidth: 1,
-                                                  borderColor: '#bbb',
-                                                }}
-                                              />
-                                            )}
-                                            label={fullName || number}
-                                          />
-                                        );
-                                      }
-
-                                      const selectedId = String(selectedProject?.id || selectedProject?.projectNumber || selectedProject?.number || '').trim();
-                                      const isActive = !!selectedId && String(selectedId) === String(number || p?.id || '').trim();
-                                      return (
-                                        <SidebarItem
-                                          key={number || p?.id || rowKey}
-                                          onPress={onSelect}
-                                          onLongPress={onOpenMenu}
-                                          disabled={isDisabled}
-                                          active={isActive}
-                                          left={() => (
-                                            <View
-                                              style={{
-                                                width: 10,
-                                                height: 10,
-                                                borderRadius: 5,
-                                                backgroundColor: indicatorColor,
-                                                marginRight: 8,
-                                                borderWidth: 1,
-                                                borderColor: '#bbb',
-                                              }}
-                                            />
-                                          )}
-                                          label={fullName || number}
-                                        />
-                                      );
-                                    })}
-                                          </View>
-                                        );
-                                      }
-
-                                      return (
-                                        <Text style={{ fontSize: 12, color: '#888', fontStyle: 'italic', marginLeft: 20, paddingVertical: 6 }}>
-                                          Inga projekt
-                                        </Text>
-                                      );
-                                    })()
-                                  ) : null}
-
-                                  {renderSectionHeader('folders', 'Mappar', nonProjectFolders.length, foldersExpanded)}
-
-                                  {foldersExpanded ? (
-                                    <>
-                                      {nonProjectFolders.length > 0 ? (
-                                        <View style={{ marginTop: 2, marginLeft: 8 }}>
-                                          {nonProjectFolders.map((folder) => (
-                                    <RecursiveFolderView
-                                      key={folder.id}
-                                      folder={folder}
-                                      level={0}
-                                      expandedSubs={spExpandedFolders}
-                                      spinSubs={spSpinFolders}
-                                      lockedSubs={spLockedFolders}
-                                      lockTickSubs={spLockedTick}
-                                      onToggle={toggleSpFolder}
-                                      companyId={companyId}
-                                      hierarchy={hierarchy}
-                                      setHierarchy={setHierarchy}
-                                      parentPath=""
-                                      isProject={false}
-                                      onSelectProject={onSelectProject}
-                                      navigation={navigation}
-                                      projectMetadataMap={projectMetadataMap}
-                                      fallbackPhaseKey={projectPhaseKey}
-                                      onOpenSpContextMenu={openSpContextMenu}
-                                    />
-                                          ))}
-                                        </View>
-                                      ) : (
-                                        <Text style={{ fontSize: 12, color: '#888', fontStyle: 'italic', marginLeft: 20, paddingVertical: 6 }}>
-                                          Inga mappar
-                                        </Text>
-                                      )}
-                                    </>
-                                  ) : null}
-                                </>
-                              );
+                              }
+                              return visibleChildren.map((folder) => (
+                                <RecursiveFolderView
+                                  key={folder.id}
+                                  folder={folder}
+                                  level={0}
+                                  expandedSubs={spExpandedFolders}
+                                  spinSubs={spSpinFolders}
+                                  lockedSubs={spLockedFolders}
+                                  lockTickSubs={spLockedTick}
+                                  onToggle={toggleSpFolder}
+                                  companyId={companyId}
+                                  hierarchy={hierarchy}
+                                  setHierarchy={setHierarchy}
+                                  parentPath=""
+                                  isProject={isProjectFolder(folder)}
+                                  onSelectProject={onSelectProject}
+                                  navigation={navigation}
+                                  projectMetadataMap={projectMetadataMap}
+                                  fallbackPhaseKey={projectPhaseKey}
+                                  onOpenSpContextMenu={openSpContextMenu}
+                                />
+                              ));
                             })()}
                           </View>
                         )}

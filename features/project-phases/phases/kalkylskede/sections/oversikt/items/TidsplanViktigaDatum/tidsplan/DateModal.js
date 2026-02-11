@@ -538,10 +538,9 @@ export default function DateModal({
   }, [initial?.source]);
   const initialDateLocked = React.useMemo(() => {
     if (!isProjectInfo) return false;
-    // Backwards compatibility: treat missing locked as locked.
-    if (typeof initial?.locked === 'boolean') return initial.locked;
-    return true;
-  }, [initial?.locked, isProjectInfo]);
+    // Projektinformation-datum ska kunna flyttas i både Projektöversikt och Tidsplan – alltid redigerbart.
+    return false;
+  }, [isProjectInfo]);
 
   const [dateLocked, setDateLocked] = React.useState(false);
   const lockTooltip = 'Datumet styrs från Projektinformationen';

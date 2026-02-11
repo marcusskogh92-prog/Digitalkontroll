@@ -56,6 +56,8 @@ function AddParticipantModalContent({
   allowInternal = true,
   allowExternal = true,
   lazyLoadExternal = false,
+  groupLinkedSupplierId,
+  groupLinkedCustomerId,
 }) {
   const showLockedInfo = useCallback((candidate) => {
     const name = String(candidate?.name || '').trim() || 'Personen';
@@ -80,6 +82,11 @@ function AddParticipantModalContent({
 
   const [externalRequested, setExternalRequested] = useState(false);
 
+  /** När gruppen har företag: false = visa endast företagets kontakter, true = visa hela registret */
+  const [showAllContacts, setShowAllContacts] = useState(false);
+
+  const hasGroupCompany = !!(groupLinkedSupplierId || groupLinkedCustomerId);
+
   const loadExternal = useCallback(async () => {
     if (!allowExternal) return;
     if (!cid) return;
@@ -89,7 +96,18 @@ function AddParticipantModalContent({
     setErrorExternal('');
     try {
       const contactsRes = await fetchCompanyContacts(cid);
-      const mappedContacts = mapExternalContacts(contactsRes, cid);
+      let list = Array.isArray(contactsRes) ? contactsRes : [];
+      const supId = groupLinkedSupplierId != null ? String(groupLinkedSupplierId).trim() : null;
+      const custId = groupLinkedCustomerId != null ? String(groupLinkedCustomerId).trim() : null;
+      const filterByCompany = hasGroupCompany && !showAllContacts && (supId || custId);
+      if (filterByCompany) {
+        list = list.filter((c) => {
+          if (supId && String(c?.linkedSupplierId ?? '').trim() === supId) return true;
+          if (custId && String(c?.customerId ?? '').trim() === custId) return true;
+          return false;
+        });
+      }
+      const mappedContacts = mapExternalContacts(list, cid);
       setExternalCandidates(mappedContacts);
       setExternalLoaded(true);
     } catch (e) {
@@ -97,7 +115,13 @@ function AddParticipantModalContent({
     } finally {
       setLoadingExternal(false);
     }
-  }, [allowExternal, cid, externalLoaded]);
+  }, [allowExternal, cid, externalLoaded, hasGroupCompany, showAllContacts, groupLinkedSupplierId, groupLinkedCustomerId]);
+
+  const handleShowAllContactsChange = useCallback((value) => {
+    setShowAllContacts(value);
+    setExternalLoaded(false);
+    setExternalCandidates([]);
+  }, []);
 
   useEffect(() => {
     setErrorInternal('');
@@ -106,6 +130,7 @@ function AddParticipantModalContent({
     setExternalCandidates([]);
     setExternalLoaded(false);
     setExternalRequested(false);
+    setShowAllContacts(false);
 
     if (!cid) {
       setErrorInternal('Saknar companyId.');
@@ -184,6 +209,9 @@ function AddParticipantModalContent({
       onToggleExternal={() => setExternalRequested(true)}
       onConfirm={handleConfirm}
       confirmLabel="Lägg till"
+      showAllContactsCheckbox={!!hasGroupCompany}
+      showAllContacts={showAllContacts}
+      onShowAllContactsChange={handleShowAllContactsChange}
     />
   );
 }
@@ -200,6 +228,8 @@ export default function AddParticipantModal({
   allowInternal = true,
   allowExternal = true,
   lazyLoadExternal = false,
+  groupLinkedSupplierId,
+  groupLinkedCustomerId,
 }) {
   const { openSystemModal, closeSystemModal } = useSystemModal();
   const modalIdRef = useRef(null);
@@ -218,6 +248,8 @@ export default function AddParticipantModal({
           allowInternal,
           allowExternal,
           lazyLoadExternal,
+          groupLinkedSupplierId,
+          groupLinkedCustomerId,
         },
         onClose,
       });
@@ -228,7 +260,7 @@ export default function AddParticipantModal({
       closeSystemModal(modalIdRef.current);
       modalIdRef.current = null;
     }
-  }, [visible, openSystemModal, closeSystemModal, onClose, companyId, existingMemberKeys, onAdd, defaultSource, defaultShowInternal, defaultShowExternal, allowInternal, allowExternal, lazyLoadExternal]);
+  }, [visible, openSystemModal, closeSystemModal, onClose, companyId, existingMemberKeys, onAdd, defaultSource, defaultShowInternal, defaultShowExternal, allowInternal, allowExternal, lazyLoadExternal, groupLinkedSupplierId, groupLinkedCustomerId]);
 
   useEffect(() => {
     return () => {

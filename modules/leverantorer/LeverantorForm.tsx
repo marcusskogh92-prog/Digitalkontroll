@@ -2,8 +2,10 @@
  * Formulär för leverantör: Företagsnamn, Orgnr, Adress (gata), Postnr, Ort, Kategori, Byggdelar (rekommendation).
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import SelectDropdown from '../../components/common/SelectDropdown';
+import { formatOrganizationNumber } from '../../utils/formatOrganizationNumber';
 import type { ByggdelMall, Supplier } from './leverantorerService';
 
 const styles = StyleSheet.create({
@@ -124,26 +126,43 @@ interface LeverantorFormProps {
   onOpenKategoriRequest?: () => void;
   categoryIdsForForm?: string[];
   onCategoryIdsChange?: (ids: string[]) => void;
+  /** När satt: byggdelsfältet öppnar Byggdel-modalen vid klick/tab. Måste då även skicka formByggdelIds + onByggdelIdsChange. */
+  onOpenByggdelRequest?: () => void;
+  formByggdelIds?: string[];
+  onByggdelIdsChange?: (ids: string[]) => void;
 }
 
-function byggdelLabel(m: ByggdelMall): string {
-  const parts = [m.moment, m.name].filter(Boolean);
-  return parts.length ? parts.join(' ') : m.id;
+/** Visar nummer (code eller moment) och beskrivning från företagets register */
+function byggdelOptionLabel(m: ByggdelMall & { code?: string }): string {
+  const code = (m as { code?: string }).code ?? m.moment ?? m.id;
+  const desc = (m.name ?? '').trim();
+  if (desc) return `${code} – ${desc}`;
+  return String(code || m.id);
 }
 
-export default function LeverantorForm({
-  initial,
-  byggdelar,
-  saving,
-  onSave,
-  onCancel,
-  onOpenKategoriRequest,
-  categoryIdsForForm,
-  onCategoryIdsChange,
-}: LeverantorFormProps): React.ReactElement {
+export interface LeverantorFormHandle {
+  submit: () => void;
+}
+
+const LeverantorFormInner: React.ForwardRefRenderFunction<LeverantorFormHandle, LeverantorFormProps> = function LeverantorForm(
+  {
+    initial,
+    byggdelar,
+    saving,
+    onSave,
+    onCancel,
+    onOpenKategoriRequest,
+    categoryIdsForForm,
+    onCategoryIdsChange,
+    onOpenByggdelRequest,
+    formByggdelIds,
+    onByggdelIdsChange,
+  },
+  ref
+) {
   const [companyName, setCompanyName] = useState(initial?.companyName ?? '');
-  const [organizationNumber, setOrganizationNumber] = useState(
-    initial?.organizationNumber ?? ''
+  const [organizationNumber, setOrganizationNumber] = useState(() =>
+    formatOrganizationNumber(initial?.organizationNumber ?? '')
   );
   const [address, setAddress] = useState(initial?.address ?? '');
   const [postalCode, setPostalCode] = useState(initial?.postalCode ?? '');
@@ -160,12 +179,15 @@ export default function LeverantorForm({
   const [selectedByggdelIds, setSelectedByggdelIds] = useState<string[]>(
     initial?.byggdelTags ?? []
   );
+  const useControlledByggdel = typeof onOpenByggdelRequest === 'function' && Array.isArray(formByggdelIds);
+  const effectiveByggdelIds = useControlledByggdel ? formByggdelIds : selectedByggdelIds;
   const [error, setError] = useState('');
+  const submitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (initial) {
       setCompanyName(initial.companyName ?? '');
-      setOrganizationNumber(initial.organizationNumber ?? '');
+      setOrganizationNumber(formatOrganizationNumber(initial.organizationNumber ?? ''));
       setAddress(initial.address ?? '');
       setPostalCode(initial.postalCode ?? '');
       setCity(initial.city ?? '');
@@ -189,12 +211,6 @@ export default function LeverantorForm({
     setError('');
   }, [initial?.id]);
 
-  const toggleByggdel = (id: string): void => {
-    setSelectedByggdelIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
   const handleSubmit = async (): Promise<void> => {
     const cn = companyName.trim();
     if (!cn) {
@@ -203,6 +219,7 @@ export default function LeverantorForm({
     }
     setError('');
     const cats = useControlledCategories ? effectiveCategories : categories;
+    const byggdelIds = useControlledByggdel ? effectiveByggdelIds : selectedByggdelIds;
     await onSave({
       companyName: cn,
       organizationNumber: organizationNumber.trim(),
@@ -211,12 +228,18 @@ export default function LeverantorForm({
       city: city.trim(),
       categories: cats,
       category: cats[0] || '',
-      byggdelTags: selectedByggdelIds,
+      byggdelTags: byggdelIds,
     });
   };
+  submitRef.current = handleSubmit;
+  useImperativeHandle(ref, () => ({ submit: () => submitRef.current?.() }), []);
+
+  const canSubmit = Boolean(companyName.trim()) && !saving;
 
   const categoryTriggerRef = useRef<View | null>(null);
   const categoryModalJustOpenedRef = useRef(false);
+  const byggdelTriggerRef = useRef<View | null>(null);
+  const byggdelModalJustOpenedRef = useRef(false);
   const openKategoriModal = (fromFocus?: boolean): void => {
     if (fromFocus && categoryModalJustOpenedRef.current) {
       categoryModalJustOpenedRef.current = false;
@@ -235,6 +258,24 @@ export default function LeverantorForm({
     }
   };
 
+  const openByggdelModal = (fromFocus?: boolean): void => {
+    if (fromFocus && byggdelModalJustOpenedRef.current) {
+      byggdelModalJustOpenedRef.current = false;
+      return;
+    }
+    onOpenByggdelRequest?.();
+    byggdelModalJustOpenedRef.current = true;
+    if (Platform.OS === 'web') {
+      setTimeout(() => {
+        const el = byggdelTriggerRef.current as unknown as HTMLElement | null;
+        if (el?.blur) el.blur();
+        else if (typeof document !== 'undefined' && document.activeElement?.blur) {
+          (document.activeElement as HTMLElement).blur();
+        }
+      }, 0);
+    }
+  };
+
   return (
     <View style={styles.content}>
       <Text style={styles.label}>Företagsnamn *</Text>
@@ -244,17 +285,17 @@ export default function LeverantorForm({
         onChangeText={setCompanyName}
         placeholder="Företagsnamn"
         placeholderTextColor="#94a3b8"
-        {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+        {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); } } } : {})}
       />
 
       <Text style={styles.label}>Organisationsnummer</Text>
       <TextInput
         style={styles.input}
         value={organizationNumber}
-        onChangeText={setOrganizationNumber}
-        placeholder="Organisationsnummer"
+        onChangeText={(v) => setOrganizationNumber(formatOrganizationNumber(v))}
+        placeholder="xxxxxx-xxxx"
         placeholderTextColor="#94a3b8"
-        {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+        {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); } } } : {})}
       />
 
       <Text style={styles.label}>Adress (gata)</Text>
@@ -264,7 +305,7 @@ export default function LeverantorForm({
         onChangeText={setAddress}
         placeholder="Gatuadress"
         placeholderTextColor="#94a3b8"
-        {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+        {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); } } } : {})}
       />
 
       <View style={styles.row}>
@@ -276,7 +317,7 @@ export default function LeverantorForm({
             onChangeText={setPostalCode}
             placeholder="Postnr"
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); } } } : {})}
           />
         </View>
         <View style={styles.half}>
@@ -287,7 +328,7 @@ export default function LeverantorForm({
             onChangeText={setCity}
             placeholder="Ort"
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); handleSubmit(); } } } : {})}
           />
         </View>
       </View>
@@ -353,25 +394,76 @@ export default function LeverantorForm({
         <Text style={styles.hint}>
           Välj byggdelar som leverantören kan vara relevant för. Används som fingervisning vid förfrågningar.
         </Text>
-        <View style={styles.chipWrap}>
-          {byggdelar.map((m) => {
-            const id = m.id;
-            const selected = selectedByggdelIds.includes(id);
-            return (
-              <TouchableOpacity
-                key={id}
-                style={[styles.chip, selected ? styles.chipSelected : null]}
-                onPress={() => toggleByggdel(id)}
-                activeOpacity={0.8}
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        {typeof onOpenByggdelRequest === 'function' ? (
+          Platform.OS === 'web' ? (
+            <View
+              ref={byggdelTriggerRef}
+              style={[styles.categoryTrigger, { cursor: 'pointer' }]}
+              tabIndex={0}
+              onFocus={() => openByggdelModal(true)}
+              onClick={() => openByggdelModal(false)}
+              onKeyDown={(e: React.KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openByggdelModal(false);
+                }
+              }}
+            >
+              <Text
+                style={[
+                  styles.categoryTriggerText,
+                  (effectiveByggdelIds?.length ?? 0) === 0 && styles.categoryTriggerTextPlaceholder,
+                ]}
+                numberOfLines={1}
               >
-                <Text style={styles.chipText} numberOfLines={1}>
-                  {byggdelLabel(m)}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                {(effectiveByggdelIds?.length ?? 0) > 0
+                  ? `${effectiveByggdelIds.length} byggdelar valda`
+                  : 'Klicka eller tabba hit för att välja byggdelar'}
+              </Text>
+              <Text style={[styles.categoryTriggerText, styles.categoryTriggerTextPlaceholder]}>▼</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.categoryTrigger}
+              onPress={() => openByggdelModal(false)}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.categoryTriggerText,
+                  (effectiveByggdelIds?.length ?? 0) === 0 && styles.categoryTriggerTextPlaceholder,
+                ]}
+                numberOfLines={1}
+              >
+                {(effectiveByggdelIds?.length ?? 0) > 0
+                  ? `${effectiveByggdelIds.length} byggdelar valda`
+                  : 'Klicka för att välja byggdelar'}
+              </Text>
+            </TouchableOpacity>
+          )
+        ) : byggdelar.length > 0 ? (
+          <SelectDropdown
+            value={selectedByggdelIds}
+            options={byggdelar.map((m) => ({
+              value: (m as ByggdelMall & { code?: string }).code ?? m.id,
+              label: byggdelOptionLabel(m as ByggdelMall & { code?: string }),
+            }))}
+            multiple
+            searchable
+            placeholder="Välj byggdelar (nummer – beskrivning)"
+            onChange={(next: string[]) => setSelectedByggdelIds(next)}
+            usePortal={Platform.OS === 'web'}
+            fieldStyle={styles.input}
+            listStyle={undefined}
+            inputStyle={{ fontSize: 13, color: '#111' }}
+          />
+        ) : (
+          <View style={[styles.input, { marginBottom: 0 }]}>
+            <Text style={[styles.chipText, { color: '#94a3b8' }]}>
+              Inga byggdelar i företagets register. Lägg till under Byggdelstabell.
+            </Text>
+          </View>
+        )}
       </View>
 
       {error ? (
@@ -380,16 +472,16 @@ export default function LeverantorForm({
 
       <View style={styles.btnRow}>
         <TouchableOpacity
-          style={[styles.btnPrimary, (!companyName.trim() || saving) ? styles.btnPrimaryDisabled : null]}
+          style={[styles.btnPrimary, !canSubmit ? styles.btnPrimaryDisabled : null]}
           onPress={handleSubmit}
-          disabled={!companyName.trim() || saving}
+          disabled={!canSubmit}
           activeOpacity={0.8}
-          {...(Platform.OS === 'web' ? { cursor: saving ? 'not-allowed' : 'pointer' } : {})}
+          {...(Platform.OS === 'web' ? { cursor: canSubmit ? 'pointer' : 'not-allowed' } : {})}
         >
           <Text
             style={[
               styles.btnPrimaryText,
-              (!companyName.trim() || saving) ? styles.btnPrimaryTextDisabled : null,
+              !canSubmit ? styles.btnPrimaryTextDisabled : null,
             ]}
           >
             {saving ? 'Sparar…' : 'Spara'}
@@ -407,6 +499,8 @@ export default function LeverantorForm({
       </View>
     </View>
   );
-}
+};
 
+const LeverantorForm = forwardRef(LeverantorFormInner);
+export default LeverantorForm;
 export { emptyValues };

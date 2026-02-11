@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ConfirmModal({
@@ -10,6 +11,7 @@ export default function ConfirmModal({
   danger = false,
   busy = false,
   error = '',
+  compact = false,
   onCancel,
   onConfirm,
 }) {
@@ -26,6 +28,29 @@ export default function ConfirmModal({
       onConfirm?.();
     } catch (_e) {}
   };
+
+  const cancelRef = useRef(handleCancel);
+  const confirmRef = useRef(handleConfirm);
+  cancelRef.current = handleCancel;
+  confirmRef.current = handleConfirm;
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelRef.current?.();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmRef.current?.();
+      }
+    };
+    // Capture-fas så vi får Enter/Esc före knapparna – annars triggar Enter Avbryt-knappen
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [visible]);
 
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={handleCancel}>
@@ -47,8 +72,8 @@ export default function ConfirmModal({
           style={{
             backgroundColor: '#fff',
             borderRadius: 16,
-            padding: 18,
-            width: Platform.OS === 'web' ? 520 : 340,
+            padding: compact ? 20 : 18,
+            width: Platform.OS === 'web' ? (compact ? 380 : 520) : (compact ? 320 : 340),
             maxWidth: '96%',
             borderWidth: 1,
             borderColor: '#E2E8F0',
@@ -59,26 +84,28 @@ export default function ConfirmModal({
             elevation: 8,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <Text style={{ fontSize: 18, fontWeight: '500', color: '#0F172A' }}>{String(title || '')}</Text>
-            <TouchableOpacity
-              onPress={handleCancel}
-              disabled={busy}
-              style={{ padding: 6, opacity: busy ? 0.4 : 1 }}
-              accessibilityLabel="Stäng"
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="close" size={22} color="#0F172A" />
-            </TouchableOpacity>
-          </View>
+          {!compact ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ fontSize: 18, fontWeight: '500', color: '#0F172A' }}>{String(title || '')}</Text>
+              <TouchableOpacity
+                onPress={handleCancel}
+                disabled={busy}
+                style={{ padding: 6, opacity: busy ? 0.4 : 1 }}
+                accessibilityLabel="Stäng"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={22} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           <Text
             style={{
-              fontSize: 14,
+              fontSize: compact ? 16 : 14,
               color: '#334155',
-              fontWeight: '400',
-              lineHeight: 20,
-              marginBottom: 10,
+              fontWeight: compact ? '500' : '400',
+              lineHeight: 22,
+              marginBottom: compact ? 20 : 10,
               ...(Platform.OS === 'web' ? { whiteSpace: 'pre-wrap' } : {}),
             }}
           >

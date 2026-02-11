@@ -18,6 +18,7 @@ import { useProjectOrganisation } from '../../../../../../../../hooks/useProject
 import { useProjectTimelineDates } from '../../../../../../../../hooks/useProjectTimelineDates';
 import { cancelOutlookEvent, updateOutlookEvent } from '../../../../../../../../services/outlook/outlookCalendarService';
 import ContextMenu from '../../../../../../../../components/ContextMenu';
+import ConfirmModal from '../../../../../../../../components/common/Modals/ConfirmModal';
 
 import DateModal from './tidsplan/DateModal';
 
@@ -467,6 +468,9 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
   /** Row overflow menu (⋯): anchor { item, x, y } when open. */
   const [rowMenuAnchor, setRowMenuAnchor] = React.useState(null);
 
+  /** Bekräftelsemodal för radera datum (samma UX som byggdelar: Enter = radera, Esc = avbryt). */
+  const [deleteConfirmDate, setDeleteConfirmDate] = React.useState(null);
+
   /** Modal: "Avboka möte i Outlook" only (no delete) – requires confirmation. */
   const [cancelOutlookOnlyModal, setCancelOutlookOnlyModal] = React.useState({ open: false, item: null });
 
@@ -687,35 +691,32 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     if (!it) return;
     const src = String(it?.source || '').trim();
     if (src === 'projectinfo' || src === 'projectInformation') return;
-    const id = String(it?.id || '').trim();
 
     if (hasOutlookInvitation(it)) {
       setOutlookDeleteModal({ open: true, item: it, choice: null });
       return;
     }
 
-    const doRemove = () => {
-      setOptimisticRemovedIds((prev) => [...prev, id]);
-      timeline.removeCustomDate(id).catch((e) => {
-        setOptimisticRemovedIds((prev) => prev.filter((x) => x !== id));
-        const msg = String(e?.message || e || 'Kunde inte radera datum.');
-        if (Platform.OS === 'web' && typeof window?.alert === 'function') {
-          window.alert(msg);
-        } else {
-          Alert.alert('Kunde inte radera', msg);
-        }
-      });
-    };
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
-      const ok = window.confirm('Vill du radera detta datum?');
-      if (ok) doRemove();
-    } else {
-      Alert.alert('Radera datum', 'Vill du radera detta datum?', [
-        { text: 'Avbryt', style: 'cancel' },
-        { text: 'Radera', style: 'destructive', onPress: doRemove },
-      ]);
-    }
-  }, [timeline]);
+    setDeleteConfirmDate(it);
+  }, []);
+
+  const performDeleteDate = React.useCallback(() => {
+    const it = deleteConfirmDate;
+    setDeleteConfirmDate(null);
+    if (!it) return;
+    const id = String(it?.id || '').trim();
+    if (!id) return;
+    setOptimisticRemovedIds((prev) => [...prev, id]);
+    timeline.removeCustomDate(id).catch((e) => {
+      setOptimisticRemovedIds((prev) => prev.filter((x) => x !== id));
+      const msg = String(e?.message || e || 'Kunde inte radera datum.');
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Kunde inte radera', msg);
+      }
+    });
+  }, [deleteConfirmDate, timeline]);
 
   const confirmOutlookReminderAndDelete = React.useCallback(() => {
     const item = outlookDeleteModal?.item;
@@ -796,12 +797,12 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     const isProjectInfo = src === 'projectinfo' || src === 'projectInformation';
     const hasOutlook = hasOutlookInvitation(it);
     const list = [
-      { key: 'edit', label: 'Redigera datum / möte', icon: '✏️' },
-      { key: 'delete', label: 'Radera datum', icon: '🗑️', danger: true, disabled: isProjectInfo },
+      { key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
+      { key: 'delete', label: 'Radera', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" />, disabled: isProjectInfo },
     ];
     if (hasOutlook) {
-      list.push({ key: 'resend_outlook', label: 'Skicka om Outlook-kallelse', icon: '📤' });
-      list.push({ key: 'cancel_outlook', label: 'Avboka möte i Outlook', icon: '❌', danger: true });
+      list.push({ key: 'resend_outlook', label: 'Skicka om Outlook-kallelse', icon: <Ionicons name="send-outline" size={16} color="#475569" /> });
+      list.push({ key: 'cancel_outlook', label: 'Avboka möte i Outlook', danger: true, icon: <Ionicons name="close-circle-outline" size={16} color="#b91c1c" /> });
     }
     return list;
   }, [rowMenuAnchor?.item]);
@@ -1081,8 +1082,8 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
 
               const src = String(it?.source || '').trim();
               const isProjectInfo = src === 'projectinfo' || src === 'projectInformation';
-              const isDateLocked = isProjectInfo && (it?.locked !== false);
-              const lockTooltip = 'Datumet styrs från Projektinformationen';
+              // Projektinformation-datum ska kunna flyttas i både Projektöversikt och Tidsplan – visa inte som låst.
+              const isDateLocked = false;
 
               return (
                 <Pressable
@@ -1122,20 +1123,6 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
                       </Text>
                     ) : null}
 
-                    {!isDateLocked ? null : (
-                      <Pressable
-                        onPress={(e) => {
-                          e?.stopPropagation?.();
-                        }}
-                        {...(Platform.OS === 'web' ? { title: lockTooltip } : {})}
-                        style={{ marginTop: 2, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-                      >
-                        <Ionicons name="lock-closed-outline" size={14} color={COLORS.textSubtle} />
-                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }} numberOfLines={1}>
-                          Låst
-                        </Text>
-                      </Pressable>
-                    )}
                   </View>
 
                   <View style={{ flex: 1, minWidth: 120, paddingRight: 12 }}>
@@ -1365,6 +1352,17 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         onClose={closeRowMenu}
         align="right"
         direction="down"
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmDate}
+        message={deleteConfirmDate ? `Vill du radera detta datum?${deleteConfirmDate?.title ? ` (${String(deleteConfirmDate.title).trim()})` : ''}` : ''}
+        cancelLabel="Avbryt"
+        confirmLabel="Radera"
+        danger
+        onCancel={() => setDeleteConfirmDate(null)}
+        onConfirm={performDeleteDate}
+        compact
       />
 
       <Modal visible={!!cancelOutlookOnlyModal?.open} transparent animationType="fade" onRequestClose={() => setCancelOutlookOnlyModal({ open: false, item: null })}>

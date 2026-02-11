@@ -8,6 +8,7 @@ import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, g
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { Alert, Platform } from 'react-native';
+import { formatOrganizationNumber } from '../utils/formatOrganizationNumber';
 import { buildKalkylskedeLockedStructure, KALKYLSKEDE_STRUCTURE_VERSIONS } from '../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition';
 import { uploadFile as uploadFileToAzure } from '../services/azure/fileService';
 
@@ -2587,6 +2588,9 @@ export async function updateCompanyContact({ id, patch }, companyIdOverride) {
     safePatch.linkedSupplierId =
       safePatch.linkedSupplierId === null ? null : String(safePatch.linkedSupplierId || '').trim();
   }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'customerId')) {
+    safePatch.customerId = safePatch.customerId === null ? null : String(safePatch.customerId || '').trim() || null;
+  }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'companyId')) {
     safePatch.companyId = safePatch.companyId == null ? null : String(safePatch.companyId).trim() || null;
   }
@@ -2657,7 +2661,7 @@ export async function createCompanySupplier(
   }
   const payload = {
     companyName: n,
-    organizationNumber: String(organizationNumber || '').trim(),
+    organizationNumber: formatOrganizationNumber(String(organizationNumber || '').trim()),
     address: String(address || '').trim(),
     postalCode: String(postalCode || '').trim(),
     city: String(city || '').trim(),
@@ -2729,7 +2733,7 @@ export async function updateCompanySupplier({ id, patch }, companyIdOverride) {
     safePatch.companyName = n;
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'organizationNumber')) {
-    safePatch.organizationNumber = String(safePatch.organizationNumber || '').trim();
+    safePatch.organizationNumber = formatOrganizationNumber(String(safePatch.organizationNumber || '').trim());
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'address')) {
     safePatch.address = String(safePatch.address || '').trim();
@@ -4463,10 +4467,9 @@ export async function upsertProjectInfoTimelineMilestone(companyIdOverride, proj
     const nextCustom = [...filtered];
 
     if (iso) {
-      // Preserve user-edited fields (title/description/participants/etc) and unlock state.
-      // New items default to locked (date is controlled by Projektinformation).
-      const prevLocked = existingItem && typeof existingItem.locked === 'boolean' ? existingItem.locked : undefined;
-      const nextLocked = prevLocked === false ? false : true;
+      // Preserve user-edited fields (title/description/participants/etc).
+      // Projektinformation-datum ska kunna flyttas i både Projektöversikt och Tidsplan – alltid unlocked vid sync härifrån.
+      const nextLocked = false;
 
       const prevTitle = existingItem ? String(existingItem?.title || '').trim() : '';
       const prevType = existingItem ? String(existingItem?.type || existingItem?.customType || '').trim() : '';

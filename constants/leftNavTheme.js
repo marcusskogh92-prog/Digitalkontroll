@@ -1,33 +1,40 @@
 // Shared styling tokens for left-panel navigation.
-// Keep left navigation calm: neutral by default, blue only on interaction.
+// Tajt, kompakt: mindre radhöjd och padding – samma i dashboard och projekt.
 
 export const LEFT_NAV = {
-  accent: '#1976D2',
+  accent: '#2563EB',
 
-  // Row sizing/spacing (single source of truth)
-  rowPaddingVertical: 6,
-  rowPaddingHorizontal: 8,
+  // Row sizing/spacing (single source of truth) – extra tajt
+  rowMinHeight: 28,
+  /** Compact row height for section/site headers (e.g. dashboard sites, phase sections). */
+  rowMinHeightCompact: 24,
+  rowPaddingVertical: 2,
+  rowPaddingHorizontal: 12,
   rowBorderRadius: 6,
-  rowBorderLeftWidth: 2,
-  rowFontSize: 14,
-  rowIconGap: 6,
+  rowBorderLeftWidth: 4,
+  rowFontSize: 13,
+  rowIconGap: 8,
+  /** Indentation per level (e.g. children under a site). Use everywhere for consistency. */
+  indentPerLevel: 12,
+  /** Chevron size (12–14px, low visual weight). Same in dashboard and project sidebar. */
+  chevronSize: 12,
+  /** Expand/collapse animation duration (ms). */
+  expandTransitionMs: 200,
 
   // Default (no hover, not active)
-  textDefault: '#222',
-  iconDefault: '#222',
-  textMuted: '#666',
-  iconMuted: '#666',
+  textDefault: '#1e293b',
+  iconDefault: '#475569',
+  textMuted: '#64748b',
+  iconMuted: '#94a3b8',
 
   // Hover
-  hoverText: '#1976D2',
-  hoverIcon: '#1976D2',
-  // Match start-view list hover highlight
-  hoverBg: '#E3F2FD',
+  hoverText: '#2563EB',
+  hoverIcon: '#2563EB',
+  hoverBg: '#f1f5f9',
 
-  // Active (current page/selection)
-  // Keep active highlight consistent with hover to match start-view behavior
-  activeBg: '#E3F2FD',
-  activeBorder: '#1976D2',
+  // Active (current page/selection) – subtil, tydlig
+  activeBg: '#EEF4FF',
+  activeBorder: '#2563EB',
 
   // Small count pill (e.g. item counters)
   countPillBg: '#0000000A',

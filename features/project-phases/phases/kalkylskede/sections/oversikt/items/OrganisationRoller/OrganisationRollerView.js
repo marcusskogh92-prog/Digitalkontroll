@@ -5,14 +5,19 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
 import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import ContextMenu from '../../../../../../../../components/ContextMenu';
-import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile } from '../../../../../../../../components/firebase';
+import {
+  ensureDefaultProjectOrganisationGroup,
+  fetchCompanyCustomers,
+  fetchCompanyProfile,
+  fetchCompanySuppliers,
+} from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
 const ROLE_QUICK = [
@@ -144,7 +149,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     groupCardBg: 'rgba(25, 118, 210, 0.06)',
   };
 
-  const { groups, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRoles } =
+  const { groups, loading, error, addGroup, removeGroup, updateGroupTitle, updateGroup, addMember, removeMember, updateMemberRoles } =
     useProjectOrganisation({ companyId, projectId });
 
   const [defaultGroupEnsured, setDefaultGroupEnsured] = useState(false);
@@ -155,13 +160,22 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const [editingGroupId, setEditingGroupId] = useState(null);
   /** Åtgärdsmeny för grupp (⋮): { x, y, gid } */
   const [groupMenuAnchor, setGroupMenuAnchor] = useState(null);
-  /** Modal "Byt namn på grupp": { gid, currentTitle } */
-  const [renameGroupModal, setRenameGroupModal] = useState(null);
-  /** Modal "Lägg till grupp": visar formulär med obligatoriskt gruppnamn */
+  /** Modal "Redigera grupp": { gid } – förifylls från gruppens data */
+  const [editGroupModal, setEditGroupModal] = useState(null);
+  const [editGroupDescription, setEditGroupDescription] = useState('');
+  const [editGroupLinkToCompany, setEditGroupLinkToCompany] = useState(false);
+  const [editGroupCompanyQuery, setEditGroupCompanyQuery] = useState('');
+  const [editGroupCompanyResults, setEditGroupCompanyResults] = useState([]);
+  const [editGroupSelectedCompany, setEditGroupSelectedCompany] = useState(null);
+  const editGroupCompanyDebounceRef = useRef(null);
+  /** Modal "Lägg till grupp": beskrivning + valfritt företag */
   const [addGroupModalOpen, setAddGroupModalOpen] = useState(false);
-  const [addGroupName, setAddGroupName] = useState('');
-  /** Draft för "Byt namn"-modal */
-  const [renameGroupDraft, setRenameGroupDraft] = useState('');
+  const [addGroupDescription, setAddGroupDescription] = useState('');
+  const [addGroupLinkToCompany, setAddGroupLinkToCompany] = useState(false);
+  const [addGroupCompanyQuery, setAddGroupCompanyQuery] = useState('');
+  const [addGroupCompanyResults, setAddGroupCompanyResults] = useState([]);
+  const [addGroupSelectedCompany, setAddGroupSelectedCompany] = useState(null); // { id, name, type: 'supplier'|'customer' }
+  const addGroupCompanyDebounceRef = useRef(null);
 
   const [roleMenuVisible, setRoleMenuVisible] = useState(false);
   const [roleMenuPos, setRoleMenuPos] = useState({ x: 20, y: 64 });
@@ -219,7 +233,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     const a = groupMenuAnchor;
     if (!a) return [];
     return [
-      { key: 'rename', label: 'Byt namn på grupp', disabled: !!a.isLockedGroup },
+      { key: 'edit', label: 'Redigera', disabled: !!a.isLockedGroup },
       { isSeparator: true, key: 'sep-group' },
       { key: 'delete', label: 'Radera grupp', iconName: 'trash-outline', danger: true, disabled: !!a.isLockedGroup || (Number(a.participantCount) || 0) > 0 },
     ];
@@ -595,6 +609,88 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     ];
   }, [roleMenuTarget, roleMenuAdvancedOpen]);
 
+  const handleAddGroupCompanySearch = useCallback(
+    (query) => {
+      if (addGroupCompanyDebounceRef.current) clearTimeout(addGroupCompanyDebounceRef.current);
+      const q = String(query ?? '').trim();
+      if (q.length < 2) {
+        setAddGroupCompanyResults([]);
+        return;
+      }
+      addGroupCompanyDebounceRef.current = setTimeout(async () => {
+        try {
+          const cid = String(companyId || '').trim() || undefined;
+          const [suppliers, customers] = await Promise.all([
+            fetchCompanySuppliers(cid),
+            fetchCompanyCustomers(cid),
+          ]);
+          const lower = q.toLowerCase();
+          const fromSuppliers = (suppliers || [])
+            .filter((s) => String(s?.companyName ?? '').trim().toLowerCase().includes(lower))
+            .map((s) => ({
+              id: s.id,
+              name: String(s.companyName ?? '').trim(),
+              type: 'supplier',
+            }));
+          const fromCustomers = (customers || [])
+            .filter((c) => String(c?.name ?? '').trim().toLowerCase().includes(lower))
+            .map((c) => ({
+              id: c.id,
+              name: String(c.name ?? '').trim(),
+              type: 'customer',
+            }));
+          const combined = [...fromSuppliers, ...fromCustomers].slice(0, 15);
+          setAddGroupCompanyResults(combined);
+        } catch {
+          setAddGroupCompanyResults([]);
+        }
+        addGroupCompanyDebounceRef.current = null;
+      }, 300);
+    },
+    [companyId]
+  );
+
+  const handleEditGroupCompanySearch = useCallback(
+    (query) => {
+      if (editGroupCompanyDebounceRef.current) clearTimeout(editGroupCompanyDebounceRef.current);
+      const q = String(query ?? '').trim();
+      if (q.length < 2) {
+        setEditGroupCompanyResults([]);
+        return;
+      }
+      editGroupCompanyDebounceRef.current = setTimeout(async () => {
+        try {
+          const cid = String(companyId || '').trim() || undefined;
+          const [suppliers, customers] = await Promise.all([
+            fetchCompanySuppliers(cid),
+            fetchCompanyCustomers(cid),
+          ]);
+          const lower = q.toLowerCase();
+          const fromSuppliers = (suppliers || [])
+            .filter((s) => String(s?.companyName ?? '').trim().toLowerCase().includes(lower))
+            .map((s) => ({
+              id: s.id,
+              name: String(s.companyName ?? '').trim(),
+              type: 'supplier',
+            }));
+          const fromCustomers = (customers || [])
+            .filter((c) => String(c?.name ?? '').trim().toLowerCase().includes(lower))
+            .map((c) => ({
+              id: c.id,
+              name: String(c.name ?? '').trim(),
+              type: 'customer',
+            }));
+          const combined = [...fromSuppliers, ...fromCustomers].slice(0, 15);
+          setEditGroupCompanyResults(combined);
+        } catch {
+          setEditGroupCompanyResults([]);
+        }
+        editGroupCompanyDebounceRef.current = null;
+      }, 300);
+    },
+    [companyId]
+  );
+
   // Ensure the mandatory company group exists and is named exactly as the company.
   // This is the "anchor" group for membership → dashboard/notifications.
   useEffect(() => {
@@ -688,7 +784,14 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
           Grupper ({Array.isArray(groups) ? groups.length : 0})
         </Text>
         <Pressable
-          onPress={() => { setAddGroupName(''); setAddGroupModalOpen(true); }}
+          onPress={() => {
+            setAddGroupDescription('');
+            setAddGroupLinkToCompany(false);
+            setAddGroupCompanyQuery('');
+            setAddGroupCompanyResults([]);
+            setAddGroupSelectedCompany(null);
+            setAddGroupModalOpen(true);
+          }}
           disabled={!hasContext}
           style={({ hovered, pressed }) => {
             const disabled = !hasContext;
@@ -715,7 +818,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
       {(Array.isArray(groups) ? groups : []).length > 0 ? (
         <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginBottom: 10 }}>
-          Klicka på ⋮ bredvid gruppnamnet för att byta namn eller radera gruppen.
+          Klicka på ⋮ bredvid gruppnamnet för att redigera eller radera gruppen.
         </Text>
       ) : null}
 
@@ -761,7 +864,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
               undefined,
               [
                 { text: 'Avbryt', style: 'cancel' },
-                ...(canRename ? [{ text: 'Byt namn på grupp', onPress: () => { setRenameGroupDraft(String(group?.title || '').trim() || ''); setRenameGroupModal({ gid, currentTitle: group?.title }); } }] : []),
+                ...(canRename ? [{ text: 'Redigera', onPress: () => { const desc = group?.description ?? group?.title ?? ''; const hasCompany = !!(group?.linkedSupplierId || group?.linkedCustomerId); const companyName = group?.linkedCompanyName ?? ''; const selected = hasCompany && companyName ? { id: group?.linkedSupplierId || group?.linkedCustomerId, name: companyName, type: group?.linkedSupplierId ? 'supplier' : 'customer' } : null; setEditGroupDescription(String(desc).trim()); setEditGroupLinkToCompany(hasCompany); setEditGroupCompanyQuery(companyName); setEditGroupCompanyResults([]); setEditGroupSelectedCompany(selected); setEditGroupModal({ gid }); } }] : []),
                 ...(canDelete ? [{ text: 'Radera grupp', style: 'destructive', onPress: async () => { const ok = await confirmWebOrNative('Ta bort gruppen?'); if (ok) removeGroup(gid); } }] : []),
               ].filter(Boolean)
             );
@@ -1078,33 +1181,126 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         );
       })}
 
-      <Modal visible={!!renameGroupModal} transparent animationType="fade" onRequestClose={() => setRenameGroupModal(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setRenameGroupModal(null)}>
+      <Modal visible={!!editGroupModal} transparent animationType="fade" onRequestClose={() => setEditGroupModal(null)}>
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          onPress={() => {
+            setEditGroupModal(null);
+            setEditGroupDescription('');
+            setEditGroupLinkToCompany(false);
+            setEditGroupCompanyQuery('');
+            setEditGroupCompanyResults([]);
+            setEditGroupSelectedCompany(null);
+          }}
+        >
           <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, padding: 20, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
-            <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 12 }}>Byt namn på grupp</Text>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 12 }}>Redigera grupp</Text>
+            <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Beskrivning (obligatoriskt)</Text>
             <TextInput
-              value={renameGroupDraft}
-              onChangeText={setRenameGroupDraft}
-              placeholder="T.ex. Leverantörer, Byggledning"
+              value={editGroupDescription}
+              onChangeText={setEditGroupDescription}
+              placeholder="T.ex. Beställargrupp, Konstruktörer"
               placeholderTextColor="#94A3B8"
-              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 16, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 12, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
             />
+            <Pressable
+              onPress={() => setEditGroupLinkToCompany((v) => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: editGroupLinkToCompany ? 12 : 16 }}
+            >
+              <Ionicons
+                name={editGroupLinkToCompany ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={editGroupLinkToCompany ? COLORS.blue : COLORS.textSubtle}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 14, color: COLORS.text }}>Koppla grupp till ett företag</Text>
+            </Pressable>
+            {editGroupLinkToCompany ? (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Företag (sök leverantörer och kunder, minst 2 tecken)</Text>
+                <TextInput
+                  value={editGroupCompanyQuery}
+                  onChangeText={(text) => {
+                    setEditGroupCompanyQuery(text);
+                    handleEditGroupCompanySearch(text);
+                  }}
+                  placeholder="Sök företagsnamn..."
+                  placeholderTextColor="#94A3B8"
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                />
+                {editGroupSelectedCompany ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: COLORS.bgMuted, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 14, color: COLORS.text, flex: 1 }}>{editGroupSelectedCompany.name}</Text>
+                    <Pressable onPress={() => { setEditGroupSelectedCompany(null); setEditGroupCompanyQuery(''); setEditGroupCompanyResults([]); }} hitSlop={8}>
+                      <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+                    </Pressable>
+                  </View>
+                ) : null}
+                {editGroupCompanyResults.length > 0 && !editGroupSelectedCompany ? (
+                  <View style={{ marginTop: 4, borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, maxHeight: 200 }}>
+                    <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                      {editGroupCompanyResults.map((company) => (
+                        <Pressable
+                          key={`${company.type}-${company.id}`}
+                          onPress={() => {
+                            setEditGroupSelectedCompany(company);
+                            setEditGroupCompanyQuery(company.name);
+                            setEditGroupCompanyResults([]);
+                          }}
+                          style={({ hovered }) => ({ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}
+                        >
+                          <Text style={{ fontSize: 14, color: COLORS.text }}>{company.name}</Text>
+                          <Text style={{ fontSize: 12, color: COLORS.textMuted }}>{company.type === 'supplier' ? 'Leverantör' : 'Kund'}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-              <Pressable onPress={() => setRenameGroupModal(null)} style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}>
+              <Pressable
+                onPress={() => {
+                  setEditGroupModal(null);
+                  setEditGroupDescription('');
+                  setEditGroupLinkToCompany(false);
+                  setEditGroupCompanyQuery('');
+                  setEditGroupCompanyResults([]);
+                  setEditGroupSelectedCompany(null);
+                }}
+                style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}
+              >
                 <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.textMuted }}>Avbryt</Text>
               </Pressable>
               <Pressable
                 onPress={() => {
-                  const gid = renameGroupModal?.gid;
-                  const next = String(renameGroupDraft || '').trim();
-                  if (gid && next) {
-                    updateGroupTitle(gid, next);
-                    setRenameGroupModal(null);
-                    setRenameGroupDraft('');
-                  }
+                  const gid = editGroupModal?.gid;
+                  const description = String(editGroupDescription || '').trim();
+                  if (!gid || !description) return;
+                  const linkedSupplierId = editGroupLinkToCompany && editGroupSelectedCompany?.type === 'supplier' ? editGroupSelectedCompany.id : null;
+                  const linkedCustomerId = editGroupLinkToCompany && editGroupSelectedCompany?.type === 'customer' ? editGroupSelectedCompany.id : null;
+                  const linkedCompanyName = editGroupLinkToCompany && editGroupSelectedCompany ? editGroupSelectedCompany.name : null;
+                  updateGroup(gid, {
+                    description,
+                    linkedSupplierId,
+                    linkedCustomerId,
+                    linkedCompanyName,
+                  });
+                  setEditGroupModal(null);
+                  setEditGroupDescription('');
+                  setEditGroupLinkToCompany(false);
+                  setEditGroupCompanyQuery('');
+                  setEditGroupCompanyResults([]);
+                  setEditGroupSelectedCompany(null);
                 }}
-                disabled={!String(renameGroupDraft || '').trim()}
-                style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: (hovered || pressed) ? COLORS.blueHover : COLORS.blue, opacity: !String(renameGroupDraft || '').trim() ? 0.5 : 1 })}
+                disabled={!String(editGroupDescription || '').trim()}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 8,
+                  backgroundColor: !String(editGroupDescription || '').trim() ? COLORS.border : hovered || pressed ? COLORS.blueHover : COLORS.blue,
+                  opacity: !String(editGroupDescription || '').trim() ? 0.6 : 1,
+                })}
               >
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Spara</Text>
               </Pressable>
@@ -1114,32 +1310,124 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
       </Modal>
 
       <Modal visible={addGroupModalOpen} transparent animationType="fade" onRequestClose={() => setAddGroupModalOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setAddGroupModalOpen(false)}>
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          onPress={() => {
+            setAddGroupModalOpen(false);
+            setAddGroupDescription('');
+            setAddGroupLinkToCompany(false);
+            setAddGroupCompanyQuery('');
+            setAddGroupCompanyResults([]);
+            setAddGroupSelectedCompany(null);
+          }}
+        >
           <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, padding: 20, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
             <Text style={{ fontSize: 16, fontWeight: '600', color: COLORS.text, marginBottom: 12 }}>Ny grupp</Text>
-            <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Gruppnamn (obligatoriskt)</Text>
+            <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Beskrivning (obligatoriskt)</Text>
             <TextInput
-              value={addGroupName}
-              onChangeText={setAddGroupName}
-              placeholder="T.ex. Leverantörer, Byggledning"
+              value={addGroupDescription}
+              onChangeText={setAddGroupDescription}
+              placeholder="T.ex. Beställargrupp, Konstruktörer"
               placeholderTextColor="#94A3B8"
-              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 16, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+              style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, marginBottom: 12, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
             />
+            <Pressable
+              onPress={() => setAddGroupLinkToCompany((v) => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: addGroupLinkToCompany ? 12 : 16 }}
+            >
+              <Ionicons
+                name={addGroupLinkToCompany ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={addGroupLinkToCompany ? COLORS.blue : COLORS.textSubtle}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 14, color: COLORS.text }}>Koppla grupp till ett företag</Text>
+            </Pressable>
+            {addGroupLinkToCompany ? (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 8 }}>Företag (sök leverantörer och kunder, minst 2 tecken)</Text>
+                <TextInput
+                  value={addGroupCompanyQuery}
+                  onChangeText={(text) => {
+                    setAddGroupCompanyQuery(text);
+                    handleAddGroupCompanySearch(text);
+                  }}
+                  placeholder="Sök företagsnamn..."
+                  placeholderTextColor="#94A3B8"
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                />
+                {addGroupSelectedCompany ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: COLORS.bgMuted, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 14, color: COLORS.text, flex: 1 }}>{addGroupSelectedCompany.name}</Text>
+                    <Pressable onPress={() => { setAddGroupSelectedCompany(null); setAddGroupCompanyQuery(''); setAddGroupCompanyResults([]); }} hitSlop={8}>
+                      <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+                    </Pressable>
+                  </View>
+                ) : null}
+                {addGroupCompanyResults.length > 0 && !addGroupSelectedCompany ? (
+                  <View style={{ marginTop: 4, borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, maxHeight: 200 }}>
+                    <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                      {addGroupCompanyResults.map((company) => (
+                        <Pressable
+                          key={`${company.type}-${company.id}`}
+                          onPress={() => {
+                            setAddGroupSelectedCompany(company);
+                            setAddGroupCompanyQuery(company.name);
+                            setAddGroupCompanyResults([]);
+                          }}
+                          style={({ hovered }) => ({ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}
+                        >
+                          <Text style={{ fontSize: 14, color: COLORS.text }}>{company.name}</Text>
+                          <Text style={{ fontSize: 12, color: COLORS.textMuted }}>{company.type === 'supplier' ? 'Leverantör' : 'Kund'}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-              <Pressable onPress={() => setAddGroupModalOpen(false)} style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}>
+              <Pressable
+                onPress={() => {
+                  setAddGroupModalOpen(false);
+                  setAddGroupDescription('');
+                  setAddGroupLinkToCompany(false);
+                  setAddGroupCompanyQuery('');
+                  setAddGroupCompanyResults([]);
+                  setAddGroupSelectedCompany(null);
+                }}
+                style={({ hovered }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: hovered ? COLORS.bgMuted : 'transparent' })}
+              >
                 <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.textMuted }}>Avbryt</Text>
               </Pressable>
               <Pressable
                 onPress={() => {
-                  const title = String(addGroupName || '').trim();
-                  if (title) {
-                    addGroup({ title });
-                    setAddGroupModalOpen(false);
-                    setAddGroupName('');
-                  }
+                  const description = String(addGroupDescription || '').trim();
+                  if (!description) return;
+                  const linkedSupplierId = addGroupLinkToCompany && addGroupSelectedCompany?.type === 'supplier' ? addGroupSelectedCompany.id : null;
+                  const linkedCustomerId = addGroupLinkToCompany && addGroupSelectedCompany?.type === 'customer' ? addGroupSelectedCompany.id : null;
+                  const linkedCompanyName = addGroupLinkToCompany && addGroupSelectedCompany ? addGroupSelectedCompany.name : null;
+                  addGroup({
+                    description,
+                    linkedSupplierId: linkedSupplierId || undefined,
+                    linkedCustomerId: linkedCustomerId || undefined,
+                    linkedCompanyName: linkedCompanyName || undefined,
+                  });
+                  setAddGroupModalOpen(false);
+                  setAddGroupDescription('');
+                  setAddGroupLinkToCompany(false);
+                  setAddGroupCompanyQuery('');
+                  setAddGroupCompanyResults([]);
+                  setAddGroupSelectedCompany(null);
                 }}
-                disabled={!String(addGroupName || '').trim()}
-                style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: !String(addGroupName || '').trim() ? COLORS.border : (hovered || pressed) ? COLORS.blueHover : COLORS.blue, opacity: !String(addGroupName || '').trim() ? 0.6 : 1 })}
+                disabled={!String(addGroupDescription || '').trim()}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 8,
+                  backgroundColor: !String(addGroupDescription || '').trim() ? COLORS.border : hovered || pressed ? COLORS.blueHover : COLORS.blue,
+                  opacity: !String(addGroupDescription || '').trim() ? 0.6 : 1,
+                })}
               >
                 <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Skapa</Text>
               </Pressable>
@@ -1159,9 +1447,25 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
             const a = groupMenuAnchor;
             if (!a?.gid || !it) return;
             setGroupMenuAnchor(null);
-            if (String(it.key) === 'rename') {
-              setRenameGroupDraft(String(a.title || '').trim() || '');
-              setRenameGroupModal({ gid: a.gid, currentTitle: a.title });
+            if (String(it.key) === 'edit') {
+              const group = (groups || []).find((g) => String(g?.id || '') === String(a.gid || ''));
+              const desc = group?.description ?? group?.title ?? '';
+              const hasCompany = !!(group?.linkedSupplierId || group?.linkedCustomerId);
+              const companyName = group?.linkedCompanyName ?? '';
+              const selected =
+                hasCompany && companyName
+                  ? {
+                      id: group?.linkedSupplierId || group?.linkedCustomerId,
+                      name: companyName,
+                      type: group?.linkedSupplierId ? 'supplier' : 'customer',
+                    }
+                  : null;
+              setEditGroupDescription(String(desc).trim());
+              setEditGroupLinkToCompany(hasCompany);
+              setEditGroupCompanyQuery(companyName);
+              setEditGroupCompanyResults([]);
+              setEditGroupSelectedCompany(selected);
+              setEditGroupModal({ gid: a.gid });
               return;
             }
             if (String(it.key) === 'delete') {
@@ -1220,6 +1524,8 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
         onClose={() => setActiveModalGroupId(null)}
         companyId={companyId}
         existingMemberKeys={activeExistingMemberKeys}
+        groupLinkedSupplierId={activeGroup?.linkedSupplierId ?? undefined}
+        groupLinkedCustomerId={activeGroup?.linkedCustomerId ?? undefined}
         defaultShowInternal
         defaultShowExternal={!activeIsLockedGroup}
         allowInternal

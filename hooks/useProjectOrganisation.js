@@ -19,17 +19,26 @@ import { auth, db } from '../components/firebase';
 const COLLECTION = 'project_organisation';
 
 function normalizeGroups(raw) {
+  if (raw == null || (typeof raw !== 'object' && !Array.isArray(raw))) {
+    return [];
+  }
   const groups = Array.isArray(raw)
     ? raw
-    : (raw && typeof raw === 'object'
-      ? Object.keys(raw)
-          .sort((a, b) => Number(a) - Number(b))
-          .map((k) => raw[k])
-      : []);
+    : Object.keys(raw)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => raw[k]);
   return groups
+    .filter((g) => g != null && typeof g === 'object')
     .map((g) => {
       const id = String(g?.id || '').trim() || uuidv4();
-      const title = String(g?.title || '').trim() || 'Grupp';
+      const description = String(g?.description ?? g?.title ?? '').trim();
+      const linkedSupplierId = g?.linkedSupplierId != null ? String(g.linkedSupplierId).trim() || null : null;
+      const linkedCustomerId = g?.linkedCustomerId != null ? String(g.linkedCustomerId).trim() || null : null;
+      const linkedCompanyName = String(g?.linkedCompanyName ?? '').trim() || null;
+      const title =
+        linkedCompanyName && description
+          ? `${linkedCompanyName} - ${description}`
+          : String(g?.title ?? '').trim() || description || 'Grupp';
       const groupType = String(g?.groupType || g?.type || '').trim() || null;
       const isInternalMainGroup = !!g?.isInternalMainGroup;
       const locked = g?.locked === true || g?.isLocked === true;
@@ -37,6 +46,10 @@ function normalizeGroups(raw) {
       return {
         id,
         title,
+        description: description || null,
+        linkedSupplierId,
+        linkedCustomerId,
+        linkedCompanyName,
         groupType,
         isInternalMainGroup,
         locked,
@@ -105,23 +118,39 @@ export function useProjectOrganisation({ companyId, projectId }) {
     setLoading(true);
     setError('');
 
-    const ref = doc(db, 'foretag', cid, COLLECTION, pid);
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const next = snap.exists() ? ensureDocShape(snap.data(), pid) : { projectId: pid, groups: [] };
-        setOrganisation(next);
+    let unsub;
+    try {
+      if (!db) {
+        setError('Databas ej tillgänglig.');
         setLoading(false);
-      },
-      (err) => {
-        setError(String(err?.message || err || 'Kunde inte läsa organisation.'));
-        setLoading(false);
+        return;
       }
-    );
+      const ref = doc(db, 'foretag', cid, COLLECTION, pid);
+      unsub = onSnapshot(
+        ref,
+        (snap) => {
+          try {
+            const next = snap.exists() ? ensureDocShape(snap.data(), pid) : { projectId: pid, groups: [] };
+            setOrganisation(next);
+          } catch (e) {
+            setError(String(e?.message || e || 'Kunde inte tolka organisationsdata.'));
+            setOrganisation({ projectId: pid, groups: [] });
+          }
+          setLoading(false);
+        },
+        (err) => {
+          setError(String(err?.message || err || 'Kunde inte läsa organisation.'));
+          setLoading(false);
+        }
+      );
+    } catch (e) {
+      setError(String(e?.message || e || 'Kunde inte ansluta till organisation.'));
+      setLoading(false);
+    }
 
     return () => {
       try {
-        unsub();
+        if (unsub && typeof unsub === 'function') unsub();
       } catch (_e) {}
     };
   }, [cid, pid]);
@@ -143,13 +172,27 @@ export function useProjectOrganisation({ companyId, projectId }) {
   );
 
   const addGroup = useCallback(
-    async ({ title } = {}) => {
-      const t = String(title || '').trim() || 'Ny grupp';
+    async ({ title, description, linkedSupplierId, linkedCustomerId, linkedCompanyName } = {}) => {
+      const desc = String(description ?? title ?? '').trim() || 'Ny grupp';
+      const supId = linkedSupplierId != null ? String(linkedSupplierId).trim() || null : null;
+      const custId = linkedCustomerId != null ? String(linkedCustomerId).trim() || null : null;
+      const companyName = String(linkedCompanyName ?? '').trim() || null;
+      const displayTitle =
+        companyName && desc ? `${companyName} - ${desc}` : (title && String(title).trim()) || desc;
       const newId = uuidv4();
       const current = latestRef.current;
+      const newGroup = {
+        id: newId,
+        title: displayTitle,
+        description: desc || null,
+        linkedSupplierId: supId || null,
+        linkedCustomerId: custId || null,
+        linkedCompanyName: companyName || null,
+        members: [],
+      };
       const next = {
         ...current,
-        groups: [...(current.groups || []), { id: newId, title: t, members: [] }],
+        groups: [...(current.groups || []), newGroup],
       };
       await save(next);
       return { ok: true, id: newId };
@@ -193,6 +236,45 @@ export function useProjectOrganisation({ companyId, projectId }) {
         ...current,
         groups: (current.groups || []).map((g) =>
           String(g?.id || '') === gid ? { ...g, title: t || 'Grupp' } : g
+        ),
+      };
+      await save(next);
+      return { ok: true };
+    },
+    [save]
+  );
+
+  const updateGroup = useCallback(
+    async (groupId, { description, linkedSupplierId, linkedCustomerId, linkedCompanyName } = {}) => {
+      const gid = String(groupId || '').trim();
+      if (!gid) return { ok: false, reason: 'no_group' };
+      const current = latestRef.current;
+
+      const hit = (current.groups || []).find((g) => String(g?.id || '') === gid) || null;
+      if (hit && (hit.locked === true || hit.isInternalMainGroup === true)) {
+        return { ok: false, reason: 'locked' };
+      }
+
+      const desc = description != null ? String(description).trim() || null : (hit?.description ?? hit?.title ?? 'Grupp');
+      const supId = linkedSupplierId === undefined ? (hit?.linkedSupplierId ?? null) : (linkedSupplierId != null ? String(linkedSupplierId).trim() || null : null);
+      const custId = linkedCustomerId === undefined ? (hit?.linkedCustomerId ?? null) : (linkedCustomerId != null ? String(linkedCustomerId).trim() || null : null);
+      const companyName = linkedCompanyName === undefined ? (hit?.linkedCompanyName ?? null) : (linkedCompanyName != null ? String(linkedCompanyName).trim() || null : null);
+      const displayTitle =
+        companyName && desc ? `${companyName} - ${desc}` : (desc || 'Grupp');
+
+      const next = {
+        ...current,
+        groups: (current.groups || []).map((g) =>
+          String(g?.id || '') === gid
+            ? {
+                ...g,
+                title: displayTitle,
+                description: desc || null,
+                linkedSupplierId: supId,
+                linkedCustomerId: custId,
+                linkedCompanyName: companyName,
+              }
+            : g
         ),
       };
       await save(next);
@@ -306,11 +388,12 @@ export function useProjectOrganisation({ companyId, projectId }) {
       addGroup,
       removeGroup,
       updateGroupTitle,
+      updateGroup,
       addMember,
       removeMember,
       updateMemberRoles,
     }),
-    [organisation, loading, error, addGroup, removeGroup, updateGroupTitle, addMember, removeMember, updateMemberRoles]
+    [organisation, loading, error, addGroup, removeGroup, updateGroupTitle, updateGroup, addMember, removeMember, updateMemberRoles]
   );
 
   return api;

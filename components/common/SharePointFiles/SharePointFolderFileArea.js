@@ -2693,8 +2693,11 @@ const styles = StyleSheet.create({
   tableDndHintRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 14,
-    paddingVertical: 8,
+    minHeight: 140,
+    flexShrink: 0,
+    paddingVertical: 20,
     paddingHorizontal: 12,
     marginTop: 6,
     borderTopWidth: 1,
@@ -2707,7 +2710,7 @@ const styles = StyleSheet.create({
   },
 
   tableDndHintRowText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#64748B',
   },

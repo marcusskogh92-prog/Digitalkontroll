@@ -310,7 +310,7 @@ export default function WebMainPane(props) {
         {showOuterScroll ? (
           <ScrollView
             ref={rightPaneScrollRef}
-            style={{ flex: 1, minHeight: 0 }}
+            style={{ flex: 1, minHeight: 0, backgroundColor: '#F5F7FA' }}
             contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
           >
             {mainContent}

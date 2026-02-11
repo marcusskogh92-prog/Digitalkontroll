@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Platform, Pressable, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { showAlert } from '../../utils/alerts';
+import { HEADER_ICON_SIZE, SUB_HEADER_PADDING_VERTICAL, SUB_HEADER_PADDING_HORIZONTAL, SUB_HEADER_ITEM_GAP } from './layoutConstants';
 import { fetchCompanySharePointSiteMetas } from '../firebase';
 import { checkSharePointSiteById } from '../../services/azure/hierarchyService';
 import { AdminModalContext } from './AdminModalContext';
@@ -10,8 +11,6 @@ import ContextMenu from '../ContextMenu';
 import HeaderDisplayName from '../HeaderDisplayName';
 import HeaderUserMenu from '../HeaderUserMenu';
 import { formatPersonName } from '../formatPersonName';
-import { UploadPanelTrigger } from './uploads/UploadPanel';
-
 let createPortal = null;
 if (typeof Platform !== 'undefined' && Platform.OS === 'web') {
   try { createPortal = require('react-dom').createPortal; } catch (_e) { createPortal = null; }
@@ -204,10 +203,9 @@ export function HomeHeader({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: 16,
-        backgroundColor: (() => {
-          return 'rgba(25, 118, 210, 0.2)';
-        })(),
+        paddingVertical: SUB_HEADER_PADDING_VERTICAL,
+        paddingHorizontal: SUB_HEADER_PADDING_HORIZONTAL,
+        backgroundColor: 'rgba(25, 118, 210, 0.2)',
         borderBottomWidth: 1,
         borderColor: 'rgba(25, 118, 210, 0.3)',
         borderLeftWidth: 4,
@@ -268,7 +266,7 @@ export function HomeHeader({
             setLeftHeaderWidth(w);
           }
         }}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: SUB_HEADER_ITEM_GAP, flexWrap: 'wrap' }}
       >
         {Platform.OS !== 'web' ? (() => {
           let displayName = '';
@@ -389,7 +387,7 @@ export function HomeHeader({
             }}
             accessibilityLabel="SharePoint Nav"
           >
-            <Ionicons name="git-branch-outline" size={20} color="#1976D2" />
+            <Ionicons name="git-branch-outline" size={HEADER_ICON_SIZE} color="#1976D2" />
             <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Nav</Text>
           </TouchableOpacity>
         ) : null}
@@ -425,7 +423,7 @@ export function HomeHeader({
                 }}
                 accessibilityLabel="Administration"
               >
-                <Ionicons name="settings-outline" size={20} color="#1976D2" />
+                <Ionicons name="settings-outline" size={HEADER_ICON_SIZE} color="#1976D2" />
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Administration</Text>
                 <Ionicons name="chevron-down" size={14} color="#64748B" />
               </TouchableOpacity>
@@ -488,7 +486,7 @@ export function HomeHeader({
               }}
               accessibilityLabel="Register"
             >
-              <Ionicons name="grid-outline" size={20} color="#1976D2" />
+              <Ionicons name="grid-outline" size={HEADER_ICON_SIZE} color="#1976D2" />
               <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Register</Text>
               <Ionicons name="chevron-down" size={14} color="#64748B" />
             </TouchableOpacity>
@@ -548,7 +546,7 @@ export function HomeHeader({
             accessibilityLabel="Notiser"
           >
             <View style={{ position: 'relative' }}>
-              <Ionicons name="notifications-outline" size={20} color="#1976D2" />
+              <Ionicons name="notifications-outline" size={HEADER_ICON_SIZE} color="#1976D2" />
               {notificationsUnreadCount > 0 ? (
                 <View
                   style={{
@@ -676,7 +674,7 @@ export function HomeHeader({
                 )
               ) : sharePointStatus.connected ? (
                 <>
-                  <Ionicons name="cloud" size={32} color="#1976D2" />
+                  <Ionicons name="cloud" size={HEADER_ICON_SIZE} color="#1976D2" />
                   {hasSharePointAnim ? (
                     <Animated.View
                       style={{
@@ -718,7 +716,7 @@ export function HomeHeader({
                 </>
               ) : (
                 <>
-                  <Ionicons name="cloud" size={32} color="#999" />
+                  <Ionicons name="cloud" size={HEADER_ICON_SIZE} color="#999" />
                   {hasSharePointAnim ? (
                     <Animated.View
                       style={{
@@ -924,7 +922,6 @@ export function HomeHeader({
             document.body
           );
         })()}
-        <UploadPanelTrigger />
         {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && notificationDropdownVisible && (() => {
           const dropMinW = 280;
           const dropMaxW = 400;

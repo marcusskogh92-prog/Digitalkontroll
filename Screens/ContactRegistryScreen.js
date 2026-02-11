@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { HomeHeader } from '../components/common/HomeHeader';
 import ContextMenu from '../components/ContextMenu';
 import {
@@ -52,6 +52,43 @@ function formatSwedishMobilePhone(input) {
 
   return parts.join(' ').trim();
 }
+
+const contactModalStyles = StyleSheet.create({
+  dropdown: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '100%',
+    marginTop: 2,
+    maxHeight: 280,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    zIndex: 1000,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  dropdownItemHighlight: { backgroundColor: '#eef6ff' },
+  dropdownItemLast: { borderBottomWidth: 0 },
+  dropdownItemName: { fontSize: 13, color: '#1e293b', fontWeight: '500', flex: 1, minWidth: 0 },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  badge: { backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 11, color: '#0369a1', fontWeight: '500' },
+});
 
 export default function ContactRegistryScreen({ navigation, route }) {
   const routeCompanyId = String(route?.params?.companyId || '').trim();
@@ -118,6 +155,12 @@ export default function ContactRegistryScreen({ navigation, route }) {
   const [inlineEmail, setInlineEmail] = useState('');
   const [inlineSaving, setInlineSaving] = useState(false);
   const [contactModalVisible, setContactModalVisible] = useState(false);
+  const [contactCompanySearchResults, setContactCompanySearchResults] = useState([]);
+  const [contactCompanySearchOpen, setContactCompanySearchOpen] = useState(false);
+  const [contactCompanyHighlightedIndex, setContactCompanyHighlightedIndex] = useState(0);
+  const [contactLinkedSupplierId, setContactLinkedSupplierId] = useState('');
+  const [contactCustomerId, setContactCustomerId] = useState('');
+  const contactCompanySearchDebounceRef = useRef(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -380,6 +423,10 @@ export default function ContactRegistryScreen({ navigation, route }) {
     setEditingCompanyName('');
     setName('');
     setContactCompanyName('');
+    setContactLinkedSupplierId('');
+    setContactCustomerId('');
+    setContactCompanySearchResults([]);
+    setContactCompanySearchOpen(false);
     setRole('');
     setPhone('');
     setEmail('');
@@ -400,6 +447,10 @@ export default function ContactRegistryScreen({ navigation, route }) {
       setEditingCompanyName(String(contact?.companyName || '').trim());
       setName(String(contact?.name || ''));
       setContactCompanyName(String(contact?.contactCompanyName || contact?.companyName || '').trim());
+      setContactLinkedSupplierId(String(contact?.linkedSupplierId ?? '').trim());
+      setContactCustomerId(String(contact?.customerId ?? '').trim());
+      setContactCompanySearchResults([]);
+      setContactCompanySearchOpen(false);
       setRole(String(contact?.role || ''));
       setPhone(formatSwedishMobilePhone(contact?.phone || ''));
       setEmail(String(contact?.email || ''));
@@ -481,13 +532,14 @@ export default function ContactRegistryScreen({ navigation, route }) {
     try {
       const payloadBase = {
         name: n,
-        contactCompanyName: String(contactCompanyName || '').trim(), // Företag som kontakten jobbar på
+        contactCompanyName: String(contactCompanyName || '').trim(),
         role: String(role || '').trim(),
         phone: String(phone || '').trim(),
         email: String(email || '').trim(),
         companyId: null,
-        customerId: null,
+        customerId: contactCustomerId.trim() || null,
         companyType: null,
+        linkedSupplierId: contactLinkedSupplierId.trim() || null,
       };
 
       const payload = editingId
@@ -504,21 +556,41 @@ export default function ContactRegistryScreen({ navigation, route }) {
         await updateCompanyContact({ id: editingId, patch: payload }, cid || undefined);
       } else {
         const newId = await createCompanyContact(payload, cid || undefined);
-        const match = await resolveCompanyMatch(payload.contactCompanyName);
-        if (match?.type === 'supplier') {
-          await linkExistingContactToSupplier(cid || undefined, match.supplier.id, newId, {
+        if (contactLinkedSupplierId.trim()) {
+          await linkExistingContactToSupplier(cid || undefined, contactLinkedSupplierId.trim(), newId, {
             role: payload.role,
             phone: payload.phone,
             email: payload.email,
-            contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
+            contactCompanyName: payload.contactCompanyName,
           });
-        } else if (match?.type === 'customer') {
-          await linkExistingContactToCustomer(cid || undefined, match.customer, newId, {
-            role: payload.role,
-            phone: payload.phone,
-            email: payload.email,
-            contactCompanyName: match.customer.name || payload.contactCompanyName,
-          });
+        } else if (contactCustomerId.trim()) {
+          const customers = await fetchCompanyCustomers(cid || undefined);
+          const customer = (customers || []).find((c) => c.id === contactCustomerId.trim());
+          if (customer) {
+            await linkExistingContactToCustomer(cid || undefined, customer, newId, {
+              role: payload.role,
+              phone: payload.phone,
+              email: payload.email,
+              contactCompanyName: payload.contactCompanyName,
+            });
+          }
+        } else {
+          const match = await resolveCompanyMatch(payload.contactCompanyName);
+          if (match?.type === 'supplier') {
+            await linkExistingContactToSupplier(cid || undefined, match.supplier.id, newId, {
+              role: payload.role,
+              phone: payload.phone,
+              email: payload.email,
+              contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
+            });
+          } else if (match?.type === 'customer') {
+            await linkExistingContactToCustomer(cid || undefined, match.customer, newId, {
+              role: payload.role,
+              phone: payload.phone,
+              email: payload.email,
+              contactCompanyName: match.customer.name || payload.contactCompanyName,
+            });
+          }
         }
       }
 
@@ -566,6 +638,79 @@ export default function ContactRegistryScreen({ navigation, route }) {
     } catch (_e) {}
     return null;
   };
+
+  const contactModalCompanyList = useMemo(() => (contactCompanySearchResults || []).slice(0, 15), [contactCompanySearchResults]);
+  const contactModalCompanyListLen = contactModalCompanyList.length;
+
+  const handleContactModalCompanySearch = useCallback(
+    (query) => {
+      if (contactCompanySearchDebounceRef.current) clearTimeout(contactCompanySearchDebounceRef.current);
+      const q = String(query ?? '').trim();
+      if (q.length < 2) {
+        setContactCompanySearchResults([]);
+        setContactCompanySearchOpen(false);
+        return;
+      }
+      contactCompanySearchDebounceRef.current = setTimeout(async () => {
+        try {
+          const cid = String(companyId || '').trim() || undefined;
+          const [suppliers, customers] = await Promise.all([
+            fetchCompanySuppliers(cid),
+            fetchCompanyCustomers(cid),
+          ]);
+          const lower = q.toLowerCase();
+          const fromSuppliers = (suppliers || [])
+            .filter((s) => String(s?.companyName ?? '').trim().toLowerCase().includes(lower))
+            .map((s) => ({
+              id: s.id,
+              name: String(s.companyName ?? '').trim(),
+              type: 'supplier',
+              roles: { supplier: true, customer: false },
+            }));
+          const fromCustomers = (customers || [])
+            .filter((c) => String(c?.name ?? '').trim().toLowerCase().includes(lower))
+            .map((c) => ({
+              id: c.id,
+              name: String(c.name ?? '').trim(),
+              type: 'customer',
+              roles: { customer: true, supplier: false },
+            }));
+          const combined = [...fromSuppliers, ...fromCustomers].slice(0, 15);
+          setContactCompanySearchResults(combined);
+          setContactCompanySearchOpen(combined.length > 0);
+          setContactCompanyHighlightedIndex(0);
+        } catch {
+          setContactCompanySearchResults([]);
+        }
+        contactCompanySearchDebounceRef.current = null;
+      }, 300);
+    },
+    [companyId]
+  );
+
+  const handleContactModalSelectCompany = useCallback((company) => {
+    if (!company) return;
+    const name = String(company.name ?? '').trim();
+    if (company.type === 'supplier') {
+      setContactLinkedSupplierId(company.id || '');
+      setContactCustomerId('');
+      setContactCompanyName(name);
+    } else if (company.type === 'customer') {
+      setContactCustomerId(company.id || '');
+      setContactLinkedSupplierId('');
+      setContactCompanyName(name);
+    } else {
+      setContactCompanyName(name);
+      setContactLinkedSupplierId('');
+      setContactCustomerId('');
+    }
+    setContactCompanySearchResults([]);
+    setContactCompanySearchOpen(false);
+  }, []);
+
+  useEffect(() => {
+    setContactCompanyHighlightedIndex(0);
+  }, [contactCompanySearchResults, contactCompanySearchOpen]);
 
   const handleInlineSave = async () => {
     const cid = String(companyId || '').trim();
@@ -872,41 +1017,93 @@ export default function ContactRegistryScreen({ navigation, route }) {
             />
 
             <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Företag</Text>
-            <TextInput
-              value={contactCompanyName}
-              onChangeText={setContactCompanyName}
-              placeholder="t.ex. Tekniska Verken, Skanska, etc."
-              returnKeyType="next"
-              blurOnSubmit={false}
-              onSubmitEditing={() => {
-                // Focus next field (Roll)
-                if (Platform.OS === 'web') {
-                  setTimeout(() => {
-                    try {
-                      const nextInput = document.querySelector('input[placeholder*="Platschef"]');
-                      if (nextInput) nextInput.focus();
-                    } catch(_e) {}
-                  }, 50);
-                }
-              }}
-              style={{ 
-                borderWidth: 1, 
-                borderColor: '#E2E8F0', 
-                paddingVertical: 10, 
-                paddingHorizontal: 12, 
-                borderRadius: 10, 
-                fontSize: 13, 
-                marginBottom: 16,
-                backgroundColor: '#fff',
-                color: '#111',
-                ...(Platform.OS === 'web' ? {
-                  transition: 'border-color 0.2s',
-                  outline: 'none',
-                } : {}),
-              }}
-            />
+            <View style={{ position: 'relative', marginBottom: 16 }}>
+              <TextInput
+                value={contactCompanyName}
+                onChangeText={(v) => {
+                  setContactCompanyName(v);
+                  handleContactModalCompanySearch(v);
+                }}
+                onFocus={() => contactCompanyName.trim().length >= 2 && handleContactModalCompanySearch(contactCompanyName)}
+                onBlur={() => setTimeout(() => setContactCompanySearchOpen(false), 200)}
+                placeholder="Skriv minst 2 tecken – välj kund eller leverantör"
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onKeyDown={(e) => {
+                  if (Platform.OS !== 'web' || !contactCompanySearchOpen || contactModalCompanyListLen === 0) return;
+                  const key = e?.nativeEvent?.key;
+                  if (key === 'ArrowDown') {
+                    e.preventDefault();
+                    setContactCompanyHighlightedIndex((i) => Math.min(i + 1, contactModalCompanyListLen - 1));
+                  } else if (key === 'ArrowUp') {
+                    e.preventDefault();
+                    setContactCompanyHighlightedIndex((i) => Math.max(0, i - 1));
+                  } else if (key === 'Enter' || key === 'Tab') {
+                    e.preventDefault();
+                    const company = contactModalCompanyList[Math.max(0, Math.min(contactCompanyHighlightedIndex, contactModalCompanyListLen - 1))];
+                    if (company) handleContactModalSelectCompany(company);
+                    if (key === 'Tab') {
+                      setTimeout(() => {
+                        try {
+                          const next = document.querySelector('input[placeholder*="Platschef"]');
+                          if (next) next.focus();
+                        } catch (_e) {}
+                      }, 50);
+                    }
+                  }
+                }}
+                onSubmitEditing={() => {
+                  if (Platform.OS === 'web') {
+                    setTimeout(() => {
+                      try {
+                        const nextInput = document.querySelector('input[placeholder*="Platschef"]');
+                        if (nextInput) nextInput.focus();
+                      } catch(_e) {}
+                    }, 50);
+                  }
+                }}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 10,
+                  fontSize: 13,
+                  backgroundColor: '#fff',
+                  color: '#111',
+                  ...(Platform.OS === 'web' ? { outline: 'none' } : {}),
+                }}
+              />
+              {contactCompanySearchOpen && contactModalCompanyListLen > 0 && (
+                <View style={contactModalStyles.dropdown}>
+                  {contactModalCompanyList.map((company, i) => (
+                    <TouchableOpacity
+                      key={company.id || i}
+                      style={[
+                        contactModalStyles.dropdownItem,
+                        i === contactModalCompanyListLen - 1 ? contactModalStyles.dropdownItemLast : null,
+                        i === contactCompanyHighlightedIndex ? contactModalStyles.dropdownItemHighlight : null,
+                      ]}
+                      onPress={() => handleContactModalSelectCompany(company)}
+                      onMouseEnter={() => setContactCompanyHighlightedIndex(i)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={contactModalStyles.dropdownItemName} numberOfLines={1}>{company.name || '—'}</Text>
+                      <View style={contactModalStyles.badges}>
+                        {company.roles?.supplier ? (
+                          <View style={contactModalStyles.badge}><Text style={contactModalStyles.badgeText}>Leverantör</Text></View>
+                        ) : null}
+                        {company.roles?.customer ? (
+                          <View style={contactModalStyles.badge}><Text style={contactModalStyles.badgeText}>Kund</Text></View>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
             <Text style={{ fontSize: 11, color: '#64748b', marginTop: -12, marginBottom: 16 }}>
-              Företag som kontakten jobbar på (kan vara extern kund/leverantör)
+              Företag som kontakten jobbar på (kunder och leverantörer från registret – sökning skiftlägesokänslig)
             </Text>
 
             <Text style={{ fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 6 }}>Roll</Text>

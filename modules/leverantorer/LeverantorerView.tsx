@@ -271,6 +271,7 @@ export default function LeverantorerView({
   const [inlineCategoryIds, setInlineCategoryIds] = useState<string[]>([]);
   const [companyCategories, setCompanyCategories] = useState<{ id: string; name?: string }[]>([]);
   const [formCategoryIds, setFormCategoryIds] = useState<string[]>([]);
+  const [keepExpandedSupplierId, setKeepExpandedSupplierId] = useState<string | null>(null);
   const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [inlineSaving, setInlineSaving] = useState(false);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
@@ -356,6 +357,10 @@ export default function LeverantorerView({
           setFormCategoryIds(payload);
         }
         categoryModalSourceRef.current = null;
+      } else if (typeof payload === 'string' && payload.trim()) {
+        setKeepExpandedSupplierId(payload.trim());
+        loadSuppliers();
+        setTimeout(() => setKeepExpandedSupplierId(null), 800);
       } else {
         loadSuppliers();
       }
@@ -1212,6 +1217,7 @@ export default function LeverantorerView({
                     });
                   }}
                   companyCategories={companyCategories}
+                  keepExpandedSupplierId={keepExpandedSupplierId}
                   inlineEnabled={hasCompany}
                   inlineSaving={inlineSaving}
                   inlineValues={{

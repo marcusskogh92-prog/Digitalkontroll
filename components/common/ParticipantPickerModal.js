@@ -64,6 +64,10 @@ export default function ParticipantPickerModal({
 
   onToggleExternal,
 
+  showAllContactsCheckbox = false,
+  showAllContacts = false,
+  onShowAllContactsChange,
+
   onConfirm,
   confirmLabel = 'Lägg till',
 }) {
@@ -354,6 +358,24 @@ export default function ParticipantPickerModal({
                 <Text style={[styles.filterPillText, showExternal ? styles.filterPillTextActive : null]}>Externa kontakter</Text>
               </Pressable>
             </View>
+          ) : null}
+
+          {showAllContactsCheckbox && allowExternal && showExternal ? (
+            <Pressable
+              onPress={() => onShowAllContactsChange?.(!showAllContacts)}
+              style={[
+                { flexDirection: 'row', alignItems: 'center', marginBottom: 10, marginTop: 4 },
+                Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+              ]}
+            >
+              <Ionicons
+                name={!showAllContacts ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={!showAllContacts ? COLORS.blue : COLORS.textSubtle}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 14, color: COLORS.text }}>Visa endast deltagare från valt företag</Text>
+            </Pressable>
           ) : null}
 
           <View style={styles.tableWrap}>

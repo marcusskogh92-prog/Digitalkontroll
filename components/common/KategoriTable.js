@@ -1,5 +1,5 @@
 /**
- * Tabell för Kategoriregister – kolumner: Kategori, Anteckning, Åtgärder (sticky kebab).
+ * Tabell för Kategoriregister – kolumner: Kategori, Beskrivning, Åtgärder (sticky kebab).
  * Inline-redigering, Enter/Esc, diskreta ✔ ✕. Samma mönster som KontoplanTable.
  */
 
@@ -204,7 +204,7 @@ export default function KategoriTable({
 
   const handleEditKeyDown = (e, item) => {
     if (Platform.OS !== 'web') return;
-    const key = e.nativeEvent?.key;
+    const key = e.key ?? e.nativeEvent?.key;
     if (key === 'Enter') {
       e.preventDefault();
       if (onSaveEdit && !saving && editDraft.name.trim()) {
@@ -232,6 +232,17 @@ export default function KategoriTable({
     );
 
   const stickyRight = Platform.OS === 'web' ? { position: 'sticky', right: 0 } : {};
+  const handleInlineEnter = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e.key ?? e.nativeEvent?.key;
+    const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+    const isEnter = key === 'Enter' || keyCode === 13;
+    if (isEnter) {
+      e.preventDefault();
+      e.stopPropagation?.();
+      if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+    }
+  };
   const toggleSelection = (id) => {
     if (!onSelectionChange) return;
     const set = new Set(selectedCategoryIds);
@@ -266,7 +277,7 @@ export default function KategoriTable({
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
           <View style={styles.columnContent}>
-            <Text style={styles.headerText}>Anteckning</Text>
+            <Text style={styles.headerText}>Beskrivning</Text>
             <SortIcon col="note" />
           </View>
         </TouchableOpacity>
@@ -274,26 +285,46 @@ export default function KategoriTable({
       </View>
 
       {inlineEnabled && (
-        <View style={styles.inlineRow}>
+        <View
+          style={styles.inlineRow}
+          {...(Platform.OS === 'web'
+            ? {
+                onKeyDownCapture: (e) => {
+                  const key = e.key ?? e.nativeEvent?.key;
+                  const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+                  if (key === 'Enter' || keyCode === 13) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+                  }
+                },
+              }
+            : {})}
+        >
           {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f8fafc' }]} /> : null}
           <TextInput
             value={inlineValues?.name ?? ''}
             onChangeText={(v) => onInlineChange?.('name', v)}
             placeholder="t.ex. Golv, Mark, Måleri"
+            multiline={false}
+            returnKeyType="done"
+            blurOnSubmit={false}
+            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.name }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <TextInput
             value={inlineValues?.note ?? ''}
             onChangeText={(v) => onInlineChange?.('note', v)}
-            placeholder="Anteckning (valfritt)"
+            placeholder="Beskrivning (valfritt)"
+            multiline={false}
             returnKeyType="done"
-            blurOnSubmit={true}
+            blurOnSubmit={false}
             onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.note }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
@@ -315,7 +346,7 @@ export default function KategoriTable({
             <TextInput
               value={editDraft.note}
               onChangeText={(v) => setEditDraft((d) => ({ ...d, note: v }))}
-              placeholder="Anteckning"
+              placeholder="Beskrivning"
               style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.note }]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}

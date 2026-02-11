@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { auth, deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../firebase';
 import ContextMenu from '../ContextMenu';
+import ConfirmModal from './Modals/ConfirmModal';
 import KundContacts from '../../modules/kunder/KundContacts';
 import KundForm from '../../modules/kunder/KundForm';
 import KunderTable from '../../modules/kunder/KunderTable';
@@ -34,6 +35,13 @@ import {
   removeContactFromCustomer,
   updateCustomer,
 } from '../../modules/kunder/kunderService';
+import {
+  buildAndDownloadExcel,
+  computeSyncPlan,
+  parseExcelFromBuffer,
+  validateHeaders,
+  KUNDER_EXCEL,
+} from '../../utils/registerExcel';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -164,6 +172,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  excelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
   tableWrap: {},
   emptyState: {
     padding: 32,
@@ -246,6 +265,16 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuCustomer, setRowMenuCustomer] = useState(null);
+  const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmContact, setDeleteConfirmContact] = useState(null); // { customer, contact }
+  const [deletingContact, setDeletingContact] = useState(false);
+  const [excelMenuVisible, setExcelMenuVisible] = useState(false);
+  const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
+  const [importPlan, setImportPlan] = useState(null);
+  const [importConfirmVisible, setImportConfirmVisible] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const excelInputRef = useRef(null);
   const [contactMenuVisible, setContactMenuVisible] = useState(false);
   const [contactMenuPos, setContactMenuPos] = useState({ x: 20, y: 64 });
   const [contactMenuCustomer, setContactMenuCustomer] = useState(null);
@@ -498,19 +527,9 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     }
   };
 
-  const handleDelete = async (customer) => {
-    if (!cid) return;
-    const label = String(customer.name ?? '').trim() || 'kunden';
-    const ok =
-      Platform.OS === 'web'
-        ? window.confirm(`Radera ${label}?`)
-        : await new Promise((resolve) => {
-            Alert.alert('Radera kund', `Radera ${label}?`, [
-              { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Radera', style: 'destructive', onPress: () => resolve(true) },
-            ]);
-          });
-    if (!ok) return;
+  const performDeleteCustomer = async (customer) => {
+    if (!cid || !customer) return;
+    setDeleting(true);
     try {
       await deleteCustomer(cid, customer.id);
       showNotice('Kund borttagen');
@@ -519,8 +538,123 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
         setEditingId(null);
       }
       await loadCustomers();
+      setDeleteConfirmCustomer(null);
     } catch (e) {
       setError(e?.message || 'Kunde inte radera.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const requestDeleteCustomer = (customer) => setDeleteConfirmCustomer(customer);
+
+  const exportExcel = () => {
+    setExcelMenuVisible(false);
+    if (Platform.OS !== 'web') {
+      Alert.alert('Info', 'Excel-export är endast tillgängligt i webbversionen.');
+      return;
+    }
+    const rows = (customers || []).map((c) => KUNDER_EXCEL.itemToRow(c));
+    buildAndDownloadExcel(
+      KUNDER_EXCEL.sheetName,
+      KUNDER_EXCEL.headers,
+      rows,
+      KUNDER_EXCEL.filenamePrefix
+    );
+    showNotice('Excel-mall nedladdad');
+  };
+
+  const handleExcelFileChange = (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file || !cid) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const ab = ev?.target?.result;
+      if (!ab) return;
+      const { headers, rows, errors } = parseExcelFromBuffer(ab);
+      if (errors.length > 0) {
+        setError(errors[0]);
+        return;
+      }
+      const { valid, missing } = validateHeaders(headers, KUNDER_EXCEL.headers);
+      if (!valid) {
+        setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Använd Excel-mallen.`);
+        return;
+      }
+      const plan = computeSyncPlan(rows, customers, {
+        keyField: KUNDER_EXCEL.keyField,
+        getKeyFromRow: (row) => KUNDER_EXCEL.itemToKey(KUNDER_EXCEL.rowToPayload(row)),
+        getKeyFromItem: (item) => KUNDER_EXCEL.itemToKey(item),
+      });
+      setImportPlan(plan);
+      setImportConfirmVisible(true);
+    };
+    reader.readAsArrayBuffer(file);
+    if (excelInputRef.current) excelInputRef.current.value = '';
+  };
+
+  const runKunderImport = async () => {
+    if (!cid || !importPlan) return;
+    setImportBusy(true);
+    setError('');
+    const failed = [];
+    try {
+      for (const row of importPlan.toCreate) {
+        const payload = KUNDER_EXCEL.rowToPayload(row);
+        const name = (payload.name || '').trim();
+        if (!name) continue;
+        try {
+          await createCustomer(cid, payload);
+        } catch (e) {
+          failed.push(`Skapa ${name}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const { id, row } of importPlan.toUpdate) {
+        const payload = KUNDER_EXCEL.rowToPayload(row);
+        try {
+          await updateCustomer(cid, id, payload);
+        } catch (e) {
+          failed.push(`Uppdatera ${payload.name}: ${e?.message || 'fel'}`);
+        }
+      }
+      for (const item of importPlan.toDelete) {
+        try {
+          await deleteCustomer(cid, item.id);
+        } catch (e) {
+          failed.push(`Radera ${item.name ?? item.id}: ${e?.message || 'fel'}`);
+        }
+      }
+      setImportConfirmVisible(false);
+      setImportPlan(null);
+      await loadCustomers();
+      await loadContacts();
+      if (editingId) setEditingId(null);
+      if (failed.length > 0) {
+        setError(`Import klar. ${failed.length} rad(er) misslyckades: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? '…' : ''}`);
+      } else {
+        showNotice('Import genomförd');
+      }
+    } catch (e) {
+      setError(e?.message || 'Kunde inte importera.');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const performDeleteContact = async () => {
+    const { customer, contact } = deleteConfirmContact || {};
+    if (!cid || !customer || !contact) return;
+    setDeletingContact(true);
+    try {
+      await deleteCompanyContact({ id: contact.id }, cid);
+      await removeContactFromCustomer(cid, customer, contact.id);
+      await loadContacts();
+      showNotice('Kontaktperson raderad');
+      setDeleteConfirmContact(null);
+    } catch (e) {
+      setError(e?.message || 'Kunde inte radera.');
+    } finally {
+      setDeletingContact(false);
     }
   };
 
@@ -529,7 +663,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
       Alert.alert('Kund', String(customer.name ?? 'Kund'), [
         { text: 'Avbryt', style: 'cancel' },
         { text: 'Redigera', onPress: () => setEditingId(customer.id) },
-        { text: 'Radera', style: 'destructive', onPress: () => handleDelete(customer) },
+        { text: 'Radera', style: 'destructive', onPress: () => requestDeleteCustomer(customer) },
       ]);
       return;
     }
@@ -610,6 +744,28 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {Platform.OS === 'web' && (
+                      <TouchableOpacity
+                        style={styles.excelBtn}
+                        onPress={(ev) => {
+                          const ne = ev?.nativeEvent || ev;
+                          const target = ne?.target;
+                          if (target && typeof target.getBoundingClientRect === 'function') {
+                            const r = target.getBoundingClientRect();
+                            setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
+                          } else {
+                            setExcelMenuPos({ x: 20, y: 200 });
+                          }
+                          setExcelMenuVisible(true);
+                        }}
+                        accessibilityLabel="Importera / exportera Excel"
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
+                      >
+                        <Ionicons name="grid-outline" size={18} color="#167534" />
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                      </TouchableOpacity>
+                    )}
+                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => { setFormModalVisible(true); }}
@@ -795,9 +951,78 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           if (it.key === 'edit') {
             setEditingId(c.id);
           } else if (it.key === 'delete') {
-            handleDelete(c);
+            requestDeleteCustomer(c);
           }
         }}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmCustomer}
+        message={deleteConfirmCustomer ? `Radera ${String(deleteConfirmCustomer.name ?? '').trim() || 'kunden'}?` : ''}
+        cancelLabel="Avbryt"
+        confirmLabel="OK"
+        compact
+        busy={deleting}
+        onCancel={() => setDeleteConfirmCustomer(null)}
+        onConfirm={() => performDeleteCustomer(deleteConfirmCustomer)}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmContact}
+        message="Radera kontaktpersonen?"
+        cancelLabel="Avbryt"
+        confirmLabel="OK"
+        compact
+        busy={deletingContact}
+        onCancel={() => setDeleteConfirmContact(null)}
+        onConfirm={performDeleteContact}
+      />
+
+      {Platform.OS === 'web' && (
+        <View style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+          <input
+            ref={excelInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleExcelFileChange}
+            style={{ width: 0, height: 0 }}
+          />
+        </View>
+      )}
+
+      <ContextMenu
+        visible={excelMenuVisible}
+        x={excelMenuPos.x}
+        y={excelMenuPos.y}
+        items={[
+          { key: 'export', label: 'Exportera Excel' },
+          { key: 'import', label: 'Importera Excel' },
+        ]}
+        onClose={() => setExcelMenuVisible(false)}
+        onSelect={(it) => {
+          setExcelMenuVisible(false);
+          if (it?.key === 'export') exportExcel();
+          else if (it?.key === 'import') setTimeout(() => excelInputRef.current?.click(), 0);
+        }}
+      />
+
+      <ConfirmModal
+        visible={importConfirmVisible}
+        message={
+          importPlan
+            ? `Importen ersätter hela registret.\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}, Raderas: ${importPlan.toDelete.length}`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Importera"
+        busy={importBusy}
+        onCancel={() => {
+          if (!importBusy) {
+            setImportConfirmVisible(false);
+            setImportPlan(null);
+          }
+        }}
+        onConfirm={runKunderImport}
       />
 
       <ContextMenu
@@ -821,39 +1046,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
             });
             setContactEditOpen(true);
           } else if (it.key === 'delete') {
-            const ok = Platform.OS === 'web' ? window.confirm('Radera kontaktpersonen?') : undefined;
-            if (Platform.OS !== 'web') {
-              Alert.alert('Radera kontakt', 'Radera kontaktpersonen?', [
-                { text: 'Avbryt', style: 'cancel' },
-                {
-                  text: 'Radera',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await deleteCompanyContact({ id: contact.id }, cid);
-                      await removeContactFromCustomer(cid, customer, contact.id);
-                      await loadContacts();
-                      showNotice('Kontaktperson raderad');
-                    } catch (e) {
-                      setError(e?.message || 'Kunde inte radera.');
-                    }
-                  },
-                },
-              ]);
-              return;
-            }
-            if (ok) {
-              (async () => {
-                try {
-                  await deleteCompanyContact({ id: contact.id }, cid);
-                  await removeContactFromCustomer(cid, customer, contact.id);
-                  await loadContacts();
-                  showNotice('Kontaktperson raderad');
-                } catch (e) {
-                  setError(e?.message || 'Kunde inte radera.');
-                }
-              })();
-            }
+            setDeleteConfirmContact({ customer, contact });
           }
         }}
       />

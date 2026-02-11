@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useRef, useState } from 'react';
-import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Alert, Animated, Easing, ImageBackground, Platform, Pressable, ScrollView, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
 import { HeaderSearchDropdown } from '../components/common/HeaderSearchDropdown';
@@ -1139,9 +1140,13 @@ export default function HomeScreen({ navigation, route }) {
   // start background sync hook
   useBackgroundSync(companyId, { onStatus: (s) => setSyncStatus(s) });
 
-  // Panel-bredd och resize-hantering (vänster/höger)
+  // Panel-bredd, collapse och resize-hantering (vänster/höger)
   const {
     leftWidth,
+    setLeftWidth,
+    leftPanelCollapsed,
+    setLeftPanelCollapsed,
+    effectiveLeftWidth,
     rightWidth,
     panResponder,
     panResponderRight,
@@ -1591,9 +1596,12 @@ export default function HomeScreen({ navigation, route }) {
                 {/* Web: scroll ägs av HomeMainPaneContainer/WebMainPane (inte här) */}
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'stretch', minHeight: 0, minWidth: 0 }}>
                   <SharePointLeftPanel
-                    leftWidth={leftWidth}
+                    leftWidth={effectiveLeftWidth}
+                    setLeftWidth={setLeftWidth}
+                    leftPanelCollapsed={leftPanelCollapsed}
+                    onToggleLeftPanelCollapse={() => setLeftPanelCollapsed((c) => !c)}
                     webPaneHeight={webPaneHeight}
-                    panResponder={panResponder}
+                    panResponder={leftPanelCollapsed ? null : panResponder}
                     spinSidebarHome={spinSidebarHome}
                     spinSidebarRefresh={spinSidebarRefresh}
                     onPressHome={() => {
@@ -1713,6 +1721,25 @@ export default function HomeScreen({ navigation, route }) {
                     onAfSelectedItemIdChange={setAfSelectedItemId}
                     afMirrorRefreshNonce={afMirrorRefreshNonce}
                   />
+
+                  {leftPanelCollapsed ? (
+                    <TouchableOpacity
+                      onPress={() => setLeftPanelCollapsed(false)}
+                      style={{
+                        width: 28,
+                        alignSelf: 'stretch',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        backgroundColor: '#e2e8f0',
+                        borderRightWidth: 1,
+                        borderRightColor: '#cbd5e1',
+                      }}
+                      accessibilityLabel="Öppna vänsterpanel"
+                      {...(Platform.OS === 'web' ? { title: 'Öppna vänsterpanel' } : {})}
+                    >
+                      <Ionicons name="chevron-forward" size={20} color="#475569" />
+                    </TouchableOpacity>
+                  ) : null}
 
                   <HomeMainPaneContainer
                     webPaneHeight={webPaneHeight}
@@ -1849,9 +1876,12 @@ export default function HomeScreen({ navigation, route }) {
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <SharePointLeftPanel
-              leftWidth={leftWidth}
+              leftWidth={effectiveLeftWidth}
+              setLeftWidth={setLeftWidth}
+              leftPanelCollapsed={leftPanelCollapsed}
+              onToggleLeftPanelCollapse={() => setLeftPanelCollapsed((c) => !c)}
               webPaneHeight={webPaneHeight}
-              panResponder={panResponder}
+              panResponder={leftPanelCollapsed ? null : panResponder}
               spinSidebarHome={spinSidebarHome}
               spinSidebarRefresh={spinSidebarRefresh}
               onPressHome={() => {

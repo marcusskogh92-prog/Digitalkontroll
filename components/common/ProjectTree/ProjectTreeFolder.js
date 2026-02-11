@@ -33,6 +33,8 @@ export default function ProjectTreeFolder({
   // When rendered in the project-mode left panel, rows should be edge-to-edge.
   // That means: no rounded row backgrounds, no margin-based indentation.
   edgeToEdge = false,
+  // When left panel is collapsed, show only the icon (tooltip on web).
+  iconOnly = false,
 }) {
   const [chevronSpinTick, setChevronSpinTick] = useState(0);
   const clickTimeoutRef = useRef(null);
@@ -63,7 +65,7 @@ export default function ProjectTreeFolder({
   const hasFilesDeep = folder?.hasFilesDeep === true;
   const displayFontWeight = staticHeader ? fontWeight : (hasFilesDeep ? fontWeight : '400');
   const iconSize = compact ? (isMainFolder ? 22 : 20) : (isMainFolder ? 28 : 24); // Larger for better visibility
-  const chevronSize = compact ? (isMainFolder ? 18 : 16) : (isMainFolder ? 20 : 18);
+  const chevronSize = compact ? LEFT_NAV.chevronSize : (isMainFolder ? 20 : 18);
   
   // Get folder color - use folder.iconColor or default
   const folderColor = folder?.iconColor 
@@ -242,19 +244,26 @@ export default function ProjectTreeFolder({
   };
 
   if (edgeToEdge) {
-    const indent = isMainFolder ? 0 : 12 * Math.max(1, level);
+    // Samma utseende som startsidans vänsterpanel: LEFT_NAV-tema, rundade hörn, 12px chevron.
+    const indent = isMainFolder ? 0 : LEFT_NAV.indentPerLevel * Math.max(1, level);
     const labelWeight = staticHeader
       ? (isMainFolder ? '700' : '600')
       : hasFilesDeep
         ? (isMainFolder ? '700' : '600')
         : '500';
+    const rowMinHeight = staticHeader ? LEFT_NAV.rowMinHeightCompact : LEFT_NAV.rowMinHeight;
 
     return (
       <SidebarItem
+        iconOnly={iconOnly}
         fullWidth
-        squareCorners={Boolean(Platform.OS === 'web')}
         indentMode="padding"
         indent={indent}
+        style={{
+          minHeight: rowMinHeight,
+          paddingVertical: LEFT_NAV.rowPaddingVertical,
+          ...(isMainFolder ? { paddingHorizontal: LEFT_NAV.rowPaddingHorizontal } : {}),
+        }}
         active={Boolean(isActive)}
         disabled={!canPress}
         onPress={canPress ? handlePress : undefined}
@@ -267,7 +276,7 @@ export default function ProjectTreeFolder({
                 <View
                   style={{
                     marginRight: 6,
-                    minWidth: chevronSize,
+                    minWidth: LEFT_NAV.chevronSize,
                     alignItems: 'center',
                     justifyContent: 'center',
                   }}
@@ -275,7 +284,7 @@ export default function ProjectTreeFolder({
                   <AnimatedChevron
                     expanded={Boolean(isExpanded)}
                     spinTrigger={chevronSpinTick}
-                    size={chevronSize}
+                    size={LEFT_NAV.chevronSize}
                     color={(state.active || state.hovered) ? LEFT_NAV.accent : LEFT_NAV.iconMuted}
                   />
                 </View>
@@ -286,6 +295,7 @@ export default function ProjectTreeFolder({
         )}
         label={displayName}
         labelWeight={labelWeight}
+        labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
         right={() =>
           isExpanded && showAddButton && onAddChild ? (
             <Pressable

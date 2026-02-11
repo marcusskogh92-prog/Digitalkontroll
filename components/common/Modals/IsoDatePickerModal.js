@@ -101,7 +101,7 @@ function monthLabel(date) {
 const SYSTEM_BLUE = '#1976D2';
 const FW_MED = '500';
 
-export default function IsoDatePickerModal({ visible, title = 'Välj datum', value, onSelect, onClose }) {
+export default function IsoDatePickerModal({ visible, title = 'Välj datum', value, onSelect, onClose, onDelete }) {
   const todayIso = React.useMemo(() => toIsoDate(new Date()), []);
 
   const isMulti = Array.isArray(value);
@@ -375,6 +375,27 @@ export default function IsoDatePickerModal({ visible, title = 'Välj datum', val
               />
             </View>
           </View>
+
+          {!isMulti && onDelete && isValidIsoDate(value) ? (
+            <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
+              <Pressable
+                onPress={() => {
+                  onDelete();
+                  close();
+                }}
+                style={({ hovered, pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#DC2626',
+                  backgroundColor: hovered || pressed ? 'rgba(220, 38, 38, 0.12)' : '#FEF2F2',
+                })}
+              >
+                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#B91C1C' }}>Radera datum</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {!isMulti ? null : (
             <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: '#EEF2F7', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>

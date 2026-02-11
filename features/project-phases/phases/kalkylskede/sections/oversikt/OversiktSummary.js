@@ -11,8 +11,10 @@ import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextIn
 import { PhaseChangeLoadingModal } from '../../../../../../components/common/Modals';
 import SelectDropdown from '../../../../../../components/common/SelectDropdown';
 import IsoDatePickerModal from '../../../../../../components/common/Modals/IsoDatePickerModal';
+import ConfirmModal from '../../../../../../components/common/Modals/ConfirmModal';
 import { fetchCompanyProject, hasDuplicateProjectNumber, patchCompanyProject, patchSharePointProjectMetadata, updateSharePointProjectPropertiesFromFirestoreProject, upsertProjectInfoTimelineMilestone } from '../../../../../../components/firebase';
 import { emitProjectUpdated } from '../../../../../../components/projectBus';
+import { useProjectTimelineDates } from '../../../../../../hooks/useProjectTimelineDates';
 import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
 import { enqueueFsExcelSync } from '../../services/fragaSvarExcelSyncQueue';
@@ -109,6 +111,30 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Date picker modal state for ISO dates
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [datePickerField, setDatePickerField] = useState(null); // 'sistaDagForFragor' | 'anbudsinlamning' | 'planeradByggstart' | 'klartForBesiktning'
+  const [clearConfirmField, setClearConfirmField] = useState(null); // samma keys – när satt visas ConfirmModal "Töm datum"
+
+  const { customDates: timelineCustomDates = [] } = useProjectTimelineDates(companyId || null, projectId || null);
+
+  const FIELD_TO_SOURCE_KEY = {
+    sistaDagForFragor: 'sista-dag-for-fragor',
+    anbudsinlamning: 'anbudsinlamning',
+    planeradByggstart: 'planerad-byggstart',
+    klartForBesiktning: 'klart-for-besiktning',
+  };
+  const hasOutlookForField = useCallback((fieldKey) => {
+    const sourceKey = FIELD_TO_SOURCE_KEY[fieldKey];
+    if (!sourceKey) return false;
+    const item = (timelineCustomDates || []).find(
+      (d) => String(d?.source || '').trim() === 'projectinfo' && String(d?.sourceKey || '').trim() === sourceKey
+    );
+    return Boolean(
+      item &&
+        (item.outlookEventId ||
+          item?.outlook?.eventId ||
+          item.outlookStatus === 'sent' ||
+          item?.outlook === 'sent')
+    );
+  }, [timelineCustomDates]);
 
   // Store original values to detect changes
   const [originalValues, setOriginalValues] = useState({});
@@ -726,6 +752,66 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setDatePickerField(null);
   }, []);
 
+  const requestClearDate = useCallback((fieldKey) => {
+    if (datePickerField === fieldKey) {
+      setDatePickerVisible(false);
+      setDatePickerField(null);
+    }
+    setClearConfirmField(fieldKey);
+  }, [datePickerField]);
+
+  const performClearDate = useCallback(async () => {
+    const fieldKey = clearConfirmField;
+    setClearConfirmField(null);
+    if (!fieldKey || !companyId || !projectId) return;
+
+    const sourceKey = FIELD_TO_SOURCE_KEY[fieldKey];
+    const empty = '';
+    const updates = {};
+    const canonical = {};
+    const legacyMirror = {};
+    if (fieldKey === 'sistaDagForFragor') {
+      updates.sistaDagForFragor = empty;
+      canonical.lastQuestionDate = empty;
+      setSistaDagForFragor(empty);
+    } else if (fieldKey === 'anbudsinlamning') {
+      updates.anbudsinlamning = empty;
+      canonical.tenderSubmissionDate = empty;
+      legacyMirror.anbudstid = empty;
+      setAnbudsinlamning(empty);
+    } else if (fieldKey === 'planeradByggstart') {
+      updates.planeradByggstart = empty;
+      canonical.plannedConstructionStart = empty;
+      legacyMirror.byggstart = empty;
+      setPlaneradByggstart(empty);
+    } else if (fieldKey === 'klartForBesiktning') {
+      updates.klartForBesiktning = empty;
+      canonical.readyForInspectionDate = empty;
+      legacyMirror.fardigstallning = empty;
+      setKlartForBesiktning(empty);
+    }
+    showSavingFeedback();
+    setSaving(true);
+    try {
+      const updatedProject = await updateProjectInHierarchy({ ...canonical, ...updates, ...legacyMirror });
+      await upsertProjectInfoTimelineMilestone(companyId, projectId, {
+        key: sourceKey,
+        title: fieldKey === 'sistaDagForFragor' ? 'Sista dag för frågor' : fieldKey === 'anbudsinlamning' ? 'Anbudsinlämning' : fieldKey === 'planeradByggstart' ? 'Planerad byggstart' : 'Klart för besiktning',
+        date: empty,
+      });
+      setOriginalValues((prev) => ({ ...prev, ...updates }));
+      setHasChangesTider(false);
+      emitProjectUpdated(updatedProject);
+      showSaveSuccessFeedback('Datumet har tagits bort');
+    } catch (error) {
+      console.error('[OversiktSummary] Error clearing date:', error);
+      hideSaveFeedback();
+      Alert.alert('Fel', `Kunde inte ta bort datum: ${error?.message || 'Okänt fel'}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [clearConfirmField, companyId, projectId, updateProjectInHierarchy, showSavingFeedback, hideSaveFeedback, showSaveSuccessFeedback]);
+
   const datePickerValue = React.useMemo(() => {
     if (datePickerField === 'sistaDagForFragor') return sistaDagForFragor;
     if (datePickerField === 'anbudsinlamning') return anbudsinlamning;
@@ -1296,6 +1382,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.sistaDagForFragor || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('sistaDagForFragor')}
+            onClear={sistaDagForFragor ? () => requestClearDate('sistaDagForFragor') : undefined}
           />
           <DateRow
             key="anbudsinlamning"
@@ -1304,6 +1391,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.anbudsinlamning || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('anbudsinlamning')}
+            onClear={anbudsinlamning ? () => requestClearDate('anbudsinlamning') : undefined}
           />
           <DateRow
             key="planeradByggstart"
@@ -1312,6 +1400,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.planeradByggstart || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('planeradByggstart')}
+            onClear={planeradByggstart ? () => requestClearDate('planeradByggstart') : undefined}
           />
           <DateRow
             key="klartForBesiktning"
@@ -1320,6 +1409,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             originalValue={originalValues.klartForBesiktning || ''}
             placeholder="YYYY-MM-DD"
             onOpen={() => openDatePicker('klartForBesiktning')}
+            onClear={klartForBesiktning ? () => requestClearDate('klartForBesiktning') : undefined}
           />
         </InfoCard>
           </View>
@@ -1394,6 +1484,31 @@ export default function OversiktSummary({ projectId, companyId, project }) {
         value={datePickerValue}
         onSelect={handleDatePicked}
         onClose={closeDatePicker}
+        onDelete={
+          datePickerField && datePickerValue
+            ? () => {
+                closeDatePicker();
+                requestClearDate(datePickerField);
+              }
+            : undefined
+        }
+      />
+
+      <ConfirmModal
+        visible={!!clearConfirmField}
+        message={
+          clearConfirmField
+            ? hasOutlookForField(clearConfirmField)
+              ? 'Du har skickat ut en Outlook-kallelse för detta datum. Glöm inte att radera eller avboka den i Outlook (t.ex. under Tidsplan och viktiga datum).\n\nVill du tömma datumet?'
+              : 'Vill du tömma detta datum?'
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Töm datum"
+        danger
+        onCancel={() => setClearConfirmField(null)}
+        onConfirm={performClearDate}
+        compact
       />
 
       {/* Info Tooltip Modal - Rendered after dropdown modals to appear on top */}
@@ -1878,10 +1993,11 @@ const InfoRow = ({ label, value, onChange, placeholder, multiline = false, origi
   );
 };
 
-// DateRow component - opens a calendar and stores ISO YYYY-MM-DD
-const DateRow = ({ label, value, placeholder, originalValue = '', onOpen }) => {
+// DateRow component - opens a calendar and stores ISO YYYY-MM-DD; optional onClear shows kryss to töm datum
+const DateRow = ({ label, value, placeholder, originalValue = '', onOpen, onClear }) => {
   const displayValue = isValidIsoDate(value) ? String(value) : '';
   const hasChanged = String(displayValue || '').trim() !== String(originalValue || '').trim();
+  const showClear = onClear && displayValue;
 
   return (
     <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
@@ -1897,11 +2013,32 @@ const DateRow = ({ label, value, placeholder, originalValue = '', onOpen }) => {
             placeholder={placeholder}
             editable={false}
             pointerEvents="none"
-            style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: 40 }]}
+            style={[styles.infoInput, hasChanged && styles.infoInputChanged, { paddingRight: showClear ? 76 : 40 }]}
             autoCapitalize="none"
             autoCorrect={false}
           />
         </TouchableOpacity>
+        {showClear ? (
+          <TouchableOpacity
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              onClear();
+            }}
+            activeOpacity={0.7}
+            style={{
+              position: 'absolute',
+              right: 40,
+              top: 0,
+              bottom: 0,
+              justifyContent: 'center',
+              alignItems: 'center',
+              paddingHorizontal: 6,
+              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+            }}
+          >
+            <Ionicons name="close-circle-outline" size={20} color="#64748B" />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           onPress={onOpen}
           activeOpacity={0.7}

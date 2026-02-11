@@ -18,6 +18,7 @@ import SelectDropdownOrig, { SelectDropdownChip } from '../../components/common/
 /** Cast så att SelectDropdown accepterar våra props (keepOpenOnSelect/visible/onToggleVisible är inte krävda i körning – .js-komponenten). */
 const SelectDropdown = SelectDropdownOrig as unknown as React.ComponentType<Record<string, unknown>>;
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
+import { formatOrganizationNumber } from '../../utils/formatOrganizationNumber';
 import type { Supplier } from './leverantorerService';
 
 /** Kolumnordning: Leverantör, Org-nr, Ort, Kategori, Kebab. Bredder: Leverantör 0.9, Org-nr 170px, Ort 160px, Kategori 1 (huvudyta), Kebab 30px + divider. */
@@ -147,11 +148,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
-    padding: 16,
-    paddingLeft: 26,
+    paddingVertical: 16,
+    paddingHorizontal: 26,
   },
   detailsInner: {
-    maxWidth: 720,
+    width: '100%',
   },
   /** Öppet läge: företagets header (summary) – alltid read-only */
   openSummary: {
@@ -318,7 +319,7 @@ const styles = StyleSheet.create({
   },
   /** Relationer – kompakt sektion med + Byggdelar / + Konton / + Kategorier */
   openRelationerSection: {
-    marginBottom: 20,
+    marginBottom: 8,
   },
   openRelationerTitle: {
     fontSize: 12,
@@ -378,6 +379,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#2563eb',
     fontWeight: '500',
+  },
+  /** Expander-sektion: klickbar rubrikrad med chevron */
+  expanderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    marginBottom: 0,
+  },
+  expanderHeaderTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 6,
+  },
+  expanderChevron: {
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** Tydlig avdelare mellan expanderad leverantör (kontakter) och nästa rad i listan */
+  detailsDivider: {
+    height: 2,
+    backgroundColor: '#cbd5e1',
+    marginVertical: 16,
+    marginHorizontal: 0,
+    borderRadius: 1,
   },
   detailsMeta: {
     fontSize: 12,
@@ -690,6 +719,8 @@ interface LeverantorerTableProps {
     }
   ) => void;
   onCancelEdit?: () => void;
+  /** Efter sparning från Byggdel/Konton/Kategori-modal: håll denna leverantör expanderad. */
+  keepExpandedSupplierId?: string | null;
 }
 
 export default function LeverantorerTable({
@@ -727,9 +758,14 @@ export default function LeverantorerTable({
   inlineSavingCustomer = false,
   onSaveEdit,
   onCancelEdit,
+  keepExpandedSupplierId,
 }: LeverantorerTableProps): React.ReactElement {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  /** Relationer-sektion expanderad (default stängd). */
+  const [relationerExpandedIds, setRelationerExpandedIds] = useState<Record<string, boolean>>({});
+  /** Kontaktpersoner-sektion expanderad (default öppen). */
+  const [kontaktpersonerExpandedIds, setKontaktpersonerExpandedIds] = useState<Record<string, boolean>>({});
   /** Vilken sektion som är i redigeringsläge per leverantör (null = alla i läsläge). */
   const [editingSection, setEditingSection] = useState<Record<string, 'categories' | 'byggdelar' | 'konton' | 'contacts' | 'address' | null>>({});
   /** E-postlänk hover (för underline) i öppet läge kontakt-tabell. */
@@ -791,7 +827,7 @@ export default function LeverantorerTable({
         : editingSupplier.category ?? '';
       setEditDraft({
         companyName: String(editingSupplier.companyName ?? ''),
-        organizationNumber: String(editingSupplier.organizationNumber ?? ''),
+        organizationNumber: formatOrganizationNumber(String(editingSupplier.organizationNumber ?? '')),
         address: String(editingSupplier.address ?? ''),
         postalCode: String(editingSupplier.postalCode ?? ''),
         city: String(editingSupplier.city ?? ''),
@@ -801,6 +837,13 @@ export default function LeverantorerTable({
       setEditDraft(null);
     }
   }, [editingId, editingSupplier]);
+
+  /** Efter sparning från Byggdel/Konton/Kategori-modal: håll leverantören expanderad. */
+  React.useEffect(() => {
+    if (keepExpandedSupplierId?.trim()) {
+      setExpandedIds((prev) => ({ ...prev, [keepExpandedSupplierId]: true }));
+    }
+  }, [keepExpandedSupplierId]);
 
   /** Resolverar kategori-ids till namn om companyCategories finns; annars används värden som namn (legacy). */
   const getCategoryNames = (supplier: Supplier): string[] => {
@@ -967,7 +1010,7 @@ export default function LeverantorerTable({
                 onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
                 style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                 placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (!inlineSaving) onInlineSave?.(); } } } : {})}
               />
             </View>
           </View>
@@ -975,11 +1018,14 @@ export default function LeverantorerTable({
             <View style={styles.columnContent}>
               <TextInput
                 value={inlineValues?.organizationNumber ?? ''}
-                onChangeText={(v) => onInlineChange?.('organizationNumber', v)}
-                placeholder="Org-nr (ny)"
+                onChangeText={(v) => onInlineChange?.('organizationNumber', formatOrganizationNumber(v))}
+                placeholder="xxxxxx-xxxx"
+                returnKeyType="done"
+                blurOnSubmit={false}
+                onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
                 style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                 placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (!inlineSaving) onInlineSave?.(); } } } : {})}
               />
             </View>
           </View>
@@ -989,9 +1035,12 @@ export default function LeverantorerTable({
                 value={inlineValues?.city ?? ''}
                 onChangeText={(v) => onInlineChange?.('city', v)}
                 placeholder="Ort (ny)"
+                returnKeyType="done"
+                blurOnSubmit={false}
+                onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
                 style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                 placeholderTextColor="#94a3b8"
-                {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (!inlineSaving) onInlineSave?.(); } } } : {})}
               />
             </View>
           </View>
@@ -1071,8 +1120,8 @@ export default function LeverantorerTable({
                 <View style={styles.columnContent}>
                   <TextInput
                     value={editDraft.organizationNumber}
-                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, organizationNumber: v } : d))}
-                    placeholder="Org-nr"
+                    onChangeText={(v) => setEditDraft((d) => (d ? { ...d, organizationNumber: formatOrganizationNumber(v) } : d))}
+                    placeholder="xxxxxx-xxxx"
                     style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                     placeholderTextColor="#94a3b8"
                     {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e: React.KeyboardEvent) => handleEditKeyDown(e, supplier) } : {})}
@@ -1237,7 +1286,7 @@ export default function LeverantorerTable({
               <View style={[styles.cellFixed, { width: FIXED.organizationNumber }]}>
                 <View style={styles.columnContent}>
                   <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
-                    {supplier.organizationNumber || '—'}
+                    {formatOrganizationNumber(supplier.organizationNumber ?? '') || '—'}
                   </Text>
                 </View>
               </View>
@@ -1294,161 +1343,207 @@ export default function LeverantorerTable({
                     {supplier.companyName || '—'}
                   </Text>
                   <Text style={styles.openSummaryMeta} numberOfLines={1}>
-                    {[
-                      'Leverantör',
-                      getCategoryList(supplier).slice(0, 2).join(', ') || null,
-                      supplier.city?.trim() || null,
-                    ]
-                      .filter(Boolean)
-                      .join(' • ')}
+                    {['Leverantörer', ...getCategoryList(supplier).slice(0, 10)].join(' • ') || 'Leverantörer'}
                   </Text>
                 </View>
 
-                {/* Relationer – tvåkolumnslayout: vänster action, höger kopplade värden, vertikal divider */}
+                {/* Relationer – expander (default stängd), tvåkolumnslayout när öppen */}
                 <View style={styles.openRelationerSection}>
-                  <Text style={styles.openRelationerTitle}>Relationer</Text>
-                  <View style={styles.openRelationerRow}>
-                    <View style={styles.openRelationerColLeft}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (onOpenByggdelar) onOpenByggdelar(supplier);
-                          else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'byggdelar' }));
-                        }}
-                        activeOpacity={0.8}
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                      >
-                        <Text style={styles.openRelationerLink}>+ Byggdelar</Text>
-                      </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.expanderHeader}
+                    onPress={() => setRelationerExpandedIds((prev) => ({ ...prev, [supplier.id]: !(prev[supplier.id] ?? false) }))}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                  >
+                    <View style={styles.expanderHeaderTouchable}>
+                      <View style={styles.expanderChevron}>
+                        <Ionicons
+                          name={relationerExpandedIds[supplier.id] ? 'chevron-down' : 'chevron-forward'}
+                          size={20}
+                          color="#475569"
+                        />
+                      </View>
+                      <Text style={styles.openRelationerTitle}>Relationer</Text>
                     </View>
-                    <View style={styles.openRelationerColRight}>
-                      {Array.isArray(supplier.byggdelTags) && supplier.byggdelTags.length > 0 ? (
-                        <Text style={styles.openRelationerValues} numberOfLines={1}>
-                          {(supplier.byggdelTags as string[])
-                            .slice(0, 5)
-                            .map((code) => {
-                              const b = companyByggdelar.find((x) => (x.code ?? x.id) === code);
-                              return b ? (b.name ?? b.code ?? code) : code;
-                            })
-                            .join(', ')}
-                          {(supplier.byggdelTags?.length ?? 0) > 5 ? ` +${(supplier.byggdelTags?.length ?? 0) - 5}` : ''}
-                        </Text>
-                      ) : null}
-                      {!onOpenByggdelar && editingSection[supplier.id] === 'byggdelar' && companyByggdelar.length > 0 && onByggdelarChange ? (
-                        <View style={styles.openRelationerDropdownWrap}>
-                          <SelectDropdown
-                            value={Array.isArray(supplier.byggdelTags) ? supplier.byggdelTags : []}
-                            options={companyByggdelar.map((b) => ({
-                              value: b.code ?? b.id,
-                              label: [b.code, b.name].filter(Boolean).join(' – ') || b.id,
-                            }))}
-                            multiple
-                            searchable
-                            placeholder="Välj byggdelar"
-                            onChange={(next: string[]) => {
-                              onByggdelarChange(supplier, next);
-                              setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                  </TouchableOpacity>
+                  {relationerExpandedIds[supplier.id] ? (
+                    <>
+                      <View style={styles.openRelationerRow}>
+                        <View style={styles.openRelationerColLeft}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (onOpenByggdelar) onOpenByggdelar(supplier);
+                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'byggdelar' }));
                             }}
-                            usePortal={true}
-                            fieldStyle={styles.inlineSelectField}
-                            listStyle={styles.inlineSelectList}
-                            inputStyle={{ fontSize: 13, color: '#111' }}
-                          />
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openRelationerLink}>+ Byggdelar</Text>
+                          </TouchableOpacity>
                         </View>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View style={styles.openRelationerRow}>
-                    <View style={styles.openRelationerColLeft}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (onOpenKonton) onOpenKonton(supplier);
-                          else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'konton' }));
-                        }}
-                        activeOpacity={0.8}
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                      >
-                        <Text style={styles.openRelationerLink}>+ Konton</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.openRelationerColRight}>
-                      {Array.isArray(supplier.konton) && supplier.konton.length > 0 ? (
-                        <Text style={styles.openRelationerValues} numberOfLines={1}>
-                          {(supplier.konton as string[]).slice(0, 5).join(', ')}
-                          {(supplier.konton?.length ?? 0) > 5 ? ` +${(supplier.konton?.length ?? 0) - 5}` : ''}
-                        </Text>
-                      ) : null}
-                      {!onOpenKonton && editingSection[supplier.id] === 'konton' && companyKontoplan.length > 0 && onKontonChange ? (
-                        <View style={styles.openRelationerDropdownWrap}>
-                          <SelectDropdown
-                            value={Array.isArray(supplier.konton) ? supplier.konton : []}
-                            options={companyKontoplan.map((k) => ({
-                              value: k.konto ?? k.id,
-                              label: [k.konto, k.benamning].filter(Boolean).join(' – ') || k.id,
-                            }))}
-                            multiple
-                            searchable
-                            placeholder="Välj konton"
-                            onChange={(next: string[]) => {
-                              onKontonChange(supplier, next);
-                              setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                        <View style={styles.openRelationerColRight}>
+                          {Array.isArray(supplier.byggdelTags) && supplier.byggdelTags.length > 0 ? (
+                            <Text style={styles.openRelationerValues} numberOfLines={1}>
+                              {(supplier.byggdelTags as string[])
+                                .slice(0, 5)
+                                .map((code) => {
+                                  const b = companyByggdelar.find((x) => (x.code ?? x.id) === code);
+                                  return b ? (b.name ?? b.code ?? code) : code;
+                                })
+                                .join(', ')}
+                              {(supplier.byggdelTags?.length ?? 0) > 5 ? ` +${(supplier.byggdelTags?.length ?? 0) - 5}` : ''}
+                            </Text>
+                          ) : null}
+                          {!onOpenByggdelar && editingSection[supplier.id] === 'byggdelar' && companyByggdelar.length > 0 && onByggdelarChange ? (
+                            <View style={styles.openRelationerDropdownWrap}>
+                              <SelectDropdown
+                                value={Array.isArray(supplier.byggdelTags) ? supplier.byggdelTags : []}
+                                options={companyByggdelar.map((b) => ({
+                                  value: b.code ?? b.id,
+                                  label: [b.code, b.name].filter(Boolean).join(' – ') || b.id,
+                                }))}
+                                multiple
+                                searchable
+                                placeholder="Välj byggdelar"
+                                onChange={(next: string[]) => {
+                                  onByggdelarChange(supplier, next);
+                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                                }}
+                                usePortal={true}
+                                fieldStyle={styles.inlineSelectField}
+                                listStyle={styles.inlineSelectList}
+                                inputStyle={{ fontSize: 13, color: '#111' }}
+                              />
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={styles.openRelationerRow}>
+                        <View style={styles.openRelationerColLeft}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (onOpenKonton) onOpenKonton(supplier);
+                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'konton' }));
                             }}
-                            usePortal={true}
-                            fieldStyle={styles.inlineSelectField}
-                            listStyle={styles.inlineSelectList}
-                            inputStyle={{ fontSize: 13, color: '#111' }}
-                          />
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openRelationerLink}>+ Konton</Text>
+                          </TouchableOpacity>
                         </View>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View style={[styles.openRelationerRow, styles.openRelationerRowLast]}>
-                    <View style={styles.openRelationerColLeft}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (onOpenKategorier) onOpenKategorier(supplier);
-                          else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'categories' }));
-                        }}
-                        activeOpacity={0.8}
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                      >
-                        <Text style={styles.openRelationerLink}>+ Kategorier</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.openRelationerColRight}>
-                      {getCategoryList(supplier).length > 0 ? (
-                        <Text style={styles.openRelationerValues} numberOfLines={1}>
-                          {getCategoryList(supplier).slice(0, 5).join(', ')}
-                          {getCategoryList(supplier).length > 5 ? ` +${getCategoryList(supplier).length - 5}` : ''}
-                        </Text>
-                      ) : null}
-                      {!onOpenKategorier && editingSection[supplier.id] === 'categories' && companyCategories.length > 0 && onCategoriesChange ? (
-                        <View style={styles.openRelationerDropdownWrap}>
-                          <SelectDropdown
-                            value={Array.isArray(supplier.categories) ? supplier.categories : []}
-                            options={companyCategories.map((c) => ({ value: c.id, label: c.name ?? c.id }))}
-                            multiple
-                            searchable
-                            placeholder="Välj kategorier"
-                            onChange={(next: string[]) => {
-                              onCategoriesChange(supplier, next);
-                              setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                        <View style={styles.openRelationerColRight}>
+                          {Array.isArray(supplier.konton) && supplier.konton.length > 0 ? (
+                            <Text style={styles.openRelationerValues} numberOfLines={1}>
+                              {(supplier.konton as string[]).slice(0, 5).join(', ')}
+                              {(supplier.konton?.length ?? 0) > 5 ? ` +${(supplier.konton?.length ?? 0) - 5}` : ''}
+                            </Text>
+                          ) : null}
+                          {!onOpenKonton && editingSection[supplier.id] === 'konton' && companyKontoplan.length > 0 && onKontonChange ? (
+                            <View style={styles.openRelationerDropdownWrap}>
+                              <SelectDropdown
+                                value={Array.isArray(supplier.konton) ? supplier.konton : []}
+                                options={companyKontoplan.map((k) => ({
+                                  value: k.konto ?? k.id,
+                                  label: [k.konto, k.benamning].filter(Boolean).join(' – ') || k.id,
+                                }))}
+                                multiple
+                                searchable
+                                placeholder="Välj konton"
+                                onChange={(next: string[]) => {
+                                  onKontonChange(supplier, next);
+                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                                }}
+                                usePortal={true}
+                                fieldStyle={styles.inlineSelectField}
+                                listStyle={styles.inlineSelectList}
+                                inputStyle={{ fontSize: 13, color: '#111' }}
+                              />
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={styles.openRelationerRow}>
+                        <View style={styles.openRelationerColLeft}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (onOpenKategorier) onOpenKategorier(supplier);
+                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'categories' }));
                             }}
-                            usePortal={true}
-                            fieldStyle={styles.inlineSelectField}
-                            listStyle={styles.inlineSelectList}
-                            inputStyle={{ fontSize: 13, color: '#111' }}
-                          />
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openRelationerLink}>+ Kategorier</Text>
+                          </TouchableOpacity>
                         </View>
-                      ) : null}
-                    </View>
-                  </View>
+                        <View style={styles.openRelationerColRight}>
+                          {getCategoryList(supplier).length > 0 ? (
+                            <Text style={styles.openRelationerValues} numberOfLines={1}>
+                              {getCategoryList(supplier).slice(0, 5).join(', ')}
+                              {getCategoryList(supplier).length > 5 ? ` +${getCategoryList(supplier).length - 5}` : ''}
+                            </Text>
+                          ) : null}
+                          {!onOpenKategorier && editingSection[supplier.id] === 'categories' && companyCategories.length > 0 && onCategoriesChange ? (
+                            <View style={styles.openRelationerDropdownWrap}>
+                              <SelectDropdown
+                                value={Array.isArray(supplier.categories) ? supplier.categories : []}
+                                options={companyCategories.map((c) => ({ value: c.id, label: c.name ?? c.id }))}
+                                multiple
+                                searchable
+                                placeholder="Välj kategorier"
+                                onChange={(next: string[]) => {
+                                  onCategoriesChange(supplier, next);
+                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                                }}
+                                usePortal={true}
+                                fieldStyle={styles.inlineSelectField}
+                                listStyle={styles.inlineSelectList}
+                                inputStyle={{ fontSize: 13, color: '#111' }}
+                              />
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                      <View style={[styles.openRelationerRow, styles.openRelationerRowLast]}>
+                        <View style={styles.openRelationerColLeft}>
+                          <TouchableOpacity
+                            onPress={(e) => onRowMenu?.(e, supplier)}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openRelationerLink}>+ Adress</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <View style={styles.openRelationerColRight}>
+                          <Text style={styles.openRelationerValues} numberOfLines={2}>
+                            {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
+                          </Text>
+                        </View>
+                      </View>
+                    </>
+                  ) : null}
                 </View>
 
-                {/* Kontaktpersoner – rubrik och + Lägg till kontakt på samma rad, högerjusterad action */}
+                {/* Kontaktpersoner – expander (default öppen), antal i rubrik, + Lägg till kontakt högerjusterad */}
                 <View style={styles.openRelationerSection}>
-                  <View style={styles.openRelationerHeaderRow}>
-                    <Text style={styles.openRelationerTitle}>Kontaktpersoner</Text>
-                    {editingSection[supplier.id] !== 'contacts' ? (
+                  <View style={styles.expanderHeader}>
+                    <TouchableOpacity
+                      style={styles.expanderHeaderTouchable}
+                      onPress={() => setKontaktpersonerExpandedIds((prev) => ({ ...prev, [supplier.id]: !(prev[supplier.id] ?? true) }))}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                    >
+                      <View style={styles.expanderChevron}>
+                        <Ionicons
+                          name={kontaktpersonerExpandedIds[supplier.id] !== false ? 'chevron-down' : 'chevron-forward'}
+                          size={20}
+                          color="#475569"
+                        />
+                      </View>
+                      <Text style={styles.openRelationerTitle}>
+                        Kontaktpersoner ({(contactMap[supplier.id] || []).length})
+                      </Text>
+                    </TouchableOpacity>
+                    {kontaktpersonerExpandedIds[supplier.id] !== false && editingSection[supplier.id] !== 'contacts' ? (
                       <TouchableOpacity
                         onPress={() => setEditingSection((prev) => ({ ...prev, [supplier.id]: 'contacts' }))}
                         activeOpacity={0.8}
@@ -1458,6 +1553,8 @@ export default function LeverantorerTable({
                       </TouchableOpacity>
                     ) : null}
                   </View>
+                  {kontaktpersonerExpandedIds[supplier.id] !== false ? (
+                  <>
                   <View style={styles.openSectionContent}>
                     {(contactMap[supplier.id] || []).length > 0 ? (
                       <View style={styles.openContactTableWrap}>
@@ -1698,32 +1795,11 @@ export default function LeverantorerTable({
                       ) : null}
                     </>
                   ) : null}
+                  </>
+                  ) : null}
                 </View>
 
-                {/* F. Adress & metadata */}
-                <View style={styles.openSection}>
-                  <Text style={styles.openSectionTitle}>Adress & metadata</Text>
-                  <View style={styles.openSectionContent}>
-                    <Text style={{ fontSize: 13, color: '#334155', marginBottom: 4 }}>
-                      Org-nr: {safeText(supplier.organizationNumber)}
-                    </Text>
-                    <Text style={{ fontSize: 13, color: '#334155', marginBottom: 4 }}>
-                      Ort: {safeText(supplier.city)}
-                    </Text>
-                    <Text style={{ fontSize: 13, color: '#334155' }} numberOfLines={2}>
-                      Adress: {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.openActionBtn}
-                    onPress={() => onRowMenu?.(undefined, supplier)}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                  >
-                    <Ionicons name="pencil" size={14} color="#64748b" />
-                    <Text style={styles.openActionBtnText}>Redigera</Text>
-                  </TouchableOpacity>
-                </View>
+                <View style={styles.detailsDivider} />
               </View>
             </View>
           ) : null}

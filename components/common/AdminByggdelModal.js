@@ -208,7 +208,8 @@ function normalizeCode(v) {
 export default function AdminByggdelModal({ visible, companyId, selectionContext, onClose, onSelectionSaved }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
-  const isSelectionMode = Boolean(selectionContext?.entityId);
+  const isFormMode = selectionContext?.forForm === true;
+  const isSelectionMode = isFormMode || Boolean(selectionContext?.entityId);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -226,6 +227,9 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuItem, setRowMenuItem] = useState(null);
+  const [deleteConfirmByggdel, setDeleteConfirmByggdel] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const tableScrollRef = useRef(null);
   const [excelMenuVisible, setExcelMenuVisible] = useState(false);
   const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
   const excelInputRef = useRef(null);
@@ -267,7 +271,7 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
       setLocalSelectedCodes(Array.isArray(selectionContext.selectedCodes) ? [...selectionContext.selectedCodes] : []);
       setFilterOnlySelected(false);
     }
-  }, [visible, selectionContext?.entityId]);
+  }, [visible, selectionContext?.entityId, selectionContext?.forForm, selectionContext?.selectedCodes]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -362,7 +366,13 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   );
 
   const handleSaveSelection = async () => {
-    if (!cid || !selectionContext?.entityId) return;
+    if (!cid) return;
+    if (isFormMode) {
+      onSelectionSaved?.({ forFormByggdel: true, selectedCodes: localSelectedCodes });
+      onClose();
+      return;
+    }
+    if (!selectionContext?.entityId) return;
     setSavingSelection(true);
     setError('');
     try {
@@ -371,7 +381,8 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
         cid
       );
       showNotice('Val sparade för leverantör');
-      onSelectionSaved?.();
+      onSelectionSaved?.(selectionContext.entityId);
+      onClose();
     } catch (e) {
       setError(formatWriteError(e));
     } finally {
@@ -392,12 +403,23 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   const handleInlineSave = async () => {
     if (!cid) return;
     const code = normalizeCode(inlineByggdel);
-    const name = String(inlineBeskrivning || '').trim();
-    if (!code || !name) return;
+    if (!code) return;
+    const exists = (allByggdelar || []).some(
+      (b) => String(b.code ?? '').trim() === code
+    );
+    if (exists) {
+      setError('BD-numret finns redan. Varje BD ska vara unikt.');
+      return;
+    }
     setInlineSaving(true);
+    setError('');
     try {
       await createByggdel(
-        { code, name, notes: String(inlineAnteckningar || '').trim() },
+        {
+          code,
+          name: String(inlineBeskrivning || '').trim(),
+          notes: String(inlineAnteckningar || '').trim(),
+        },
         cid
       );
       setInlineByggdel('');
@@ -419,8 +441,17 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
       notes: String(values.anteckningar ?? '').trim(),
     };
     if (values.byggdel != null) {
-      const code = normalizeCode(values.byggdel);
-      if (code) patch.code = code;
+      const newCode = normalizeCode(values.byggdel);
+      if (newCode) {
+        const exists = (allByggdelar || []).some(
+          (b) => b.id !== byggdelId && String(b.code ?? '').trim() === newCode
+        );
+        if (exists) {
+          setError('BD-numret finns redan. Varje BD ska vara unikt.');
+          return;
+        }
+        patch.code = newCode;
+      }
     }
     setSaving(true);
     setError('');
@@ -436,29 +467,28 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     }
   };
 
-  const handleDelete = async (item) => {
-    if (item.isDefault) return;
-    if (!cid) return;
-    const code = String(item.code ?? '').trim();
-    const name = String(item.name ?? '').trim();
-    const msg = `Vill du verkligen ta bort byggdel ${code}${name ? ` – ${name}` : ''}?`;
-    const ok =
-      Platform.OS === 'web'
-        ? window.confirm(msg)
-        : await new Promise((resolve) => {
-            Alert.alert('Ta bort byggdel', msg, [
-              { text: 'Avbryt', style: 'cancel', onPress: () => resolve(false) },
-              { text: 'Ta bort', style: 'destructive', onPress: () => resolve(true) },
-            ]);
-          });
-    if (!ok) return;
+  const performDeleteByggdel = async () => {
+    const item = deleteConfirmByggdel;
+    if (!item || !cid) {
+      setDeleteConfirmByggdel(null);
+      return;
+    }
+    if (item.isDefault) {
+      showNotice('Grundbyggdelar kan inte raderas.');
+      setDeleteConfirmByggdel(null);
+      return;
+    }
+    setDeleting(true);
     try {
       await deleteByggdel(cid, item.id);
       showNotice('Byggdel borttagen');
       if (editingId === item.id) setEditingId(null);
       await load();
+      setDeleteConfirmByggdel(null);
     } catch (e) {
       setError(e?.message || 'Kunde inte ta bort.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -562,14 +592,12 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   };
 
   const openRowMenu = (e, item) => {
-    const allowDelete = !item.isDefault;
     if (Platform.OS !== 'web') {
-      const buttons = [
+      Alert.alert('Byggdel', `${item.code ?? ''} ${item.name ?? ''}`.trim(), [
         { text: 'Avbryt', style: 'cancel' },
         { text: 'Redigera', onPress: () => setEditingId(item.id) },
-      ];
-      if (allowDelete) buttons.push({ text: 'Ta bort', style: 'destructive', onPress: () => handleDelete(item) });
-      Alert.alert('Byggdel', `${item.code ?? ''} ${item.name ?? ''}`.trim(), buttons);
+        { text: 'Radera', style: 'destructive', onPress: () => setDeleteConfirmByggdel(item) },
+      ]);
       return;
     }
     const ne = e?.nativeEvent || e;
@@ -580,13 +608,10 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     setRowMenuVisible(true);
   };
 
-  const rowMenuItems = useMemo(() => {
-    const items = [{ key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> }];
-    if (rowMenuItem && !rowMenuItem.isDefault) {
-      items.push({ key: 'delete', label: 'Ta bort', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> });
-    }
-    return items;
-  }, [rowMenuItem]);
+  const rowMenuItems = useMemo(() => [
+    { key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
+    { key: 'delete', label: 'Radera', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
+  ], []);
 
   if (!visible) return null;
 
@@ -645,7 +670,7 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
                         {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                       >
                         <Text style={{ fontSize: 13, fontWeight: '500', color: filterOnlySelected ? '#2563eb' : '#64748b' }}>
-                          Endast valda för {selectionContext?.entityName || 'leverantör'}
+                          Endast valda för {selectionContext?.entityName || (isFormMode ? 'formulär' : 'leverantör')}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -688,7 +713,15 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
                     <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => {}}
+                      onPress={() => {
+                        const r = tableScrollRef.current;
+                        if (r?.scrollTo) r.scrollTo({ y: 0, animated: true });
+                        else if (Platform.OS === 'web' && r) {
+                          const node = r.getScrollableNode?.() ?? r;
+                          if (node?.scrollTop !== undefined) node.scrollTop = 0;
+                        }
+                      }}
+                      accessibilityLabel="Lägg till byggdel"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
                       <Ionicons name="add" size={18} color="#fff" />
@@ -708,6 +741,7 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
           </View>
 
           <ScrollView
+            ref={tableScrollRef}
             style={styles.tableScroll}
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
@@ -798,8 +832,23 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
           const item = rowMenuItem;
           if (!item || !it) return;
           if (it.key === 'edit') setEditingId(item.id);
-          else if (it.key === 'delete' && !item.isDefault) handleDelete(item);
+          else if (it.key === 'delete') setDeleteConfirmByggdel(item);
         }}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmByggdel}
+        message={
+          deleteConfirmByggdel
+            ? `Radera ${String(deleteConfirmByggdel.code ?? '').trim()}${deleteConfirmByggdel.name ? ` – ${deleteConfirmByggdel.name}` : ''}?`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="OK"
+        compact
+        busy={deleting}
+        onCancel={() => setDeleteConfirmByggdel(null)}
+        onConfirm={performDeleteByggdel}
       />
 
       {Platform.OS === 'web' && (

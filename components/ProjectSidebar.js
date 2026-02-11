@@ -5,6 +5,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
 import { LEFT_NAV } from '../constants/leftNavTheme';
+const CHEVRON_SIZE = LEFT_NAV.chevronSize ?? 12;
+const INDENT_PER_LEVEL = LEFT_NAV.indentPerLevel ?? 12;
+const ROW_FONT_SIZE = LEFT_NAV.rowFontSize ?? 13;
+const EXPAND_TRANSITION_MS = LEFT_NAV.expandTransitionMs ?? 200;
 import { ensureDkBasStructure } from '../services/azure/fileService';
 import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
@@ -56,8 +60,8 @@ function RecursiveFolderItem({
   const [isHovered, setIsHovered] = useState(false);
   const folderSpin = spinSubs[folder.id] || 0;
   const folderAngle = expandedSubs[folder.id] ? (folderSpin * 360 + 90) : (folderSpin * 360);
-  const fontSize = Math.max(12, 15 - level); // Slightly smaller font for deeper levels
-  const paddingLeft = 16 + (level * 4); // More indentation for deeper levels
+  const fontSize = ROW_FONT_SIZE;
+  const paddingLeft = INDENT_PER_LEVEL * Math.max(0, level);
   
   // Check if this folder is a project (if not already determined)
   const folderIsProject = isProject || isProjectFolder(folder);
@@ -113,13 +117,13 @@ function RecursiveFolderItem({
         {!folderIsProject && (
           <span
             style={{
-              color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
-              fontSize: fontSize + 1,
-              fontWeight: 500,
-              marginRight: 6,
+              color: isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault,
+              fontSize: CHEVRON_SIZE,
+              fontWeight: 400,
+              marginRight: LEFT_NAV.rowIconGap,
               display: 'inline-block',
               transform: `rotate(${folderAngle}deg)`,
-              transition: 'transform 0.4s ease',
+              transition: `transform ${EXPAND_TRANSITION_MS}ms ease`,
             }}
           >
             &gt;
@@ -131,27 +135,28 @@ function RecursiveFolderItem({
               width: 10,
               height: 10,
               borderRadius: 5,
-              backgroundColor: '#43A047',
-              marginRight: 8,
+              backgroundColor: LEFT_NAV.phaseDotFallback,
+              marginRight: LEFT_NAV.rowIconGap,
               display: 'inline-block',
-              border: '1px solid #bbb',
+              border: `1px solid ${LEFT_NAV.phaseDotBorder}`,
             }}
           />
         )}
-        <span style={{ 
-          fontWeight: expandedSubs[folder.id] ? 600 : (folderIsProject ? 600 : 400), 
-          fontSize: fontSize,
+        <span style={{
+          fontWeight: expandedSubs[folder.id] ? 600 : (folderIsProject ? 600 : 400),
+          fontSize,
           color: isHovered ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
+          fontFamily: LEFT_NAV.webFontFamily || 'inherit',
         }}>{folder.name}</span>
       </div>
       {!folderIsProject && expandedSubs[folder.id] && (
-        <ul style={{ listStyle: 'none', paddingLeft: paddingLeft, marginTop: 2 }}>
+        <ul style={{ listStyle: 'none', paddingLeft, marginTop: 2 }}>
           {folder.loading ? (
-            <li style={{ color: '#888', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+            <li style={{ color: LEFT_NAV.textMuted, fontSize: ROW_FONT_SIZE - 1, paddingLeft: INDENT_PER_LEVEL, fontStyle: 'italic' }}>
               Laddar undermappar från SharePoint...
             </li>
           ) : folder.error ? (
-            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8 }}>
+            <li style={{ color: LEFT_NAV.errorText, fontSize: ROW_FONT_SIZE - 1, paddingLeft: INDENT_PER_LEVEL }}>
               Fel: {folder.error}
             </li>
           ) : folder.children && folder.children.length > 0 ? (
@@ -176,7 +181,7 @@ function RecursiveFolderItem({
               );
             })
           ) : (
-            <li style={{ color: '#D32F2F', fontSize: fontSize - 1, paddingLeft: 8, fontStyle: 'italic' }}>
+            <li style={{ color: LEFT_NAV.textMuted, fontSize: ROW_FONT_SIZE - 1, paddingLeft: INDENT_PER_LEVEL, fontStyle: 'italic' }}>
               Mappen är tom
             </li>
           )}

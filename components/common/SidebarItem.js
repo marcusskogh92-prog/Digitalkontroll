@@ -36,8 +36,9 @@ export default function SidebarItem({
   accessibilityLabel,
   onHoverIn,
   onHoverOut,
+  iconOnly = false,
 }) {
-  const showCount = typeof count === 'number' && Number.isFinite(count);
+  const showCount = !iconOnly && typeof count === 'number' && Number.isFinite(count);
   const basePaddingHorizontal = LEFT_NAV.rowPaddingHorizontal;
 
   const isWeb = Platform.OS === 'web';
@@ -54,6 +55,7 @@ export default function SidebarItem({
       onHoverOut={Platform.OS === 'web' ? onHoverOut : undefined}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel || (typeof label === 'string' ? label : undefined)}
+      {...(isWeb && iconOnly && typeof label === 'string' ? { title: label } : {})}
       style={({ hovered, pressed }) => {
         const isHovered = typeof hoveredProp === 'boolean' ? hoveredProp : Boolean(Platform.OS === 'web' && hovered);
         const backgroundColor = active
@@ -73,9 +75,11 @@ export default function SidebarItem({
 
         return [
           styles.row,
+          iconOnly ? styles.rowIconOnly : null,
           {
-            marginLeft,
-            ...(isPaddingIndent ? { paddingLeft, paddingRight } : {}),
+            marginLeft: iconOnly ? 0 : marginLeft,
+            ...(isPaddingIndent && !iconOnly ? { paddingLeft, paddingRight } : {}),
+            ...(iconOnly ? { paddingLeft: 0, paddingRight: 0, justifyContent: 'center' } : {}),
             ...(widthStyle || {}),
             opacity: disabled ? 0.6 : 1,
             backgroundColor,
@@ -100,13 +104,13 @@ export default function SidebarItem({
               : LEFT_NAV.textDefault;
 
         const renderedLeft = typeof left === 'function' ? left(state) : left;
-        const renderedRight = typeof right === 'function' ? right(state) : right;
+        const renderedRight = !iconOnly && (typeof right === 'function' ? right(state) : right);
 
         return (
           <>
             {renderedLeft ? <View style={styles.left}>{renderedLeft}</View> : null}
 
-            {label ? (
+            {!iconOnly && label ? (
               <Text
                 numberOfLines={1}
                 style={[
@@ -127,7 +131,7 @@ export default function SidebarItem({
 
             {renderedRight ? <View style={styles.right}>{renderedRight}</View> : null}
 
-            {!renderedRight && showCount ? (
+            {!iconOnly && !renderedRight && showCount ? (
               <View style={styles.countPill}>
                 <Text
                   style={[
@@ -155,10 +159,14 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'nowrap',
+    minHeight: LEFT_NAV.rowMinHeight,
+    minWidth: 0,
     paddingVertical: LEFT_NAV.rowPaddingVertical,
     paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
     borderRadius: LEFT_NAV.rowBorderRadius,
     borderLeftWidth: LEFT_NAV.rowBorderLeftWidth,
+    overflow: 'hidden',
     ...(Platform.OS === 'web'
       ? {
           cursor: 'pointer',
@@ -166,6 +174,11 @@ const styles = StyleSheet.create({
           transition: 'background-color 0.15s ease, border-left-color 0.15s ease, opacity 0.15s ease',
         }
       : {}),
+  },
+  rowIconOnly: {
+    paddingVertical: 6,
+    paddingHorizontal: 0,
+    justifyContent: 'center',
   },
   rowPressed: {
     opacity: Platform.OS === 'web' ? 0.92 : 1,
@@ -178,6 +191,10 @@ const styles = StyleSheet.create({
   label: {
     fontSize: LEFT_NAV.rowFontSize,
     flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+      : {}),
   },
   right: {
     marginLeft: 8,

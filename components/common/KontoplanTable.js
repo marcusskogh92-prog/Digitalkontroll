@@ -161,11 +161,22 @@ const styles = StyleSheet.create({
   checkboxChecked: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   cellText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
+  kontoHintText: {
+    fontSize: 11,
+    color: '#b45309',
+    marginTop: 2,
+    marginLeft: 2,
+  },
 });
 
 function safeText(v) {
   const s = String(v ?? '').trim();
   return s || '—';
+}
+
+/** Endast siffror för kontonummer (t.ex. 4510) */
+function normalizeKonto(value) {
+  return String(value ?? '').replace(/\D/g, '').slice(0, 12);
 }
 
 export default function KontoplanTable({
@@ -189,7 +200,9 @@ export default function KontoplanTable({
 }) {
   const [hoveredId, setHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState({ konto: '', benamning: '', beskrivning: '' });
+  const [showKontoHint, setShowKontoHint] = useState(false);
   const kebabRefs = useRef({});
+  const kontoHintTimeoutRef = useRef(null);
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
   React.useEffect(() => {
@@ -206,7 +219,7 @@ export default function KontoplanTable({
 
   const handleEditKeyDown = (e, item) => {
     if (Platform.OS !== 'web') return;
-    const key = e.nativeEvent?.key;
+    const key = e.key ?? e.nativeEvent?.key;
     if (key === 'Enter') {
       e.preventDefault();
       if (onSaveEdit && !saving && editDraft.konto.trim()) {
@@ -235,6 +248,46 @@ export default function KontoplanTable({
     );
 
   const stickyRight = Platform.OS === 'web' ? { position: 'sticky', right: 0 } : {};
+  const handleInlineEnter = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e.key ?? e.nativeEvent?.key;
+    const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+    const isEnter = key === 'Enter' || keyCode === 13;
+    if (isEnter) {
+      e.preventDefault();
+      e.stopPropagation?.();
+      if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+    }
+  };
+  const handleKontoKeyDown = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e.key ?? e.nativeEvent?.key;
+    const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+    if (key === 'Enter' || keyCode === 13) {
+      e.preventDefault();
+      e.stopPropagation?.();
+      if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+      return;
+    }
+    if (key !== 'Tab' && key !== 'Backspace' && key !== 'Delete' && key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') {
+      if (!/^[0-9]$/.test(key)) {
+        e.preventDefault();
+        setShowKontoHint(true);
+        if (kontoHintTimeoutRef.current) clearTimeout(kontoHintTimeoutRef.current);
+        kontoHintTimeoutRef.current = setTimeout(() => {
+          setShowKontoHint(false);
+          kontoHintTimeoutRef.current = null;
+        }, 2500);
+      }
+    }
+  };
+  const handleKontoBlur = () => {
+    setShowKontoHint(false);
+    if (kontoHintTimeoutRef.current) {
+      clearTimeout(kontoHintTimeoutRef.current);
+      kontoHintTimeoutRef.current = null;
+    }
+  };
   const toggleSelection = (konto) => {
     if (!onSelectionChange) return;
     const set = new Set(selectedKonton);
@@ -288,34 +341,65 @@ export default function KontoplanTable({
       </View>
 
       {inlineEnabled && (
-        <View style={styles.inlineRow}>
+        <View
+          style={styles.inlineRow}
+          {...(Platform.OS === 'web'
+            ? {
+                onKeyDownCapture: (e) => {
+                  const key = e.key ?? e.nativeEvent?.key;
+                  const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+                  if (key === 'Enter' || keyCode === 13) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+                  }
+                },
+              }
+            : {})}
+        >
           {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f8fafc' }]} /> : null}
-          <TextInput
-            value={inlineValues?.konto ?? ''}
-            onChangeText={(v) => onInlineChange?.('konto', v)}
-            placeholder="t.ex. 4510"
-            style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.konto }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
+          <View style={[styles.cellFixed, { width: FIXED.konto }]}>
+            <TextInput
+              value={inlineValues?.konto ?? ''}
+              onChangeText={(v) => onInlineChange?.('konto', normalizeKonto(v))}
+              placeholder="t.ex. 4510"
+              keyboardType="number-pad"
+              maxLength={12}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              style={[styles.inlineInput, styles.cellMono, { width: '100%' }]}
+              placeholderTextColor="#94a3b8"
+              onBlur={handleKontoBlur}
+              onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleKontoKeyDown, inputMode: 'numeric' } : {})}
+            />
+            {showKontoHint && (
+              <Text style={styles.kontoHintText}>Endast siffror (0–9)</Text>
+            )}
+          </View>
           <TextInput
             value={inlineValues?.benamning ?? ''}
             onChangeText={(v) => onInlineChange?.('benamning', v)}
             placeholder="Benämning (ny)"
+            multiline={false}
+            returnKeyType="done"
+            blurOnSubmit={false}
+            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.benamning }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <TextInput
             value={inlineValues?.beskrivning ?? ''}
             onChangeText={(v) => onInlineChange?.('beskrivning', v)}
             placeholder="Beskrivning (ny)"
+            multiline={false}
             returnKeyType="done"
-            blurOnSubmit={true}
+            blurOnSubmit={false}
             onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
@@ -329,11 +413,13 @@ export default function KontoplanTable({
             {selectionMode ? <View style={styles.selectCol} /> : null}
             <TextInput
               value={editDraft.konto}
-              onChangeText={(v) => setEditDraft((d) => ({ ...d, konto: v }))}
+              onChangeText={(v) => setEditDraft((d) => ({ ...d, konto: normalizeKonto(v) }))}
               placeholder="t.ex. 4510"
+              keyboardType="number-pad"
+              maxLength={12}
               style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.konto }]}
               placeholderTextColor="#94a3b8"
-              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
+              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => { const k = e.key ?? e.nativeEvent?.key; const allow = ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End']; if (!allow.includes(k) && !/^[0-9]$/.test(k)) e.preventDefault(); handleEditKeyDown(e, item); } } : {})}
             />
             <TextInput
               value={editDraft.benamning}

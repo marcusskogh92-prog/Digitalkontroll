@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { PanResponder, Platform } from 'react-native';
 
-// Hanterar vänster/höger kolumnbredder + pan-responders för HomeScreen (web + native)
+// Hanterar vänster/höger kolumnbredder + collapse + pan-responders för HomeScreen
+const LEFT_PANEL_EXPANDED_DEFAULT = 240;
+const LEFT_PANEL_COLLAPSED_WIDTH = 64;
+const LEFT_PANEL_MIN_WIDTH = 180;
+const LEFT_PANEL_MAX_WIDTH = 480;
+
 export const useHomePaneResizing = () => {
-  // Left column resizer state (default 300 för bättre bredd på web)
-  const [leftWidth, setLeftWidth] = useState(300);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_EXPANDED_DEFAULT);
   const leftWidthRef = useRef(leftWidth);
   useEffect(() => {
     leftWidthRef.current = leftWidth;
   }, [leftWidth]);
   const initialLeftRef = useRef(0);
+  const effectiveLeftWidth = leftPanelCollapsed ? LEFT_PANEL_COLLAPSED_WIDTH : leftWidth;
 
   // Right column resizer state (default 420)
   const [rightWidth, setRightWidth] = useState(420);
@@ -34,7 +40,7 @@ export const useHomePaneResizing = () => {
       },
       onPanResponderMove: (evt, gestureState) => {
         const dx = gestureState.dx || 0;
-        const newWidth = Math.max(240, Math.min(800, initialLeftRef.current + dx));
+        const newWidth = Math.max(LEFT_PANEL_MIN_WIDTH, Math.min(LEFT_PANEL_MAX_WIDTH, initialLeftRef.current + dx));
         setLeftWidth(newWidth);
       },
       onPanResponderRelease: () => {},
@@ -70,14 +76,18 @@ export const useHomePaneResizing = () => {
   const initialPaneWidthsSetRef = useRef(false);
   useEffect(() => {
     if (Platform.OS === 'web' && !initialPaneWidthsSetRef.current) {
-      setLeftWidth(300); // Startbredd för left panel
-      setRightWidth(420); // Behåll default
+      setLeftWidth(LEFT_PANEL_EXPANDED_DEFAULT);
+      setRightWidth(420);
       initialPaneWidthsSetRef.current = true;
     }
   }, []);
 
   return {
     leftWidth,
+    setLeftWidth,
+    leftPanelCollapsed,
+    setLeftPanelCollapsed,
+    effectiveLeftWidth,
     rightWidth,
     panResponder,
     panResponderRight,

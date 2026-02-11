@@ -19,6 +19,7 @@ export default function ProjectTreeNode({
   isSelected = false,
   selectedPhase = null,
   compact = false,
+  iconOnly = false,
   edgeToEdge = false,
 }) {
   // Check if project is in kalkylskede - these should NEVER have functions or expand
@@ -105,6 +106,7 @@ export default function ProjectTreeNode({
   return (
     <View>
       <SidebarItem
+        iconOnly={iconOnly}
         fullWidth
         squareCorners={Boolean(edgeToEdge && isWeb)}
         indentMode={edgeToEdge ? 'padding' : 'margin'}

@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { AdminModalContext } from './AdminModalContext';
 import LeverantorerTable from '../../modules/leverantorer/LeverantorerTable';
+import LeverantorForm from '../../modules/leverantorer/LeverantorForm';
 import {
     addContactToSupplier,
     createSupplier,
@@ -234,6 +235,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const [inlineCity, setInlineCity] = useState('');
   const [inlineCategory, setInlineCategory] = useState('');
   const [inlineCategoryIds, setInlineCategoryIds] = useState([]);
+  const [keepExpandedSupplierId, setKeepExpandedSupplierId] = useState(null);
   const [inlineSaving, setInlineSaving] = useState(false);
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
@@ -245,8 +247,15 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const [importPlan, setImportPlan] = useState(null);
   const [importConfirmVisible, setImportConfirmVisible] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [addModalSaving, setAddModalSaving] = useState(false);
+  const [addModalCategoryIds, setAddModalCategoryIds] = useState([]);
+  const [addModalByggdelIds, setAddModalByggdelIds] = useState([]);
   const tableScrollRef = useRef(null);
   const excelInputRef = useRef(null);
+  const categoryModalSourceRef = useRef(null);
+  const addFormSubmitRef = useRef(null);
+  const inlineSaveRef = useRef(null);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -269,10 +278,33 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   }, [cid]);
 
   useEffect(() => {
+    inlineSaveRef.current = handleInlineSave;
+  });
+  useEffect(() => {
     if (!registerSelectionSavedListener) return;
     registerSelectionSavedListener((payload) => {
+      if (payload?.forFormByggdel === true && Array.isArray(payload.selectedCodes)) {
+        setAddModalByggdelIds(payload.selectedCodes);
+        return;
+      }
       if (Array.isArray(payload)) {
-        setInlineCategoryIds(payload);
+        if (categoryModalSourceRef.current === 'addModal') {
+          setAddModalCategoryIds(payload);
+          categoryModalSourceRef.current = null;
+          setTimeout(() => addFormSubmitRef.current?.submit?.(), 0);
+        } else if (categoryModalSourceRef.current === 'inline') {
+          setInlineCategoryIds(payload);
+          categoryModalSourceRef.current = null;
+          // Efter kategorival från inline-rad: spara leverantören (kräver minst företagsnamn)
+          setTimeout(() => inlineSaveRef.current?.(), 0);
+        } else {
+          setInlineCategoryIds(payload);
+          categoryModalSourceRef.current = null;
+        }
+      } else if (typeof payload === 'string' && payload.trim()) {
+        setKeepExpandedSupplierId(payload.trim());
+        loadSuppliers();
+        setTimeout(() => setKeepExpandedSupplierId(null), 800);
       } else {
         loadSuppliers();
       }
@@ -516,6 +548,21 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
       setDeleting(false);
     }
   };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !deleteConfirmSupplier) return undefined;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmDelete();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setDeleteConfirmSupplier(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [deleteConfirmSupplier]);
 
   const exportExcel = () => {
     setExcelMenuVisible(false);
@@ -849,10 +896,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => {
-                        const r = tableScrollRef.current;
-                        if (r && typeof r.scrollTo === 'function') r.scrollTo({ y: 0, animated: true });
-                      }}
+                      onPress={() => setAddModalVisible(true)}
                       accessibilityLabel="Lägg till leverantör"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
@@ -903,6 +947,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     onRemoveContact={handleRemoveContact}
                     onLinkContact={handleLinkContact}
                     companyCategories={companyCategories}
+                    keepExpandedSupplierId={keepExpandedSupplierId}
                     companyByggdelar={companyByggdelar}
                     companyKontoplan={companyKontoplan}
                     onCategoriesChange={handleCategoriesChange}
@@ -932,13 +977,14 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                         selectedCategoryIds: (s.categories ?? []) || [],
                       })
                     }
-                    onOpenKategoriForInlineAdd={() =>
+                    onOpenKategoriForInlineAdd={() => {
+                      categoryModalSourceRef.current = 'inline';
                       openKategoriModal(cid, {
                         forForm: true,
                         selectedCategoryIds: inlineCategoryIds || [],
                         entityName: 'formulär',
-                      })
-                    }
+                      });
+                    }}
                     inlineEnabled={hasCompany}
                     inlineSaving={inlineSaving}
                     inlineValues={{
@@ -1009,15 +1055,102 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
 
       <ConfirmModal
         visible={!!deleteConfirmSupplier}
-        title="Radera leverantör"
-        message={deleteConfirmSupplier ? `Vill du verkligen radera ${String(deleteConfirmSupplier.companyName ?? '').trim() || 'leverantören'}?` : ''}
+        message={deleteConfirmSupplier ? `Radera ${String(deleteConfirmSupplier.companyName ?? '').trim() || 'leverantören'}?` : ''}
         cancelLabel="Avbryt"
-        confirmLabel="Radera"
-        danger
+        confirmLabel="OK"
+        compact
         busy={deleting}
         onCancel={() => setDeleteConfirmSupplier(null)}
         onConfirm={confirmDelete}
       />
+
+      <Modal
+        visible={addModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !addModalSaving && setAddModalVisible(false)}
+      >
+        <Pressable
+          style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}
+          onPress={() => !addModalSaving && setAddModalVisible(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              width: Platform.OS === 'web' ? 480 : '90%',
+              maxWidth: 480,
+              maxHeight: '85vh',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.15,
+              shadowRadius: 12,
+              elevation: 8,
+            }}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>Lägg till leverantör</Text>
+              <TouchableOpacity onPress={() => !addModalSaving && setAddModalVisible(false)} hitSlop={10}>
+                <Ionicons name="close" size={22} color="#475569" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: '75vh' }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
+              <LeverantorForm
+                ref={addFormSubmitRef}
+                initial={null}
+                byggdelar={companyByggdelar || []}
+                saving={addModalSaving}
+                onSave={async (values) => {
+                  setAddModalSaving(true);
+                  setError('');
+                  try {
+                    await createSupplier(cid, {
+                      companyName: values.companyName,
+                      organizationNumber: values.organizationNumber || '',
+                      address: values.address || '',
+                      postalCode: values.postalCode || '',
+                      city: values.city || '',
+                      category: (values.categories && values.categories[0]) || values.category || '',
+                      categories: values.categories || [],
+                      byggdelTags: values.byggdelTags || [],
+                    });
+                    setAddModalVisible(false);
+                    setAddModalCategoryIds([]);
+                    setAddModalByggdelIds([]);
+                    await loadSuppliers();
+                    showNotice('Leverantör tillagd');
+                  } catch (e) {
+                    setError(formatWriteError(e));
+                  } finally {
+                    setAddModalSaving(false);
+                  }
+                }}
+                onCancel={() => !addModalSaving && setAddModalVisible(false)}
+                onOpenKategoriRequest={() => {
+                  categoryModalSourceRef.current = 'addModal';
+                  openKategoriModal(cid, {
+                    forForm: true,
+                    selectedCategoryIds: addModalCategoryIds || [],
+                    entityName: 'formulär',
+                  });
+                }}
+                categoryIdsForForm={addModalCategoryIds}
+                onCategoryIdsChange={setAddModalCategoryIds}
+                onOpenByggdelRequest={() => {
+                  openByggdelModal(cid, {
+                    forForm: true,
+                    selectedCodes: addModalByggdelIds || [],
+                    entityName: 'formulär',
+                  });
+                }}
+                formByggdelIds={addModalByggdelIds}
+                onByggdelIdsChange={setAddModalByggdelIds}
+              />
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {Platform.OS === 'web' && (
         <>

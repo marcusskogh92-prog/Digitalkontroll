@@ -253,3 +253,74 @@ export const LEVERANTORER_EXCEL = {
     ];
   },
 };
+
+/**
+ * Kunder: Kundnamn, Personnr/Orgnr, Adress, Postnr, Ort, Kundtyp.
+ * Nyckel = Personnr/Orgnr, fallback till Kundnamn.
+ */
+export const KUNDER_EXCEL = {
+  sheetName: 'Kunder',
+  filenamePrefix: 'Kunder',
+  headers: ['Kundnamn', 'Personnr/Orgnr', 'Adress', 'Postnr', 'Ort', 'Kundtyp'],
+  keyField: 'Personnr/Orgnr',
+  rowToPayload(row) {
+    return {
+      name: cellStr(row['Kundnamn']),
+      personalOrOrgNumber: cellStr(row['Personnr/Orgnr']),
+      address: cellStr(row['Adress']),
+      postalCode: cellStr(row['Postnr']),
+      city: cellStr(row['Ort']),
+      customerType: cellStr(row['Kundtyp']),
+    };
+  },
+  itemToKey(item) {
+    const pnr = (item.personalOrOrgNumber ?? '').trim();
+    const name = (item.name ?? '').trim();
+    return pnr || name || '';
+  },
+  itemToRow(item) {
+    return [
+      item.name ?? '',
+      item.personalOrOrgNumber ?? '',
+      item.address ?? '',
+      item.postalCode ?? '',
+      item.city ?? '',
+      item.customerType ?? '',
+    ];
+  },
+};
+
+/**
+ * Kontaktregister: Id, Namn, Företag, Roll, Telefon, Arbete, E-post.
+ * Id = Firestore-dokumentid; tomt vid ny rad. Nyckel = Id för ersättande synk.
+ */
+export const KONTAKTER_EXCEL = {
+  sheetName: 'Kontakter',
+  filenamePrefix: 'Kontaktregister',
+  headers: ['Id', 'Namn', 'Företag', 'Roll', 'Telefon', 'Arbete', 'E-post'],
+  keyField: 'Id',
+  rowToPayload(row) {
+    return {
+      name: cellStr(row['Namn']),
+      contactCompanyName: cellStr(row['Företag']),
+      role: cellStr(row['Roll']),
+      phone: cellStr(row['Telefon']),
+      workPhone: cellStr(row['Arbete']),
+      email: cellStr(row['E-post']),
+    };
+  },
+  itemToKey(item) {
+    return (item.id ?? '').trim();
+  },
+  itemToRow(item) {
+    return [
+      item.id ?? '',
+      item.name ?? '',
+      item.contactCompanyName ?? item.companyName ?? '',
+      item.role ?? '',
+      item.phone ?? '',
+      item.workPhone ?? '',
+      item.email ?? '',
+    ];
+  },
+};

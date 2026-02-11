@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from './components/ErrorBoundary';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
+import { GLOBAL_HEADER_HEIGHT } from './components/common/layoutConstants';
 import { AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
@@ -327,7 +328,7 @@ export default function App() {
               const dkExtraNudge = isWeb ? -10 : 0;
               return ({
                 // Clean base header for all screens; detailed layout handled via container styles
-                headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
+                headerStyle: { backgroundColor: '#FFFFFF', height: GLOBAL_HEADER_HEIGHT },
                 headerTintColor: '#000',
                 headerTitleStyle: { fontWeight: 'bold', color: '#000', fontFamily: 'Inter_700Bold' },
                 headerTitleAlign: 'center',
@@ -380,7 +381,7 @@ export default function App() {
                 const dkExtraNudge = isWeb ? -10 : 0;
                 return ({
                   // Keep header clean on native; extra layout is handled via container styles
-                  headerStyle: { backgroundColor: '#FFFFFF', height: 96 },
+                  headerStyle: { backgroundColor: '#FFFFFF', height: GLOBAL_HEADER_HEIGHT },
                 headerTitleAlign: 'center',
                 headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }

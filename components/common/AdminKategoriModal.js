@@ -352,7 +352,8 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
         cid
       );
       showNotice('Val sparade för leverantör');
-      onSelectionSaved?.();
+      onSelectionSaved?.(selectionContext.entityId);
+      onClose();
     } catch (e) {
       setError(formatWriteError(e));
     } finally {
@@ -373,7 +374,16 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
     if (!cid) return;
     const name = String(inlineName ?? '').trim();
     if (!name) return;
+    const nameLower = name.toLowerCase();
+    const exists = (categories || []).some(
+      (c) => String(c.name ?? '').trim().toLowerCase() === nameLower
+    );
+    if (exists) {
+      setError('Kategorinamnet finns redan. Varje kategori ska vara unikt (oberoende av stor eller liten bokstav).');
+      return;
+    }
     setInlineSaving(true);
+    setError('');
     try {
       await createCategory(
         { name, note: String(inlineNote ?? '').trim() },
@@ -392,12 +402,23 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
 
   const handleSaveEdit = async (categoryId, values) => {
     if (!cid) return;
+    const newName = String(values.name ?? '').trim();
+    if (newName) {
+      const newNameLower = newName.toLowerCase();
+      const exists = (categories || []).some(
+        (c) => c.id !== categoryId && String(c.name ?? '').trim().toLowerCase() === newNameLower
+      );
+      if (exists) {
+        setError('Kategorinamnet finns redan. Varje kategori ska vara unikt (oberoende av stor eller liten bokstav).');
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     try {
       await updateCategory(cid, categoryId, {
-        name: values.name,
-        note: values.note,
+        name: newName || values.name,
+        note: values.note ?? '',
       });
       showNotice('Kategori uppdaterad');
       setEditingId(null);
@@ -613,7 +634,7 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
                       style={styles.searchInput}
                       value={search}
                       onChangeText={setSearch}
-                      placeholder="Sök kategori, anteckning…"
+                      placeholder="Sök kategori, beskrivning…"
                       placeholderTextColor="#94a3b8"
                       {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
                     />
@@ -645,7 +666,11 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => {
                         const r = tableScrollRef.current;
-                        if (r && typeof r.scrollTo === 'function') r.scrollTo({ y: 0, animated: true });
+                        if (r?.scrollTo) r.scrollTo({ y: 0, animated: true });
+                        else if (Platform.OS === 'web' && r) {
+                          const node = r.getScrollableNode?.() ?? r;
+                          if (node?.scrollTop !== undefined) node.scrollTop = 0;
+                        }
                       }}
                       accessibilityLabel="Lägg till kategori"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}

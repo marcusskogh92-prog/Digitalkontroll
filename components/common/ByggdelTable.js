@@ -161,6 +161,12 @@ const styles = StyleSheet.create({
   checkboxChecked: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   cellText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
+  bdHintText: {
+    fontSize: 11,
+    color: '#b45309',
+    marginTop: 2,
+    marginLeft: 2,
+  },
 });
 
 function safeText(v) {
@@ -252,6 +258,51 @@ export default function ByggdelTable({
     onSelectionChange(Array.from(set));
   };
 
+  const [showBDHint, setShowBDHint] = useState(false);
+  const bdHintTimeoutRef = useRef(null);
+
+  const handleInlineEnter = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e.key ?? e.nativeEvent?.key;
+    const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+    const isEnter = key === 'Enter' || keyCode === 13;
+    if (isEnter) {
+      e.preventDefault();
+      e.stopPropagation?.();
+      if (!inlineSaving) {
+        requestAnimationFrame(() => onInlineSave?.());
+      }
+    }
+  };
+  const handleBDKeyDown = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e.key ?? e.nativeEvent?.key;
+    if (key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation?.();
+      if (!inlineSaving) onInlineSave?.();
+      return;
+    }
+    if (key !== 'Tab' && key !== 'Backspace' && key !== 'Delete' && key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') {
+      if (!/^[0-9]$/.test(key)) {
+        e.preventDefault();
+        setShowBDHint(true);
+        if (bdHintTimeoutRef.current) clearTimeout(bdHintTimeoutRef.current);
+        bdHintTimeoutRef.current = setTimeout(() => {
+          setShowBDHint(false);
+          bdHintTimeoutRef.current = null;
+        }, 2500);
+      }
+    }
+  };
+  const handleBDBlur = () => {
+    setShowBDHint(false);
+    if (bdHintTimeoutRef.current) {
+      clearTimeout(bdHintTimeoutRef.current);
+      bdHintTimeoutRef.current = null;
+    }
+  };
+
   return (
     <View style={styles.tableWrap}>
       <View style={styles.header}>
@@ -267,7 +318,7 @@ export default function ByggdelTable({
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
           <View style={styles.columnContent}>
-            <Text style={[styles.headerText, styles.cellMono]}>Kod</Text>
+            <Text style={[styles.headerText, styles.cellMono]}>BD</Text>
             <SortIcon col="moment" />
           </View>
         </TouchableOpacity>
@@ -278,7 +329,7 @@ export default function ByggdelTable({
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
           <View style={styles.columnContent}>
-            <Text style={styles.headerText}>Namn</Text>
+            <Text style={styles.headerText}>Beskrivning</Text>
             <SortIcon col="name" />
           </View>
         </TouchableOpacity>
@@ -297,36 +348,65 @@ export default function ByggdelTable({
       </View>
 
       {inlineEnabled && (
-        <View style={styles.inlineRow}>
+        <View
+          style={styles.inlineRow}
+          {...(Platform.OS === 'web'
+            ? {
+                onKeyDownCapture: (e) => {
+                  const key = e.key ?? e.nativeEvent?.key;
+                  const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+                  if (key === 'Enter' || keyCode === 13) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+                  }
+                },
+              }
+            : {})}
+        >
           {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f8fafc' }]} /> : null}
-          <TextInput
-            value={inlineValues?.byggdel ?? ''}
-            onChangeText={(v) => onInlineChange?.('byggdel', normalizeCode(v))}
-            placeholder="t.ex. 45"
-            keyboardType="number-pad"
-            maxLength={3}
-            style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.byggdel }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-          />
+          <View style={[styles.cellFixed, { width: FIXED.byggdel }]}>
+            <TextInput
+              value={inlineValues?.byggdel ?? ''}
+              onChangeText={(v) => onInlineChange?.('byggdel', normalizeCode(v))}
+              placeholder="t.ex. 45"
+              keyboardType="number-pad"
+              maxLength={3}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              style={[styles.inlineInput, styles.cellMono, { width: '100%' }]}
+              placeholderTextColor="#94a3b8"
+              onBlur={handleBDBlur}
+              onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleBDKeyDown, inputMode: 'numeric' } : {})}
+            />
+            {showBDHint && (
+              <Text style={styles.bdHintText}>Endast siffror (0–9)</Text>
+            )}
+          </View>
           <TextInput
             value={inlineValues?.beskrivning ?? ''}
             onChangeText={(v) => onInlineChange?.('beskrivning', v)}
             placeholder="Beskrivning (ny)"
+            multiline={false}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            returnKeyType="done"
+            blurOnSubmit={false}
+            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <TextInput
             value={inlineValues?.anteckningar ?? ''}
             onChangeText={(v) => onInlineChange?.('anteckningar', v)}
             placeholder="Anteckningar (ny)"
+            multiline={false}
             returnKeyType="done"
-            blurOnSubmit={true}
+            blurOnSubmit={false}
             onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
             style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.anteckningar }]}
             placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
           />
           <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>

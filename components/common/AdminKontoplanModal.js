@@ -352,7 +352,8 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
         cid
       );
       showNotice('Val sparade för leverantör');
-      onSelectionSaved?.();
+      onSelectionSaved?.(selectionContext.entityId);
+      onClose();
     } catch (e) {
       setError(formatWriteError(e));
     } finally {
@@ -369,11 +370,19 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
     }
   };
 
+  const normalizeKonto = (v) => String(v ?? '').replace(/\D/g, '').trim();
+
   const handleInlineSave = async () => {
     if (!cid) return;
-    const konto = String(inlineKonto ?? '').trim();
+    const konto = normalizeKonto(inlineKonto);
     if (!konto) return;
+    const exists = (accounts || []).some((a) => String(a.konto ?? '').trim() === konto);
+    if (exists) {
+      setError('Kontonumret finns redan. Varje konto ska vara unikt.');
+      return;
+    }
     setInlineSaving(true);
+    setError('');
     try {
       await createKontoplanAccount(
         {
@@ -397,13 +406,23 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
 
   const handleSaveEdit = async (accountId, values) => {
     if (!cid) return;
+    const newKonto = normalizeKonto(values.konto);
+    if (newKonto) {
+      const exists = (accounts || []).some(
+        (a) => a.id !== accountId && String(a.konto ?? '').trim() === newKonto
+      );
+      if (exists) {
+        setError('Kontonumret finns redan. Varje konto ska vara unikt.');
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     try {
       await updateKontoplanAccount(cid, accountId, {
-        konto: values.konto,
-        benamning: values.benamning,
-        beskrivning: values.beskrivning,
+        konto: newKonto || String(values.konto ?? '').trim(),
+        benamning: values.benamning ?? '',
+        beskrivning: values.beskrivning ?? '',
       });
       showNotice('Konto uppdaterat');
       setEditingId(null);
@@ -652,7 +671,11 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => {
                         const r = tableScrollRef.current;
-                        if (r && typeof r.scrollTo === 'function') r.scrollTo({ y: 0, animated: true });
+                        if (r?.scrollTo) r.scrollTo({ y: 0, animated: true });
+                        else if (Platform.OS === 'web' && r) {
+                          const node = r.getScrollableNode?.() ?? r;
+                          if (node?.scrollTop !== undefined) node.scrollTop = 0;
+                        }
                       }}
                       accessibilityLabel="Lägg till konto"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
