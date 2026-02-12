@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-import { storage, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../firebase';
+import { db, storage, subscribeCompanyActivity, subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../firebase';
 import { computeControlsToSign, computeOpenDeviationsCount, countActiveProjectsInHierarchy, countOpenDeviationsForControl, formatRelativeTime, resolveProjectId, toTsMs } from './dashboardUtils';
 
 /**
@@ -41,6 +42,7 @@ export function useDashboard({
   const [dashboardControlsToSignItems, setDashboardControlsToSignItems] = useState([]);
   const [dashboardOpenDeviationItems, setDashboardOpenDeviationItems] = useState([]);
   const [dashboardUpcomingSkyddsrondItems, setDashboardUpcomingSkyddsrondItems] = useState([]);
+  const [dashboardUpcomingTimelineItems, setDashboardUpcomingTimelineItems] = useState([]);
   const [dashboardDropdownAnchor, setDashboardDropdownAnchor] = useState('overview');
   const [dashboardDropdownTop, setDashboardDropdownTop] = useState(null);
   const [dashboardDropdownRowKey, setDashboardDropdownRowKey] = useState(null);
@@ -674,6 +676,69 @@ export function useDashboard({
     };
   }, [companyId, routeCompanyId, authClaims?.companyId]);
 
+  // Tidsplan för projekt användaren är med i (organisation): kommande datum till högerpanelen
+  const timelineByProjectRef = useRef({});
+  useEffect(() => {
+    const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
+    if (!cid || !memberProjectsReady || memberProjectIds.size === 0) {
+      setDashboardUpcomingTimelineItems([]);
+      return;
+    }
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const pids = Array.from(memberProjectIds).filter((id) => String(id || '').trim()).slice(0, 50);
+
+    function buildMerged() {
+      const list = companyProjectsRef.current || [];
+      const merged = [];
+      for (const pid of Object.keys(timelineByProjectRef.current)) {
+        const customDates = timelineByProjectRef.current[pid] || [];
+        const proj = list.find((p) => String(resolveProjectId(p) || '').trim() === String(pid).trim());
+        const projectName = proj?.fullName || proj?.projectName || proj?.name || proj?.projectNumber || pid;
+        for (const d of customDates) {
+          const date = String(d?.date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+          if (date < todayISO) continue;
+          merged.push({
+            projectId: pid,
+            projectName,
+            project: proj ? { ...proj, id: pid, fullName: projectName } : { id: pid, fullName: projectName },
+            date,
+            title: String(d?.title || '').trim() || 'Datum',
+            dateMs: new Date(date).getTime(),
+          });
+        }
+      }
+      merged.sort((a, b) => a.dateMs - b.dateMs);
+      setDashboardUpcomingTimelineItems(merged);
+    }
+
+    const unsubs = [];
+    for (const pid of pids) {
+      const ref = doc(db, 'foretag', cid, 'project_timeline', pid);
+      const unsub = onSnapshot(
+        ref,
+        (snap) => {
+          const raw = snap.exists() ? snap.data() : null;
+          const customDates = Array.isArray(raw?.customDates) ? raw.customDates : [];
+          const withDate = customDates
+            .map((d) => ({ id: d?.id, title: d?.title, date: String(d?.date || '').trim() }))
+            .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date));
+          timelineByProjectRef.current[pid] = withDate;
+          buildMerged();
+        },
+        () => {
+          timelineByProjectRef.current[pid] = [];
+          buildMerged();
+        }
+      );
+      unsubs.push(unsub);
+    }
+    return () => {
+      unsubs.forEach((u) => { try { u(); } catch (_e) {} });
+      pids.forEach((pid) => { delete timelineByProjectRef.current[pid]; });
+    };
+  }, [companyId, routeCompanyId, authClaims?.companyId, memberProjectsReady, memberProjectIds]);
+
   useEffect(() => {
     try {
       setDashboardFocus(null);
@@ -762,6 +827,7 @@ export function useDashboard({
     dashboardControlsToSignItems,
     dashboardOpenDeviationItems,
     dashboardUpcomingSkyddsrondItems,
+    dashboardUpcomingTimelineItems,
     dashboardDropdownAnchor,
     dashboardDropdownTop,
     dashboardDropdownRowKey,

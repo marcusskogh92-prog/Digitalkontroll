@@ -53,3 +53,18 @@ export const LEFT_NAV = {
   webFontFamily:
     'Inter_400Regular, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
 };
+
+/** Samma färger som ikonerna i railen – för vänsterpanelen på web (mörk bakgrund). */
+export const LEFT_NAV_ON_DARK = {
+  ...LEFT_NAV,
+  textDefault: 'rgba(255, 255, 255, 0.9)',
+  iconDefault: 'rgba(255, 255, 255, 0.7)',
+  textMuted: 'rgba(255, 255, 255, 0.65)',
+  iconMuted: 'rgba(255, 255, 255, 0.55)',
+  hoverText: '#fff',
+  hoverIcon: '#fff',
+  hoverBg: 'rgba(255, 255, 255, 0.08)',
+  activeBg: 'rgba(255, 255, 255, 0.12)',
+  activeBorder: 'rgba(255, 255, 255, 0.4)',
+  subtleText: 'rgba(255, 255, 255, 0.5)',
+};

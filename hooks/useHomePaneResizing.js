@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform } from 'react-native';
 
 // Hanterar vänster/höger kolumnbredder + collapse + pan-responders för HomeScreen
-const LEFT_PANEL_EXPANDED_DEFAULT = 240;
+const LEFT_PANEL_EXPANDED_DEFAULT = 280;
 const LEFT_PANEL_COLLAPSED_WIDTH = 64;
 const LEFT_PANEL_MIN_WIDTH = 180;
 const LEFT_PANEL_MAX_WIDTH = 480;
+const RIGHT_PANEL_MIN = 340;
+const RIGHT_PANEL_MAX = 520;
 
 export const useHomePaneResizing = () => {
-  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  // Standard vid inloggning: vänster stängd, höger (kalender) öppen
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(true);
   const [leftWidth, setLeftWidth] = useState(LEFT_PANEL_EXPANDED_DEFAULT);
   const leftWidthRef = useRef(leftWidth);
   useEffect(() => {
@@ -64,7 +67,7 @@ export const useHomePaneResizing = () => {
       onPanResponderMove: (evt, gestureState) => {
         const dx = gestureState.dx || 0;
         // Dragging the left edge: moving right (dx>0) should decrease width, moving left (dx<0) should increase
-        const newWidth = Math.max(340, Math.min(520, initialRightRef.current - dx));
+        const newWidth = Math.max(RIGHT_PANEL_MIN, Math.min(RIGHT_PANEL_MAX, initialRightRef.current - dx));
         setRightWidth(newWidth);
       },
       onPanResponderRelease: () => {},
@@ -82,6 +85,46 @@ export const useHomePaneResizing = () => {
     }
   }, []);
 
+  // Web: steglös resize med mus (PanResponder fungerar dåligt i web)
+  const leftResizeHandlersWeb = useMemo(() => ({
+    onMouseDown(e) {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = leftWidthRef.current;
+      const onMouseMove = (e2) => {
+        const dx = e2.clientX - startX;
+        setLeftWidth(Math.max(LEFT_PANEL_MIN_WIDTH, Math.min(LEFT_PANEL_MAX_WIDTH, startW + dx)));
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+  }), []);
+
+  const rightResizeHandlersWeb = useMemo(() => ({
+    onMouseDown(e) {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = rightWidthRef.current;
+      const onMouseMove = (e2) => {
+        const dx = e2.clientX - startX;
+        setRightWidth(Math.max(RIGHT_PANEL_MIN, Math.min(RIGHT_PANEL_MAX, startW - dx)));
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+  }), []);
+
+  const leftResizeHandlers = Platform.OS === 'web' ? leftResizeHandlersWeb : panResponder.panHandlers;
+  const rightResizeHandlers = Platform.OS === 'web' ? rightResizeHandlersWeb : panResponderRight.panHandlers;
+
   return {
     leftWidth,
     setLeftWidth,
@@ -91,6 +134,8 @@ export const useHomePaneResizing = () => {
     rightWidth,
     panResponder,
     panResponderRight,
+    leftResizeHandlers,
+    rightResizeHandlers,
   };
 };
 

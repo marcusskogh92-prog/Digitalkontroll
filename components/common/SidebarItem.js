@@ -187,11 +187,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginRight: LEFT_NAV.rowIconGap,
+    flexShrink: 0,
   },
   label: {
     fontSize: LEFT_NAV.rowFontSize,
     flex: 1,
-    minWidth: 0,
+    minWidth: 40,
     ...(Platform.OS === 'web'
       ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
       : {}),

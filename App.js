@@ -2,8 +2,9 @@ import { Inter_400Regular, Inter_600SemiBold, Inter_700Bold, useFonts } from '@e
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { applyGlobalBodyBackground } from './constants/backgroundTheme';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // AppLoading borttagen, ersätts med View och Text
 
@@ -11,6 +12,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
 import { GLOBAL_HEADER_HEIGHT } from './components/common/layoutConstants';
+import { ICON_RAIL } from './constants/iconRailTheme';
 import { AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
@@ -274,7 +276,11 @@ function ensureWebTitle() {
 export default function App() {
   const [currentRoute, setCurrentRoute] = React.useState(null);
   const navigationRef = React.useRef(null);
-  
+
+  useEffect(() => {
+    if (Platform.OS === 'web') applyGlobalBodyBackground();
+  }, []);
+
   let [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_700Bold,
@@ -310,7 +316,7 @@ export default function App() {
             route={{ name: currentRoute }}
           />
         )}
-        <AdminModalProvider>
+        <AdminModalProvider navigationRef={navigationRef}>
           <SystemModalProvider>
           <UploadManagerProvider>
             <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
@@ -381,7 +387,11 @@ export default function App() {
                 const dkExtraNudge = isWeb ? -10 : 0;
                 return ({
                   // Keep header clean on native; extra layout is handled via container styles
-                  headerStyle: { backgroundColor: '#FFFFFF', height: GLOBAL_HEADER_HEIGHT },
+                  headerStyle: {
+                    backgroundColor: '#FFFFFF',
+                    height: GLOBAL_HEADER_HEIGHT,
+                    ...(isWeb ? { borderBottomWidth: 3, borderBottomColor: ICON_RAIL.bg } : {}),
+                  },
                 headerTitleAlign: 'center',
                 headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }

@@ -12,6 +12,7 @@ import AdminKontoplanModal from './AdminKontoplanModal';
 import MallarModal from './MallarModal';
 import AdminAIPromptsModal from './AdminAIPromptsModal';
 import AdminKategoriModal from './AdminKategoriModal';
+import AdminCompanyModal from './AdminCompanyModal';
 
 const defaultContext = {
   openCustomersModal: () => {},
@@ -30,12 +31,16 @@ const defaultContext = {
   closeAIPromptsModal: () => {},
   openKategoriModal: () => {},
   closeKategoriModal: () => {},
+  openCompanyModal: () => {},
+  closeCompanyModal: () => {},
+  navigationRef: null,
   registerSelectionSavedListener: () => {},
+  isSubModalOpen: false,
 };
 
 export const AdminModalContext = React.createContext(defaultContext);
 
-export function AdminModalProvider({ children }) {
+export function AdminModalProvider({ children, navigationRef: navigationRefProp }) {
   const [customersOpen, setCustomersOpen] = useState(false);
   const [customersCompanyId, setCustomersCompanyId] = useState('');
   const [contactRegistryOpen, setContactRegistryOpen] = useState(false);
@@ -56,6 +61,8 @@ export function AdminModalProvider({ children }) {
   const [kategoriOpen, setKategoriOpen] = useState(false);
   const [kategoriCompanyId, setKategoriCompanyId] = useState('');
   const [kategoriSelectionContext, setKategoriSelectionContext] = useState(null);
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
+  const [companyModalCompanyId, setCompanyModalCompanyId] = useState('');
   const selectionSavedListenerRef = useRef(null);
 
   const openCustomersModal = useCallback((companyId) => {
@@ -144,6 +151,16 @@ export function AdminModalProvider({ children }) {
     setKategoriSelectionContext(null);
   }, []);
 
+  const openCompanyModal = useCallback((companyId) => {
+    setCompanyModalCompanyId(String(companyId || '').trim());
+    setCompanyModalOpen(true);
+  }, []);
+
+  const closeCompanyModal = useCallback(() => {
+    setCompanyModalOpen(false);
+    setCompanyModalCompanyId('');
+  }, []);
+
   const registerSelectionSavedListener = useCallback((fn) => {
     selectionSavedListenerRef.current = fn;
   }, []);
@@ -153,6 +170,8 @@ export function AdminModalProvider({ children }) {
       selectionSavedListenerRef.current(...args);
     }
   }, []);
+
+  const isSubModalOpen = byggdelOpen || kontoplanOpen || kategoriOpen || mallarOpen || aiPromptsOpen;
 
   const value = {
     openCustomersModal,
@@ -169,9 +188,13 @@ export function AdminModalProvider({ children }) {
     closeMallarModal,
     openAIPromptsModal,
     closeAIPromptsModal,
-  openKategoriModal,
-  closeKategoriModal,
-  registerSelectionSavedListener,
+    openKategoriModal,
+    closeKategoriModal,
+    openCompanyModal,
+    closeCompanyModal,
+    navigationRef: navigationRefProp ?? null,
+    registerSelectionSavedListener,
+    isSubModalOpen,
   };
 
   return (
@@ -222,6 +245,11 @@ export function AdminModalProvider({ children }) {
         selectionContext={kategoriSelectionContext}
         onClose={closeKategoriModal}
         onSelectionSaved={notifySelectionSaved}
+      />
+      <AdminCompanyModal
+        visible={companyModalOpen}
+        companyId={companyModalCompanyId}
+        onClose={closeCompanyModal}
       />
     </AdminModalContext.Provider>
   );

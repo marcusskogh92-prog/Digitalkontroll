@@ -36,6 +36,8 @@ import {
 } from '../firebase';
 import KontoplanTable from './KontoplanTable';
 import ConfirmModal from './Modals/ConfirmModal';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -63,24 +65,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
   titleIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#eff6ff',
+    width: 28,
+    height: 28,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
-  subtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { padding: 8 },
+  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
+  titleLine: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, gap: 6, flexWrap: 'nowrap' },
+  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
+  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95, flexShrink: 1, minWidth: 0 },
+  closeBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+  },
   statusOverlay: {
     position: 'absolute',
     left: 20,
@@ -195,8 +208,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   footerBtnPrimary: {
-    borderColor: '#2563eb',
-    backgroundColor: '#2563eb',
+    borderColor: ICON_RAIL.bg,
+    backgroundColor: ICON_RAIL.bg,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease` } : {}),
+  },
+  footerBtnDark: {
+    borderColor: ICON_RAIL.bg,
+    backgroundColor: ICON_RAIL.bg,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
 });
 
@@ -580,24 +601,40 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
     { key: 'delete', label: 'Ta bort', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
   ];
 
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: 720,
+    defaultHeight: 600,
+    minWidth: 400,
+    minHeight: 300,
+  });
+
   if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
+      <Pressable style={[styles.overlay, overlayStyle]} onPress={onClose}>
+        <Pressable style={[styles.box, boxStyle]} onPress={(e) => e.stopPropagation()}>
+          <View
+            style={[styles.header, headerProps.style]}
+            {...(Platform.OS === 'web' ? { onMouseDown: headerProps.onMouseDown } : {})}
+          >
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="list-outline" size={22} color="#1976D2" />
+                <Ionicons name="list-outline" size={18} color={ICON_RAIL.iconColorActive} />
               </View>
-              <View>
-                <Text style={styles.title}>Kontoplan</Text>
-                <Text style={styles.subtitle}>Register över konton</Text>
+              <View style={styles.titleLine}>
+                <Text style={styles.title} numberOfLines={1}>Kontoplan</Text>
+                <Text style={styles.titleDot}>•</Text>
+                <Text style={styles.subtitle} numberOfLines={1}>Register över konton</Text>
               </View>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={24} color="#475569" />
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.closeBtn}
+              accessibilityLabel="Stäng"
+              {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}
+            >
+              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
             </TouchableOpacity>
           </View>
 
@@ -765,12 +802,14 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
               </TouchableOpacity>
             ) : null}
             <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
+              <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDark]} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Stäng</Text>
               </TouchableOpacity>
               <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
             </View>
           </View>
+
+          {resizeHandles}
 
           {(notice || error) ? (
             <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">

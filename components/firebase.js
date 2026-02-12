@@ -48,7 +48,7 @@ export const deleteProjectCallable = httpsCallable(functionsClient, 'deleteProje
 export const deleteFolderCallable = httpsCallable(functionsClient, 'deleteFolder');
 
 // Callable wrappers
-export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset }) {
+export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset, permissions }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'createUser');
   const payload = { companyId, email, displayName };
@@ -57,6 +57,7 @@ export async function createUserRemote({ companyId, email, displayName, role, pa
   if (firstName !== undefined) payload.firstName = firstName;
   if (lastName !== undefined) payload.lastName = lastName;
   if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
+  if (Array.isArray(permissions)) payload.permissions = permissions;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
@@ -68,7 +69,7 @@ export async function deleteUserRemote({ companyId, uid }) {
   return res && res.data ? res.data : res;
 }
 
-export async function updateUserRemote({ companyId, uid, displayName, email, role, password, disabled, photoURL, avatarPreset }) {
+export async function updateUserRemote({ companyId, uid, displayName, email, role, password, disabled, photoURL, avatarPreset, permissions }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'updateUser');
   const payload = { companyId, uid };
@@ -79,6 +80,7 @@ export async function updateUserRemote({ companyId, uid, displayName, email, rol
   if (disabled !== undefined) payload.disabled = disabled;
   if (photoURL !== undefined) payload.photoURL = photoURL;
   if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
+  if (permissions !== undefined) payload.permissions = permissions;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
 }

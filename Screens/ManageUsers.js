@@ -1,13 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, ImageBackground, KeyboardAvoidingView, Platform, SectionList, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { HomeHeader } from '../components/common/HomeHeader';
-import { adminFetchCompanyMembers, auth, createUserRemote, deleteUserRemote, fetchCompanyMembers, fetchCompanyProfile, requestSubscriptionUpgradeRemote, updateUserRemote, uploadUserAvatar } from '../components/firebase';
-import { formatPersonName } from '../components/formatPersonName';
+import { auth, fetchCompanyProfile, requestSubscriptionUpgradeRemote } from '../components/firebase';
+import CompanyUsersContent from '../components/CompanyUsersContent';
 import MainLayout from '../components/MainLayout';
-import UserEditModal from '../components/UserEditModal';
-import UsersTable from '../components/UsersTable';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
 function ManageUsersLegacy({ route, navigation }) {
@@ -2132,19 +2130,9 @@ export default function ManageUsers({ route, navigation }) {
   const searchSpinAnim = useRef(new Animated.Value(0)).current;
   const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
 
-  const [members, setMembers] = useState([]);
   const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [reloadNonce, setReloadNonce] = useState(0);
-
-  const [memberSearch, setMemberSearch] = useState('');
-
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalIsNew, setModalIsNew] = useState(false);
-  const [modalMember, setModalMember] = useState(null);
-  const [modalSaving, setModalSaving] = useState(false);
-  const [modalError, setModalError] = useState('');
+  const [memberCount, setMemberCount] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [upgradeSending, setUpgradeSending] = useState(false);
 
@@ -2237,80 +2225,26 @@ export default function ManageUsers({ route, navigation }) {
     return n;
   }, [profile, companyId]);
 
-  const activeCount = useMemo(() => {
-    const arr = Array.isArray(members) ? members : [];
-    return arr.filter((m) => !(m?.disabled === true || String(m?.status || '').toLowerCase() === 'disabled')).length;
-  }, [members]);
-
   const usageLine = useMemo(() => {
     if (!companyId) return '';
-    if (typeof userLimitNumber === 'number') return `Användare: ${activeCount} / ${userLimitNumber}`;
-    return `Användare: ${activeCount}`;
-  }, [companyId, activeCount, userLimitNumber]);
-
-  const canEditUser = (member) => {
-    if (!member) return false;
-    if (!isCompanyAdmin) return false;
-    const targetRole = String(member?.role || '').trim();
-    if (!isSuperAdmin && targetRole === 'superadmin') return false;
-    return true;
-  };
-
-  const canDeleteUser = (member) => {
-    if (!member) return false;
-    if (!isCompanyAdmin) return false;
-    const uid = String(member?.uid || member?.id || '').trim();
-    const targetRole = String(member?.role || '').trim();
-    if (uid && currentUid && uid === currentUid) return false;
-    if (!isSuperAdmin && targetRole === 'superadmin') return false;
-    try {
-      const emailLower = String(member?.email || '').trim().toLowerCase();
-      if (emailLower === 'marcus@msbyggsystem.se') return false;
-    } catch (_e) {}
-    return true;
-  };
+    if (typeof userLimitNumber === 'number') return `Användare: ${memberCount} / ${userLimitNumber}`;
+    return `Användare: ${memberCount}`;
+  }, [companyId, memberCount, userLimitNumber]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!companyId) {
         setProfile(null);
-        setMembers([]);
-        setError('');
         return;
       }
-      setLoading(true);
-      setError('');
       try {
         const prof = await fetchCompanyProfile(companyId).catch(() => null);
         if (!cancelled) setProfile(prof || null);
-
-        let mems = [];
-        let loaded = false;
-        if (canSeeAllCompanies) {
-          try {
-            const r = await adminFetchCompanyMembers(companyId);
-            const arr = r && (r.members || (r.data && r.data.members)) ? (r.members || (r.data && r.data.members)) : [];
-            if (Array.isArray(arr)) {
-              mems = arr;
-              loaded = true;
-            }
-          } catch (_e) {
-            loaded = false;
-          }
-        }
-        if (!loaded) {
-          mems = await fetchCompanyMembers(companyId).catch(() => []);
-        }
-        if (!cancelled) setMembers(Array.isArray(mems) ? mems : []);
-      } catch (e) {
-        if (!cancelled) setError(String(e?.message || e || 'Kunde inte ladda användare.'));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } catch (_e) {}
     })();
     return () => { cancelled = true; };
-  }, [companyId, reloadNonce, canSeeAllCompanies]);
+  }, [companyId]);
 
   useEffect(() => {
     if (!isWeb || typeof window === 'undefined') return undefined;
@@ -2318,7 +2252,7 @@ export default function ManageUsers({ route, navigation }) {
       try { navigation.reset({ index: 0, routes: [{ name: 'Home' }] }); } catch (_e) {}
     };
     const handleRefresh = () => {
-      try { setReloadNonce((n) => n + 1); } catch (_e) {}
+      try { setReloadKey((k) => k + 1); } catch (_e) {}
     };
     window.addEventListener('dkGoHome', handler);
     window.addEventListener('dkRefresh', handleRefresh);
@@ -2327,70 +2261,6 @@ export default function ManageUsers({ route, navigation }) {
       try { window.removeEventListener('dkRefresh', handleRefresh); } catch (_e) {}
     };
   }, [navigation, isWeb]);
-
-  const handleRefresh = () => setReloadNonce((n) => n + 1);
-
-  const openAddModal = () => {
-    setModalError('');
-    setModalIsNew(true);
-    setModalMember(null);
-    setModalOpen(true);
-  };
-
-  const openEditModal = (member) => {
-    setModalError('');
-    setModalIsNew(false);
-    setModalMember(member || null);
-    setModalOpen(true);
-  };
-
-  const handleToggleDisabled = async (member) => {
-    if (!member) return;
-    if (!canEditUser(member)) return;
-    const uid = String(member?.uid || member?.id || '').trim();
-    if (!uid) return;
-    if (uid && currentUid && uid === currentUid) {
-      Alert.alert('Inte tillåtet', 'Du kan inte inaktivera ditt eget konto.');
-      return;
-    }
-    const currentlyDisabled = !!(member.disabled === true || String(member.status || '').toLowerCase() === 'disabled');
-    const targetDisabled = !currentlyDisabled;
-    try {
-      await updateUserRemote({ companyId, uid, disabled: targetDisabled });
-      setMembers((prev) => (Array.isArray(prev) ? prev.map((m) => {
-        const mmuid = String(m?.uid || m?.id || '').trim();
-        if (mmuid !== uid) return m;
-        return { ...m, disabled: targetDisabled };
-      }) : prev));
-    } catch (e) {
-      Alert.alert('Fel', String(e?.message || e));
-    }
-  };
-
-  const handleDelete = async (member) => {
-    if (!member) return;
-    if (!canDeleteUser(member)) {
-      Alert.alert('Inte tillåtet', 'Du kan inte ta bort denna användare.');
-      return;
-    }
-
-    const uid = String(member?.uid || member?.id || '').trim();
-    if (!uid) return;
-
-    const label = String(member?.displayName || member?.email || 'användaren');
-
-    const conf = (typeof window !== 'undefined')
-      ? window.confirm(`Ta bort ${label}?\n\nDetta drar tillbaka åtkomst (soft delete).`)
-      : true;
-    if (!conf) return;
-
-    try {
-      await deleteUserRemote({ companyId, uid });
-      setReloadNonce((n) => n + 1);
-    } catch (e) {
-      Alert.alert('Fel', String(e?.message || e));
-    }
-  };
 
   const handleUpgrade = async () => {
     if (upgradeSending) return;
@@ -2424,25 +2294,20 @@ export default function ManageUsers({ route, navigation }) {
       <MainLayout adminMode={true} adminCurrentScreen="manage_users" sidebarSelectedCompanyId={companyId} adminShowCompanySelector={false}>
         <View style={{ padding: 24, borderRadius: 16, borderWidth: 1, borderColor: '#E6E8EC', backgroundColor: '#fff' }}>
           <Text style={{ fontSize: 16, fontWeight: '800', color: '#111' }}>Ingen åtkomst</Text>
-          <Text style={{ marginTop: 8, color: '#64748b' }}>Du behöver vara Företagsadmin eller Superadmin för att se Användare.</Text>
+          <Text style={{ marginTop: 8, color: '#64748b' }}>Du behöver vara Admin eller Superadmin för att se Användare.</Text>
         </View>
       </MainLayout>
     );
   }
 
   const dashboardContainerStyle = { width: '100%', maxWidth: 1180, alignSelf: 'center' };
-  const dashboardCardStyle = {
-    borderWidth: 1,
-    borderColor: '#E6E8EC',
-    borderRadius: 18,
-    padding: 20,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
-  };
+
+  const handleMembersLoaded = useCallback((list) => {
+    const active = Array.isArray(list)
+      ? list.filter((m) => !(m?.disabled === true || String(m?.status || '').toLowerCase() === 'disabled')).length
+      : 0;
+    setMemberCount(active);
+  }, []);
 
   return (
     <>
@@ -2499,109 +2364,13 @@ export default function ManageUsers({ route, navigation }) {
         rightPanel={null}
       >
         <View style={dashboardContainerStyle}>
-          <View style={dashboardCardStyle}>
-            <UsersTable
-              companyName={companyName}
-              hasSelectedCompany={!!String(companyId || '').trim()}
-              users={members}
-              loading={loading}
-              error={error}
-              search={memberSearch}
-              setSearch={setMemberSearch}
-              onRefresh={handleRefresh}
-              onAdd={openAddModal}
-              onEdit={openEditModal}
-              onToggleDisabled={handleToggleDisabled}
-              onDelete={handleDelete}
-              canEditUser={canEditUser}
-              canDeleteUser={canDeleteUser}
-            />
-          </View>
+          <CompanyUsersContent
+            key={reloadKey}
+            companyId={companyId}
+            companyName={companyName}
+            onMembersLoaded={handleMembersLoaded}
+          />
         </View>
-
-        <UserEditModal
-          visible={modalOpen}
-          member={modalMember}
-          companyId={companyId}
-          isNew={modalIsNew}
-          saving={modalSaving}
-          errorMessage={modalError}
-          canDelete={!modalIsNew && canDeleteUser(modalMember)}
-          onDelete={() => {
-            setModalOpen(false);
-            handleDelete(modalMember);
-          }}
-          onClose={() => {
-            if (modalSaving) return;
-            setModalOpen(false);
-            setModalError('');
-          }}
-          onSave={async (payload) => {
-            if (!companyId) return;
-            setModalSaving(true);
-            setModalError('');
-            try {
-              const firstName = String(payload?.firstName || '').trim();
-              const lastName = String(payload?.lastName || '').trim();
-              const displayName = String(`${firstName} ${lastName}`.trim());
-              const email = String(payload?.email || '').trim().toLowerCase();
-              const role = String(payload?.role || 'user').trim() || 'user';
-              const disabled = !!payload?.disabled;
-              const avatarPreset = String(payload?.avatarPreset || '').trim();
-              const avatarFile = payload?.avatarFile || null;
-              const password = String(payload?.password || '');
-
-              if (!modalIsNew) {
-                const uid = String(modalMember?.uid || modalMember?.id || '').trim();
-                if (!uid) throw new Error('Saknar uid för användaren');
-                if (!canEditUser(modalMember)) throw new Error('Inte tillåtet');
-
-                const patch = { displayName, role, disabled };
-
-                if (avatarFile) {
-                  const photoURL = await uploadUserAvatar({ companyId, uid, file: avatarFile });
-                  patch.photoURL = photoURL || '';
-                  patch.avatarPreset = '';
-                } else if (avatarPreset) {
-                  patch.avatarPreset = avatarPreset;
-                  patch.photoURL = '';
-                }
-
-                await updateUserRemote({ companyId, uid, ...patch });
-              } else {
-                const res = await createUserRemote({
-                  companyId,
-                  email,
-                  displayName,
-                  role,
-                  password,
-                  firstName,
-                  lastName,
-                  avatarPreset: avatarPreset || undefined,
-                });
-
-                const createdUid = String(res?.uid || res?.data?.uid || '').trim();
-                const tempPw = String(res?.tempPassword || res?.data?.tempPassword || '').trim();
-
-                if (createdUid && avatarFile) {
-                  const photoURL = await uploadUserAvatar({ companyId, uid: createdUid, file: avatarFile });
-                  await updateUserRemote({ companyId, uid: createdUid, photoURL: photoURL || '', avatarPreset: '' });
-                }
-
-                if (tempPw) {
-                  try { if (typeof window !== 'undefined') window.alert(`Användare skapad. Lösenord: ${tempPw}`); } catch (_e) {}
-                }
-              }
-
-              setModalOpen(false);
-              setReloadNonce((n) => n + 1);
-            } catch (e) {
-              setModalError(String(e?.message || e));
-            } finally {
-              setModalSaving(false);
-            }
-          }}
-        />
       </MainLayout>
     </>
   );

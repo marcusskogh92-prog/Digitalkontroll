@@ -266,6 +266,8 @@ export function HomeHeader({
           gap: 10,
         }}
       >
+        {Platform.OS !== 'web' ? (
+        <>
         {canShowSharePointNav ? (
           <TouchableOpacity
             onPress={() => {
@@ -992,6 +994,8 @@ export function HomeHeader({
             document.body
           );
         })()}
+        </>
+        ) : null}
       </View>
 
       {canShowSupportToolsInHeader && supportMenuOpen && (

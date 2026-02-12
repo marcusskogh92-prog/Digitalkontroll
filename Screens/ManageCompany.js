@@ -515,12 +515,24 @@ export default function ManageCompany({ navigation, route }) {
     }
   }, [route?.params?.createNew]);
 
-  // If navigated with a companyId (e.g. clicking "Översikt" under a company in the sidebar),
-  // auto-select that company so the screen doesn't show the "Välj ett företag..." placeholder.
+  // If navigated with showCompanyList: true (e.g. Admin → Företag i rail), visa företagslistan utan att förvälja.
+  // Om navigerat med companyId: auto-select det företaget. Annars fallback till senast sparade.
   useEffect(() => {
     (async () => {
       try {
         if (route?.params?.createNew) return;
+        if (route?.params?.showCompanyList === true) {
+          setCompanyId('');
+          setCompanyName('');
+          setUserLimit('10');
+          setCompanyEnabled(true);
+          setCompanyDeleted(false);
+          setCompanyMemberCount(null);
+          setIsCreatingNew(false);
+          setLogoUrl('');
+          setSelectedCompanyAuditEvents([]);
+          return;
+        }
         const fromRoute = String(route?.params?.companyId || '').trim();
         let cid = fromRoute;
 
@@ -546,7 +558,7 @@ export default function ManageCompany({ navigation, route }) {
         handleSelectCompany(cid);
       } catch (_e) {}
     })();
-  }, [route?.params?.companyId]);
+  }, [route?.params?.companyId, route?.params?.showCompanyList]);
 
   // focus: 'sharepoint' is handled by showing the SharePoint card (single list); no accordion to open
 

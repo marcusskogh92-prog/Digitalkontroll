@@ -2,6 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
+
+/** På web har vänsterpanelen mörk bakgrund – använd samma ljusa färger som rail-ikoner. */
+const NAV = LEFT_NAV;
 import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
 import { ensureDkBasStructure, ensureFolderPath, ensureKalkylskedeProjectFolderStructure, moveDriveItemByIdGuarded, renameDriveItemByIdGuarded } from '../../services/azure/fileService';
 import { folderHasFilesDeep, getDriveItemByPath, getDriveItems, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../../services/azure/hierarchyService';
@@ -28,6 +31,14 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     paddingHorizontal: 0,
+  },
+  /** Hierarki (sites + mappar): tydlig vänsterpadding, och full bredd så sitnamn får plats. */
+  leftPanelHierarchyWrap: {
+    paddingLeft: 12,
+    paddingRight: 8,
+    alignSelf: 'stretch',
+    width: '100%',
+    minWidth: 0,
   },
 });
 
@@ -155,7 +166,7 @@ function RecursiveFolderView({
   };
 
   if (Platform.OS === 'web') {
-    const indent = LEFT_NAV.indentPerLevel * Math.max(0, level);
+    const indent = NAV.indentPerLevel * Math.max(0, level);
     return (
       <View style={{ marginTop: level > 0 ? 0 : 2 }}>
         <SidebarItem
@@ -163,7 +174,7 @@ function RecursiveFolderView({
           indentMode="padding"
           indent={indent}
           label={safeName}
-          labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+          labelStyle={{ fontSize: NAV.rowFontSize }}
           labelWeight={folderIsProject ? '500' : '500'}
           hovered={isHovered}
           onPress={handlePress}
@@ -181,12 +192,12 @@ function RecursiveFolderView({
                   <AnimatedChevron
                     expanded={isExpanded}
                     spinTrigger={folderSpin}
-                    size={LEFT_NAV.chevronSize}
-                    color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                    size={NAV.chevronSize}
+                    color={isHovered ? NAV.hoverIcon : NAV.iconDefault}
                   />
                 </View>
               ) : (
-                <View style={{ width: LEFT_NAV.chevronSize, marginRight: 6 }} />
+                <View style={{ width: NAV.chevronSize, marginRight: 6 }} />
               )}
               {!folderIsProject && (
                 <MicroShake trigger={lockTrigger}>
@@ -194,7 +205,7 @@ function RecursiveFolderView({
                     <Ionicons
                       name="folder-outline"
                       size={16}
-                      color={isHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                      color={isHovered ? NAV.hoverIcon : NAV.iconDefault}
                       style={{ marginRight: 8 }}
                     />
                   </MicroPulse>
@@ -209,7 +220,7 @@ function RecursiveFolderView({
                     backgroundColor: indicatorColor,
                     marginRight: 8,
                     borderWidth: 1,
-                    borderColor: LEFT_NAV.phaseDotBorder,
+                    borderColor: NAV.phaseDotBorder,
                   }}
                 />
               )}
@@ -217,7 +228,7 @@ function RecursiveFolderView({
           )}
         />
         {!folderIsProject && showChevron && isExpanded && visibleChildren.length > 0 && (
-          <View style={{ marginLeft: LEFT_NAV.indentPerLevel }}>
+          <View style={{ marginLeft: NAV.indentPerLevel }}>
             {visibleChildren.map(child => {
               const childIsProject = isProjectFolder(child);
               return (
@@ -246,11 +257,11 @@ function RecursiveFolderView({
           </View>
         )}
         {!folderIsProject && showChevron && isExpanded && visibleChildren.length === 0 && (folder?.loading || folder?.error) && (
-          <View style={{ marginLeft: LEFT_NAV.indentPerLevel * 2, marginTop: 2 }}>
+          <View style={{ marginLeft: NAV.indentPerLevel * 2, marginTop: 2 }}>
             <Text
               style={{
                 fontSize: 12,
-                color: LEFT_NAV.textMuted,
+                color: NAV.textMuted,
                 fontStyle: 'italic',
               }}
             >
@@ -294,7 +305,7 @@ function RecursiveFolderView({
                 expanded={isExpanded}
                 spinTrigger={folderSpin}
                 size={Math.max(12, 16 - level)}
-                color={LEFT_NAV.iconDefault}
+                color={NAV.iconDefault}
               />
             </View>
           ) : (
@@ -307,7 +318,7 @@ function RecursiveFolderView({
                 <Ionicons
                   name={'folder-outline'}
                   size={Math.max(12, 16 - level)}
-                  color={LEFT_NAV.iconDefault}
+                  color={NAV.iconDefault}
                   style={{ marginRight: 6 }}
                 />
               </MicroPulse>
@@ -332,7 +343,7 @@ function RecursiveFolderView({
             numberOfLines={1}
             style={{
               fontSize: 14,
-              color: LEFT_NAV.textDefault,
+              color: NAV.textDefault,
               fontWeight: '500',
               flex: 1,
               minWidth: 0,
@@ -376,7 +387,7 @@ function RecursiveFolderView({
         <Text
           style={{
             fontSize: 12,
-            color: '#888',
+            color: NAV.textMuted,
             fontStyle: 'italic',
             marginLeft: 16,
             paddingLeft: 4,
@@ -399,6 +410,7 @@ export function SharePointLeftPanel({
   onToggleLeftPanelCollapse,
   webPaneHeight,
   panResponder,
+  resizeHandlers,
   spinSidebarHome,
   spinSidebarRefresh,
   onPressHome,
@@ -2771,9 +2783,9 @@ export function SharePointLeftPanel({
             padding: isWeb ? 0 : 8,
             borderRightWidth: 0,
             borderColor: '#e2e8f0',
-            backgroundColor: SIDEBAR_BG,
+            backgroundColor: Platform.OS === 'web' ? 'transparent' : SIDEBAR_BG,
+            flex: 1,
             flexShrink: 0,
-            alignSelf: 'stretch',
             minHeight: 0,
             position: 'relative',
           },
@@ -2781,9 +2793,26 @@ export function SharePointLeftPanel({
           isWeb ? { transition: isResizingLeft ? 'none' : 'width 0.2s ease' } : null,
         ]}
       >
-        {/* Resizer: dra för att justera panelbredd. Web: mus (onMouseDown); native: PanResponder */}
-        {!leftPanelCollapsed && (isWeb ? setLeftWidth : panResponder) && (
-          isWeb ? (
+        {/* Resizer: dra för att justera panelbredd. resizeHandlers från hook (web: mus, native: PanResponder) */}
+        {!leftPanelCollapsed && (resizeHandlers || (isWeb ? setLeftWidth : panResponder)) && (
+          resizeHandlers ? (
+            <View
+              {...resizeHandlers}
+              style={[
+                {
+                  position: 'absolute',
+                  right: isWeb ? -6 : -12,
+                  top: 0,
+                  bottom: 0,
+                  width: isWeb ? 12 : 24,
+                  zIndex: 9,
+                  backgroundColor: isWeb ? 'transparent' : 'rgba(0,0,0,0.05)',
+                },
+                isWeb && { cursor: 'col-resize', pointerEvents: 'auto', borderLeftWidth: 2, borderLeftColor: '#cbd5e1' },
+              ]}
+              accessibilityLabel="Justera panelbredd"
+            />
+          ) : isWeb ? (
             createElement('div', {
               role: 'separator',
               'aria-label': 'Justera panelbredd',
@@ -2893,7 +2922,12 @@ export function SharePointLeftPanel({
 
         <ScrollView
           ref={leftTreeScrollRef}
-          style={{ flex: 1 }}
+          style={{ flex: 1, minHeight: 0, alignSelf: 'stretch' }}
+          contentContainerStyle={{
+            minWidth: '100%',
+            width: '100%',
+            alignItems: 'stretch',
+          }}
           scrollEnabled
           nestedScrollEnabled
         >
@@ -3031,8 +3065,8 @@ export function SharePointLeftPanel({
             if (!selectedProject && sharepointSyncState === 'error') {
               return (
                 <View style={styles.leftPanelScrollContent}>
-                  <View style={{ paddingVertical: 16, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal }}>
-                    <Text style={{ color: LEFT_NAV.errorText, fontSize: LEFT_NAV.rowFontSize }}>
+                  <View style={{ paddingVertical: 16, paddingHorizontal: NAV.rowPaddingHorizontal }}>
+                    <Text style={{ color: NAV.errorText, fontSize: NAV.rowFontSize }}>
                       {sharepointSyncError || 'SharePoint-synk misslyckades'}
                     </Text>
                   </View>
@@ -3043,8 +3077,8 @@ export function SharePointLeftPanel({
             if (!selectedProject && sharepointSyncState !== 'ready') {
               return (
                 <View style={styles.leftPanelScrollContent}>
-                  <View style={{ paddingVertical: 16, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal }}>
-                    <Text style={{ color: LEFT_NAV.textMuted, fontSize: LEFT_NAV.rowFontSize }}>
+                  <View style={{ paddingVertical: 16, paddingHorizontal: NAV.rowPaddingHorizontal }}>
+                    <Text style={{ color: NAV.textMuted, fontSize: NAV.rowFontSize }}>
                       Laddar mappar...
                     </Text>
                   </View>
@@ -3084,7 +3118,7 @@ export function SharePointLeftPanel({
 
                 return (
                   <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
-                    <Text style={{ paddingVertical: 8, paddingHorizontal: LEFT_NAV.rowPaddingHorizontal, color: LEFT_NAV.textMuted, fontSize: LEFT_NAV.rowFontSize }}>
+                    <Text style={{ paddingVertical: 8, paddingHorizontal: NAV.rowPaddingHorizontal, color: NAV.textMuted, fontSize: NAV.rowFontSize }}>
                       Projekt (från Firestore)
                     </Text>
                     {items.map((p) => {
@@ -3135,7 +3169,7 @@ export function SharePointLeftPanel({
                             <SidebarItem
                               fullWidth
                               label={fullName || number}
-                              labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+                              labelStyle={{ fontSize: NAV.rowFontSize }}
                               hovered={isHovered}
                               onPress={onSelect}
                               onHoverIn={() => setHoveredProjectKey(rowKey)}
@@ -3150,7 +3184,7 @@ export function SharePointLeftPanel({
                                     backgroundColor: indicatorColor,
                                     marginRight: 8,
                                     borderWidth: 1,
-                                    borderColor: LEFT_NAV.phaseDotBorder,
+                                    borderColor: NAV.phaseDotBorder,
                                   }}
                                 />
                               )}
@@ -3164,7 +3198,7 @@ export function SharePointLeftPanel({
                           <SidebarItem
                             fullWidth
                             label={fullName || number}
-                            labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+                            labelStyle={{ fontSize: NAV.rowFontSize }}
                             onPress={onSelect}
                             onLongPress={onOpenMenu}
                             left={() => (
@@ -3176,7 +3210,7 @@ export function SharePointLeftPanel({
                                   backgroundColor: indicatorColor,
                                   marginRight: 8,
                                   borderWidth: 1,
-                                  borderColor: LEFT_NAV.phaseDotBorder,
+                                  borderColor: NAV.phaseDotBorder,
                                 }}
                               />
                             )}
@@ -3193,9 +3227,9 @@ export function SharePointLeftPanel({
                   <Text
                     style={{
                       paddingVertical: 8,
-                      paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
-                      color: LEFT_NAV.textMuted,
-                      fontSize: LEFT_NAV.rowFontSize,
+                      paddingHorizontal: NAV.rowPaddingHorizontal,
+                      color: NAV.textMuted,
+                      fontSize: NAV.rowFontSize,
                     }}
                   >
                     {'Inga SharePoint-siter är synliga för detta företag. Be en superadmin koppla en SharePoint-site (Admin → Företag → "Koppla SharePoint Site").'}
@@ -3206,7 +3240,7 @@ export function SharePointLeftPanel({
 
             // Show sites as root level, with their folders as children (samma wrapper som project för identisk layout)
             return (
-              <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
+              <View style={[styles.leftPanelScrollContent, styles.leftPanelHierarchyWrap]} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                 {displayHierarchy.map(siteItem => {
                   // Site items have type 'site' and contain folders as children
                   if (siteItem.type === 'site') {
@@ -3233,10 +3267,10 @@ export function SharePointLeftPanel({
                     })();
 
                     return (
-                      <View key={siteItem.id} style={{ marginBottom: 0 }}>
-                        {/* Site header – liten snurrbar chevron + moln, så det syns att raden är klickbar */}
+                      <View key={siteItem.id} style={{ marginBottom: 0, alignSelf: 'stretch', width: '100%' }}>
+                        {/* Site header – moln + chevron vänster, sitnamn alltid synligt (aldrig iconOnly så det inte centreras) */}
                         <SidebarItem
-                          iconOnly={leftPanelCollapsed}
+                          iconOnly={false}
                           onPress={toggleSiteExpanded}
                           onLongPress={(e) => {
                             try { openSpContextMenu(e, siteItem); } catch (_e) {}
@@ -3247,26 +3281,26 @@ export function SharePointLeftPanel({
                           onHoverIn={() => setHoveredSiteId(siteItem.siteId)}
                           onHoverOut={() => setHoveredSiteId(null)}
                           hovered={isSiteHovered}
-                          style={{ minHeight: LEFT_NAV.rowMinHeightCompact }}
+                          style={{ minHeight: NAV.rowMinHeightCompact }}
                           left={() => (
                             <>
+                              <SharePointSiteIcon
+                                size={18}
+                                color={isSiteHovered ? NAV.hoverIcon : NAV.iconDefault}
+                                status={siteSyncStatus}
+                                style={{ marginRight: 6 }}
+                              />
                               <View style={{ marginRight: 4 }}>
                                 <AnimatedChevron
                                   expanded={isExpanded}
                                   spinTrigger={siteSpin}
                                   size={12}
-                                  color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
+                                  color={isSiteHovered ? NAV.hoverIcon : NAV.iconDefault}
                                 />
                               </View>
-                              <SharePointSiteIcon
-                                size={18}
-                                color={isSiteHovered ? LEFT_NAV.hoverIcon : LEFT_NAV.iconDefault}
-                                status={siteSyncStatus}
-                                style={{ marginRight: 8 }}
-                              />
                             </>
                           )}
-                          label={stripNumberPrefixForDisplay(siteItem.name)}
+                          label={stripNumberPrefixForDisplay(siteItem.name) || siteItem.siteId || 'SharePoint-site'}
                           labelWeight="600"
                         />
                         
@@ -3283,7 +3317,7 @@ export function SharePointLeftPanel({
                                   <Text
                                     style={{
                                       fontSize: 12,
-                                      color: LEFT_NAV.textMuted,
+                                      color: NAV.textMuted,
                                       fontStyle: 'italic',
                                       marginTop: 4,
                                       marginLeft: 50,

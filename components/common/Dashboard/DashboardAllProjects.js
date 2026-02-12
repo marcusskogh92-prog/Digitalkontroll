@@ -338,48 +338,6 @@ const DashboardAllProjects = ({
 
   return (
     <>
-      {/* Header with title and create button */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        {/* Title removed - no company name or phase name needed */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          {visibleProjects.length > 0 && (
-            <Text style={{ fontSize: 14, color: '#888' }}>
-              {visibleProjects.length} {visibleProjects.length === 1 ? 'projekt' : 'projekt'}
-            </Text>
-          )}
-          {onCreateProject && (
-            <TouchableOpacity
-              onPress={onCreateProject}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#1976D2',
-                paddingVertical: 10,
-                paddingHorizontal: 16,
-                borderRadius: 8,
-                gap: 6,
-                ...(Platform.OS === 'web' ? {
-                  cursor: 'pointer',
-                  transition: 'background-color 0.2s',
-                } : {}),
-              }}
-              activeOpacity={0.8}
-              onMouseEnter={Platform.OS === 'web' ? (e) => {
-                e.currentTarget.style.backgroundColor = '#1565C0';
-              } : undefined}
-              onMouseLeave={Platform.OS === 'web' ? (e) => {
-                e.currentTarget.style.backgroundColor = '#1976D2';
-              } : undefined}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-                Skapa nytt projekt
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
       {/* Contextual guidance text */}
       {membershipLoading ? (
         <DashboardBanner
@@ -425,13 +383,7 @@ const DashboardAllProjects = ({
             ) : null}
           </Text>
         </DashboardBanner>
-      ) : (
-        <DashboardBanner padding={12} accentColor="#1976D2" title={null} message={null}>
-          <Text style={{ fontSize: 13, color: '#495057' }}>
-            Välj ett projekt i listan för att fortsätta
-          </Text>
-        </DashboardBanner>
-      )}
+      ) : null}
       
       {membershipLoading ? (
         <View style={{ 

@@ -94,6 +94,22 @@ Innehåll i RULES.md
 
 ⸻
 
+8. Modal-standard (golden rule)
+	•	Alla modaler i systemet ska se ut och bete sig som Företagsinställningar (AdminCompanyModal).
+	•	Detaljerad beskrivning: docs/MODAL_GOLDEN_RULE.md.
+	•	Banner (header):
+	•	Mörk färg (ICON_RAIL.bg). Titel 14px, undertitel 12px på en rad. Ikonruta 28×28 px. Stäng (X): mörk bakgrund, vit ikon.
+	•	Footer-knappar:
+	•	Stäng och Spara ska vara mörka (samma färg som bannern) med vit text.
+	•	Tangentbord: Esc stänger. Enter sparar när fokus inte är i input/textarea. Tab och pilar fungerar normalt.
+	•	Webb: modalen ska vara flyttbar (drag i bannern) och storleksändringbar (dra i högerkant, nederkant, nedre högra hörnet). Vid mus över kant/hörn ska muspekaren bli resize-cursor (streck med pilar, Windows-liknande).
+	•	Implementering:
+	•	Nya modaler: använd StandardModal (components/common/StandardModal.js).
+	•	Tema: constants/modalTheme.js (MODAL_THEME). Hooks: useDraggableResizableModal, useModalKeyboard.
+	•	Befintliga modaler ska uppdateras till samma utseende och beteende vid underhåll.
+
+⸻
+
 Slut
 
 Detta dokument är en del av systemets arkitektur och ska följas i all vidare utveckling.

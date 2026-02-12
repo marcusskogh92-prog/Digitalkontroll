@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { formatPersonName } from './formatPersonName';
 
@@ -11,19 +11,28 @@ const isMemberDisabled = (member) => {
 
 const getRoleLabel = (member) => {
   const role = String(member?.role || '').trim();
-  if (role === 'superadmin') return 'Superadmin';
-  if (role === 'admin') return 'Företagsadmin';
+  if (role === 'superadmin' || role === 'admin') return 'Admin';
   return 'Användare';
 };
 
 const getRoleBadge = (member) => {
   const role = String(member?.role || '').trim();
-  if (role === 'superadmin') return { label: 'Superadmin', color: '#C62828', bg: '#FFEBEE' };
-  if (role === 'admin') return { label: 'Företagsadmin', color: '#1565C0', bg: '#E3F2FD' };
-  return { label: 'Användare', color: '#455A64', bg: '#ECEFF1' };
+  if (role === 'superadmin' || role === 'admin') return { label: 'Admin', color: '#fff', bg: '#1e293b' };
+  return { label: 'Användare', color: '#334155', bg: '#e2e8f0' };
 };
 
 const normalizeText = (value) => String(value || '').toLowerCase();
+
+const ROLE_FILTERS = [
+  { key: 'all', label: 'Alla' },
+  { key: 'admin', label: 'Admin' },
+  { key: 'user', label: 'Användare' },
+];
+
+const isAdminRole = (member) => {
+  const r = String(member?.role || '').trim();
+  return r === 'admin' || r === 'superadmin';
+};
 
 export default function UsersTable({
   companyName,
@@ -40,11 +49,13 @@ export default function UsersTable({
   onDelete,
   canEditUser,
   canDeleteUser,
+  showRoleFilter = false,
 }) {
   const isWeb = Platform.OS === 'web';
   const [sortColumn, setSortColumn] = useState('displayName');
   const [sortDirection, setSortDirection] = useState('asc');
   const [visibleLimit, setVisibleLimit] = useState(500);
+  const [roleFilter, setRoleFilter] = useState('all');
 
   const [hoveredRowKey, setHoveredRowKey] = useState(null);
   const [toggleBusyKey, setToggleBusyKey] = useState(null);
@@ -56,8 +67,17 @@ export default function UsersTable({
   const [lastClickKey, setLastClickKey] = useState(null);
   const [lastClickAt, setLastClickAt] = useState(0);
 
-  const filtered = useMemo(() => {
+  const columnWidths = { actions: 48 };
+
+  const roleFiltered = useMemo(() => {
     const arr = Array.isArray(users) ? users : [];
+    if (roleFilter === 'all') return arr;
+    if (roleFilter === 'admin') return arr.filter(isAdminRole);
+    return arr.filter((u) => !isAdminRole(u));
+  }, [users, roleFilter]);
+
+  const filtered = useMemo(() => {
+    const arr = roleFiltered;
     const q = normalizeText(search).trim();
     if (!q) return arr;
     return arr.filter((u) => {
@@ -65,7 +85,7 @@ export default function UsersTable({
       const email = normalizeText(u?.email || '');
       return name.includes(q) || email.includes(q);
     });
-  }, [users, search]);
+  }, [roleFiltered, search]);
 
   const sorted = useMemo(() => {
     const arr = Array.isArray(filtered) ? [...filtered] : [];
@@ -163,7 +183,7 @@ export default function UsersTable({
 
   return (
     <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 16, overflow: 'hidden', backgroundColor: '#fff' }}>
-      <View style={{ padding: 18, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
+      <View style={{ padding: 16, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E6E8EC' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {companyName ? (
@@ -178,6 +198,29 @@ export default function UsersTable({
             <Text style={{ fontSize: 15, fontWeight: '700', color: '#111' }}>Användare</Text>
           </View>
 
+          {showRoleFilter ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#E2E8F0', borderRadius: 10, padding: 2 }}>
+              {ROLE_FILTERS.map((f) => {
+                const active = roleFilter === f.key;
+                return (
+                  <TouchableOpacity
+                    key={f.key}
+                    onPress={() => setRoleFilter(f.key)}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 12,
+                      borderRadius: 8,
+                      backgroundColor: active ? '#334155' : 'transparent',
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s' } : {}),
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#fff' : '#475569' }}>{f.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
           <View style={{ flex: 1, maxWidth: 420, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8 }}>
             <Ionicons name="search" size={16} color="#64748b" style={{ marginRight: 8 }} />
             <TextInput
@@ -206,7 +249,7 @@ export default function UsersTable({
                     paddingVertical: 9,
                     paddingHorizontal: 12,
                     borderRadius: 12,
-                    backgroundColor: '#1976D2',
+                    backgroundColor: '#1e293b',
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 8,
@@ -215,7 +258,7 @@ export default function UsersTable({
                   activeOpacity={0.8}
                 >
                   <Ionicons name="add" size={18} color="#fff" />
-                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Lägg till användare</Text>
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Lägg till användare</Text>
                 </TouchableOpacity>
               </>
             ) : null}
@@ -241,7 +284,7 @@ export default function UsersTable({
         </View>
       </View>
 
-      <View style={{ padding: 18 }}>
+      <View style={{ padding: 16 }}>
         {!hasSelectedCompany ? (
           <View style={{ padding: 32, alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E6E8EC' }}>
             <Text style={{ color: '#475569', fontSize: 15, fontWeight: '600' }}>Välj ett företag i listan till vänster</Text>
@@ -270,11 +313,11 @@ export default function UsersTable({
               ) : null}
             </View>
 
-            <View style={{ backgroundColor: '#F8FAFC', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E6E8EC', marginBottom: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 14, overflow: 'hidden', backgroundColor: '#fff', width: '100%' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E2E8F0', width: '100%' }}>
                 <TouchableOpacity
                   onPress={() => handleSort('displayName')}
-                  style={{ flex: 2.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
                   activeOpacity={0.7}
                 >
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Namn</Text>
@@ -284,10 +327,9 @@ export default function UsersTable({
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   onPress={() => handleSort('email')}
-                  style={{ flex: 2.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
                   activeOpacity={0.7}
                 >
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>E-post</Text>
@@ -297,23 +339,21 @@ export default function UsersTable({
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   onPress={() => handleSort('role')}
-                  style={{ flex: 1.3, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Behörighet</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Roll</Text>
                   {sortColumn === 'role' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   onPress={() => handleSort('status')}
-                  style={{ flex: 1.0, flexDirection: 'row', alignItems: 'center', gap: 4, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
+                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s' } : {}) }}
                   activeOpacity={0.7}
                 >
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Status</Text>
@@ -323,12 +363,8 @@ export default function UsersTable({
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
-
-                <View style={{ flex: 0.4, alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Åtgärder</Text>
-                </View>
+                <View style={{ width: columnWidths.actions, flexShrink: 0 }} />
               </View>
-            </View>
 
             {loading ? (
               <View style={{ padding: 24, alignItems: 'center' }}>
@@ -345,7 +381,7 @@ export default function UsersTable({
                 </Text>
               </View>
             ) : (
-              <View style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
+              <>
                 {shownUsers.map((u, idx) => {
                   const key = getUserKey(u, idx);
                   const disabled = isMemberDisabled(u);
@@ -370,7 +406,6 @@ export default function UsersTable({
                           if (canEditUser?.(u)) onEdit?.(u);
                           return;
                         }
-                        // single-click no-op (keeps table calm)
                         try { e?.stopPropagation?.(); } catch (_e2) {}
                       }}
                       onContextMenu={Platform.OS === 'web' ? (e) => {
@@ -383,41 +418,65 @@ export default function UsersTable({
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
-                        paddingVertical: 6,
-                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        paddingHorizontal: 14,
                         borderBottomWidth: idx < shownUsers.length - 1 ? 1 : 0,
-                        borderBottomColor: '#EEF0F3',
+                        borderBottomColor: '#E2E8F0',
                         backgroundColor: isHovered ? hoverBg : baseBg,
+                        width: '100%',
                         ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer', transition: 'background-color 0.15s' } : {}),
                       }}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ flex: 2.0, fontSize: 13, color: '#111', fontWeight: '500' }} numberOfLines={1}>
-                        {formatPersonName(u?.displayName || u?.email || '') || '—'}
-                      </Text>
-                      <Text style={{ flex: 2.0, fontSize: 13, color: '#64748b' }} numberOfLines={1}>
-                        {String(u?.email || '—')}
-                      </Text>
-                      <View style={{ flex: 1.3, flexDirection: 'row', alignItems: 'center' }}>
-                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 9, borderRadius: 999, backgroundColor: roleBadge.bg }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: roleBadge.color }}>{roleBadge.label}</Text>
+                      <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#111' }} numberOfLines={1}>
+                          {formatPersonName(u?.displayName || u?.email || '') || '—'}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0, paddingHorizontal: 8 }}>
+                        {u?.email ? (
+                          <TouchableOpacity
+                            onPress={() => Linking.openURL(`mailto:${String(u.email).trim()}`)}
+                            style={Platform.OS === 'web' ? { cursor: 'pointer' } : {}}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={{ fontSize: 13, color: '#1976D2', textDecorationLine: 'underline' }} numberOfLines={1}>
+                              {String(u.email)}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>—</Text>
+                        )}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 }}>
+                        <View style={{ alignSelf: 'flex-start', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, backgroundColor: roleBadge.bg }}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: roleBadge.color }}>{roleBadge.label}</Text>
                         </View>
                       </View>
-                      <View style={{ flex: 1.0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 9, borderRadius: 999, backgroundColor: disabled ? '#FFEBEE' : '#E8F5E9' }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: disabled ? '#C62828' : '#2E7D32' }}>{disabled ? 'Inaktiv' : 'Aktiv'}</Text>
+                      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, gap: 6 }}>
+                        <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: disabled ? '#FEF2F2' : '#F1F5F9' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: disabled ? '#B91C1C' : '#64748b' }}>{disabled ? 'Inaktiv' : 'Aktiv'}</Text>
                         </View>
                         {isBusy ? (
-                          <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
+                          <View style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}>
                             <ActivityIndicator size="small" color="#1976D2" />
                           </View>
                         ) : null}
                       </View>
-                      <View style={{ flex: 0.4, alignItems: 'flex-end' }}>
+                      <View style={{ width: columnWidths.actions, flexShrink: 0, alignItems: 'flex-end', justifyContent: 'center' }}>
                         <TouchableOpacity
                           onPress={(e) => openRowMenu(e, u)}
                           disabled={!!isBusy}
-                          style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer' } : {}) }}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 8,
+                            backgroundColor: isHovered ? '#E2E8F0' : 'transparent',
+                            borderWidth: 0,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer', transition: 'background-color 0.15s' } : {}),
+                          }}
                           activeOpacity={0.8}
                         >
                           <Ionicons name="ellipsis-vertical" size={16} color="#475569" />
@@ -426,8 +485,10 @@ export default function UsersTable({
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </>
             )}
+            </View>
+
           </>
         )}
 
