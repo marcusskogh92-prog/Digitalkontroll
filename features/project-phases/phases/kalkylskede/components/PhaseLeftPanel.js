@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ProjectSidebarHeader } from '../../../../../components/common/ProjectSidebarHeader';
 import SidebarItem from '../../../../../components/common/SidebarItem';
 import { AnimatedChevron, MicroPulse } from '../../../../../components/common/leftNavMicroAnimations';
 import { auth } from '../../../../../components/firebase';
@@ -805,14 +806,13 @@ export default function PhaseLeftPanel({
   return (
     <View style={styles.container}>
       <View style={styles.panelCard}>
-        {/* Project name header */}
-        {projectName && (
-          <View style={styles.projectHeader}>
-            <Text style={styles.projectName} numberOfLines={1}>
-              {projectName}
-            </Text>
-            <View style={styles.divider} />
-          </View>
+        {/* Projekt-header: nummer + namn, skede (ingen divider) */}
+        {(project || projectName) && (
+          <ProjectSidebarHeader
+            project={project}
+            projectName={projectName}
+            phaseKey={project?.phase}
+          />
         )}
 
         {/* Content wrapper - takes flex: 1 */}
@@ -1462,25 +1462,6 @@ const styles = StyleSheet.create({
           borderRightColor: SIDEBAR_BORDER_COLOR,
         }
       : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 2 }),
-  },
-  projectHeader: {
-    paddingVertical: LEFT_NAV.rowPaddingVertical,
-    paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
-    borderBottomWidth: 1,
-    borderBottomColor: Platform.OS === 'web' ? '#e0e0e0' : '#e6e6e6',
-    backgroundColor: Platform.OS === 'web' ? SIDEBAR_BG : '#fff',
-    flexShrink: 0,
-    minHeight: LEFT_NAV.rowMinHeightCompact,
-    justifyContent: 'center',
-  },
-  projectName: {
-    fontSize: LEFT_NAV.rowFontSize,
-    fontWeight: '600',
-    color: LEFT_NAV.textDefault,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e6e6e6'
   },
   contentWrapper: {
     flex: 1, // Take remaining space (after header)

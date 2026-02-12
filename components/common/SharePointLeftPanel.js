@@ -8,11 +8,13 @@ import { folderHasFilesDeep, getDriveItemByPath, getDriveItems, loadFolderChildr
 import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
 import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
+import { LeftPanelProjectSearch } from '../HeaderComponents';
 import ContextMenu from '../ContextMenu';
 import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
 import { SIDEBAR_BG, SIDEBAR_BORDER_COLOR } from './layoutConstants';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ConfirmModal } from './Modals';
+import { ProjectSidebarHeader } from './ProjectSidebarHeader';
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
 import SidebarItem from './SidebarItem';
@@ -435,6 +437,10 @@ export function SharePointLeftPanel({
   phaseActiveItem = null,
   phaseActiveNode = null,
 
+  // Projekt-sök i vänsterpanelen (web, startsida). Om route skickas och showProjectSearch true visas sökrutan.
+  route: leftPanelRoute = null,
+  showProjectSearch = false,
+
   // AF-only folder mirror state (shared with middle panel)
   afRelativePath = '',
   onAfRelativePathChange = null,
@@ -561,8 +567,10 @@ export function SharePointLeftPanel({
     } catch (_e) {}
   }, []);
 
+  // Mark ready as soon as nav (sites/folders) is loaded – don't block on ensure/self-heal.
+  // Ensure runs in background and won't block "Laddar mappar...".
   const maybeMarkSyncReady = useCallback(() => {
-    if (syncNavDoneRef.current && syncEnsureDoneRef.current) {
+    if (syncNavDoneRef.current) {
       setSyncState('ready');
     }
   }, [setSyncState]);
@@ -2687,29 +2695,18 @@ export function SharePointLeftPanel({
       const promise = (async () => {
         try {
           setNavLoading(true);
-          const config = await getSharePointNavigationConfig(companyId);
+          // Ladda config och synka visibility i parallell med visible sites – snabbare första anrop.
+          const [config, , visibleSiteIdsResult] = await Promise.all([
+            getSharePointNavigationConfig(companyId),
+            syncSharePointSiteVisibilityRemote({ companyId }).catch(() => {}),
+            getCompanyVisibleSharePointSiteIds(companyId).catch(() => []),
+          ]);
           if (!mounted) return;
           setNavConfig(config);
-
-          // Ensure visibility metadata exists (server-side migration). Best-effort.
-          try {
-            await syncSharePointSiteVisibilityRemote({ companyId });
-          } catch (_e) {
-            // Non-fatal: UI can still fall back to legacy behavior.
-          }
-
-          // Enabled sites are controlled by Firestore metadata (sharepoint_sites).
-          // Navigation config is only used for optional folder/path config.
-          let visibleSiteIds = [];
-          try {
-            visibleSiteIds = await getCompanyVisibleSharePointSiteIds(companyId);
-          } catch (_e) {
-            visibleSiteIds = [];
-          }
+          const visibleSiteIds = Array.isArray(visibleSiteIdsResult) ? visibleSiteIdsResult : [];
 
           const effectiveConfig = {
-            // Only render project sites. System sites (e.g. DK Bas) must never appear.
-            enabledSites: Array.isArray(visibleSiteIds) ? visibleSiteIds : [],
+            enabledSites: visibleSiteIds,
             siteConfigs: config?.siteConfigs || {},
           };
 
@@ -2829,8 +2826,8 @@ export function SharePointLeftPanel({
             marginBottom: 12,
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: leftPanelCollapsed ? 'center' : 'flex-end',
             gap: 6,
+            ...(leftPanelCollapsed && !showProjectSearch ? { justifyContent: 'center' } : {}),
           }}
         >
           {typeof onToggleLeftPanelCollapse === 'function' && (
@@ -2848,7 +2845,10 @@ export function SharePointLeftPanel({
               />
             </TouchableOpacity>
           )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {showProjectSearch && leftPanelRoute && !leftPanelCollapsed && (
+            <LeftPanelProjectSearch navigation={navigation} route={leftPanelRoute} />
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             <TouchableOpacity
               style={{ padding: 6, borderRadius: 8 }}
               onPress={onPressHome}
@@ -2919,56 +2919,14 @@ export function SharePointLeftPanel({
                 );
               }
 
-              const projectHierarchy = selectedProject
-                ? [
-                    {
-                      ...selectedProject,
-                      id: selectedProject.id,
-                      name: (() => {
-                        const rawName = String(
-                          selectedProject.projectName || selectedProject.name || selectedProject.fullName || ''
-                        ).trim();
-
-                        let number = String(
-                          selectedProject.projectNumber || selectedProject.number || ''
-                        ).trim();
-
-                        // Fallback: some callers might set `id` to a non-human identifier.
-                        // If number is missing, try to parse it from the beginning of name/fullName.
-                        if (!number) {
-                          const firstToken = String(rawName.split(/\s+/)[0] || '').trim();
-                          if (firstToken && firstToken.includes('-')) {
-                            number = firstToken;
-                          }
-                        }
-
-                        const cleanedName = (() => {
-                          if (!rawName) return '';
-                          if (selectedProject.projectName) return rawName;
-                          if (number && rawName.startsWith(number)) {
-                            let rest = rawName.slice(number.length).trim();
-                            if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) {
-                              rest = rest.slice(1).trim();
-                            }
-                            return rest || rawName;
-                          }
-                          return rawName;
-                        })();
-
-                        if (number && cleanedName) return `${number} — ${cleanedName}`;
-                        return number || cleanedName || selectedProject.id;
-                      })(),
-                      type: 'project',
-                      expanded: true,
-                      children: projectFolderTree,
-                    },
-                  ]
-                : [];
-
               return (
                 <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
+                  <ProjectSidebarHeader
+                    project={selectedProject}
+                    phaseKey={projectPhaseKey}
+                  />
                   <ProjectTree
-                    hierarchy={projectHierarchy}
+                    hierarchy={projectFolderTree}
                     selectedProject={selectedProject}
                     selectedPhase={projectPhaseKey}
                     compact={isWeb}

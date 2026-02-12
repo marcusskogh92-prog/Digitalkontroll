@@ -273,6 +273,18 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
+
   useLayoutEffect(() => {
     if (!notice && !error) return;
     statusOpacity.setValue(1);
@@ -745,9 +757,12 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
+            </View>
           </View>
 
           {(notice || error) ? (
@@ -788,7 +803,11 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
       <ConfirmModal
         visible={!!deleteConfirmItem}
         title="Radera kategori"
-        message="Vill du verkligen radera denna kategori?"
+        message={
+          deleteConfirmItem
+            ? `Du är på väg att permanent radera kategorin "${String(deleteConfirmItem.name ?? '').trim() || 'kategorin'}".\nDetta går inte att ångra.`
+            : ''
+        }
         cancelLabel="Avbryt"
         confirmLabel="Radera"
         danger

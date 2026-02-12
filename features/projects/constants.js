@@ -61,3 +61,21 @@ export function getProjectPhase(project) {
   const phaseKey = project?.phase || DEFAULT_PHASE;
   return getPhaseConfig(phaseKey);
 }
+
+/** Färg och visningsnamn per skede för left-panel header m.m. (kompakt visning). */
+const PHASE_META_MAP = {
+  kalkylskede: { color: '#2563EB', label: 'Kalkylskede' },
+  produktion: { color: '#16A34A', label: 'Produktion' },
+  avslut: { color: '#111827', label: 'Avslutat' },
+  eftermarknad: { color: '#A855F7', label: 'Eftermarknad' },
+  free: { color: '#F59E0B', label: 'Valfri mappstruktur' },
+};
+
+/**
+ * Returnerar { color, label } för ett skede (för projekt-header i left panel).
+ * @param {string} [phase] - Phase key (kalkylskede, produktion, avslut, eftermarknad)
+ */
+export function getPhaseMeta(phase) {
+  const key = String(phase || '').trim().toLowerCase() || DEFAULT_PHASE;
+  return PHASE_META_MAP[key] || PHASE_META_MAP[DEFAULT_PHASE];
+}

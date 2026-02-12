@@ -14,7 +14,7 @@ import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
-import { auth, saveControlToFirestore, saveDraftToFirestore, subscribeUserNotifications } from '../components/firebase';
+import { auth, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
 import { onProjectUpdated } from '../components/projectBus';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
@@ -238,18 +238,28 @@ export default function HomeScreen({ navigation, route }) {
   }, [companyId, authClaims?.companyId]);
 
   const [hierarchyReloadKey, setHierarchyReloadKey] = useState(0);
+  const [companyProjects, setCompanyProjects] = useState([]);
+
+  // Prenumeration på företagets projekt (samma lista som i vänsterpanelen – alla siter företaget har tillgång till).
+  React.useEffect(() => {
+    const cid = String(companyId || '').trim();
+    if (!cid) {
+      setCompanyProjects([]);
+      return () => {};
+    }
+    const unsub = subscribeCompanyProjects(cid, { siteRole: 'projects' }, (list) => {
+      const active = (list || []).filter((p) => String(p?.status || '').trim().toLowerCase() !== 'archived');
+      setCompanyProjects(active);
+    });
+    return () => {
+      try { unsub(); } catch (_e) {}
+    };
+  }, [companyId]);
 
   // Inloggnings-/activity-effekter (login-logg + company members) extraherade till useHomeUserActivity
   useHomeUserActivity({ companyId, routeCompanyId, authClaims });
 
-  // Auto-refresh av SharePoint-hierarkin på webben (polling)
-  React.useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const interval = setInterval(() => {
-      setHierarchyReloadKey((k) => k + 1);
-    }, 60000); // var 60:e sekund
-    return () => clearInterval(interval);
-  }, []);
+  // Vänsterpanelen uppdateras endast när användaren klickar på Uppdatera-knappen (ingen auto-polling).
 
   // Refresh SharePoint metadata/hierarchy when a project updates its phase metadata.
   React.useEffect(() => {
@@ -1170,7 +1180,17 @@ export default function HomeScreen({ navigation, route }) {
   }, []);
   // Sökpopup + keyboard/scroll hanteras nu av useHomeSearchAndScroll
 
-  // Header search dropdown (between logos): search among created projects in hierarchy
+  // Header search dropdown (between logos / left panel): search among created projects
+  const onSelectProjectFromSearch = React.useCallback(
+    (proj) => {
+      requestProjectSwitch(proj, { selectedAction: null });
+      try {
+        navigation?.setParams?.({ headerSearchOpen: false, headerSearchKeepConnected: false });
+      } catch (_e) {}
+    },
+    [requestProjectSwitch, navigation]
+  );
+
   const {
     headerProjectQuery,
     headerSearchOpen,
@@ -1180,8 +1200,16 @@ export default function HomeScreen({ navigation, route }) {
     headerProjectMatches,
     hoveredProjectId,
     setHoveredProjectId,
+    selectedIndex,
+    setSelectedIndex,
     dropdownAnim,
-  } = useHomeHeaderProjectSearch({ route, navigation, hierarchy });
+  } = useHomeHeaderProjectSearch({
+    route,
+    navigation,
+    hierarchy,
+    searchableProjects: companyProjects,
+    onSelectProject: onSelectProjectFromSearch,
+  });
 
   // --- Safe-aliaser för render, så JSX aldrig kraschar på undefined ---
   const selectedProjectSafe = selectedProject ?? null;
@@ -1551,6 +1579,8 @@ export default function HomeScreen({ navigation, route }) {
               headerProjectMatches={headerProjectMatches}
               hoveredProjectId={hoveredProjectId}
               setHoveredProjectId={setHoveredProjectId}
+              selectedIndex={selectedIndex}
+              setSelectedIndex={setSelectedIndex}
               dropdownAnim={dropdownAnim}
               navigation={navigation}
               requestProjectSwitch={requestProjectSwitch}
@@ -1627,6 +1657,8 @@ export default function HomeScreen({ navigation, route }) {
                     selectedProjectFolders={selectedProjectFoldersSafe}
                     selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
                     navigation={navigation}
+                    route={route}
+                    showProjectSearch={Platform.OS === 'web'}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
                     handleSelectFunction={handleSelectFunction}
@@ -1907,6 +1939,8 @@ export default function HomeScreen({ navigation, route }) {
               selectedProjectFolders={selectedProjectFoldersSafe}
               selectedProjectFoldersLoading={selectedProjectFoldersLoadingSafe}
               navigation={navigation}
+              route={route}
+              showProjectSearch={Platform.OS === 'web'}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}
               handleSelectFunction={handleSelectFunction}

@@ -386,14 +386,10 @@ export default function App() {
                 headerTitleContainerStyle: isWeb
                   ? { flex: 1, paddingLeft: 300, paddingRight: 300 }
                   : { flex: 1, paddingLeft: 0, paddingRight: 0 },
-                // Web: show search + breadcrumb via global screenOptions; native uses centered logo.
+                // Web: sök ligger i vänsterpanelen; header center tom. Native: centrerad logo.
                 headerTitle: () => (
                   isWeb
-                    ? (
-                      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                        <HomeHeaderSearch navigation={navigation} route={route} />
-                      </View>
-                    )
+                    ? <View style={{ flex: 1, minWidth: 0 }} />
                     : (
                       <View style={{ marginBottom: 4, marginLeft: -28 }}>
                         <DigitalKontrollHeaderLogo />

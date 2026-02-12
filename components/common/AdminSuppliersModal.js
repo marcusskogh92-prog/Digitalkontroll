@@ -366,6 +366,18 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
+
   useLayoutEffect(() => {
     if (!notice && !error) return;
     statusOpacity.setValue(1);
@@ -549,20 +561,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     }
   };
 
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !deleteConfirmSupplier) return undefined;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        confirmDelete();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setDeleteConfirmSupplier(null);
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [deleteConfirmSupplier]);
+  // ESC/ENTER hanteras av ConfirmModal
 
   const exportExcel = () => {
     setExcelMenuVisible(false);
@@ -1013,9 +1012,12 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
+            </View>
           </View>
 
           {(notice || error) ? (
@@ -1055,10 +1057,15 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
 
       <ConfirmModal
         visible={!!deleteConfirmSupplier}
-        message={deleteConfirmSupplier ? `Radera ${String(deleteConfirmSupplier.companyName ?? '').trim() || 'leverantören'}?` : ''}
+        title="Radera leverantör"
+        message={
+          deleteConfirmSupplier
+            ? `Du är på väg att permanent radera leverantören "${String(deleteConfirmSupplier.companyName ?? '').trim() || 'leverantören'}".\nDetta går inte att ångra.`
+            : ''
+        }
         cancelLabel="Avbryt"
-        confirmLabel="OK"
-        compact
+        confirmLabel="Radera"
+        danger
         busy={deleting}
         onCancel={() => setDeleteConfirmSupplier(null)}
         onConfirm={confirmDelete}

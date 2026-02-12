@@ -1,9 +1,49 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
-import { Image, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { LEFT_NAV } from '../constants/leftNavTheme';
 import { resolveCompanyLogoUrl } from './firebase';
+
+const leftPanelSearchStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    minWidth: 0,
+    marginHorizontal: 4,
+  },
+  inputRow: {
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inputRowFocused: {
+    borderColor: '#666',
+  },
+  inputRowBlurred: {
+    borderColor: '#e0e0e0',
+  },
+  searchIconTouch: {
+    marginRight: 6,
+  },
+  input: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: LEFT_NAV.rowFontSize,
+    color: LEFT_NAV.textDefault,
+    paddingVertical: 0,
+    fontFamily: 'Inter_400Regular',
+    fontWeight: '400',
+  },
+  inputWeb: {
+    outlineStyle: 'none',
+    outlineWidth: 0,
+  },
+});
 
 export function CompanyHeaderLogo({ companyId }) {
   const [logoUrl, setLogoUrl] = React.useState(null);
@@ -182,6 +222,120 @@ export function HomeHeaderSearch({ navigation, route }) {
               ? { outlineStyle: 'none', outlineWidth: 0 }
               : null),
           }}
+          returnKeyType="search"
+          onSubmitEditing={submitSearch}
+          onFocus={() => {
+            setIsFocused(true);
+            setHeaderSearchParams({ headerSearchOpen: true, headerSearchKeepConnected: false });
+          }}
+          onBlur={() => {
+            setIsFocused(false);
+            setHeaderSearchParams({ headerSearchOpen: false });
+          }}
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+      </View>
+    </View>
+  );
+}
+
+/** Kompakt projektsök för vänsterpanelen. Samma route-params som HomeHeaderSearch; fyller tillgänglig bredd (flex). */
+export function LeftPanelProjectSearch({ navigation, route, style, containerStyle }) {
+  const query = String(route?.params?.headerProjectSearchText || '');
+  const [isFocused, setIsFocused] = React.useState(false);
+  const containerRef = React.useRef(null);
+
+  const setHeaderSearchParams = React.useCallback(
+    (params) => {
+      if (Platform.OS !== 'web') return;
+      try {
+        navigation?.setParams?.(params);
+      } catch (_e) {}
+    },
+    [navigation]
+  );
+
+  const measureAbsolute = React.useCallback(() => {
+    try {
+      const node = containerRef.current;
+      if (node && typeof node.measureInWindow === 'function') {
+        node.measureInWindow((x, y, w, h) => {
+          if (typeof w === 'number' && w > 0) {
+            setHeaderSearchParams({
+              headerSearchWidth: w,
+              headerSearchBottom: (y || 0) + (h || 0) - 1,
+              headerSearchLeft: x ?? 0,
+              headerSearchTop: y ?? 0,
+            });
+          }
+        });
+      }
+    } catch (_e) {}
+  }, [setHeaderSearchParams]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const t = setTimeout(measureAbsolute, 50);
+    return () => clearTimeout(t);
+  }, [measureAbsolute, query]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onResize = () => measureAbsolute();
+    try {
+      window.addEventListener('resize', onResize);
+    } catch (_e) {}
+    return () => {
+      try {
+        window.removeEventListener('resize', onResize);
+      } catch (_e) {}
+    };
+  }, [measureAbsolute]);
+
+  const submitSearch = React.useCallback(() => {
+    try {
+      const q = String(query || '').trim();
+      setHeaderSearchParams({ headerProjectSearchText: q, headerSearchOpen: true });
+    } catch (_e) {}
+  }, [setHeaderSearchParams, query]);
+
+  return (
+    <View
+      ref={containerRef}
+      onLayout={(e) => {
+        const w = e?.nativeEvent?.layout?.width;
+        if (typeof w === 'number' && w > 0) measureAbsolute();
+      }}
+      style={[leftPanelSearchStyles.container, containerStyle]}
+    >
+      <View
+        style={[
+          leftPanelSearchStyles.inputRow,
+          isFocused ? leftPanelSearchStyles.inputRowFocused : leftPanelSearchStyles.inputRowBlurred,
+          style,
+        ]}
+      >
+        <TouchableOpacity
+          onPress={submitSearch}
+          activeOpacity={0.7}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          style={leftPanelSearchStyles.searchIconTouch}
+          accessibilityLabel="Sök"
+        >
+          <Ionicons name="search" size={16} color={LEFT_NAV.iconDefault} />
+        </TouchableOpacity>
+        <TextInput
+          value={query}
+          onChangeText={(t) => {
+            setHeaderSearchParams({ headerProjectSearchText: t, headerSearchOpen: true });
+          }}
+          placeholder="Sök projekt…"
+          placeholderTextColor={LEFT_NAV.textMuted}
+          style={[
+            leftPanelSearchStyles.input,
+            Platform.OS === 'web' && leftPanelSearchStyles.inputWeb,
+          ]}
           returnKeyType="search"
           onSubmitEditing={submitSearch}
           onFocus={() => {

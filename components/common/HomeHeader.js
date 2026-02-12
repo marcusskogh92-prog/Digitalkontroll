@@ -121,61 +121,6 @@ export function HomeHeader({
 
   const canShowSharePointNav = !!(isSuperAdmin || isSuperAdminResolved);
 
-  const resolveProjectBannerText = () => {
-    try {
-      const p = selectedProject || null;
-      if (!p) return null;
-
-      const number = String(
-        p.projectNumber || p.number || p.projectId || p.id || ''
-      ).trim();
-      const name = String(
-        p.projectName || p.name || ''
-      ).trim();
-      const fullName = String(p.fullName || '').trim();
-
-      const cleanedName = (() => {
-        if (!name && fullName) {
-          // Try to remove leading number from fullName
-          if (number && fullName.startsWith(number)) {
-            let rest = fullName.slice(number.length).trim();
-            if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) rest = rest.slice(1).trim();
-            return rest || fullName;
-          }
-          return fullName;
-        }
-        if (number && name.startsWith(number)) {
-          let rest = name.slice(number.length).trim();
-          if (rest.startsWith('-') || rest.startsWith('–') || rest.startsWith('—')) rest = rest.slice(1).trim();
-          return rest || name;
-        }
-        return name;
-      })();
-
-      const hasAny = !!(number || cleanedName || fullName);
-      if (!hasAny) return null;
-      return {
-        number: number || '',
-        name: cleanedName || '',
-        fullName: fullName || '',
-      };
-    } catch (_e) {
-      return null;
-    }
-  };
-
-  const projectBanner = resolveProjectBannerText();
-
-  const bannerSideGutter = (() => {
-    const w = Number(windowWidth || 0);
-    const max = Platform.OS === 'web' ? 240 : 140;
-    const computed = Math.round(w * 0.22);
-    return Math.max(72, Math.min(max, computed || 120));
-  })();
-
-  const bannerLeftGutter = Math.max(bannerSideGutter, Number(leftHeaderWidth || 0) + 16);
-  const bannerRightGutter = Math.max(bannerSideGutter, Number(rightHeaderWidth || 0) + 16);
-
   const openUserMenu = () => {
     try {
       const node = userBtnRef.current;
@@ -212,53 +157,6 @@ export function HomeHeader({
         borderLeftColor: '#1976D2',
       }}
     >
-      {projectBanner ? (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: bannerLeftGutter,
-            right: bannerRightGutter,
-            top: 0,
-            bottom: 0,
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: 8,
-            opacity: 0.9,
-          }}
-        >
-          <View style={{ maxWidth: 720, width: '100%', alignItems: 'center' }}>
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={{
-                fontSize: 13,
-                fontWeight: '400',
-                color: 'rgba(51, 65, 85, 0.80)',
-                textAlign: 'center',
-              }}
-            >
-              {projectBanner.number ? (
-                <Text
-                  style={{
-                    fontSize: 13,
-                    fontWeight: '600',
-                    color: 'rgba(15, 23, 42, 0.78)',
-                  }}
-                >
-                  {projectBanner.number}
-                </Text>
-              ) : null}
-              {projectBanner.number && (projectBanner.name || projectBanner.fullName) ? ' — ' : ''}
-              {(projectBanner.name || projectBanner.fullName) ? (
-                <Text style={{ fontSize: 13, fontWeight: '400', color: 'rgba(51, 65, 85, 0.80)' }}>
-                  {projectBanner.name || projectBanner.fullName}
-                </Text>
-              ) : null}
-            </Text>
-          </View>
-        </View>
-      ) : null}
       <View
         onLayout={(e) => {
           const w = e?.nativeEvent?.layout?.width;

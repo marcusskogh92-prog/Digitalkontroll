@@ -26,13 +26,14 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
       config = await getSharePointNavigationConfig(companyId);
     }
 
-    // Enabled sites are controlled by Firestore metadata (sharepoint_sites)
-    // so visibility does not require SharePoint Navigation.
-    let enabledSites = [];
-    try {
-      enabledSites = await getCompanyVisibleSharePointSiteIds(companyId);
-    } catch (_e) {
-      enabledSites = [];
+    // Enabled sites: använd redan hämtade om navConfig.enabledSites finns (snabbare).
+    let enabledSites = Array.isArray(navConfig?.enabledSites) ? navConfig.enabledSites : null;
+    if (enabledSites === null) {
+      try {
+        enabledSites = await getCompanyVisibleSharePointSiteIds(companyId);
+      } catch (_e) {
+        enabledSites = [];
+      }
     }
 
     // IMPORTANT: No legacy enabledSites fallback here.

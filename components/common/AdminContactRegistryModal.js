@@ -340,6 +340,18 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
+
   useLayoutEffect(() => {
     if (!notice && !error) return;
     statusOpacity.setValue(1);
@@ -781,9 +793,12 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
           </ScrollView>
 
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
+            </View>
           </View>
 
           {(notice || error) ? (
@@ -900,10 +915,15 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
 
       <ConfirmModal
         visible={!!deleteConfirmContact}
-        message={deleteConfirmContact ? `Radera ${String(deleteConfirmContact.name ?? '').trim() || 'kontakten'}?` : ''}
+        title="Radera kontakt"
+        message={
+          deleteConfirmContact
+            ? `Du är på väg att permanent radera kontakten "${String(deleteConfirmContact.name ?? '').trim() || 'kontakten'}".\nDetta går inte att ångra.`
+            : ''
+        }
         cancelLabel="Avbryt"
-        confirmLabel="OK"
-        compact
+        confirmLabel="Radera"
+        danger
         busy={deleting}
         onCancel={() => setDeleteConfirmContact(null)}
         onConfirm={() => performDeleteContact(deleteConfirmContact)}

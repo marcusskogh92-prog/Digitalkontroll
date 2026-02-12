@@ -284,6 +284,18 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose]);
+
   useLayoutEffect(() => {
     if (!notice && !error) return;
     statusOpacity.setValue(1);
@@ -796,9 +808,12 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-            </TouchableOpacity>
+            <View style={{ alignItems: 'center' }}>
+              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
+            </View>
           </View>
 
           {(notice || error) ? (
@@ -838,14 +853,15 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
 
       <ConfirmModal
         visible={!!deleteConfirmByggdel}
+        title="Radera byggdel"
         message={
           deleteConfirmByggdel
-            ? `Radera ${String(deleteConfirmByggdel.code ?? '').trim()}${deleteConfirmByggdel.name ? ` – ${deleteConfirmByggdel.name}` : ''}?`
+            ? `Du är på väg att permanent radera byggdelen "${String(deleteConfirmByggdel.code ?? '').trim()}${deleteConfirmByggdel.name ? ` – ${deleteConfirmByggdel.name}` : ''}".\nDetta går inte att ångra.`
             : ''
         }
         cancelLabel="Avbryt"
-        confirmLabel="OK"
-        compact
+        confirmLabel="Radera"
+        danger
         busy={deleting}
         onCancel={() => setDeleteConfirmByggdel(null)}
         onConfirm={performDeleteByggdel}
