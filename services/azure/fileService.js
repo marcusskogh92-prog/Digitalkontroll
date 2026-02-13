@@ -1350,6 +1350,31 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
   // This is safe even if the project is v1; it will just rename the matching folder number (03/04).
   await migrateOfferterFolderNames();
 
+  // Översikt subfolders: add 01 - Checklista and renumber 01→02, 02→03, 03→04, 04→05 (rename high→low).
+  const migrateOversiktSubfolders = async () => {
+    const parent = '01 - Översikt';
+    const renames = [
+      { from: '04 - FrågaSvar', to: '05 - FrågaSvar' },
+      { from: '03 - Tidsplan och viktiga datum', to: '04 - Tidsplan och viktiga datum' },
+      { from: '02 - Organisation och roller', to: '03 - Organisation och roller' },
+      { from: '01 - Projektinformation', to: '02 - Projektinformation' },
+    ];
+    for (const r of renames) {
+      try {
+        await renameChildByPathIfSafe({ parentRel: parent, fromChild: r.from, toChild: r.to });
+      } catch (e) {
+        console.warn('[ensureKalkylskedeProjectFolderStructure] Översikt subfolder rename failed:', r.from, '→', r.to, e?.message || e);
+      }
+    }
+    const checklistaPath = `${root}/${parent}/01 - Checklista`.replace(/\/+/g, '/');
+    try {
+      await ensureFolderPath(checklistaPath, companyId, siteId, { siteRole: 'projects' });
+    } catch (e) {
+      console.warn('[ensureKalkylskedeProjectFolderStructure] Översikt 01 - Checklista create failed:', e?.message || e);
+    }
+  };
+  await migrateOversiktSubfolders();
+
   const { getKalkylskedeLockedRelativeFolderPaths } = await import('../../components/firebase');
   const relPaths = getKalkylskedeLockedRelativeFolderPaths(resolvedVersion);
 

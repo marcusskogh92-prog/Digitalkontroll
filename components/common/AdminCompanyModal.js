@@ -20,6 +20,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import LoadingState from './LoadingState';
 import {
   adminFetchCompanyMembers,
   fetchCompanyMembers,
@@ -34,6 +35,8 @@ import {
 import { ICON_RAIL, PROGRESS_THEME } from '../../constants/iconRailTheme';
 import { PROJECT_PHASES } from '../../features/projects/constants';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
+import CompanyAIPromptsContent from '../CompanyAIPromptsContent';
+import CompanySharePointContent from '../CompanySharePointContent';
 import CompanyUsersContent from '../CompanyUsersContent';
 import { AdminModalContext } from './AdminModalContext';
 
@@ -69,14 +72,6 @@ const REGISTER_LINKS = [
   { key: 'byggdelar', label: 'Byggdelar', description: 'Byggdelstabell och koder', icon: 'layers-outline', openModal: 'openByggdelModal', comingSoon: false },
   { key: 'kategorier', label: 'Kategorier', description: 'Kategorier och taggar', icon: 'pricetag-outline', openModal: 'openKategoriModal', comingSoon: false },
   { key: 'mallar', label: 'Mallar', description: 'Mallar för kontroller', icon: 'document-text-outline', openModal: 'openMallarModal', comingSoon: true },
-];
-
-const AI_INSTALLNINGAR_LINKS = [
-  { key: 'ai', label: 'AI-inställningar', description: 'AI-prompter och inställningar', icon: 'sparkles-outline', openModal: 'openAIPromptsModal' },
-];
-
-const SHAREPOINT_LINKS = [
-  { key: 'sharepoint', label: 'SharePoint', description: 'SharePoint och mappstruktur', icon: 'cloud-outline', screen: 'ManageSharePointNavigation' },
 ];
 
 const styles = StyleSheet.create({
@@ -363,8 +358,6 @@ const styles = StyleSheet.create({
   },
   saving: { opacity: 0.7 },
   error: { fontSize: 13, color: '#dc2626', marginTop: 8 },
-  loading: { padding: 32, alignItems: 'center' },
-  loadingText: { fontSize: 13, color: '#64748b' },
   logoWrap: {
     minWidth: 220,
     width: '42%',
@@ -428,6 +421,12 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
     navigationRef,
   isSubModalOpen = false,
   } = useContext(AdminModalContext) || {};
+
+  const isSubModalOpenRef = useRef(isSubModalOpen);
+  const subModalWasOpenWhenEscPressedRef = useRef(false);
+  useEffect(() => {
+    isSubModalOpenRef.current = isSubModalOpen;
+  }, [isSubModalOpen]);
 
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -622,9 +621,12 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
 
   useEffect(() => {
     if (!visible || Platform.OS !== 'web') return;
+    const onKeyCapture = (e) => {
+      if (e.key === 'Escape') subModalWasOpenWhenEscPressedRef.current = isSubModalOpenRef.current;
+    };
     const onKey = (e) => {
       if (e.key === 'Escape') {
-        if (isSubModalOpen) return;
+        if (isSubModalOpenRef.current) return;
         e.preventDefault();
         onClose?.();
         return;
@@ -638,9 +640,13 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
         }
       }
     };
+    window.addEventListener('keydown', onKeyCapture, true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [visible, onClose, saving, isDirty, cid, handleSave, isSubModalOpen]);
+    return () => {
+      window.removeEventListener('keydown', onKeyCapture, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [visible, onClose, saving, isDirty, cid, handleSave]);
 
   const handleLogoUpload = useCallback(async (e) => {
     const file = e?.target?.files?.[0];
@@ -663,14 +669,13 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
       if (item.openModal === 'openByggdelModal') openByggdelModal?.(cid);
       if (item.openModal === 'openKategoriModal') openKategoriModal?.(cid);
       if (item.openModal === 'openMallarModal') openMallarModal?.(cid);
-      if (item.openModal === 'openAIPromptsModal') openAIPromptsModal?.(cid);
       onClose?.();
     }
     if (item.screen && navigationRef?.current) {
       navigationRef.current.navigate(item.screen, { companyId: cid });
       onClose?.();
     }
-  }, [cid, onClose, openKontoplanModal, openByggdelModal, openKategoriModal, openMallarModal, openAIPromptsModal, navigationRef]);
+  }, [cid, onClose, openKontoplanModal, openByggdelModal, openKategoriModal, openMallarModal, navigationRef]);
 
   /** Öppna register-modal (Kontoplan, Byggdelar, Kategorier) ovanpå företagsinställningar – stäng inte company-modalen. Mallar visar "Kommer snart". */
   const openRegisterLink = useCallback((item) => {
@@ -705,7 +710,7 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
   if (!visible) return null;
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible transparent animationType="fade" onRequestClose={() => { if (subModalWasOpenWhenEscPressedRef.current) { subModalWasOpenWhenEscPressedRef.current = false; return; } onClose?.(); }} statusBarTranslucent>
       <View style={[styles.overlay, overlayStyle]}>
         <Pressable style={[styles.box, boxStyle]} onPress={(e) => e?.stopPropagation?.()}>
           <View
@@ -731,9 +736,7 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
           </View>
 
           {loading ? (
-            <View style={styles.loading}>
-              <Text style={styles.loadingText}>Laddar…</Text>
-            </View>
+            <LoadingState message="Laddar…" size="large" />
           ) : (
             <>
               {/* Statusrad */}
@@ -985,51 +988,21 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
 
                 {activeTab === 'sharepoint' && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Sharepoint</Text>
+                    <Text style={styles.sectionTitle}>SharePoint</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
-                      SharePoint och mappstruktur för företaget.
+                      Siter som företaget har tillgång till eller skapat. Hantera och öppna siter här.
                     </Text>
-                    <View style={styles.dataLinkGrid}>
-                      {SHAREPOINT_LINKS.map((item) => (
-                        <TouchableOpacity
-                          key={item.key}
-                          style={styles.dataLinkCard}
-                          onPress={() => openDataLink(item)}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.dataLinkIcon}>
-                            <Ionicons name={item.icon} size={20} color="#64748b" />
-                          </View>
-                          <Text style={styles.dataLinkLabel}>{item.label}</Text>
-                          <Text style={styles.dataLinkDesc}>{item.description}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                    <CompanySharePointContent companyId={cid} companyName={companyName} />
                   </View>
                 )}
 
                 {activeTab === 'ai-installningar' && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>AI-Inställningar</Text>
+                    <Text style={styles.sectionTitle}>AI-analys</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
-                      AI-prompter och inställningar för företaget.
+                      Företagets extra instruktioner till AI per analystyp (Förfrågningsunderlag, Ritningar).
                     </Text>
-                    <View style={styles.dataLinkGrid}>
-                      {AI_INSTALLNINGAR_LINKS.map((item) => (
-                        <TouchableOpacity
-                          key={item.key}
-                          style={styles.dataLinkCard}
-                          onPress={() => openDataLink(item)}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.dataLinkIcon}>
-                            <Ionicons name={item.icon} size={20} color="#64748b" />
-                          </View>
-                          <Text style={styles.dataLinkLabel}>{item.label}</Text>
-                          <Text style={styles.dataLinkDesc}>{item.description}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                    <CompanyAIPromptsContent companyId={cid} />
                   </View>
                 )}
 

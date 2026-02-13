@@ -13,14 +13,16 @@ import ProjektstatusView from './items/Projektstatus/ProjektstatusView';
 import RiskerView from './items/Risker/RiskerView';
 import OversiktDashboard from './OversiktDashboard';
 
-// New "Översikt 01–04" views (SharePoint filmappar)
+// New "Översikt 01–05" views (SharePoint filmappar)
+import ChecklistaView from './items/Checklista/ChecklistaView';
 import FragaSvarView from './items/FragaSvar/FragaSvarView';
 import OrganisationRollerView from './items/OrganisationRoller/OrganisationRollerView';
 import ProjektinformationView from './items/Projektinformation/ProjektinformationView';
 import TidsplanViktigaDatumView from './items/TidsplanViktigaDatum/TidsplanViktigaDatumView';
 
 const ITEM_COMPONENTS = {
-  // SharePoint filmappar (01–04)
+  // SharePoint filmappar (01–05)
+  checklista: ChecklistaView,
   projektinfo: ProjektinformationView,
   'organisation-roller': OrganisationRollerView,
   'tidsplan-viktiga-datum': TidsplanViktigaDatumView,
@@ -35,6 +37,7 @@ const ITEM_COMPONENTS = {
 
 export default function OversiktSection({ projectId, companyId, project, activeItem, navigation, navigationParams, hidePageHeader = false, onSelectItem = null }) {
   const bgEnabledItemIds = new Set([
+    'checklista',
     'projektinfo',
     'organisation-roller',
     'tidsplan-viktiga-datum',

@@ -85,6 +85,7 @@ export default function WebMainPane(props) {
     setPhaseActiveItem,
     setPhaseActiveNode,
     onOpenCreateProjectModal,
+    onPhaseHeaderLabels,
 
     // AF-only explorer state (shared with left panel mirror)
     afRelativePath,
@@ -186,6 +187,7 @@ export default function WebMainPane(props) {
                 setPhaseActiveNode(null);
               }
             },
+            onPhaseHeaderLabels: onPhaseHeaderLabels,
           },
         }}
         navigation={navigation}

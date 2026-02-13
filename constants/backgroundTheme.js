@@ -3,8 +3,7 @@
  * Samma bild överallt; toning med CSS linear-gradient (overlay).
  */
 
-import { Image } from 'react-native';
-import { Platform } from 'react-native';
+import { Image, Platform } from 'react-native';
 
 // En enda källa för bakgrundsbilden (Global Background System 2026)
 const BACKGROUND_IMAGE_SOURCE = require('../assets/bakgrund-webb.png');
@@ -86,9 +85,9 @@ export function getLoginPageBackgroundStyle() {
   };
 }
 
-/** Divider: mellan left ↔ main och main ↔ right (mörkare så de syns tydligare). */
-export const PANEL_DIVIDER = { borderRightWidth: 1, borderRightColor: 'rgba(0, 0, 0, 0.2)' };
-export const PANEL_DIVIDER_LEFT = { borderLeftWidth: 1, borderLeftColor: 'rgba(0, 0, 0, 0.2)' };
+/** Divider: samma mörka färg som railen (left ↔ main, main ↔ right). */
+export const PANEL_DIVIDER = { borderRightWidth: 1, borderRightColor: RAIL_BG };
+export const PANEL_DIVIDER_LEFT = { borderLeftWidth: 1, borderLeftColor: RAIL_BG };
 
 /** Login-kort: ljus, blur. */
 export const LOGIN_CARD_STYLE = {

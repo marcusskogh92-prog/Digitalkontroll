@@ -1,7 +1,7 @@
 /**
  * Icon-based navigation rail (2026 SaaS). Full height, mörk neutral.
- * Middle: Dashboard, SharePoint, Projekt, Register, Notiser, Administration, logotyp (sköld).
- * Bottom: separator, användarprofil (avatar + tooltip), Inställningar.
+ * Order: Hem, Notiser, divider, Kalkylskede, Produktion, Avslutat, Eftermarknad, divider,
+ * SharePoint, Register, Administration, divider. Bottom: Superadmin (om synlig), divider, profil, Inställningar.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -9,16 +9,24 @@ import React, { useRef, useState } from 'react';
 import { Animated, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 
-const RAIL_NAV_ITEMS_BASE = [
+const RAIL_DIVIDER = { type: 'divider' };
+
+const RAIL_NAV_ITEMS = [
   { id: 'dashboard', icon: 'home-outline', label: 'Dashboard' },
-  { id: 'sharepoint', icon: 'cloud-outline', label: 'SharePoint' },
-  { id: 'projekt', icon: 'folder-outline', label: 'Projekt' },
-  { id: 'register', icon: 'grid-outline', label: 'Register' },
   { id: 'notiser', icon: 'notifications-outline', label: 'Notiser' },
+  RAIL_DIVIDER,
+  { id: 'kalkylskede', icon: 'calculator-outline', label: 'Kalkylskede' },
+  { id: 'produktion', icon: 'hammer-outline', label: 'Produktion' },
+  { id: 'avslut', icon: 'checkmark-done-outline', label: 'Avslutat' },
+  { id: 'eftermarknad', icon: 'construct-outline', label: 'Eftermarknad' },
+  RAIL_DIVIDER,
+  { id: 'sharepoint', icon: 'cloud-outline', label: 'SharePoint' },
+  { id: 'register', icon: 'grid-outline', label: 'Register' },
   { id: 'administration', icon: 'business-outline', label: 'Administration' },
+  RAIL_DIVIDER,
 ];
 
-const SUPERADMIN_RAIL_ITEM = { id: 'superadmin', label: 'Superadmin' };
+const SUPERADMIN_RAIL_ITEM = { id: 'superadmin', icon: 'person-outline', label: 'Superadmin' };
 const SUPERADMIN_SHIELD_GREEN = '#22c55e';
 
 const styles = StyleSheet.create({
@@ -119,8 +127,11 @@ const styles = StyleSheet.create({
     bottom: -2,
     right: -4,
   },
-  superadminChevron: {
-    marginLeft: 2,
+  railDivider: {
+    width: ICON_RAIL.width - ICON_RAIL.itemPaddingHorizontal * 4,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    marginVertical: ICON_RAIL.itemPaddingVertical,
   },
 });
 
@@ -132,13 +143,16 @@ export function IconRail({
   userPhotoURL,
   onUserPress,
   showSuperadmin = false,
+  /** Fas-ids som ännu inte är aktiva – visas dimmade med rött kryss, klick visar info-modal. */
+  inactivePhaseIds = [],
 }) {
   const [hoveredId, setHoveredId] = useState(null);
   const userAvatarRef = useRef(null);
   const scaleAnims = useRef({}).current;
+  const isInactive = (id) => Array.isArray(inactivePhaseIds) && inactivePhaseIds.includes(id);
 
   const railNavItems = React.useMemo(
-    () => (showSuperadmin ? [...RAIL_NAV_ITEMS_BASE, SUPERADMIN_RAIL_ITEM] : RAIL_NAV_ITEMS_BASE),
+    () => (showSuperadmin ? [...RAIL_NAV_ITEMS, SUPERADMIN_RAIL_ITEM] : RAIL_NAV_ITEMS),
     [showSuperadmin]
   );
 
@@ -172,10 +186,15 @@ export function IconRail({
   return (
     <View style={styles.rail}>
       <View style={styles.itemList}>
-        {railNavItems.map((item) => {
+        {railNavItems.map((item, index) => {
+          if (item.type === 'divider') {
+            return <View key={`div-${index}`} style={styles.railDivider} />;
+          }
           const isActive = activeId === item.id;
           const isHovered = Platform.OS === 'web' && hoveredId === item.id;
           const isNotiser = item.id === 'notiser';
+          const inactive = isInactive(item.id);
+          const iconColor = inactive ? 'rgba(255,255,255,0.45)' : (isActive ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor);
 
           return (
             <TouchableOpacity
@@ -188,19 +207,19 @@ export function IconRail({
               onMouseLeave={Platform.OS === 'web' ? () => setHoveredId(null) : undefined}
               style={[
                 styles.itemTouch,
-                isHovered && styles.itemTouchHover,
-                isActive && styles.itemTouchActive,
+                isHovered && !inactive && styles.itemTouchHover,
+                isActive && !inactive && styles.itemTouchActive,
+                inactive && { opacity: 0.7 },
               ]}
-              accessibilityLabel={item.label}
+              accessibilityLabel={inactive ? `${item.label} (under uppbyggnad)` : item.label}
               accessibilityRole="button"
             >
-              {isActive ? <View style={styles.activeBar} /> : null}
+              {isActive && !inactive ? <View style={styles.activeBar} /> : null}
               <Animated.View
-                style={
-                  Platform.OS === 'web'
-                    ? undefined
-                    : { transform: [{ scale: getScaleAnim(item.id) }] }
-                }
+                style={[
+                  Platform.OS === 'web' ? undefined : { transform: [{ scale: getScaleAnim(item.id) }] },
+                  inactive && { opacity: 0.65 },
+                ]}
               >
                 <View style={{ position: 'relative' }}>
                   {item.id === 'superadmin' ? (
@@ -209,27 +228,25 @@ export function IconRail({
                         <Ionicons
                           name="person-outline"
                           size={ICON_RAIL.iconSize}
-                          color={isActive ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
+                          color={iconColor}
                         />
                         <View style={styles.superadminShieldBadge}>
                           <Ionicons name="shield-checkmark" size={14} color={SUPERADMIN_SHIELD_GREEN} />
                         </View>
                       </View>
-                      <View style={styles.superadminChevron}>
-                        <Ionicons
-                          name="chevron-forward"
-                          size={12}
-                          color={isActive ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
-                        />
-                      </View>
                     </View>
                   ) : (
-                  <Ionicons
-                    name={item.icon}
-                    size={ICON_RAIL.iconSize}
-                    color={isActive ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
-                  />
+                    <Ionicons
+                      name={item.icon}
+                      size={ICON_RAIL.iconSize}
+                      color={iconColor}
+                    />
                   )}
+                  {inactive ? (
+                    <View style={{ position: 'absolute', top: -2, right: -2, width: 14, height: 14, borderRadius: 7, backgroundColor: '#dc2626', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="close" size={10} color="#fff" />
+                    </View>
+                  ) : null}
                   {isNotiser && notificationsBadgeCount > 0 ? (
                     <View
                       style={{
@@ -255,9 +272,6 @@ export function IconRail({
             </TouchableOpacity>
           );
         })}
-        <View style={styles.logoWrap}>
-          <Ionicons name="shield-checkmark" size={24} color={ICON_RAIL.iconColor} />
-        </View>
       </View>
 
       <View style={styles.bottom}>

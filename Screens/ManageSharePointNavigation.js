@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 let createPortal = null;
 let flushSync = (fn) => { if (typeof fn === 'function') fn(); };
@@ -13,6 +13,7 @@ try {
   createPortal = null;
 }
 import { collectionGroup, deleteDoc, doc, getDocs, getDocsFromServer, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
+import { MODAL_THEME } from '../constants/modalTheme';
 import { HomeHeader } from '../components/common/HomeHeader';
 import SharePointSiteIcon from '../components/common/SharePointSiteIcon';
 import MainLayout from '../components/MainLayout';
@@ -106,7 +107,7 @@ const showSimpleAlert = (title, message) => {
   } catch (_e) {}
 };
 
-export default function ManageSharePointNavigation({ navigation, route }) {
+export default function ManageSharePointNavigation({ navigation, route, embedInModal = false, onClose }) {
   const [companyId, setCompanyId] = useState(() => {
     try {
       const fromRoute = String(route?.params?.companyId || '').trim();
@@ -146,6 +147,8 @@ export default function ManageSharePointNavigation({ navigation, route }) {
   const [moveModalTargetCompanyId, setMoveModalTargetCompanyId] = useState('');
   const [actionInProgressKey, setActionInProgressKey] = useState(null);
   const [refreshingList, setRefreshingList] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [lastSyncTime, setLastSyncTime] = useState(null);
   const searchSpinAnim = useRef(new Animated.Value(0)).current;
   const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
 
@@ -304,6 +307,26 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     })();
     return () => { mounted = false; };
   }, [isSuperadmin, companies]);
+
+  const syncAllCompanies = useCallback(async () => {
+    const list = Array.isArray(companies) ? companies : [];
+    if (list.length === 0) return;
+    setSyncingCompanies(true);
+    setSyncProgress({ done: 0, total: list.length });
+    try {
+      for (let i = 0; i < list.length; i += 1) {
+        const cid = String(list[i]?.id || '').trim();
+        if (cid) {
+          try { await syncSharePointSiteVisibilityRemote({ companyId: cid }); } catch (_e) {}
+        }
+        setSyncProgress({ done: i + 1, total: list.length });
+      }
+      await refreshAllCompanySiteMetas({ afterWrite: true });
+      setLastSyncTime(new Date());
+    } finally {
+      setSyncingCompanies(false);
+    }
+  }, [companies]);
 
   // Hämta sharepoint_sites per företag – serverläsning, med fallback på slug-format om id skiljer sig
   const fetchMetasByCompany = async (companyList) => {
@@ -882,17 +905,51 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     return companyRows;
   }, [companyRows]);
 
+  const kpiAggregate = useMemo(() => {
+    const rows = Array.isArray(companyRows) ? companyRows : [];
+    let totalSites = 0;
+    let withWarning = 0;
+    let withError = 0;
+    rows.forEach((c) => {
+      totalSites += Number(c.total) || 0;
+      if (c.statusKind === 'warning') withWarning += 1;
+      if (c.statusKind === 'error') withError += 1;
+    });
+    return {
+      totalCompanies: rows.length,
+      totalSites,
+      withWarning,
+      withError,
+    };
+  }, [companyRows]);
+
+  const displayedCompanyRows = useMemo(() => {
+    let list = Array.isArray(companyRows) ? companyRows : [];
+    const q = String(searchQuery || '').trim().toLowerCase();
+    if (q) {
+      list = list.filter((c) => {
+        const nameMatch = String(c.name || c.id || '').toLowerCase().includes(q);
+        const siteMatch = (c.rows || []).some((r) =>
+          String(r.displayName || r.site?.displayName || r.site?.name || r.siteId || '').toLowerCase().includes(q)
+        );
+        return nameMatch || siteMatch;
+      });
+    }
+    return list;
+  }, [companyRows, searchQuery]);
+
   const isUnassignedGroup = (groupId) =>
     groupId === 'digitalkontroll-unassigned' || normalizeCompanyIdForMatch(groupId) === normalizeCompanyIdForMatch('Digitalkontroll');
 
   const isDeletedSitesGroup = (groupId) => groupId === 'deleted-sites';
 
   const filterRows = (rows, groupId) => {
-    if (statusFilter === 'all') return rows;
-    if (statusFilter === 'error') return rows.filter((r) => r.statusValue === 'error');
-    if (statusFilter === 'linked') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? [] : rows;
-    if (statusFilter === 'available') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? rows : [];
-    return rows;
+    const list = Array.isArray(rows) ? rows : [];
+    if (statusFilter === 'all') return list;
+    if (statusFilter === 'error') return list.filter((r) => r.statusValue === 'error');
+    if (statusFilter === 'linked') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? [] : list;
+    if (statusFilter === 'available') return (isUnassignedGroup(groupId) || isDeletedSitesGroup(groupId)) ? list : [];
+    return list;
   };
 
   const toggleSiteEnabled = async (siteId, targetCompanyId, nextEnabled, row = null) => {
@@ -986,6 +1043,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       const snap = await getDocsFromServer(coll);
       const next = await ensureNonEmpty(buildByCompany(snap));
       applyMetas(next);
+      setLastSyncTime(new Date());
       return { fromCache: false };
     } catch (e) {
       lastError = e;
@@ -994,6 +1052,7 @@ export default function ManageSharePointNavigation({ navigation, route }) {
         const snap = await getDocsFromServer(coll);
         const next = await ensureNonEmpty(buildByCompany(snap));
         applyMetas(next);
+        setLastSyncTime(new Date());
         return { fromCache: false };
       } catch (e2) {
         lastError = e2;
@@ -1003,11 +1062,13 @@ export default function ManageSharePointNavigation({ navigation, route }) {
       const snap = await getDocs(coll);
       const next = await ensureNonEmpty(buildByCompany(snap));
       applyMetas(next);
+      setLastSyncTime(new Date());
       return { fromCache: true };
     } catch (e2) {
       if (list.length > 0) {
         const byCompany = await fetchMetasByCompany(list);
         applyMetasMerge(byCompany);
+        setLastSyncTime(new Date());
         return { fromCache: true };
       }
       if (lastError) throw lastError;
@@ -1288,74 +1349,10 @@ export default function ManageSharePointNavigation({ navigation, route }) {
     );
   }
 
-  return (
-    <View style={{ flex: 1 }}>
-      {(loadingSites || loadingMetas || syncingCompanies || creatingCustomSite) && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 9999,
-            backgroundColor: 'rgba(255,255,255,0.7)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <View style={{ backgroundColor: '#111827', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, minWidth: 260, maxWidth: 360, alignItems: 'center' }}>
-            <ActivityIndicator color="#fff" />
-            <Text style={{ color: '#fff', fontWeight: '800', marginTop: 8, fontSize: 13, textAlign: 'center' }}>
-              {syncingCompanies ? `Synkar företag… (${syncProgress.done}/${syncProgress.total})` : (creatingCustomSite ? 'Skapar ny SharePoint-site…' : 'Laddar SharePoint-nav…')}
-            </Text>
-          </View>
-        </View>
-      )}
-
-      <MainLayout
-        adminMode={true}
-        adminCurrentScreen="sharepoint_navigation"
-        adminOnSelectCompany={(company) => {
-          if (company && company.id) {
-            setCompanyId(String(company.id).trim());
-          }
-        }}
-        adminShowCompanySelector={true}
-        adminHideCompanyBanner={true}
-        sidebarSelectedCompanyId={companyId}
-        topBar={
-          <HomeHeader
-            headerHeight={headerHeight}
-            setHeaderHeight={setHeaderHeight}
-            navigation={navigation}
-            route={route}
-            auth={auth}
-            selectedProject={null}
-            isSuperAdmin={isSuperadmin}
-            allowedTools={false}
-            showHeaderUserMenu={showHeaderUserMenu}
-            canShowSupportToolsInHeader={false}
-            supportMenuOpen={supportMenuOpen}
-            setSupportMenuOpen={setSupportMenuOpen}
-            companyId={companyId}
-            routeCompanyId={route?.params?.companyId || ''}
-            showAdminButton={false}
-            adminActionRunning={false}
-            localFallbackExists={false}
-            handleMakeDemoAdmin={noopAsync}
-            refreshLocalFallbackFlag={noopAsync}
-            dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
-            showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
-            saveControlToFirestore={noopAsync}
-            saveDraftToFirestore={noopAsync}
-            searchSpinAnim={searchSpinAnim}
-            sharePointStatus={sharePointStatus}
-          />
-        }
-      >
+  const getMainContent = () => {
+    const bodyContent = (
         <View style={{ width: '100%', maxWidth: 1200, margin: '0 auto', padding: 24 }}>
-          {Platform.OS === 'web' ? (
+          {!embedInModal && (Platform.OS === 'web' ? (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <div>
                 <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 4, margin: 0, color: '#222' }}>
@@ -1376,6 +1373,11 @@ export default function ManageSharePointNavigation({ navigation, route }) {
                 Företagscentrerad överblick. Expandera ett företag för att se dess siter.
               </Text>
             </View>
+          ))}
+          {embedInModal && (
+            <Text style={{ fontSize: MODAL_THEME.banner.subtitleFontSize, color: MODAL_THEME.body.labelColor, marginBottom: 12 }}>
+              Ändringar sparas direkt.
+            </Text>
           )}
 
           <View style={{ backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB' }}>
@@ -1672,7 +1674,269 @@ export default function ManageSharePointNavigation({ navigation, route }) {
             </View>
           </View>
         </View>
-
+          );
+          return embedInModal ? (
+            <>
+              <View style={{ flex: 1, backgroundColor: '#fff', minHeight: 0 }}>
+                {typeof onClose === 'function' && (
+                  <>
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: MODAL_THEME.banner.paddingVertical,
+                      paddingHorizontal: MODAL_THEME.banner.paddingHorizontal,
+                      backgroundColor: MODAL_THEME.banner.backgroundColor,
+                      borderBottomWidth: 1,
+                      borderBottomColor: MODAL_THEME.banner.borderBottomColor,
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                        <View style={{
+                          width: MODAL_THEME.banner.iconSize,
+                          height: MODAL_THEME.banner.iconSize,
+                          borderRadius: MODAL_THEME.banner.iconBgRadius,
+                          backgroundColor: MODAL_THEME.banner.iconBg,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Ionicons name="cloud-outline" size={20} color={MODAL_THEME.banner.titleColor} />
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: MODAL_THEME.banner.titleFontSize, fontWeight: MODAL_THEME.banner.titleFontWeight, color: MODAL_THEME.banner.titleColor }}>
+                            SharePoint Nav
+                          </Text>
+                          <Text style={{ fontSize: MODAL_THEME.banner.subtitleFontSize, color: MODAL_THEME.banner.subtitleColor, marginTop: 2 }}>
+                            Företagsöversikt
+                          </Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity onPress={onClose} style={{ padding: MODAL_THEME.banner.closeBtnPadding, borderRadius: MODAL_THEME.banner.iconBgRadius, backgroundColor: MODAL_THEME.banner.iconBg }} accessibilityLabel="Stäng">
+                        <Ionicons name="close" size={MODAL_THEME.banner.closeIconSize} color={MODAL_THEME.banner.titleColor} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 8, paddingHorizontal: MODAL_THEME.banner.paddingHorizontal, backgroundColor: MODAL_THEME.banner.backgroundColor, borderBottomWidth: 1, borderBottomColor: MODAL_THEME.banner.borderBottomColor }}>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>FÖRETAG: {kpiAggregate.totalCompanies} st</Text>
+                      </View>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>TOTALT SITER: {kpiAggregate.totalSites} st</Text>
+                      </View>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>VARNINGAR: {kpiAggregate.withWarning}</Text>
+                      </View>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>FEL: {kpiAggregate.withError}</Text>
+                      </View>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>SENAST SYNK: {lastSyncTime ? lastSyncTime.toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</Text>
+                      </View>
+                    </View>
+                  </>
+                )}
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+                  {embedInModal && (
+                    <>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+                        <View style={{ flex: 1, minWidth: 140, backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#E5E7EB' }}>
+                          <Text style={{ fontSize: 24, fontWeight: '700', color: '#111827' }}>{kpiAggregate.totalCompanies}</Text>
+                          <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>Totalt företag</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 140, backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#E5E7EB' }}>
+                          <Text style={{ fontSize: 24, fontWeight: '700', color: '#111827' }}>{kpiAggregate.totalSites}</Text>
+                          <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>Totalt siter</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 140, backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: kpiAggregate.withWarning > 0 ? '#FEF3C7' : '#E5E7EB' }}>
+                          <Text style={{ fontSize: 24, fontWeight: '700', color: kpiAggregate.withWarning > 0 ? '#B45309' : '#111827' }}>{kpiAggregate.withWarning}</Text>
+                          <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>Företag med varning</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 140, backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: kpiAggregate.withError > 0 ? '#FFEBEE' : '#E5E7EB' }}>
+                          <Text style={{ fontSize: 24, fontWeight: '700', color: kpiAggregate.withError > 0 ? '#C62828' : '#111827' }}>{kpiAggregate.withError}</Text>
+                          <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>Företag med fel</Text>
+                        </View>
+                      </View>
+                      {(syncingCompanies || refreshingList) && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#EFF6FF', borderRadius: 8, borderWidth: 1, borderColor: '#BFDBFE' }}>
+                          <ActivityIndicator size="small" color="#2563EB" />
+                          <Text style={{ fontSize: 13, color: '#1D4ED8' }}>
+                            {syncingCompanies ? `Synkar företag… (${syncProgress?.done ?? 0}/${syncProgress?.total ?? 0})` : 'Uppdaterar lista…'}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                        {[{ key: 'all', label: 'Alla' }, { key: 'linked', label: 'Upptagna' }, { key: 'available', label: 'Lediga' }, { key: 'error', label: 'Fel' }].map((item) => {
+                          const active = statusFilter === item.key;
+                          return (
+                            <TouchableOpacity
+                              key={item.key}
+                              onPress={() => setStatusFilter(item.key)}
+                              style={{
+                                paddingVertical: 6,
+                                paddingHorizontal: 12,
+                                borderRadius: 999,
+                                borderWidth: 1,
+                                borderColor: active ? '#2563EB' : '#E5E7EB',
+                                backgroundColor: active ? '#EFF6FF' : '#fff',
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#1D4ED8' : '#6B7280' }}>{item.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        <TextInput
+                          placeholder="Sök företag eller site"
+                          value={searchQuery}
+                          onChangeText={setSearchQuery}
+                          style={{ flex: 1, minWidth: 160, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff', fontSize: 13, color: '#111827' }}
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          onPress={async () => { setRefreshingList(true); try { await syncAllCompanies(); } finally { setRefreshingList(false); } }}
+                          disabled={refreshingList || syncingCompanies}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                            paddingVertical: 8,
+                            paddingHorizontal: 14,
+                            borderRadius: 8,
+                            backgroundColor: MODAL_THEME.footer.btnBackground,
+                            opacity: (refreshingList || syncingCompanies) ? 0.7 : 1,
+                            ...(Platform.OS === 'web' ? { cursor: (refreshingList || syncingCompanies) ? 'not-allowed' : 'pointer' } : {}),
+                          }}
+                        >
+                          {(refreshingList || syncingCompanies) ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="sync" size={16} color="#fff" />}
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>{syncingCompanies ? `Synkar… (${syncProgress?.done ?? 0}/${syncProgress?.total ?? 0})` : 'Synka alla'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={async () => { setRefreshingList(true); try { await refreshAllCompanySiteMetas(); } finally { setRefreshingList(false); } }}
+                          disabled={refreshingList}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 6,
+                            paddingVertical: 8,
+                            paddingHorizontal: 14,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: '#E5E7EB',
+                            backgroundColor: '#fff',
+                            opacity: refreshingList ? 0.7 : 1,
+                            ...(Platform.OS === 'web' ? { cursor: refreshingList ? 'not-allowed' : 'pointer' } : {}),
+                          }}
+                        >
+                          {refreshingList ? <ActivityIndicator size="small" color="#2563EB" /> : <Ionicons name="refresh" size={16} color="#2563EB" />}
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#2563EB' }}>Uppdatera lista</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
+                        <View style={[
+                          { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#F9FAFB', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center' },
+                          Platform.OS === 'web' ? { position: 'sticky', top: 0, zIndex: 1 } : {},
+                        ]}>
+                          <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: '#111827' }}>Företag</Text>
+                          <Text style={{ width: 90, fontSize: 12, fontWeight: '600', color: '#111827', textAlign: 'right' }}>Antal siter</Text>
+                          <Text style={{ width: 90, fontSize: 12, fontWeight: '600', color: '#111827', textAlign: 'right' }}>Status</Text>
+                          <Text style={{ width: 80, fontSize: 12, fontWeight: '600', color: '#111827', textAlign: 'right' }}>Åtgärder</Text>
+                        </View>
+                        {displayedCompanyRows.length === 0 ? (
+                          <View style={{ padding: 24, alignItems: 'center' }}>
+                            <Ionicons name="business-outline" size={40} color="#9CA3AF" />
+                            <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 8 }}>Inga företag att visa</Text>
+                            <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 4 }}>Justera filter eller sökning</Text>
+                          </View>
+                        ) : (
+                          displayedCompanyRows.map((company) => {
+                            const isOpen = !!companyGroupOpen[company.id];
+                            return (
+                              <View key={company.id}>
+                                <TouchableOpacity
+                                  onPress={() => setCompanyGroupOpen((prev) => ({ ...prev, [company.id]: !isOpen }))}
+                                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#F3F4F6', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
+                                >
+                                  <Ionicons name={isOpen ? 'chevron-down' : 'chevron-forward'} size={16} color="#64748B" style={{ marginRight: 8 }} />
+                                  <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: '#111827' }} numberOfLines={1}>{company.name || company.id}</Text>
+                                  <Text style={{ width: 90, fontSize: 13, color: '#6B7280', textAlign: 'right' }}>{company.total}</Text>
+                                  <View style={{ width: 90, alignItems: 'flex-end' }}>
+                                    <View style={{ paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1, borderColor: company.statusKind === 'ok' ? '#C8E6C9' : company.statusKind === 'error' ? '#FFCDD2' : '#FFECB3', backgroundColor: company.statusBg }}>
+                                      <Text style={{ fontSize: 11, fontWeight: '600', color: company.statusColor }}>{company.statusLabel}</Text>
+                                    </View>
+                                    {(company.statusKind === 'warning' || company.statusKind === 'error') && (
+                                      <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }} numberOfLines={1}>
+                                        {company.statusKind === 'error' ? 'Kontrollera koppling' : (company.total === 0 ? '0 siter' : 'Synkar eller delvis fel')}
+                                      </Text>
+                                    )}
+                                  </View>
+                                  <View style={{ width: 80 }} />
+                                </TouchableOpacity>
+                                {isOpen ? (
+                                  <View style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F9FAFB', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+                                    {isSuperadmin && !isUnassignedGroup(company.id) && !isDeletedSitesGroup(company.id) ? (
+                                      <TouchableOpacity
+                                        onPress={() => createCustomSiteForCompany(company.id, company.name)}
+                                        disabled={creatingCustomSite}
+                                        style={{ alignSelf: 'flex-end', marginBottom: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', backgroundColor: '#fff', opacity: creatingCustomSite ? 0.6 : 1 }}
+                                      >
+                                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#1976D2' }}>+ Lägg till ny site</Text>
+                                      </TouchableOpacity>
+                                    ) : null}
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, marginBottom: 6 }}>
+                                      <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: '#6B7280' }}>Site</Text>
+                                      <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: '#6B7280' }}>Typ</Text>
+                                      <Text style={{ width: 72, fontSize: 11, fontWeight: '600', color: '#6B7280', textAlign: 'right' }}>Status</Text>
+                                      <Text style={{ width: 100, fontSize: 11, fontWeight: '600', color: '#6B7280', textAlign: 'right' }}>Åtgärder</Text>
+                                    </View>
+                                    {(filterRows(company.rows || [], company.id) || []).map((row) => (
+                                      <View key={row.siteId} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
+                                        <View style={{ flex: 1 }}>
+                                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#111827' }} numberOfLines={1}>{row.displayName || row.site?.displayName || row.siteId}</Text>
+                                          {row.isSystem ? <Ionicons name="lock-closed" size={12} color="#6B7280" style={{ marginTop: 2 }} /> : null}
+                                        </View>
+                                        <Text style={{ flex: 1, fontSize: 12, color: '#374151' }}>{row.roleLabel || (row.isSystem ? 'System' : 'Extra')}</Text>
+                                        <View style={{ width: 72, alignItems: 'flex-end' }}>
+                                          <View style={{ paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: row.statusBg, borderWidth: 1, borderColor: row.statusColor === '#2E7D32' ? '#C8E6C9' : row.statusColor === '#C62828' ? '#FFCDD2' : '#FFECB3' }}>
+                                            <Text style={{ fontSize: 10, fontWeight: '600', color: row.statusColor }}>{row.statusLabel}</Text>
+                                          </View>
+                                        </View>
+                                        <View style={{ width: 100, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                                          {actionInProgressKey === `${company.id}-${row.siteId}` ? <ActivityIndicator size="small" color="#2563EB" /> : null}
+                                          {Platform.OS === 'web' ? (
+                                            <button
+                                              type="button"
+                                              ref={(el) => { if (openKebabKey === `${company.id}-${row.siteId}`) kebabButtonRef.current = el; }}
+                                              onClick={(e) => { e.stopPropagation(); e.preventDefault(); const key = `${company.id}-${row.siteId}`; if (openKebabKey === key) { closeKebabMenu(); return; } const rect = e.target.getBoundingClientRect(); kebabButtonRef.current = e.target; setKebabMenuPosition({ left: rect.left, top: rect.bottom + 4 }); setKebabMenuContent({ row, company }); setOpenKebabKey(key); }}
+                                              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', backgroundColor: '#fff', fontSize: 14, cursor: 'pointer', color: '#6B7280' }}
+                                            >⋮</button>
+                                          ) : (
+                                            <TouchableOpacity onPress={() => toggleSiteEnabled(row.siteId, company.id, !row.visibleInLeftPanel, row)} style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
+                                              <Text style={{ fontSize: 11, fontWeight: '600', color: '#2563EB' }}>{row.visibleInLeftPanel ? 'Aktiv' : 'Pausa'}</Text>
+                                            </TouchableOpacity>
+                                          )}
+                                        </View>
+                                      </View>
+                                    ))}
+                                  </View>
+                                ) : null}
+                              </View>
+                            );
+                          })
+                        )}
+                      </View>
+                    </>
+                  )}
+                  {!embedInModal ? bodyContent : null}
+                </ScrollView>
+                {typeof onClose === 'function' && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', paddingVertical: 12, paddingHorizontal: MODAL_THEME.banner.paddingHorizontal, borderTopWidth: 1, borderTopColor: MODAL_THEME.footer.borderTopColor, backgroundColor: MODAL_THEME.footer.backgroundColor }}>
+                    <TouchableOpacity
+                      onPress={onClose}
+                      style={{ paddingVertical: MODAL_THEME.footer.btnPaddingVertical, paddingHorizontal: MODAL_THEME.footer.btnPaddingHorizontal, borderRadius: MODAL_THEME.footer.btnBorderRadius, borderWidth: 1, borderColor: MODAL_THEME.footer.btnBorderColor, backgroundColor: MODAL_THEME.footer.btnBackground, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
+                      accessibilityLabel="Stäng"
+                    >
+                      <Text style={{ fontSize: MODAL_THEME.footer.btnFontSize, fontWeight: MODAL_THEME.footer.btnFontWeight, color: MODAL_THEME.footer.btnTextColor }}>Stäng</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
         {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && openKebabKey && kebabMenuPosition && kebabMenuContent ? createPortal(
           <div
             ref={kebabMenuPortalRef}
@@ -1826,7 +2090,232 @@ export default function ManageSharePointNavigation({ navigation, route }) {
               </View>
           </TouchableOpacity>
         </Modal>
+      </>
+          ) : (
+      <MainLayout
+        adminMode={true}
+        adminCurrentScreen="sharepoint_navigation"
+        adminOnSelectCompany={(company) => {
+          if (company && company.id) {
+            setCompanyId(String(company.id).trim());
+          }
+        }}
+        adminShowCompanySelector={true}
+        adminHideCompanyBanner={true}
+        sidebarSelectedCompanyId={companyId}
+        topBar={
+          <HomeHeader
+            headerHeight={headerHeight}
+            setHeaderHeight={setHeaderHeight}
+            navigation={navigation}
+            route={route}
+            auth={auth}
+            selectedProject={null}
+            isSuperAdmin={isSuperadmin}
+            allowedTools={false}
+            showHeaderUserMenu={showHeaderUserMenu}
+            canShowSupportToolsInHeader={false}
+            supportMenuOpen={supportMenuOpen}
+            setSupportMenuOpen={setSupportMenuOpen}
+            companyId={companyId}
+            routeCompanyId={route?.params?.companyId || ''}
+            showAdminButton={false}
+            adminActionRunning={false}
+            localFallbackExists={false}
+            handleMakeDemoAdmin={noopAsync}
+            refreshLocalFallbackFlag={noopAsync}
+            dumpLocalRemoteControls={async () => showSimpleAlert('Info', 'Debug-funktionen är inte kopplad på denna vy.')}
+            showLastFsError={async () => showSimpleAlert('Info', 'FS-felvisning är inte kopplad på denna vy.')}
+            saveControlToFirestore={noopAsync}
+            saveDraftToFirestore={noopAsync}
+            searchSpinAnim={searchSpinAnim}
+            sharePointStatus={sharePointStatus}
+          />
+        }
+      >
+        {bodyContent}
+        {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && openKebabKey && kebabMenuPosition && kebabMenuContent ? createPortal(
+          <div
+            ref={kebabMenuPortalRef}
+            style={{
+              position: 'fixed',
+              left: kebabMenuPosition.left,
+              top: kebabMenuPosition.top,
+              zIndex: 99999,
+              backgroundColor: '#fff',
+              border: '1px solid #E5E7EB',
+              borderRadius: 8,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              minWidth: 160,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => { handleRenameSite(kebabMenuContent.row, kebabMenuContent.company.id); closeKebabMenu(); }}
+              style={{ display: 'block', width: '100%', padding: '10px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: 12, cursor: 'pointer', color: '#111' }}
+            >
+              Byt visningsnamn
+            </button>
+            {kebabMenuContent.row.visibleInLeftPanel ? (
+              <button
+                type="button"
+                onClick={() => { toggleSiteEnabled(kebabMenuContent.row.siteId, kebabMenuContent.company.id, false, kebabMenuContent.row); closeKebabMenu(); }}
+                style={{ display: 'block', width: '100%', padding: '10px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: 12, cursor: 'pointer', color: '#111', borderTop: '1px solid #F3F4F6' }}
+              >
+                Pausa site
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { toggleSiteEnabled(kebabMenuContent.row.siteId, kebabMenuContent.company.id, true, kebabMenuContent.row); closeKebabMenu(); }}
+                style={{ display: 'block', width: '100%', padding: '10px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: 12, cursor: 'pointer', color: '#111', borderTop: '1px solid #F3F4F6' }}
+              >
+                Aktivera site
+              </button>
+            )}
+            {!kebabMenuContent.row.isLocked ? (
+              <button
+                type="button"
+                onClick={() => { handleRemoveSiteFromCompany(kebabMenuContent.row, kebabMenuContent.company.id); closeKebabMenu(); }}
+                style={{ display: 'block', width: '100%', padding: '10px 12px', textAlign: 'left', border: 'none', background: 'none', fontSize: 12, cursor: 'pointer', color: '#B45309', borderTop: '1px solid #F3F4F6' }}
+              >
+                Ta bort från företag
+              </button>
+            ) : null}
+          </div>,
+          document.body
+        ) : null}
+        <Modal
+          visible={moveModalOpen}
+          transparent
+          onRequestClose={() => setMoveModalOpen(false)}
+          animationType="fade"
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setMoveModalOpen(false)}
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              justifyContent: 'center',
+              alignItems: 'center',
+              padding: 24,
+            }}
+          >
+            <View
+              onStartShouldSetResponder={() => true}
+              style={{
+                backgroundColor: '#fff',
+                borderRadius: 12,
+                padding: 24,
+                minWidth: 360,
+                maxWidth: '100%',
+              }}
+            >
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#111', marginBottom: 16 }}>
+                Flytta site till annat företag
+              </Text>
+              {moveModalRow ? (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }} numberOfLines={1}>
+                  Site: {moveModalRow.displayName || moveModalRow.siteId}
+                </Text>
+              ) : null}
+              {Platform.OS === 'web' ? (
+                <select
+                  value={moveModalTargetCompanyId}
+                  onChange={(e) => setMoveModalTargetCompanyId(String(e.target.value || ''))}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #E5E7EB',
+                    fontSize: 14,
+                    marginBottom: 16,
+                  }}
+                >
+                  <option value="">Välj mål-företag</option>
+                  {companies
+                    .filter((c) => String(c?.id || '').trim() && c.id !== moveModalCompanyId)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {getCompanyLabel(c.id)}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 4 }}>Välj mål-företag</Text>
+                  <Text style={{ fontSize: 12, color: '#9CA3AF' }}>Flytt stöds i webbläget.</Text>
+                </View>
+              )}
+              <View style={{ backgroundColor: '#F3F4F6', borderRadius: 8, padding: 12, marginBottom: 20 }}>
+                <Text style={{ fontSize: 12, color: '#6B7280', lineHeight: 18 }}>
+                  Flytten ändrar vilken organisation som har tillgång till siten i Digitalkontroll. Själva SharePoint-siten flyttas inte fysiskt.
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => setMoveModalOpen(false)}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#D1D5DB',
+                    backgroundColor: '#fff',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#374151' }}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!moveModalTargetCompanyId || !moveModalRow) return;
+                    moveSiteToCompany(moveModalRow.siteId, moveModalCompanyId, moveModalTargetCompanyId, moveModalRow);
+                  }}
+                  disabled={!moveModalTargetCompanyId}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 16,
+                    borderRadius: 8,
+                    backgroundColor: moveModalTargetCompanyId ? '#2563EB' : '#9CA3AF',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Bekräfta flytt</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </MainLayout>
+          );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {(loadingSites || loadingMetas || syncingCompanies || creatingCustomSite) && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 9999,
+            backgroundColor: 'rgba(255,255,255,0.7)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <View style={{ backgroundColor: '#111827', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, minWidth: 260, maxWidth: 360, alignItems: 'center' }}>
+            <ActivityIndicator color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '800', marginTop: 8, fontSize: 13, textAlign: 'center' }}>
+              {syncingCompanies ? `Synkar företag… (${syncProgress.done}/${syncProgress.total})` : (creatingCustomSite ? 'Skapar ny SharePoint-site…' : 'Laddar SharePoint-nav…')}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {getMainContent()}
     </View>
   );
 }

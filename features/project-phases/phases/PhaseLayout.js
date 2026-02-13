@@ -4,12 +4,13 @@
 
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
-import ProjectPageHeader from '../../../components/common/ProjectPageHeader';
+import ProjectSubTopbar from '../../../components/common/ProjectSubTopbar';
+import ProjectTopbar from '../../../components/common/ProjectTopbar';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
 import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
 import { usePhaseNavigation } from './hooks/usePhaseNavigation';
+import { useProjectNavigation } from './hooks/useProjectNavigation';
 import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
-import PhaseTopNavigator from './kalkylskede/components/PhaseTopNavigator';
 
 // Import kalkylskede sections (for now, other phases can use these or have their own)
 import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
@@ -28,7 +29,7 @@ const SECTION_COMPONENTS = {
   anbud: AnbudSection
 };
 
-export default function PhaseLayout({ companyId, projectId, project, phaseKey, hideLeftPanel = false, externalActiveSection = null, externalActiveItem = null, externalActiveNode = null, onExternalSectionChange = null, onExternalItemChange = null, onPhaseChange = null, reactNavigation = null, afRelativePath = '', setAfRelativePath = null, afSelectedItemId = null, setAfSelectedItemId = null, bumpAfMirrorRefreshNonce = null }) {
+export default function PhaseLayout({ companyId, projectId, project, phaseKey, hideLeftPanel = false, externalActiveSection = null, externalActiveItem = null, externalActiveNode = null, onExternalSectionChange = null, onExternalItemChange = null, onPhaseChange = null, reactNavigation = null, afRelativePath = '', setAfRelativePath = null, afSelectedItemId = null, setAfSelectedItemId = null, bumpAfMirrorRefreshNonce = null, onHeaderLabelsChange = null }) {
   const { navigation, isLoading: navLoading } = usePhaseNavigation(companyId, projectId, phaseKey, project);
 
   const formatNavLabel = (value) => stripNumberPrefixForDisplay(value);
@@ -68,8 +69,9 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
 
   // Set default active section when navigation loads
   useEffect(() => {
-    if (navigation && navigation.sections && navigation.sections.length > 0 && !activeSection) {
-      const firstSection = navigation.sections[0];
+    const sections = navigation?.sections ?? [];
+    if (navigation && Array.isArray(sections) && sections.length > 0 && !activeSection) {
+      const firstSection = sections[0];
       setActiveSection(firstSection.id);
       // Don't auto-select first item - show section summary instead
       setActiveItem(firstSection.id, null, { activeNode: null });
@@ -100,7 +102,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     setActiveItem(sectionId, itemId, meta);
   };
 
-  const activeSectionConfig = navigation?.sections?.find(s => s.id === activeSection) || null;
+  const { sections: navSections, subMenuItems, activeSectionConfig } = useProjectNavigation(navigation, activeSection);
   const activeItemConfig = activeSectionConfig && activeItem
     ? (activeSectionConfig.items || []).find(i => i.id === activeItem) || null
     : null;
@@ -108,9 +110,16 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const headerSectionLabel = activeSectionConfig ? formatNavLabel(activeSectionConfig.name) : '';
   const headerItemLabel = activeItemConfig ? formatNavLabel(activeItemConfig.name) : '';
 
-  // Background should only be visible for Översikt + 4 specific subpages.
-  // Everything else (Kalkyl/Anbud/Dokument/etc) keeps the plain white shell.
+  // Rapportera header-labels till parent (t.ex. MinimalTopbar) så rubriken kan visas på samma rad som kalender.
+  useEffect(() => {
+    if (typeof onHeaderLabelsChange === 'function') {
+      onHeaderLabelsChange({ sectionLabel: headerSectionLabel, itemLabel: headerItemLabel });
+    }
+  }, [onHeaderLabelsChange, headerSectionLabel, headerItemLabel]);
+
+  // Background should only be visible for Översikt + 5 specific subpages.
   const bgEnabledItemIds = new Set([
+    'checklista',
     'projektinfo',
     'organisation-roller',
     'tidsplan-viktiga-datum',
@@ -162,7 +171,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         afSelectedItemId={afSelectedItemId}
         setAfSelectedItemId={setAfSelectedItemId}
         bumpAfMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
-        navigation={navigation.sections.find(s => s.id === activeSection)}
+        navigation={(navigation?.sections || []).find(s => s.id === activeSection)}
         onSelectItem={handleSelectItem}
         hidePageHeader
       />
@@ -319,11 +328,17 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         </View>
       )}
 
-      {/* Top Navigator */}
-      <PhaseTopNavigator
-        navigation={navigation}
+      {/* Projekt-rubrik (ikon, nummer, namn, breadcrumb) visas i MinimalTopbar på samma rad som kalender – inte här. */}
+      {/* Topbar (primary sections) + Sub-Topbar (section items) */}
+      <ProjectTopbar
+        sections={navSections}
         activeSection={activeSection}
         onSelectSection={handleSelectSection}
+      />
+      <ProjectSubTopbar
+        subMenuItems={subMenuItems}
+        activeItem={activeItem}
+        onSelectItem={(itemId) => handleSelectItem(activeSection, itemId, null)}
       />
 
       {/* Main Content Area - Full width layout */}
@@ -342,14 +357,8 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
           />
         )}
 
-        {/* Right Content - Takes remaining space */}
+        {/* Right Content - Takes remaining space (breadcrumb visas redan högst upp) */}
         <View style={[styles.contentArea, shouldUseProjectBackground ? styles.contentAreaTransparent : null]}>
-          <ProjectPageHeader
-            project={project}
-            sectionLabel={headerSectionLabel}
-            itemLabel={headerItemLabel}
-            style={shouldUseProjectBackground ? styles.projectHeaderTransparent : null}
-          />
           <View style={[styles.contentBody, lockViewportForSection ? styles.contentBodyLocked : null]}>{renderContent()}</View>
         </View>
       </View>

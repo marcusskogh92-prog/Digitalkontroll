@@ -6,6 +6,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { getPhaseConfig, getProjectPhase } from '../../features/projects/constants';
 
 const PANEL_WIDTH = 340;
@@ -15,15 +16,46 @@ const CARD_PADDING = 20;
 const ITEM_GAP = 14;
 
 const WEEKDAY_LABELS = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
+const COLS = 7;
 
-/** ISO date string set for days that have activity (timeline or skyddsrond) */
-function CompactMonthCalendar({ activityDates = [] }) {
-  const [viewDate] = useState(() => new Date());
+/** Map ISO date -> phase color(s) for that day (from first project's phase per item). */
+function buildActivityColorsByDate(upcomingTimelineItems = [], upcomingItems = []) {
+  const byDate = new Map();
+  const add = (iso, color) => {
+    if (!byDate.has(iso)) byDate.set(iso, []);
+    const arr = byDate.get(iso);
+    if (color && !arr.includes(color)) arr.push(color);
+  };
+  (Array.isArray(upcomingTimelineItems) ? upcomingTimelineItems : []).forEach((item) => {
+    const iso = String(item?.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+    const config = getProjectPhase(item?.project || {}) || getPhaseConfig('kalkylskede');
+    add(iso, config?.color || '#2563EB');
+  });
+  (Array.isArray(upcomingItems) ? upcomingItems : []).forEach((item) => {
+    if (!item?.nextDueMs) return;
+    const iso = new Date(item.nextDueMs).toISOString().slice(0, 10);
+    const config = getPhaseConfig(item?.project?.phase || 'kalkylskede');
+    add(iso, config?.color || '#2563EB');
+  });
+  return byDate;
+}
+
+/** Kalender med fast 7-kolumnslayout så att datum inte flyttas vid resize. Fasfärgade prickar per dag. Månadsnavigering. */
+function CompactMonthCalendar({ activityDates = [], activityColorsByDate = new Map(), upcomingTimelineItems = [], upcomingItems = [] }) {
+  const [viewDate, setViewDate] = useState(() => new Date());
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
+
+  const goPrevMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  const goNextMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
   const today = new Date();
   const isToday = (d) => d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
   const activitySet = useMemo(() => new Set(Array.isArray(activityDates) ? activityDates : []), [activityDates]);
+  const colorsByDate = useMemo(
+    () => (activityColorsByDate instanceof Map && activityColorsByDate.size > 0 ? activityColorsByDate : buildActivityColorsByDate(upcomingTimelineItems, upcomingItems)),
+    [activityColorsByDate, upcomingTimelineItems, upcomingItems]
+  );
 
   const { firstDay, daysInMonth, startOffset } = useMemo(() => {
     const first = new Date(year, month, 1);
@@ -41,42 +73,78 @@ function CompactMonthCalendar({ activityDates = [] }) {
       const date = new Date(year, month, d);
       const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const hasActivity = activitySet.has(iso);
-      cells.push({ key: `day-${d}`, day: d, date, today: isToday(date), hasActivity });
+      const phaseColors = colorsByDate.get(iso) || [];
+      cells.push({ key: `day-${d}`, day: d, date, today: isToday(date), hasActivity, phaseColors });
     }
     return cells;
-  }, [year, month, daysInMonth, startOffset, activitySet]);
+  }, [year, month, daysInMonth, startOffset, activitySet, colorsByDate]);
+
+  const rows = useMemo(() => {
+    const list = [...gridCells];
+    const remainder = list.length % COLS;
+    if (remainder !== 0) for (let i = 0; i < COLS - remainder; i++) list.push({ key: `pad-${i}`, empty: true });
+    const result = [];
+    for (let i = 0; i < list.length; i += COLS) result.push(list.slice(i, i + COLS));
+    return result;
+  }, [gridCells]);
 
   const monthYearLabel = viewDate.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' });
 
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Kalender</Text>
-      <Text style={styles.calendarMonthYear}>{monthYearLabel}</Text>
+      <View style={styles.calendarMonthNav}>
+        <TouchableOpacity
+          style={styles.calendarNavButton}
+          onPress={goPrevMonth}
+          accessibilityLabel="Föregående månad"
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <Ionicons name="chevron-back" size={20} color="#475569" />
+        </TouchableOpacity>
+        <Text style={styles.calendarMonthYear}>{monthYearLabel}</Text>
+        <TouchableOpacity
+          style={styles.calendarNavButton}
+          onPress={goNextMonth}
+          accessibilityLabel="Nästa månad"
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <Ionicons name="chevron-forward" size={20} color="#475569" />
+        </TouchableOpacity>
+      </View>
       <View style={styles.calendarHeader}>
         {WEEKDAY_LABELS.map((label) => (
           <Text key={label} style={styles.weekdayLabel}>{label}</Text>
         ))}
       </View>
       <View style={styles.calendarGrid}>
-        {gridCells.map((cell) =>
-          cell.empty ? (
-            <View key={cell.key} style={styles.dayCell} />
-          ) : (
-            <View
-              key={cell.key}
-              style={[
-                styles.dayCell,
-                cell.today && styles.dayCellToday,
-                cell.hasActivity && !cell.today && styles.dayCellActivity,
-              ]}
-            >
-              <Text style={[styles.dayText, cell.today && styles.dayTextToday]}>
-                {cell.day}
-              </Text>
-              {cell.hasActivity && !cell.today ? <View style={styles.dayActivityDot} /> : null}
-            </View>
-          )
-        )}
+        {rows.map((rowCells, rowIndex) => (
+          <View key={`row-${rowIndex}`} style={styles.calendarRow}>
+            {rowCells.map((cell) =>
+              cell.empty ? (
+                <View key={cell.key} style={styles.dayCellFlex} />
+              ) : (
+                <View
+                  key={cell.key}
+                  style={[
+                    styles.dayCellFlex,
+                    cell.today && styles.dayCellToday,
+                    cell.hasActivity && !cell.today && styles.dayCellActivity,
+                  ]}
+                >
+                  <Text style={[styles.dayText, cell.today && styles.dayTextToday]}>{cell.day}</Text>
+                  {cell.hasActivity && !cell.today && (cell.phaseColors?.length > 0 || true) ? (
+                    <View style={styles.dayDotsWrap}>
+                      {(cell.phaseColors?.length ? cell.phaseColors : ['#2563EB']).slice(0, 3).map((color, i) => (
+                        <View key={i} style={[styles.dayActivityDot, { backgroundColor: color }]} />
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              )
+            )}
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -154,7 +222,7 @@ function UpcomingDeadlinesCard({ upcomingItems = [], upcomingTimelineItems = [],
                       <View style={[styles.upcomingStageIcon, { backgroundColor: config?.color || '#2563EB' }]}>
                         <Ionicons name={config?.icon || 'calendar-outline'} size={12} color="#fff" />
                       </View>
-                      <Text style={styles.upcomingRowText} numberOfLines={2}>
+                      <Text style={styles.upcomingRowText} numberOfLines={1} ellipsizeMode="tail">
                         {projectLabel} – {what}
                       </Text>
                     </TouchableOpacity>
@@ -174,7 +242,7 @@ function UpcomingDeadlinesCard({ upcomingItems = [], upcomingTimelineItems = [],
                     <View style={[styles.upcomingStageIcon, { backgroundColor: config?.color || '#2563EB' }]}>
                       <Ionicons name={config?.icon || 'shield-checkmark-outline'} size={12} color="#fff" />
                     </View>
-                    <Text style={styles.upcomingRowText} numberOfLines={2}>
+                    <Text style={styles.upcomingRowText} numberOfLines={1} ellipsizeMode="tail">
                       {projectLabel} – Skyddsrond
                     </Text>
                   </TouchableOpacity>
@@ -200,7 +268,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: CARD_RADIUS,
     padding: CARD_PADDING,
-    marginBottom: 16,
+    marginBottom: 0,
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: ICON_RAIL.bg,
+    marginVertical: 16,
   },
   cardTitle: {
     fontSize: 15,
@@ -208,10 +281,19 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     marginBottom: 4,
   },
+  calendarMonthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  calendarNavButton: {
+    padding: 6,
+    borderRadius: 8,
+  },
   calendarMonthYear: {
     fontSize: 13,
     color: '#64748b',
-    marginBottom: 10,
     textTransform: 'capitalize',
   },
   calendarHeader: {
@@ -223,19 +305,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 11,
     color: '#64748b',
+    minWidth: 0,
   },
   calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
   },
-  dayCell: {
-    position: 'relative',
-    width: '14.28%',
+  calendarRow: {
+    flexDirection: 'row',
+    width: '100%',
+  },
+  dayCellFlex: {
+    flex: 1,
+    minWidth: 0,
     aspectRatio: 1,
-    maxWidth: 36,
+    maxHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 6,
+    position: 'relative',
   },
   dayCellToday: {
     backgroundColor: '#2563EB',
@@ -243,13 +330,20 @@ const styles = StyleSheet.create({
   dayCellActivity: {
     backgroundColor: 'rgba(37, 99, 235, 0.12)',
   },
-  dayActivityDot: {
+  dayDotsWrap: {
     position: 'absolute',
-    bottom: 3,
+    bottom: 2,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 2,
+  },
+  dayActivityDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#2563EB',
   },
   dayText: {
     fontSize: 13,
@@ -325,7 +419,12 @@ export function DashboardRightPanel({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
-      <CompactMonthCalendar activityDates={activityDates} />
+      <CompactMonthCalendar
+        activityDates={activityDates}
+        upcomingTimelineItems={upcomingTimelineItems}
+        upcomingItems={upcomingItems}
+      />
+      <View style={styles.cardDivider} />
       <UpcomingDeadlinesCard
         upcomingItems={upcomingItems}
         upcomingTimelineItems={upcomingTimelineItems}

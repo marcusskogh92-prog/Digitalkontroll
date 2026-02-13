@@ -1,33 +1,34 @@
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Alert, Animated, Easing, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { AdminModalContext } from '../components/common/AdminModalContext';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
-import { AdminModalContext } from '../components/common/AdminModalContext';
-import ContextMenu from '../components/ContextMenu';
-import { formatPersonName } from '../components/formatPersonName';
 import { DashboardRightPanel } from '../components/common/DashboardRightPanel';
 import { GlobalSidePanel } from '../components/common/GlobalSidePanel';
 import { GlobalSidePanelContent, LeftPanelRailHeader } from '../components/common/GlobalSidePanelContent';
 import { HeaderSearchDropdown } from '../components/common/HeaderSearchDropdown';
 import { HomeHeader } from '../components/common/HomeHeader';
 import HomeMainPaneContainer from '../components/common/HomeMainPaneContainer';
-import { IconRail } from '../components/common/IconRail';
-import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { HomeMobileProjectTreeContainer } from '../components/common/HomeMobileProjectTreeContainer';
 import { HomeTasksSection } from '../components/common/HomeTasksSection';
+import { IconRail } from '../components/common/IconRail';
+import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
+import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
 import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
-import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
-import { GLOBAL_SIDE_PANEL, LAYOUT_2026 } from '../constants/iconRailTheme';
-import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
+import ManageSharePointNavigation from './ManageSharePointNavigation';
+import ContextMenu from '../components/ContextMenu';
 import { auth, fetchCompanies, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
+import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
+import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
+import { LAYOUT_2026 } from '../constants/iconRailTheme';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
-import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
+import { DEFAULT_PHASE, getPhaseMeta, getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import { useCompanyControlTypes } from '../hooks/useCompanyControlTypes';
@@ -37,6 +38,7 @@ import { useHomeInlineBrowserIntegration } from '../hooks/useHomeInlineBrowserIn
 import { useHomePaneResizing } from '../hooks/useHomePaneResizing';
 import { useHomeProjectFolders } from '../hooks/useHomeProjectFolders';
 import { useHomeProjectSelection } from '../hooks/useHomeProjectSelection';
+import { useModalKeyboard } from '../hooks/useModalKeyboard';
 import { useHomeSearchAndScroll } from '../hooks/useHomeSearchAndScroll';
 import { useHomeTasksSection } from '../hooks/useHomeTasksSection';
 import { useHomeTreeInteraction } from '../hooks/useHomeTreeInteraction';
@@ -262,6 +264,12 @@ export default function HomeScreen({ navigation, route }) {
   const [superadminCompanies, setSuperadminCompanies] = useState([]);
   const [superadminForetagExpanded, setSuperadminForetagExpanded] = useState(false);
   const [companyContextMenu, setCompanyContextMenu] = useState({ visible: false, x: 0, y: 0, company: null });
+  /** Modal för inaktiva faser (Produktion, Avslutat, Eftermarknad) – visar "Under uppbyggnad". */
+  const [inactivePhaseModal, setInactivePhaseModal] = useState(null); // 'produktion' | 'avslut' | 'eftermarknad' | null
+  /** Modal för SharePoint Nav (Superadmin) – ny layout. */
+  const [sharePointNavModalVisible, setSharePointNavModalVisible] = useState(false);
+
+  useModalKeyboard(sharePointNavModalVisible, () => setSharePointNavModalVisible(false));
 
   // Panel-bredd, collapse och resize-hantering (vänster/höger) – måste vara före alla useEffect som använder leftWidth/rightWidth
   const {
@@ -277,7 +285,7 @@ export default function HomeScreen({ navigation, route }) {
     rightResizeHandlers,
   } = useHomePaneResizing();
 
-  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal, openKategoriModal, openCompanyModal } = useContext(AdminModalContext) || {};
+  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal, openKategoriModal, openCompanyModal, openCreateCompanyModal } = useContext(AdminModalContext) || {};
 
   const getEffectiveCompanyIdForRegister = useCallback(async () => {
     const fromProps = String(companyId || route?.params?.companyId || '').trim();
@@ -353,7 +361,10 @@ export default function HomeScreen({ navigation, route }) {
   }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
 
   const handleAdminItemPress = useCallback(async (item) => {
-    setActiveSidePanelItemKey(item.key);
+    // Markera inte SharePoint Nav som aktiv när vi öppnar modalen (ingen navigering) – då "fastnar" inte highlight.
+    if (item.route !== 'ManageSharePointNavigation') {
+      setActiveSidePanelItemKey(item.key);
+    }
     try {
       const cid = await getEffectiveCompanyIdForRegister();
       if (item.route === 'ManageUsers') {
@@ -368,7 +379,9 @@ export default function HomeScreen({ navigation, route }) {
           navigation.navigate('ManageCompany', { companyId: cid });
         }
       } else if (item.route === 'ManageSharePointNavigation') {
-        navigation.navigate('ManageSharePointNavigation', { companyId: cid });
+        setActiveSidePanelItemKey(null);
+        setSharePointNavModalVisible(true);
+        return;
       }
     } catch (_e) {}
   }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved]);
@@ -555,6 +568,10 @@ export default function HomeScreen({ navigation, route }) {
     closeInlineControlEditor,
     handleInlineControlFinished,
     handleInlineViewChange,
+    leaveProjectModalVisible,
+    leaveProjectCurrentLabel,
+    confirmLeaveProject,
+    cancelLeaveProject,
   } = useHomeProjectSelection({
     showAlert,
     resetProjectFields,
@@ -567,12 +584,23 @@ export default function HomeScreen({ navigation, route }) {
     setProjectControlsRefreshNonce,
   });
 
+  useModalKeyboard(leaveProjectModalVisible, cancelLeaveProject, confirmLeaveProject);
+
   const [syncStatus, setSyncStatus] = useState('idle');
   
   // Phase navigation state (for PhaseLeftPanel in leftpanel)
   const [phaseActiveSection, setPhaseActiveSection] = useState(null);
   const [phaseActiveItem, setPhaseActiveItem] = useState(null);
   const [phaseActiveNode, setPhaseActiveNode] = useState(null);
+  const [phaseHeaderLabels, setPhaseHeaderLabels] = useState({ sectionLabel: '', itemLabel: '' });
+
+  const onPhaseHeaderLabels = useCallback(({ sectionLabel = '', itemLabel = '' } = {}) => {
+    setPhaseHeaderLabels((prev) => (
+      prev.sectionLabel === sectionLabel && prev.itemLabel === itemLabel
+        ? prev
+        : { sectionLabel, itemLabel }
+    ));
+  }, []);
 
   // Project module routing (web): decouple Offerter from kalkylskede PhaseLayout.
   // When moduleId === 'offerter', WebMainPane renders OfferterLayout.
@@ -1361,6 +1389,13 @@ export default function HomeScreen({ navigation, route }) {
   const selectedProjectSafe = selectedProject ?? null;
   const projectPhaseKeySafe = projectPhaseKey ?? null;
   const hierarchySafe = Array.isArray(hierarchy) ? hierarchy : [];
+
+  // Rensa phase-header-labels när inget projekt är valt (används i MinimalTopbar).
+  useEffect(() => {
+    if (!selectedProjectSafe) {
+      setPhaseHeaderLabels({ sectionLabel: '', itemLabel: '' });
+    }
+  }, [selectedProjectSafe]);
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
   const selectedProjectFoldersLoadingSafe = Boolean(selectedProjectFoldersLoading);
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
@@ -1734,12 +1769,18 @@ export default function HomeScreen({ navigation, route }) {
                   <IconRail
                     activeId={railActiveId}
                     onSelect={(id) => {
+                      if (id === 'produktion' || id === 'avslut' || id === 'eftermarknad') {
+                        setInactivePhaseModal(id);
+                        return;
+                      }
                       setActiveSidePanelItemKey(null);
                       setRailActiveId(id);
                       if (id === 'dashboard') {
                         setAppMode('dashboard');
                         setSidePanelCollapsed(true);
                         if (selectedProject) closeSelectedProject();
+                      } else if (id === 'notiser') {
+                        setSidePanelCollapsed(false);
                       } else if (id === 'sharepoint' || id === 'projekt') {
                         setAppMode('sharepoint');
                         if (selectedProject) closeSelectedProject();
@@ -1747,6 +1788,7 @@ export default function HomeScreen({ navigation, route }) {
                         setSidePanelCollapsed(false);
                       }
                     }}
+                    inactivePhaseIds={['produktion', 'avslut', 'eftermarknad']}
                     showSuperadmin={isSuperAdminResolved}
                     notificationsBadgeCount={notificationsUnreadCount || 0}
                     userDisplayName={
@@ -1759,6 +1801,108 @@ export default function HomeScreen({ navigation, route }) {
                       setUserMenuVisible(true);
                     } : undefined}
                   />
+                  <Modal
+                    visible={Boolean(inactivePhaseModal)}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setInactivePhaseModal(null)}
+                  >
+                    <Pressable
+                      style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+                      onPress={() => setInactivePhaseModal(null)}
+                    >
+                      <Pressable
+                        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, minWidth: 280, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        <Text style={{ fontSize: 18, fontWeight: '600', color: '#1e293b', marginBottom: 8 }}>
+                          {inactivePhaseModal ? getPhaseMeta(inactivePhaseModal).label : ''}
+                        </Text>
+                        <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 20 }}>
+                          Under uppbyggnad
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => setInactivePhaseModal(null)}
+                          style={{ backgroundColor: '#1976D2', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>OK</Text>
+                        </TouchableOpacity>
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
+                  <Modal
+                    visible={leaveProjectModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={cancelLeaveProject}
+                  >
+                    <Pressable
+                      style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+                      onPress={cancelLeaveProject}
+                    >
+                      <Pressable
+                        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, minWidth: 320, alignItems: 'stretch', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        <Text style={{ fontSize: 18, fontWeight: '600', color: '#1e293b', marginBottom: 8 }}>
+                          Lämna projekt?
+                        </Text>
+                        <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>
+                          Vill du lämna {leaveProjectCurrentLabel || 'nuvarande projekt'}? Osparade ändringar kan gå förlorade.
+                        </Text>
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+                          <TouchableOpacity
+                            onPress={cancelLeaveProject}
+                            style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#f1f5f9' }}
+                          >
+                            <Text style={{ color: '#475569', fontSize: 14, fontWeight: '600' }}>Stanna kvar</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={confirmLeaveProject}
+                            style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#1e293b' }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Lämna</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
+                  <Modal
+                    visible={sharePointNavModalVisible}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setSharePointNavModalVisible(false)}
+                  >
+                    <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setSharePointNavModalVisible(false)}>
+                      <View
+                        style={{
+                          flex: 1,
+                          backgroundColor: '#fff',
+                          borderRadius: 14,
+                          overflow: 'hidden',
+                          width: '100%',
+                          maxWidth: 900,
+                          maxHeight: '90%',
+                          borderWidth: 1,
+                          borderColor: 'rgba(15, 23, 42, 0.22)',
+                          shadowColor: '#000',
+                          shadowOffset: { width: 0, height: 8 },
+                          shadowOpacity: 0.15,
+                          shadowRadius: 24,
+                          elevation: 16,
+                        }}
+                        onStartShouldSetResponder={() => true}
+                        {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : {})}
+                      >
+                        <ManageSharePointNavigation
+                          navigation={navigation}
+                          route={{ params: {} }}
+                          embedInModal
+                          onClose={() => setSharePointNavModalVisible(false)}
+                        />
+                      </View>
+                    </Pressable>
+                  </Modal>
                   <GlobalSidePanel
                     collapsed={sidePanelCollapsed}
                     onCollapseChange={setSidePanelCollapsed}
@@ -1775,10 +1919,8 @@ export default function HomeScreen({ navigation, route }) {
                           <Text style={{ fontSize: 12, color: '#94a3b8' }}>Översikt och senaste aktiviteter visas i innehållsområdet.</Text>
                         </View>
                       </View>
-                    ) : (appMode === 'project' || railActiveId === 'sharepoint' || railActiveId === 'projekt') ? (
+                    ) : (appMode === 'project' || railActiveId === 'sharepoint' || railActiveId === 'projekt' || railActiveId === 'kalkylskede' || railActiveId === 'produktion' || railActiveId === 'avslut' || railActiveId === 'eftermarknad') ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title={railActiveId === 'projekt' ? 'Projekt' : 'SharePoint'} />
-                        <View style={{ flex: 1, minHeight: 0 }}>
                       <SharePointLeftPanel
                         leftWidth={leftWidth}
                         setLeftWidth={setLeftWidth}
@@ -1815,6 +1957,7 @@ export default function HomeScreen({ navigation, route }) {
                     navigation={navigation}
                     route={route}
                     showProjectSearch={Platform.OS === 'web'}
+                    phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
                     handleSelectFunction={handleSelectFunction}
@@ -1835,6 +1978,7 @@ export default function HomeScreen({ navigation, route }) {
                     buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
                     scrollToEndSafe={scrollToEndSafe}
                     createPortal={createPortal}
+                    onOpenCreateProjectModal={openCreateProjectModal}
                     onSelectProject={(projectData) => {
                       try {
                         if (!projectData || !projectData.id) {
@@ -1910,7 +2054,6 @@ export default function HomeScreen({ navigation, route }) {
                     onAfSelectedItemIdChange={setAfSelectedItemId}
                     afMirrorRefreshNonce={afMirrorRefreshNonce}
                   />
-                        </View>
                       </View>
                     ) : (railActiveId === 'register' || railActiveId === 'administration' || railActiveId === 'superadmin') ? (
                       <GlobalSidePanelContent
@@ -1928,6 +2071,9 @@ export default function HomeScreen({ navigation, route }) {
                           const x = (e?.clientX != null) ? e.clientX : 0;
                           const y = (e?.clientY != null) ? e.clientY : 0;
                           setCompanyContextMenu({ visible: true, x, y, company });
+                        }}
+                        onSuperadminAddCompany={() => {
+                          openCreateCompanyModal?.();
                         }}
                       />
                     ) : (
@@ -1976,6 +2122,9 @@ export default function HomeScreen({ navigation, route }) {
                   >
                     <MinimalTopbar
                       pageTitle={selectedProjectSafe?.name || 'Startsida'}
+                      project={selectedProjectSafe || null}
+                      sectionLabel={phaseHeaderLabels.sectionLabel}
+                      itemLabel={phaseHeaderLabels.itemLabel}
                       showCreateProject={false}
                       showRightPanelToggle
                       rightPanelOpen={!dashboardRightPanelCollapsed}
@@ -2060,6 +2209,7 @@ export default function HomeScreen({ navigation, route }) {
                     setPhaseActiveSection={setPhaseActiveSection}
                     setPhaseActiveItem={setPhaseActiveItem}
                     setPhaseActiveNode={setPhaseActiveNode}
+                    onPhaseHeaderLabels={onPhaseHeaderLabels}
                     onOpenCreateProjectModal={openCreateProjectModal}
 
                     // AF-only explorer state shared with left panel
@@ -2241,6 +2391,7 @@ export default function HomeScreen({ navigation, route }) {
               navigation={navigation}
               route={route}
               showProjectSearch={Platform.OS === 'web'}
+              phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}
               handleSelectFunction={handleSelectFunction}
@@ -2261,6 +2412,7 @@ export default function HomeScreen({ navigation, route }) {
               buildStamp={typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : null}
               scrollToEndSafe={scrollToEndSafe}
               createPortal={createPortal}
+              onOpenCreateProjectModal={openCreateProjectModal}
               onSelectProject={(projectData) => {
                 try {
                   if (!projectData || !projectData.id) {

@@ -270,6 +270,85 @@ export async function getDefaultAIPrompt(promptKey) {
   };
 }
 
+/** Multi-prompt manager: hämta alla prompt-mallar för en kategori. */
+export async function fetchCompanyAIPromptTemplates(companyId, category) {
+  const cid = String(companyId || '').trim();
+  const cat = String(category || '').trim();
+  if (!cid || !cat) return [];
+  const col = collection(db, 'companies', cid, 'ai_prompt_templates');
+  const q = query(col, where('category', '==', cat));
+  const snap = await getDocs(q).catch(() => ({ empty: true, docs: [] }));
+  if (snap.empty) return [];
+  const list = snap.docs.map((d) => {
+    const data = d.data() || {};
+    return {
+      id: d.id,
+      category: cat,
+      name: String(data.name || '').trim() || 'Namnlös',
+      description: String(data.description || '').trim(),
+      systemPrompt: String(data.systemPrompt || '').trim(),
+      userTemplate: String(data.userTemplate || '').trim(),
+      extraInstruction: String(data.extraInstruction || data.instruction || '').trim(),
+      active: data.active !== false,
+      isDefault: data.isDefault === true,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      updatedAt: data.updatedAt?.toDate?.() || null,
+      updatedBy: data.updatedBy || null,
+      createdAt: data.createdAt?.toDate?.() || null,
+      lastUsedAt: data.lastUsedAt?.toDate?.() || null,
+    };
+  });
+  list.sort((a, b) => (a.createdAt && b.createdAt ? a.createdAt.getTime() - b.createdAt.getTime() : 0));
+  return list;
+}
+
+/** Spara (skapa eller uppdatera) en prompt-mall. Om isDefault true, avmarkera andra i samma kategori. */
+export async function saveCompanyAIPromptTemplate(companyId, payload) {
+  const cid = String(companyId || '').trim();
+  const uid = auth?.currentUser?.uid || null;
+  const category = String(payload?.category || '').trim();
+  const id = String(payload?.id || '').trim();
+  if (!cid || !category) throw new Error('companyId och category krävs');
+
+  const col = collection(db, 'companies', cid, 'ai_prompt_templates');
+  const data = {
+    category,
+    name: String(payload.name || '').trim() || 'Namnlös',
+    description: String(payload.description || '').trim(),
+    systemPrompt: String(payload.systemPrompt || '').trim(),
+    userTemplate: String(payload.userTemplate || '').trim(),
+    extraInstruction: String(payload.extraInstruction || payload.instruction || '').trim(),
+    active: payload.active !== false,
+    isDefault: payload.isDefault === true,
+    tags: Array.isArray(payload.tags) ? payload.tags : [],
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+  };
+
+  if (payload.isDefault === true) {
+    const existing = await getDocs(query(col, where('category', '==', category)));
+    const batch = existing.docs.filter((d) => d.id !== id);
+    for (const d of batch) {
+      await updateDoc(doc(db, 'companies', cid, 'ai_prompt_templates', d.id), { isDefault: false, updatedAt: serverTimestamp(), updatedBy: uid });
+    }
+  }
+
+  if (id) {
+    await updateDoc(doc(db, 'companies', cid, 'ai_prompt_templates', id), data);
+    return { id, ...data };
+  }
+  const ref = await addDoc(col, { ...data, createdAt: serverTimestamp() });
+  return { id: ref.id, ...data };
+}
+
+/** Ta bort en prompt-mall. */
+export async function deleteCompanyAIPromptTemplate(companyId, templateId) {
+  const cid = String(companyId || '').trim();
+  const tid = String(templateId || '').trim();
+  if (!cid || !tid) throw new Error('companyId och templateId krävs');
+  await deleteDoc(doc(db, 'companies', cid, 'ai_prompt_templates', tid));
+}
+
 export async function saveLatestProjectFFUAnalysis(companyId, projectId, analysis) {
   const { canonical } = getLatestFFUAnalysisDocRefs(companyId, projectId);
   const a = analysis && typeof analysis === 'object' ? analysis : {};

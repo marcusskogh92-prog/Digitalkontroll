@@ -2204,10 +2204,10 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
 
     const rootPath = normalizeGraphPath(rootFolderPath);
 
-    // Required structure: Projekt → 01 - Översikt → 04 - FrågaSvar
+    // Required structure: Projekt → 01 - Översikt → 05 - FrågaSvar
     const base = rootPath === '/'
-      ? '/01 - Översikt/04 - FrågaSvar'
-      : `${rootPath}/01 - Översikt/04 - FrågaSvar`;
+      ? '/01 - Översikt/05 - FrågaSvar'
+      : `${rootPath}/01 - Översikt/05 - FrågaSvar`;
     const normalized = normalizeGraphPath(base);
     const withoutLeadingSlash = normalized.replace(/^\/+/, '');
 

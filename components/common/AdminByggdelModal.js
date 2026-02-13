@@ -310,11 +310,12 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose?.();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [visible, onClose]);
 
   useLayoutEffect(() => {

@@ -90,6 +90,7 @@ export function HomeMainPaneContainer(props) {
     setPhaseActiveSection,
     setPhaseActiveItem,
     setPhaseActiveNode,
+    onPhaseHeaderLabels,
 
     // AF-only explorer state (shared with left panel mirror)
     afRelativePath,
@@ -182,10 +183,11 @@ export function HomeMainPaneContainer(props) {
           phaseActiveNode={phaseActiveNode}
           setPhaseActiveSection={setPhaseActiveSection}
           setPhaseActiveItem={setPhaseActiveItem}
-          setPhaseActiveNode={setPhaseActiveNode}
-          onOpenCreateProjectModal={onOpenCreateProjectModal}
+                    setPhaseActiveNode={setPhaseActiveNode}
+                    onOpenCreateProjectModal={onOpenCreateProjectModal}
+                    onPhaseHeaderLabels={onPhaseHeaderLabels}
 
-          // AF-only explorer state (shared with left panel mirror)
+                    // AF-only explorer state (shared with left panel mirror)
           afRelativePath={afRelativePath}
           setAfRelativePath={setAfRelativePath}
           afSelectedItemId={afSelectedItemId}

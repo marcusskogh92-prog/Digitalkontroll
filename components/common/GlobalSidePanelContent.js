@@ -196,6 +196,7 @@ function CompanyRow({ company, onPress, onContextMenu, onHoverIn, onHoverOut, is
  * @param {Function} [onSuperadminForetagToggle] - () => void
  * @param {Function} [onSuperadminCompanyClick] - (company) => void → öppna popup
  * @param {Function} [onSuperadminCompanyContextMenu] - (e, company) => void
+ * @param {Function} [onSuperadminAddCompany] - () => void → skapa nytt företag (navigera till ManageCompany createNew)
  */
 export function GlobalSidePanelContent({
   activeModule,
@@ -209,6 +210,7 @@ export function GlobalSidePanelContent({
   onSuperadminForetagToggle,
   onSuperadminCompanyClick,
   onSuperadminCompanyContextMenu,
+  onSuperadminAddCompany,
 }) {
   if (activeModule === 'register') {
     return (
@@ -243,6 +245,7 @@ export function GlobalSidePanelContent({
         onSuperadminForetagToggle={onSuperadminForetagToggle}
         onSuperadminCompanyClick={onSuperadminCompanyClick}
         onSuperadminCompanyContextMenu={onSuperadminCompanyContextMenu}
+        onSuperadminAddCompany={onSuperadminAddCompany}
       />
     );
   }
@@ -269,9 +272,11 @@ function SuperadminSection({
   onSuperadminForetagToggle,
   onSuperadminCompanyClick,
   onSuperadminCompanyContextMenu,
+  onSuperadminAddCompany,
 }) {
   const [hoveredKey, setHoveredKey] = useState(null);
   const [hoveredCompanyId, setHoveredCompanyId] = useState(null);
+  const [hoveredAddCompany, setHoveredAddCompany] = useState(false);
 
   return (
     <View style={styles.container}>
@@ -313,19 +318,56 @@ function SuperadminSection({
                   }}
                   labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
                 />
-                {superadminForetagExpanded && Array.isArray(superadminCompanies) && superadminCompanies.length > 0 ? (
+                {superadminForetagExpanded ? (
                   <View style={{ marginLeft: LEFT_NAV.indentPerLevel, marginTop: 2 }}>
-                    {superadminCompanies.map((company) => (
-                      <CompanyRow
-                        key={company?.id || ''}
-                        company={company}
-                        onPress={onSuperadminCompanyClick}
-                        onContextMenu={onSuperadminCompanyContextMenu}
-                        onHoverIn={Platform.OS === 'web' ? () => setHoveredCompanyId(company?.id || '') : undefined}
-                        onHoverOut={Platform.OS === 'web' ? () => setHoveredCompanyId(null) : undefined}
-                        isHovered={Platform.OS === 'web' && hoveredCompanyId === (company?.id || '')}
-                      />
-                    ))}
+                    {onSuperadminAddCompany ? (
+                      <View style={styles.itemWrapper}>
+                        <SidebarItem
+                          label="Nytt företag"
+                          labelWeight="400"
+                          active={false}
+                          hovered={Platform.OS === 'web' && hoveredAddCompany}
+                          onPress={() => onSuperadminAddCompany()}
+                          onHoverIn={Platform.OS === 'web' ? () => setHoveredAddCompany(true) : undefined}
+                          onHoverOut={Platform.OS === 'web' ? () => setHoveredAddCompany(false) : undefined}
+                          indentMode="padding"
+                          indent={LEFT_NAV.indentPerLevel}
+                          fullWidth
+                          left={(state) => (
+                            <View style={{ marginRight: 8, width: 20, height: 20, alignItems: 'center', justifyContent: 'center' }}>
+                              <Ionicons name="business-outline" size={18} color={state.hovered ? ICON_COLOR_HOVER : ICON_COLOR_DEFAULT} />
+                              <View style={{ position: 'absolute', right: -2, bottom: -2, width: 12, height: 12, borderRadius: 6, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="add" size={10} color="#fff" />
+                              </View>
+                            </View>
+                          )}
+                          right={() => (
+                            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: '#2563eb' }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', letterSpacing: 0.5 }}>NYTT</Text>
+                            </View>
+                          )}
+                          style={{
+                            minHeight: LEFT_NAV.rowMinHeight,
+                            paddingVertical: LEFT_NAV.rowPaddingVertical,
+                            paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+                          }}
+                          labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+                        />
+                      </View>
+                    ) : null}
+                    {Array.isArray(superadminCompanies) && superadminCompanies.length > 0
+                      ? superadminCompanies.map((company) => (
+                          <CompanyRow
+                            key={company?.id || ''}
+                            company={company}
+                            onPress={onSuperadminCompanyClick}
+                            onContextMenu={onSuperadminCompanyContextMenu}
+                            onHoverIn={Platform.OS === 'web' ? () => setHoveredCompanyId(company?.id || '') : undefined}
+                            onHoverOut={Platform.OS === 'web' ? () => setHoveredCompanyId(null) : undefined}
+                            isHovered={Platform.OS === 'web' && hoveredCompanyId === (company?.id || '')}
+                          />
+                        ))
+                      : null}
                   </View>
                 ) : null}
               </View>

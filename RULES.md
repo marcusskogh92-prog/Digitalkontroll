@@ -97,6 +97,7 @@ Innehåll i RULES.md
 8. Modal-standard (golden rule)
 	•	Alla modaler i systemet ska se ut och bete sig som Företagsinställningar (AdminCompanyModal).
 	•	Detaljerad beskrivning: docs/MODAL_GOLDEN_RULE.md.
+	•	Loading: Använd komponenten LoadingState (animerad spinner + text). Tema: LOADING_THEME i constants/modalTheme.js. Se MODAL_GOLDEN_RULE.md §4.
 	•	Banner (header):
 	•	Mörk färg (ICON_RAIL.bg). Titel 14px, undertitel 12px på en rad. Ikonruta 28×28 px. Stäng (X): mörk bakgrund, vit ikon.
 	•	Footer-knappar:

@@ -16,16 +16,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile, fetchCompanyProject, fetchCompanySharePointSiteMetas, formatSharePointProjectFolderName, hasDuplicateProjectNumber, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, updateSharePointProjectPropertiesFromFirestoreProject, upsertCompanyProject } from '../components/firebase';
+import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile, fetchCompanyProject, fetchCompanySharePointSiteMetas, getCompanySharePointSiteIdByRole, formatSharePointProjectFolderName, hasDuplicateProjectNumber, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, updateSharePointProjectPropertiesFromFirestoreProject, upsertCompanyProject } from '../components/firebase';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [availableSites, setAvailableSites] = useState([]);
 
-  // Hämta SharePoint-ytor för företaget baserat på Digitalkontrolls metadata:
-  // - Endast role === "projects" får användas för projekt
-  // - Best-effort: trigga server-side sync så legacy bolag får metadata utan manuella steg
+  // Hämta SharePoint-ytor för företaget – samma logik som vänsterpanelen, men DK Bas (system) ska aldrig visas.
+  // Endast role "projects" eller "custom" (Extra); system-site är alltid dold och låst för projektskapande.
   useEffect(() => {
     let cancelled = false;
 
@@ -40,7 +39,10 @@ export function useCreateSharePointProjectModal({ companyId }) {
           await syncSharePointSiteVisibilityRemote({ companyId });
         } catch (_e) {}
 
-        const metas = await fetchCompanySharePointSiteMetas(companyId);
+        const [metas, systemSiteId] = await Promise.all([
+          fetchCompanySharePointSiteMetas(companyId),
+          getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: false }).catch(() => null),
+        ]);
         if (cancelled) return;
 
         const normalizeRole = (role) => {
@@ -48,11 +50,32 @@ export function useCreateSharePointProjectModal({ companyId }) {
           if (!r) return null;
           if (r === 'projects' || r === 'project' || r === 'project-root' || r === 'project_root' || r === 'projectroot') return 'projects';
           if (r === 'system' || r === 'system-base' || r === 'system_base' || r === 'systembase') return 'system';
+          if (r === 'custom' || r === 'extra') return 'custom';
           return r;
         };
 
+        const canShowInProjectPicker = (m) => {
+          const role = normalizeRole(m?.role);
+          if (role === 'system') return false;
+          return (role === 'projects' || role === 'custom') && m?.visibleInLeftPanel === true;
+        };
+
+        const systemId = systemSiteId ? String(systemSiteId).trim() : null;
+
+        const isDkBas = (nameOrMeta) => {
+          const name = typeof nameOrMeta === 'string'
+            ? nameOrMeta
+            : String(nameOrMeta?.siteName || nameOrMeta?.name || nameOrMeta?.siteUrl || '').trim();
+          return /dk\s*bas/i.test(name);
+        };
+
         const sites = (metas || [])
-          .filter((m) => m && m.visibleInLeftPanel === true && normalizeRole(m.role) === 'projects')
+          .filter((m) => m && canShowInProjectPicker(m))
+          .filter((m) => {
+            const id = String(m.siteId || m.id || '').trim();
+            return id && id !== systemId;
+          })
+          .filter((m) => !isDkBas(m))
           .map((m) => ({
             id: String(m.siteId || m.id || '').trim(),
             name: String(m.siteName || m.siteUrl || m.webUrl || 'SharePoint-site'),
@@ -275,40 +298,31 @@ export function useCreateSharePointProjectModal({ companyId }) {
         console.warn('[useCreateSharePointProjectModal] Warning saving project metadata:', metaError?.message || metaError);
       }
 
-      // Update SharePoint folder properties for Office Quick Parts / Document Properties.
-      // Best-effort and non-blocking: no files are rewritten.
-      try {
-        await updateSharePointProjectPropertiesFromFirestoreProject(companyId, {
-          sharePointSiteId: String(siteId),
-          rootFolderPath: String(projectPath),
-          projectNumber: String(projectNumber),
-          projectName: String(projectName),
-          fullName: projectFolderName,
-        });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('[useCreateSharePointProjectModal] Warning updating SharePoint project properties:', e?.message || e);
-      }
+      // Stäng modalen direkt när projektet finns i Firestore (syns i vänsterpanelen).
+      // Mappstruktur och SharePoint-egenskaper skapas i bakgrunden så att användaren inte behöver vänta.
+      // eslint-disable-next-line no-console
+      console.log('[useCreateSharePointProjectModal] ✅ Project saved, closing modal (structure continues in background)');
+      setVisible(false);
+      setIsCreating(false);
 
-      // Apply system structure inside the project folder.
-      // This must complete before closing modal to ensure structure is created.
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] ===== STRUCTURE CHECK =====`);
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] structureType: "${structureType}" (type: ${typeof structureType})`);
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] systemPhase: "${systemPhase}" (type: ${typeof systemPhase})`);
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] structureType === 'system': ${structureType === 'system'}`);
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] systemPhase is truthy: ${!!systemPhase}`);
-      // eslint-disable-next-line no-console
-      console.log(`[useCreateSharePointProjectModal] Will create structure: ${structureType === 'system' && systemPhase ? 'YES' : 'NO'}`);
-      
-      if ((structureType === 'system' && systemPhase) || systemPhase === 'kalkyl' || systemPhase === 'kalkylskede') {
-        // eslint-disable-next-line no-console
-        console.log(`[useCreateSharePointProjectModal] ===== ENTERING STRUCTURE CREATION BLOCK =====`);
-        // Map structure values to phase keys (handle both 'kalkyl' and 'kalkylskede')
+      // Bakgrund: uppdatera SharePoint-egenskaper och skapa mappstruktur (01 - Översikt, etc.)
+      const runInBackground = async () => {
+        try {
+          await updateSharePointProjectPropertiesFromFirestoreProject(companyId, {
+            sharePointSiteId: String(siteId),
+            rootFolderPath: String(projectPath),
+            projectNumber: String(projectNumber),
+            projectName: String(projectName),
+            fullName: projectFolderName,
+          });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('[useCreateSharePointProjectModal] Background: warning updating SharePoint project properties:', e?.message || e);
+        }
+
+        const needsStructure = (structureType === 'system' && systemPhase) || systemPhase === 'kalkyl' || systemPhase === 'kalkylskede';
+        if (!needsStructure) return;
+
         const phaseKey =
           systemPhase === 'produktion'
             ? 'produktion'
@@ -318,98 +332,41 @@ export function useCreateSharePointProjectModal({ companyId }) {
             ? 'eftermarknad'
             : (systemPhase === 'kalkyl' || systemPhase === 'kalkylskede')
             ? 'kalkylskede'
-            : 'kalkylskede'; // Default to kalkylskede
-        
-        // eslint-disable-next-line no-console
-        console.log(`[useCreateSharePointProjectModal] Mapped phaseKey: "${phaseKey}"`);
+            : 'kalkylskede';
 
-        // Create phase-specific structure inside the project folder
         try {
-          // eslint-disable-next-line no-console
-          console.log(`[useCreateSharePointProjectModal] ===== STARTING STRUCTURE CREATION =====`);
-          // eslint-disable-next-line no-console
-          console.log(`[useCreateSharePointProjectModal] phaseKey: "${phaseKey}", projectPath: "${projectPath}"`);
-
-          // Locked structure for Kalkylskede: always ensure the full fixed structure.
           if (phaseKey === 'kalkylskede') {
-            // New structure (v2): Kalkyl is late (between Möten and Anbud).
-            // IMPORTANT: Do not change folder prefixes without mirroring UI ordering.
             await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
             // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] ✅ Ensured locked kalkylskede structure`);
-            // eslint-disable-next-line no-console
-            console.log(`[useCreateSharePointProjectModal] ===== STRUCTURE CREATION COMPLETE =====`);
-            setVisible(false);
+            console.log('[useCreateSharePointProjectModal] Background: kalkylskede structure complete');
             return;
           }
 
           const { getDefaultNavigation } = await import('../features/project-phases/constants');
           const navigation = getDefaultNavigation(phaseKey);
-          if (!navigation || !Array.isArray(navigation.sections)) {
-            throw new Error('Navigation structure not found');
-          }
+          if (!navigation || !Array.isArray(navigation.sections)) return;
 
-          // eslint-disable-next-line no-console
-          console.log(`[useCreateSharePointProjectModal] ✅ Navigation loaded: ${navigation.sections.length} sections`);
-
-          const sectionPromises = navigation.sections.map(async (section) => {
-            const sectionFolderName = section.name;
-            const sectionPath = `${projectPath}/${sectionFolderName}`;
-
+          for (const section of navigation.sections || []) {
+            const sectionPath = `${projectPath}/${section.name}`;
             try {
               await ensureFolderPath(sectionPath, companyId, siteId, { siteRole: 'projects' });
-
               if (section.items && Array.isArray(section.items)) {
-                const enabledItems = section.items.filter((item) => item && item.enabled !== false);
-                const itemPromises = enabledItems.map(async (item) => {
-                  const itemPath = `${sectionPath}/${item.name}`;
+                const enabled = section.items.filter((i) => i && i.enabled !== false);
+                for (const item of enabled) {
                   try {
-                    await ensureFolderPath(itemPath, companyId, siteId, { siteRole: 'projects' });
-                  } catch (itemError) {
-                    // eslint-disable-next-line no-console
-                    console.error(`[useCreateSharePointProjectModal] Error creating item folder ${itemPath}:`, itemError?.message || itemError);
-                  }
-                });
-                await Promise.allSettled(itemPromises);
+                    await ensureFolderPath(`${sectionPath}/${item.name}`, companyId, siteId, { siteRole: 'projects' });
+                  } catch (_itemErr) {}
+                }
               }
-            } catch (sectionError) {
-              // eslint-disable-next-line no-console
-              console.error(`[useCreateSharePointProjectModal] Error creating section folder ${sectionPath}:`, sectionError);
-            }
-          });
-
-          await Promise.allSettled(sectionPromises);
-          const totalItems = navigation.sections.reduce((sum, s) => sum + (s.items?.filter((i) => i && i.enabled !== false).length || 0), 0);
-          // eslint-disable-next-line no-console
-          console.log(`[useCreateSharePointProjectModal] ✅ Created structure: ${navigation.sections.length} sections, ${totalItems} items`);
+            } catch (_sectionErr) {}
+          }
         } catch (error) {
           // eslint-disable-next-line no-console
-          console.error(`[useCreateSharePointProjectModal] Could not create structure for phase ${phaseKey}:`, error);
-          // Fallback to standard subfolders
-          const standardSubfolders = ['Documents', 'Drawings', 'Meetings', 'Controls'];
-          for (const subfolder of standardSubfolders) {
-            const subfolderPath = `${projectPath}/${subfolder}`;
-            try {
-              await ensureFolderPath(subfolderPath, companyId, siteId, { siteRole: 'projects' });
-            } catch (subfolderError) {
-              // eslint-disable-next-line no-console
-              console.warn(`[useCreateSharePointProjectModal] Warning creating subfolder ${subfolderPath}:`, subfolderError);
-            }
-          }
+          console.warn('[useCreateSharePointProjectModal] Background: structure creation failed:', error?.message || error);
         }
-      } else {
-        // eslint-disable-next-line no-console
-        console.log(`[useCreateSharePointProjectModal] ===== SKIPPING STRUCTURE CREATION =====`);
-        // eslint-disable-next-line no-console
-        console.log(`[useCreateSharePointProjectModal] Reason: structureType=${structureType}, systemPhase=${systemPhase}`);
-        // eslint-disable-next-line no-console
-        console.log(`[useCreateSharePointProjectModal] Condition check: structureType === 'system' = ${structureType === 'system'}, systemPhase is truthy = ${!!systemPhase}`);
-      }
-
-      // Project folder and structure created successfully - close modal
-      // eslint-disable-next-line no-console
-      console.log('[useCreateSharePointProjectModal] ✅ Project creation complete, closing modal');
-      setVisible(false);
+      };
+      runInBackground();
+      return;
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('[useCreateSharePointProjectModal] Error creating project', error);

@@ -553,6 +553,7 @@ export default function ProjectDetails({ route, navigation, inlineClose, refresh
             onExternalItemChange={route?.params?.onPhaseItemChange}
             onPhaseChange={handleProjectPhaseChange}
             reactNavigation={navigation}
+            onHeaderLabelsChange={route?.params?.onPhaseHeaderLabels}
           />
         </View>
       );

@@ -371,6 +371,12 @@ service cloud.firestore {
       allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
     }
 
+    // Company AI prompt templates – flera prompter per kategori (multi-prompt manager)
+    match /companies/{company}/ai_prompt_templates/{templateId} {
+      allow read: if isCompanyMember(company) || isGlobalAdmin();
+      allow create, update, delete: if hasWriteAccess(company) || isGlobalAdmin();
+    }
+
     // Company categories (Kategoriregister) – företagsbaserade kategorier (t.ex. Golv, Mark, Måleri)
     match /companies/{company}/categories/{categoryId} {
       allow read: if isCompanyMember(company) || isGlobalAdmin();

@@ -13,6 +13,7 @@ import MallarModal from './MallarModal';
 import AdminAIPromptsModal from './AdminAIPromptsModal';
 import AdminKategoriModal from './AdminKategoriModal';
 import AdminCompanyModal from './AdminCompanyModal';
+import AdminCreateCompanyModal from './AdminCreateCompanyModal';
 
 const defaultContext = {
   openCustomersModal: () => {},
@@ -33,6 +34,8 @@ const defaultContext = {
   closeKategoriModal: () => {},
   openCompanyModal: () => {},
   closeCompanyModal: () => {},
+  openCreateCompanyModal: () => {},
+  closeCreateCompanyModal: () => {},
   navigationRef: null,
   registerSelectionSavedListener: () => {},
   isSubModalOpen: false,
@@ -63,6 +66,7 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   const [kategoriSelectionContext, setKategoriSelectionContext] = useState(null);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companyModalCompanyId, setCompanyModalCompanyId] = useState('');
+  const [createCompanyModalOpen, setCreateCompanyModalOpen] = useState(false);
   const selectionSavedListenerRef = useRef(null);
 
   const openCustomersModal = useCallback((companyId) => {
@@ -161,6 +165,14 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
     setCompanyModalCompanyId('');
   }, []);
 
+  const openCreateCompanyModal = useCallback(() => {
+    setCreateCompanyModalOpen(true);
+  }, []);
+
+  const closeCreateCompanyModal = useCallback(() => {
+    setCreateCompanyModalOpen(false);
+  }, []);
+
   const registerSelectionSavedListener = useCallback((fn) => {
     selectionSavedListenerRef.current = fn;
   }, []);
@@ -192,6 +204,8 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
     closeKategoriModal,
     openCompanyModal,
     closeCompanyModal,
+    openCreateCompanyModal,
+    closeCreateCompanyModal,
     navigationRef: navigationRefProp ?? null,
     registerSelectionSavedListener,
     isSubModalOpen,
@@ -250,6 +264,14 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
         visible={companyModalOpen}
         companyId={companyModalCompanyId}
         onClose={closeCompanyModal}
+      />
+      <AdminCreateCompanyModal
+        visible={createCompanyModalOpen}
+        onClose={closeCreateCompanyModal}
+        onSuccess={(newCompanyId) => {
+          closeCreateCompanyModal();
+          openCompanyModal(newCompanyId);
+        }}
       />
     </AdminModalContext.Provider>
   );

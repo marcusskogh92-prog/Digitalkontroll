@@ -1,6 +1,6 @@
 /**
- * Minimal topbar (2026 SaaS layout). Vit bakgrund, 56–64px, endast sidtitel + snabbåtgärd.
- * Ingen navigation, ingen färgad bakgrund.
+ * Minimal topbar (2026 SaaS layout). Samma rad som kalenderknappen.
+ * Vid projekt: ikon + projektnummer – projektnamn, breadcrumb under. Annars sidtitel.
  */
 
 import React from 'react';
@@ -8,27 +8,79 @@ import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import { Ionicons } from '@expo/vector-icons';
 import { LAYOUT_2026 } from '../../constants/iconRailTheme';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
+import { getProjectPhase } from '../../features/projects/constants';
 
 const TOPBAR_HEIGHT = 60;
+const TOPBAR_HEIGHT_WITH_BREADCRUMB = 72;
 const GRID = 8;
+
+function normalizeProjectLabel(project) {
+  if (!project) return { number: '', name: '' };
+  let number = String(project?.projectNumber || project?.number || '').trim();
+  let name = String(project?.projectName || '').trim();
+  const nameLike = String(project?.name || project?.fullName || '').trim();
+  if (!number && nameLike) {
+    const m = nameLike.match(/^([a-zA-Z]?[0-9]{2,}-[0-9]+)\s*(?:[-–—]\s*)?(.*)$/);
+    if (m) {
+      number = String(m[1] || '').trim();
+      if (!name) name = String(m[2] || '').trim();
+    }
+  }
+  if (!number && project?.id && /^[a-zA-Z]?[0-9]{2,}-[0-9]+$/.test(String(project.id).trim())) {
+    number = String(project.id).trim();
+  }
+  if (!name) name = nameLike;
+  return { number, name };
+}
 
 const styles = StyleSheet.create({
   bar: {
-    height: TOPBAR_HEIGHT,
     minHeight: TOPBAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: GRID * 2,
+    paddingVertical: GRID,
     backgroundColor: 'transparent',
     borderBottomWidth: 1,
     borderBottomColor: LAYOUT_2026.dividerColor,
     flexShrink: 0,
   },
+  barWithBreadcrumb: {
+    minHeight: TOPBAR_HEIGHT_WITH_BREADCRUMB,
+    alignItems: 'flex-start',
+  },
   title: {
     fontSize: 18,
     fontWeight: '600',
     color: LEFT_NAV.textDefault,
+  },
+  projectHeaderWrap: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  projectTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  projectTitleText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  projectTitleName: {
+    fontWeight: '400',
+  },
+  breadcrumbRow: {
+    marginTop: 2,
+  },
+  breadcrumbText: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
   },
   actions: {
     flexDirection: 'row',
@@ -72,26 +124,64 @@ const styles = StyleSheet.create({
 });
 
 /**
- * @param {string} [pageTitle] - Sidtitel / projektnamn
- * @param {Function} [onCreateProject] - Klick på + Skapa projekt (döljs på dashboard om showRightPanelToggle)
- * @param {boolean} [showRightPanelToggle] - Visa chevron + kalender för högerpanel (dashboard)
+ * @param {string} [pageTitle] - Sidtitel när inget projekt (t.ex. Startsida)
+ * @param {Object} [project] - Projekt för rubrik (ikon + nummer – namn + breadcrumb)
+ * @param {string} [sectionLabel] - Sektionsnamn för breadcrumb (t.ex. Översikt)
+ * @param {string} [itemLabel] - Punktnamn för breadcrumb (t.ex. Tidsplan och viktiga datum)
+ * @param {Function} [onCreateProject] - Klick på + Skapa projekt
+ * @param {boolean} [showRightPanelToggle] - Visa chevron + kalender
  * @param {boolean} [rightPanelOpen] - Är högerpanelen öppen
  * @param {Function} [onRightPanelToggle] - Klick på panel-toggle
- * @param {boolean} [showCreateProject] - Visa "+ Skapa projekt"-knappen (false på dashboard)
+ * @param {boolean} [showCreateProject] - Visa "+ Skapa projekt"-knappen
  */
 export function MinimalTopbar({
   pageTitle = 'Startsida',
+  project = null,
+  sectionLabel = '',
+  itemLabel = '',
   onCreateProject,
   showRightPanelToggle = false,
   rightPanelOpen = false,
   onRightPanelToggle,
   showCreateProject = true,
 }) {
+  const showProjectHeader = !!project;
+  const { number, name } = normalizeProjectLabel(project);
+  const phase = project ? getProjectPhase(project) : null;
+  const section = String(sectionLabel || '').trim();
+  const item = String(itemLabel || '').trim();
+  const breadcrumb = section && item ? `${section} / ${item}` : section || item;
+
   return (
-    <View style={styles.bar}>
-      <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-        {pageTitle || 'Startsida'}
-      </Text>
+    <View style={[styles.bar, showProjectHeader && styles.barWithBreadcrumb]}>
+      {showProjectHeader ? (
+        <View style={styles.projectHeaderWrap}>
+          <View style={styles.projectTitleRow}>
+            {phase?.icon ? (
+              <Ionicons name={phase.icon} size={22} color={phase.color || '#475569'} />
+            ) : null}
+            <Text style={styles.projectTitleText} numberOfLines={1} ellipsizeMode="tail">
+              {number || name ? (
+                <>
+                  {number || ''}
+                  {name ? <Text style={styles.projectTitleName}>{number ? ` – ${name}` : name}</Text> : null}
+                </>
+              ) : (
+                'Projekt'
+              )}
+            </Text>
+          </View>
+          {breadcrumb ? (
+            <Text style={styles.breadcrumbText} numberOfLines={1} ellipsizeMode="tail">
+              {breadcrumb}
+            </Text>
+          ) : null}
+        </View>
+      ) : (
+        <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+          {pageTitle || 'Startsida'}
+        </Text>
+      )}
       <View style={styles.actions}>
         {showRightPanelToggle && typeof onRightPanelToggle === 'function' && (
           <View style={styles.panelToggleWrap}>

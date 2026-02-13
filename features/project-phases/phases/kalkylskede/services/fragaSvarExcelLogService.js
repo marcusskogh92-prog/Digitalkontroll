@@ -280,8 +280,8 @@ async function resolveProjectRootFolderPath(companyId, projectId, siteId, projec
 async function resolveFragaSvarRootPath(companyId, projectId, siteId, rootFolderPath) {
   const rootPath = normalizeGraphPath(rootFolderPath);
   const base = rootPath === '/'
-    ? '/01 - Översikt/04 - FrågaSvar'
-    : `${rootPath}/01 - Översikt/04 - FrågaSvar`;
+    ? '/01 - Översikt/05 - FrågaSvar'
+    : `${rootPath}/01 - Översikt/05 - FrågaSvar`;
   const normalized = normalizeGraphPath(base);
   const withoutLeadingSlash = normalized.replace(/^\/+/, '');
   await ensureFolderPath(withoutLeadingSlash, safeText(companyId), siteId, { siteRole: 'projects', strict: true });

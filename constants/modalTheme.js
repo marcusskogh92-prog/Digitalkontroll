@@ -58,4 +58,18 @@ export const MODAL_THEME = {
   resizeCornerSize: 20,
 };
 
+/** Golden rule: Laddningsindikator – används i modaler och vyer för konsekvent loading-UI */
+export const LOADING_THEME = {
+  /** Färg på ActivityIndicator (mörk slate, matchar primärknappar) */
+  spinnerColor: '#1e293b',
+  /** Storlek: 'large' för helsids-/modal-loading, 'small' för inline/knappar */
+  spinnerSizeLarge: 'large',
+  spinnerSizeSmall: 'small',
+  /** Text under spinnern */
+  textColor: '#64748b',
+  textFontSize: 13,
+  /** Container: minHeight så att loading känns centrerad i modaler */
+  containerMinHeight: 200,
+};
+
 export { ICON_RAIL };

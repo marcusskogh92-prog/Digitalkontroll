@@ -22,10 +22,11 @@ const SECTION_DEFS = {
     title: 'Översikt',
     icon: 'list-outline',
     items: [
-      '01 - Projektinformation',
-      '02 - Organisation och roller',
-      '03 - Tidsplan och viktiga datum',
-      '04 - FrågaSvar',
+      '01 - Checklista',
+      '02 - Projektinformation',
+      '03 - Organisation och roller',
+      '04 - Tidsplan och viktiga datum',
+      '05 - FrågaSvar',
     ],
   },
   forfragningsunderlag: {
@@ -170,10 +171,11 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
         // These are intentionally not versioned; only the SECTION ordering is.
         if (id === 'oversikt') {
           section.items = [
-            { id: 'projektinfo', name: '01 - Projektinformation', component: 'ProjektinfoView', order: 1, enabled: true },
-            { id: 'organisation-roller', name: '02 - Organisation och roller', component: 'OrganisationRollerView', order: 2, enabled: true },
-            { id: 'tidsplan-viktiga-datum', name: '03 - Tidsplan och viktiga datum', component: 'TidsplanViktigaDatumView', order: 3, enabled: true },
-            { id: 'status-beslut', name: '04 - FrågaSvar', component: 'StatusBeslutView', order: 4, enabled: true },
+            { id: 'checklista', name: '01 - Checklista', component: 'ChecklistaView', order: 1, enabled: true },
+            { id: 'projektinfo', name: '02 - Projektinformation', component: 'ProjektinfoView', order: 2, enabled: true },
+            { id: 'organisation-roller', name: '03 - Organisation och roller', component: 'OrganisationRollerView', order: 3, enabled: true },
+            { id: 'tidsplan-viktiga-datum', name: '04 - Tidsplan och viktiga datum', component: 'TidsplanViktigaDatumView', order: 4, enabled: true },
+            { id: 'status-beslut', name: '05 - FrågaSvar', component: 'StatusBeslutView', order: 5, enabled: true },
           ];
         } else if (id === 'forfragningsunderlag') {
           // GOLDEN RULE (FFU): no fixed item navigation; browse folders directly.

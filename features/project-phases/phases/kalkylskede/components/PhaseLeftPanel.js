@@ -161,6 +161,7 @@ export default function PhaseLeftPanel({
       const it = itemId != null ? String(itemId).trim() : '';
 
       // Oversikt items (known saved-data sources)
+      if (sec === 'oversikt' && it === 'checklista') return false;
       if (sec === 'oversikt' && it === 'projektinfo') return hasProjectInfoContent;
       if (sec === 'oversikt' && it === 'organisation-roller') return hasOrganisationMembers;
       if (sec === 'oversikt' && it === 'tidsplan-viktiga-datum') return hasTimelineContent;

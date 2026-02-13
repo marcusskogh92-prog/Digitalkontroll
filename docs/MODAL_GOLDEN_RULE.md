@@ -70,9 +70,21 @@ Resize-handlarna ska ha tillräcklig hit-yta (minst 8px) och följande cursor p�
 
 Implementeringen finns i **`hooks/useDraggableResizableModal.js`**.
 
-## 4. Referens
+## 4. Loading state (golden rule)
+
+När en modal eller vy visar laddning ska en **animerad spinner + text** användas, inte enbart statisk text.
+
+- **Komponent:** `components/common/LoadingState.js`
+- **Tema:** `constants/modalTheme.js` → `LOADING_THEME` (spinnerColor, textColor, containerMinHeight)
+- **Användning:**
+  - I modaler (t.ex. innan innehåll har laddats): `<LoadingState message="Laddar…" size="large" />`
+  - Inline / mindre ytor: `<LoadingState message="Laddar siter…" size="small" minHeight={80} />`
+- **Utseende:** ActivityIndicator (mörk #1e293b), centrerad, med valfri text under (standard "Laddar…", färg #64748b).
+
+## 5. Referens
 
 - **Utseende:** Företagsinställningar (AdminCompanyModal) när den är öppen.
 - **Tema:** `constants/modalTheme.js`
 - **Komponent:** `components/common/StandardModal.js`
+- **Loading:** `components/common/LoadingState.js`, `LOADING_THEME` i modalTheme.js
 - **Hooks:** `hooks/useDraggableResizableModal.js`, `hooks/useModalKeyboard.js`

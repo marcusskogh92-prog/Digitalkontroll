@@ -35,16 +35,72 @@ export function useHomeProjectSelection({
   const pendingProjectSwitchRef = React.useRef(null);
   const pendingBreadcrumbNavRef = React.useRef(null);
 
+  const [leaveProjectModalVisible, setLeaveProjectModalVisible] = React.useState(false);
+  const [leaveProjectCurrentLabel, setLeaveProjectCurrentLabel] = React.useState('');
+  const pendingLeaveProjectRef = React.useRef(null);
+
   React.useEffect(() => {
     selectedProjectRef.current = selectedProject;
   }, [selectedProject]);
+
+  function formatProjectLabel(project) {
+    if (!project) return '';
+    const num = String(project?.projectNumber || project?.number || project?.id || '').trim();
+    const name = String(project?.projectName || project?.name || '').trim();
+    if (num && name) return `${num} – ${name}`;
+    return name || num || 'Projekt';
+  }
 
   const handleInlineLockChange = React.useCallback((locked) => {
     setIsInlineLocked(!!locked);
   }, []);
 
+  const applyPendingLeaveProject = React.useCallback(() => {
+    const pending = pendingLeaveProjectRef.current;
+    pendingLeaveProjectRef.current = null;
+    setLeaveProjectModalVisible(false);
+    if (!pending) return;
+    if (!pending.project) {
+      if (Object.prototype.hasOwnProperty.call(pending.opts || {}, 'selectedAction')) {
+        setProjectSelectedAction(pending.opts.selectedAction);
+      }
+      setSelectedProjectPath(null);
+      setSelectedProject(null);
+      return;
+    }
+    const nextProject = pending.project;
+    const opts = pending.opts || {};
+    const selectedActionProvided = Object.prototype.hasOwnProperty.call(opts, 'selectedAction');
+    const clearActionAfter = !!opts.clearActionAfter;
+    if (selectedActionProvided) setProjectSelectedAction(opts.selectedAction);
+    try {
+      const p = opts.path;
+      setSelectedProjectPath(p ? { ...p, projectId: String(nextProject?.id || '') } : null);
+    } catch (_e) {}
+    setSelectedProject(nextProject);
+    if (clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
+  }, []);
+
+  const cancelLeaveProject = React.useCallback(() => {
+    pendingLeaveProjectRef.current = null;
+    setLeaveProjectModalVisible(false);
+  }, []);
+
   const requestProjectSwitch = React.useCallback(
     (project, opts = {}) => {
+      const current = selectedProjectRef.current;
+      const currentId = current ? String(current?.id || '').trim() : '';
+      const nextId = project ? String(project?.id || '').trim() : '';
+      const isClosing = !project;
+      const isSwitchingToOther = currentId && (isClosing || nextId !== currentId);
+
+      if (current && isSwitchingToOther && Platform.OS === 'web' && !isInlineLocked) {
+        pendingLeaveProjectRef.current = { project, opts };
+        setLeaveProjectCurrentLabel(formatProjectLabel(current));
+        setLeaveProjectModalVisible(true);
+        return;
+      }
+
       if (!project) {
         if (Object.prototype.hasOwnProperty.call(opts, 'selectedAction')) {
           setProjectSelectedAction(opts.selectedAction);
@@ -129,6 +185,11 @@ export function useHomeProjectSelection({
       return;
     }
 
+    if (Platform.OS === 'web' && selectedProject) {
+      requestProjectSwitch(null);
+      return;
+    }
+
     if (
       Platform.OS === 'web' &&
       typeof window !== 'undefined' &&
@@ -150,6 +211,7 @@ export function useHomeProjectSelection({
     newProjectName,
     newProjectNumber,
     resetProjectFields,
+    requestProjectSwitch,
     selectedProject,
     setCreatingProjectInline,
     setNewProjectName,
@@ -234,5 +296,9 @@ export function useHomeProjectSelection({
     closeInlineControlEditor,
     handleInlineControlFinished,
     handleInlineViewChange,
+    leaveProjectModalVisible,
+    leaveProjectCurrentLabel,
+    confirmLeaveProject: applyPendingLeaveProject,
+    cancelLeaveProject,
   };
 }

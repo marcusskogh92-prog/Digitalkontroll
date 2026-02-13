@@ -317,26 +317,26 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
         <View style={{ marginBottom: 16 }}>
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
             <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E6E8EC', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Totalt antal användare</Text>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: '#111' }}>{kpiStats.total} {userLimit != null ? `/ ${userLimit}` : ''}</Text>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Totalt antal användare</Text>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: '#111' }}>{kpiStats.total} {userLimit != null ? `/ ${userLimit}` : ''}</Text>
             </View>
             <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E6E8EC', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Admin</Text>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: '#1e293b' }}>{kpiStats.adminCount} st</Text>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Admin</Text>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e293b' }}>{kpiStats.adminCount} st</Text>
             </View>
             <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E6E8EC', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Användare</Text>
-              <Text style={{ fontSize: 20, fontWeight: '700', color: '#334155' }}>{kpiStats.userCount} st</Text>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>Användare</Text>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: '#334155' }}>{kpiStats.userCount} st</Text>
             </View>
             <View style={{ flex: 1, minWidth: 160, borderRadius: 12, padding: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#E6E8EC', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 8 }}>Licensutnyttjande</Text>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 8 }}>Licensutnyttjande</Text>
               <View style={{ height: 8, borderRadius: 6, backgroundColor: '#E2E8F0', overflow: 'hidden', marginBottom: showLicenseWarning ? 8 : 0 }}>
                 <View style={{ height: '100%', width: `${Math.min(100, kpiStats.usagePercent)}%`, backgroundColor: progressColor, borderRadius: 6, ...(Platform.OS === 'web' ? { transition: 'width 0.2s ease' } : {}) }} />
               </View>
               {showLicenseWarning ? (
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#DC2626' }}>⚠ Licensutnyttjandet är över 90%</Text>
               ) : (
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>{kpiStats.usagePercent}%</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#475569' }}>{kpiStats.usagePercent}%</Text>
               )}
             </View>
           </View>

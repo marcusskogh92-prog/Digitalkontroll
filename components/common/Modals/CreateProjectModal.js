@@ -4,6 +4,7 @@ import {
     ActivityIndicator,
     Modal,
     Platform,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -11,8 +12,41 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { MODAL_THEME } from '../../../constants/modalTheme';
 import { PROJECT_PHASES } from '../../../features/projects/constants';
+import { useModalKeyboard } from '../../../hooks/useModalKeyboard';
 import { getSharePointNavigationConfig } from '../../firebase';
+import { isProjectFolder } from '../../../utils/isProjectFolder';
+
+// Säker referens så att StyleSheet och JSX inte kraschar om MODAL_THEME inte laddas
+const BANNER_THEME = (MODAL_THEME && MODAL_THEME.banner) ? MODAL_THEME.banner : {
+  paddingVertical: 7,
+  paddingHorizontal: 14,
+  backgroundColor: '#1e293b',
+  borderBottomColor: 'rgba(255,255,255,0.06)',
+  iconSize: 28,
+  iconBgRadius: 8,
+  iconBg: 'rgba(255,255,255,0.1)',
+  titleFontSize: 14,
+  titleFontWeight: '600',
+  titleColor: '#f1f5f9',
+  subtitleFontSize: 12,
+  subtitleColor: '#94a3b8',
+  closeBtnPadding: 5,
+  closeIconSize: 20,
+};
+const FOOTER_THEME = (MODAL_THEME && MODAL_THEME.footer) ? MODAL_THEME.footer : {
+  backgroundColor: '#f8fafc',
+  borderTopColor: '#e2e8f0',
+  btnPaddingVertical: 10,
+  btnPaddingHorizontal: 20,
+  btnBorderRadius: 8,
+  btnBackground: '#1e293b',
+  btnBorderColor: '#1e293b',
+  btnTextColor: '#fff',
+  btnFontSize: 14,
+  btnFontWeight: '600',
+};
 
 // STRUCTURES removed - projects are no longer phase-based
 
@@ -89,7 +123,8 @@ export default function CreateProjectModal({
                   path = base ? `${base}/${name}` : name;
                 }
                 return { name, path };
-              });
+              })
+              .filter((item) => !isProjectFolder({ name: item.name }));
 
             setLocationFolders(folders);
 
@@ -122,7 +157,8 @@ export default function CreateProjectModal({
                   path = base ? `${base}/${name}` : name;
                 }
                 return { name, path };
-              });
+              })
+              .filter((item) => !isProjectFolder({ name: item.name }));
 
             setLocationFolders(folders);
 
@@ -160,7 +196,8 @@ export default function CreateProjectModal({
             const base = String(currentPath || '').replace(/\/+$/, '');
             const path = base ? `${base}/${name}` : name;
             return { name, path };
-          });
+          })
+          .filter((item) => !isProjectFolder({ name: item.name }));
 
         setLocationFolders(folders);
       } catch (error) {
@@ -368,10 +405,28 @@ export default function CreateProjectModal({
     });
   };
 
+  useModalKeyboard(visible, onClose, handleCreate, { canSave: canCreate && !isCreating });
+
   return (
-    <Modal transparent visible={visible} animationType="fade">
-      <View style={styles.overlay}>
-        <View style={styles.modal} data-modal="true">
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={styles.modal} onPress={(e) => e.stopPropagation()} data-modal="true">
+          {/* Banner – golden rule: mörk header med ikon, titel, undertext, stäng */}
+          <View style={styles.banner}>
+            <View style={styles.bannerLeft}>
+              <View style={styles.bannerIcon}>
+                <Ionicons name="add-circle-outline" size={20} color={BANNER_THEME.titleColor} />
+              </View>
+              <View>
+                <Text style={styles.bannerTitle}>Skapa nytt projekt</Text>
+                <Text style={styles.bannerSubtitle}>Projektnummer, plats och struktur</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={onClose} style={styles.bannerClose} accessibilityLabel="Stäng">
+              <Ionicons name="close" size={BANNER_THEME.closeIconSize} color={BANNER_THEME.titleColor} />
+            </TouchableOpacity>
+          </View>
+
           {/* Loading overlay */}
           {isCreating && (
             <View style={styles.loadingOverlay}>
@@ -384,8 +439,8 @@ export default function CreateProjectModal({
               </View>
             </View>
           )}
-          <Text style={styles.title}>Skapa nytt projekt</Text>
 
+          <View style={styles.modalBody}>
           <View style={styles.layoutRow}>
             {/* SIDEBAR – STATUS */}
             <View style={styles.sidebar}>
@@ -566,7 +621,7 @@ export default function CreateProjectModal({
                         {selectedProjectRoot 
                           ? selectedProjectRoot.folderPath
                             ? `${selectedProjectRoot.siteName} / ${selectedProjectRoot.folderPath}`
-                            : `${selectedProjectRoot.siteName} (root)`
+                            : selectedProjectRoot.siteName
                           : 'Välj lagringsplats'}
                       </Text>
                       <View style={styles.dropdownChevronWrapper}>
@@ -719,27 +774,26 @@ export default function CreateProjectModal({
               </View>
 
 
-              {/* Footer */}
+              {/* Footer – golden rule: mörka knappar */}
               <View style={styles.footerRow}>
-                <TouchableOpacity onPress={onClose} style={styles.cancelBtn}>
-                  <Text style={styles.cancelText}>Avbryt</Text>
+                <TouchableOpacity onPress={onClose} style={styles.footerBtnDark}>
+                  <Text style={styles.footerBtnText}>Avbryt</Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   onPress={handleCreate}
                   style={[
-                    styles.createBtn,
-                    (!canCreate || isCreating) && styles.createBtnDisabled,
+                    styles.footerBtnDark,
+                    (!canCreate || isCreating) && styles.footerBtnDisabled,
                   ]}
                   disabled={!canCreate || isCreating}
                 >
                   {isCreating ? (
                     <View style={styles.createBtnLoading}>
                       <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-                      <Text style={styles.createText}>Skapar...</Text>
+                      <Text style={styles.footerBtnText}>Skapar...</Text>
                     </View>
                   ) : (
-                    <Text style={styles.createText}>Skapa projekt</Text>
+                    <Text style={styles.footerBtnText}>Skapa projekt</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -849,7 +903,7 @@ export default function CreateProjectModal({
                               style={styles.folderRow}
                             >
                               <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                              <Text style={styles.folderName}>Rot (skapa projekt direkt i siten)</Text>
+                              <Text style={styles.folderName}>Sitens rot</Text>
                             </TouchableOpacity>
                           )}
                           <Text style={styles.helperText}>Inga mappar hittades</Text>
@@ -862,7 +916,7 @@ export default function CreateProjectModal({
                               style={styles.folderRow}
                             >
                               <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                              <Text style={styles.folderName}>Rot (skapa projekt direkt i siten)</Text>
+                              <Text style={styles.folderName}>Sitens rot</Text>
                             </TouchableOpacity>
                           )}
                           {locationFolders.map((folder) => (
@@ -942,7 +996,8 @@ export default function CreateProjectModal({
           )}
           
         </View>
-      </View>
+      </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -959,16 +1014,59 @@ const styles = StyleSheet.create({
     width: '90%',
     maxWidth: 880,
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 24,
+    borderRadius: 14,
+    overflow: 'hidden',
     position: 'relative',
-    zIndex: 1, // Base z-index for modal - dropdowns will be higher
+    zIndex: 1,
     ...(Platform.OS === 'web' ? {
-      // Web: ensure modal doesn't clip dropdowns and allows high z-index
       overflow: 'visible',
-      // Create new stacking context but allow children to escape
       isolation: 'isolate',
     } : {}),
+  },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: BANNER_THEME.paddingVertical,
+    paddingHorizontal: BANNER_THEME.paddingHorizontal,
+    backgroundColor: BANNER_THEME.backgroundColor,
+    borderBottomWidth: 1,
+    borderBottomColor: BANNER_THEME.borderBottomColor,
+  },
+  bannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  bannerIcon: {
+    width: BANNER_THEME.iconSize,
+    height: BANNER_THEME.iconSize,
+    borderRadius: BANNER_THEME.iconBgRadius,
+    backgroundColor: BANNER_THEME.iconBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerTitle: {
+    fontSize: BANNER_THEME.titleFontSize,
+    fontWeight: BANNER_THEME.titleFontWeight,
+    color: BANNER_THEME.titleColor,
+  },
+  bannerSubtitle: {
+    fontSize: BANNER_THEME.subtitleFontSize,
+    color: BANNER_THEME.subtitleColor,
+    marginTop: 2,
+  },
+  bannerClose: {
+    padding: BANNER_THEME.closeBtnPadding,
+    borderRadius: BANNER_THEME.iconBgRadius,
+    backgroundColor: BANNER_THEME.iconBg,
+  },
+  modalBody: {
+    flex: 1,
+    minHeight: 0,
+    padding: 24,
   },
   title: {
     fontSize: 20,
@@ -1316,9 +1414,33 @@ const styles = StyleSheet.create({
   footerRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
     marginTop: 12,
     position: 'relative',
-    zIndex: 1, // Lower z-index than dropdowns
+    zIndex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: FOOTER_THEME.borderTopColor,
+    backgroundColor: FOOTER_THEME.backgroundColor,
+  },
+  footerBtnDark: {
+    paddingVertical: FOOTER_THEME.btnPaddingVertical,
+    paddingHorizontal: FOOTER_THEME.btnPaddingHorizontal,
+    borderRadius: FOOTER_THEME.btnBorderRadius,
+    borderWidth: 1,
+    borderColor: FOOTER_THEME.btnBorderColor,
+    backgroundColor: FOOTER_THEME.btnBackground,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  footerBtnDisabled: {
+    opacity: 0.6,
+  },
+  footerBtnText: {
+    fontSize: FOOTER_THEME.btnFontSize,
+    fontWeight: FOOTER_THEME.btnFontWeight,
+    color: FOOTER_THEME.btnTextColor,
   },
   cancelBtn: {
     paddingHorizontal: 16,

@@ -1,26 +1,35 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
-
-/** På web har vänsterpanelen mörk bakgrund – använd samma ljusa färger som rail-ikoner. */
-const NAV = LEFT_NAV;
-import { DEFAULT_PHASE, getPhaseConfig } from '../../features/projects/constants';
+import { DEFAULT_PHASE, getPhaseConfig, getPhaseMeta } from '../../features/projects/constants';
 import { ensureDkBasStructure, ensureFolderPath, ensureKalkylskedeProjectFolderStructure, moveDriveItemByIdGuarded, renameDriveItemByIdGuarded } from '../../services/azure/fileService';
 import { folderHasFilesDeep, getDriveItemByPath, getDriveItems, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../../services/azure/hierarchyService';
 import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
 import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
-import { LeftPanelProjectSearch } from '../HeaderComponents';
 import ContextMenu from '../ContextMenu';
 import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
-import { SIDEBAR_BG, SIDEBAR_BORDER_COLOR } from './layoutConstants';
+import { LeftPanelProjectSearch } from '../HeaderComponents';
+import { SIDEBAR_BG } from './layoutConstants';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ConfirmModal } from './Modals';
 import { ProjectSidebarHeader } from './ProjectSidebarHeader';
 import { ProjectTree } from './ProjectTree';
 import SharePointSiteIcon from './SharePointSiteIcon';
 import SidebarItem from './SidebarItem';
+
+/** På web har vänsterpanelen mörk bakgrund – använd samma ljusa färger som rail-ikoner. */
+const NAV = LEFT_NAV;
+
+/** Ikoner per fas (samma som i IconRail) för fas-genvägsrubrik. */
+const PHASE_RAIL_ICONS = {
+  kalkylskede: 'calculator-outline',
+  produktion: 'hammer-outline',
+  avslut: 'checkmark-done-outline',
+  eftermarknad: 'construct-outline',
+};
 
 const VERIFICATION_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -444,6 +453,7 @@ export function SharePointLeftPanel({
   scrollToEndSafe,
   createPortal,
   onSelectProject, // Optional callback for project selection (from HomeScreen)
+  onOpenCreateProjectModal, // Optional: open create-project modal (e.g. from phase header plus)
   onOpenPhaseItem, // Optional callback to open a phase navigation item
   phaseActiveSection = null,
   phaseActiveItem = null,
@@ -452,6 +462,9 @@ export function SharePointLeftPanel({
   // Projekt-sök i vänsterpanelen (web, startsida). Om route skickas och showProjectSearch true visas sökrutan.
   route: leftPanelRoute = null,
   showProjectSearch = false,
+
+  // Fas-genväg: när satt (kalkylskede|produktion|avslut|eftermarknad) visas rubrik med fas-ikon och flat lista av projekt i den fasen.
+  phaseShortcutKey = null,
 
   // AF-only folder mirror state (shared with middle panel)
   afRelativePath = '',
@@ -2508,7 +2521,7 @@ export function SharePointLeftPanel({
           // If phaseNavigation isn't loaded yet (or items missing), we still want to be able to repair.
           // Use known defaults for the most important sections.
           const fallbackBySectionId = {
-            oversikt: ['01 - Projektinformation', '02 - Organisation och roller', '03 - Tidsplan och viktiga datum', '04 - FrågaSvar'],
+            oversikt: ['01 - Checklista', '02 - Projektinformation', '03 - Organisation och roller', '04 - Tidsplan och viktiga datum', '05 - FrågaSvar'],
             forfragningsunderlag: [],
           };
 
@@ -2781,7 +2794,8 @@ export function SharePointLeftPanel({
           {
             width: leftWidth,
             padding: isWeb ? 0 : 8,
-            borderRightWidth: 0,
+            borderRightWidth: 1,
+            borderRightColor: ICON_RAIL.bg,
             borderColor: '#e2e8f0',
             backgroundColor: Platform.OS === 'web' ? 'transparent' : SIDEBAR_BG,
             flex: 1,
@@ -2808,7 +2822,7 @@ export function SharePointLeftPanel({
                   zIndex: 9,
                   backgroundColor: isWeb ? 'transparent' : 'rgba(0,0,0,0.05)',
                 },
-                isWeb && { cursor: 'col-resize', pointerEvents: 'auto', borderLeftWidth: 2, borderLeftColor: '#cbd5e1' },
+                isWeb && { cursor: 'col-resize', pointerEvents: 'auto', borderLeftWidth: 2, borderLeftColor: ICON_RAIL.bg },
               ]}
               accessibilityLabel="Justera panelbredd"
             />
@@ -2826,7 +2840,7 @@ export function SharePointLeftPanel({
                 cursor: 'col-resize',
                 zIndex: 9,
                 pointerEvents: 'auto',
-                borderLeft: '2px solid #cbd5e1',
+                borderLeft: `2px solid ${ICON_RAIL.bg}`,
                 backgroundColor: 'transparent',
               },
             })
@@ -2850,74 +2864,69 @@ export function SharePointLeftPanel({
           style={{
             paddingVertical: 6,
             paddingHorizontal: 6,
-            borderBottomWidth: 1,
-            borderColor: '#e2e8f0',
-            marginBottom: 12,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 6,
-            ...(leftPanelCollapsed && !showProjectSearch ? { justifyContent: 'center' } : {}),
+            borderBottomWidth: 1,
+            borderBottomColor: ICON_RAIL.bg,
+            marginBottom: 12,
+            ...(leftPanelCollapsed && !showProjectSearch && !phaseShortcutKey ? { justifyContent: 'center' } : {}),
           }}
         >
-          {typeof onToggleLeftPanelCollapse === 'function' && (
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8 }}
-              onPress={onToggleLeftPanelCollapse}
-              activeOpacity={0.7}
-              accessibilityLabel={leftPanelCollapsed ? 'Expandera panel' : 'Kollapsa panel'}
-              {...(isWeb ? { title: leftPanelCollapsed ? 'Expandera panel' : 'Kollapsa panel' } : {})}
-            >
-              <Ionicons
-                name={leftPanelCollapsed ? 'chevron-forward' : 'chevron-back'}
-                size={18}
-                color="#475569"
-              />
-            </TouchableOpacity>
+          {phaseShortcutKey ? (
+            <Ionicons name={PHASE_RAIL_ICONS[phaseShortcutKey] || 'folder-outline'} size={18} color="#475569" style={{ marginRight: 6 }} />
+          ) : (
+            <Ionicons name="cloud-outline" size={18} color="#475569" style={{ marginRight: 6 }} />
           )}
-          {showProjectSearch && leftPanelRoute && !leftPanelCollapsed && (
-            <LeftPanelProjectSearch navigation={navigation} route={leftPanelRoute} />
-          )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b' }} numberOfLines={1}>
+            {phaseShortcutKey ? (getPhaseMeta(phaseShortcutKey).label || phaseShortcutKey) : 'SharePoint'}
+          </Text>
+          {showProjectSearch && leftPanelRoute && !leftPanelCollapsed && !phaseShortcutKey ? (
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <LeftPanelProjectSearch navigation={navigation} route={leftPanelRoute} />
+            </View>
+          ) : null}
+          {phaseShortcutKey && typeof onOpenCreateProjectModal === 'function' ? (
             <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8 }}
-              onPress={onPressHome}
+              style={{ padding: 6, borderRadius: 8, flexShrink: 0, marginLeft: 'auto' }}
+              onPress={() => {
+                try {
+                  onOpenCreateProjectModal();
+                } catch (e) {
+                  console.warn('[SharePointLeftPanel] onOpenCreateProjectModal error:', e);
+                }
+              }}
               activeOpacity={0.7}
-              accessibilityLabel="Hem"
-              {...(isWeb ? { title: 'Hem' } : {})}
+              accessibilityLabel="Skapa projekt"
+              {...(isWeb ? { title: 'Skapa projekt' } : {})}
             >
-              <Ionicons
-                name="home-outline"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: [{ rotate: `${spinSidebarHome * 360}deg` }],
-                  transitionProperty: 'transform',
-                  transitionDuration: '0.4s',
-                  transitionTimingFunction: 'ease',
-                }}
-              />
+              <Ionicons name="add-circle-outline" size={20} color="#1976D2" />
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{ padding: 6, borderRadius: 8 }}
-              onPress={onPressRefresh}
-              activeOpacity={0.7}
-              accessibilityLabel="Uppdatera"
-              {...(isWeb ? { title: 'Uppdatera' } : {})}
-            >
-              <Ionicons
-                name="refresh"
-                size={18}
-                color="#1976D2"
-                style={{
-                  transform: [{ rotate: `${spinSidebarRefresh * 360}deg` }],
-                  transitionProperty: 'transform',
-                  transitionDuration: '0.4s',
-                  transitionTimingFunction: 'ease',
-                }}
-              />
-            </TouchableOpacity>
-          </View>
+          ) : null}
+          <TouchableOpacity
+            style={{
+              padding: 6,
+              borderRadius: 8,
+              flexShrink: 0,
+              marginLeft: phaseShortcutKey && typeof onOpenCreateProjectModal === 'function' ? 4 : 'auto',
+            }}
+            onPress={onPressRefresh}
+            activeOpacity={0.7}
+            accessibilityLabel="Uppdatera"
+            {...(isWeb ? { title: 'Uppdatera' } : {})}
+          >
+            <Ionicons
+              name="refresh"
+              size={18}
+              color="#1976D2"
+              style={{
+                transform: [{ rotate: `${spinSidebarRefresh * 360}deg` }],
+                transitionProperty: 'transform',
+                transitionDuration: '0.4s',
+                transitionTimingFunction: 'ease',
+              }}
+            />
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -2932,6 +2941,138 @@ export function SharePointLeftPanel({
           nestedScrollEnabled
         >
           {(() => {
+            // Fas-genväg har företräde: när användaren valt en fas i räljen visas alltid listan för den fasen (endast projekt i den fasen).
+            if (phaseShortcutKey) {
+              if (projectsLoading) {
+                return (
+                  <View style={styles.leftPanelScrollContent}>
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <Text style={{ color: '#888', fontSize: 14 }}>Laddar projekt...</Text>
+                    </View>
+                  </View>
+                );
+              }
+              const phaseKeys = phaseShortcutKey === 'kalkylskede' ? ['kalkylskede', 'kalkyl'] : [phaseShortcutKey];
+              const items = (Array.isArray(firestoreProjects) ? firestoreProjects : [])
+                .filter((p) => String(p?.siteRole || '').trim().toLowerCase() === 'projects')
+                .filter((p) => String(p?.status || '').trim().toLowerCase() !== 'archived')
+                .filter((p) => {
+                  const siteId = String(p?.sharePointSiteId || '').trim();
+                  const path = String(p?.rootFolderPath || '').trim();
+                  const metaKey = siteId && path ? `${siteId}|${path}` : null;
+                  const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
+                  const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || String(p?.phase || '').trim().toLowerCase() || DEFAULT_PHASE;
+                  const normalized = effectivePhaseKey === 'kalkyl' ? 'kalkylskede' : effectivePhaseKey;
+                  return phaseKeys.includes(normalized);
+                })
+                .sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
+
+              return (
+                <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
+                  {items.length === 0 ? (
+                    <Text style={{ paddingVertical: 12, paddingHorizontal: NAV.rowPaddingHorizontal, color: NAV.textMuted, fontSize: NAV.rowFontSize }}>
+                      Det finns inga projekt i denna modul.
+                    </Text>
+                  ) : (
+                    items.map((p) => {
+                      const number = String(p?.projectNumber || p?.id || '').trim();
+                      const name = String(p?.projectName || '').trim();
+                      const fullName = String(p?.fullName || `${number} ${name}`.trim()).trim();
+                      const siteId = String(p?.sharePointSiteId || '').trim();
+                      const path = String(p?.rootFolderPath || '').trim();
+                      const metaKey = siteId && path ? `${siteId}|${path}` : null;
+                      const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
+                      const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || DEFAULT_PHASE;
+                      const phaseStatus = String(savedMeta?.status || (effectivePhaseKey === 'avslut' ? 'completed' : 'ongoing'));
+                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#43A047';
+                      const rowKey = `${siteId || 'no-site'}|${number || p?.id || ''}`;
+
+                      const onSelect = () => {
+                        const projectData = {
+                          id: number || String(p?.id || '').trim(),
+                          number,
+                          name: name || fullName,
+                          projectNumber: number,
+                          projectName: name,
+                          fullName,
+                          siteId,
+                          path,
+                          sharePointPath: path,
+                          type: 'project',
+                          phase: effectivePhaseKey,
+                          status: phaseStatus,
+                          lifecycleStatus: String(p?.status || 'active'),
+                        };
+                        if (onSelectProject) onSelectProject(projectData);
+                      };
+
+                      const onOpenMenu = (e) => {
+                        try {
+                          if (!canArchiveProjects) return null;
+                          openProjectContextMenu(e, { projectId: number, fullName, projectNumber: number, sharePointSiteId: siteId, rootFolderPath: path });
+                        } catch (_e) {}
+                      };
+
+                      if (isWeb) {
+                        const isHovered = hoveredProjectKey === rowKey;
+                        return (
+                          <View key={number || p?.id || rowKey}>
+                            <SidebarItem
+                              fullWidth
+                              label={fullName || number}
+                              labelStyle={{ fontSize: NAV.rowFontSize }}
+                              hovered={isHovered}
+                              onPress={onSelect}
+                              onHoverIn={() => setHoveredProjectKey(rowKey)}
+                              onHoverOut={() => setHoveredProjectKey(null)}
+                              onContextMenu={onOpenMenu}
+                              left={() => (
+                                <View
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    backgroundColor: indicatorColor,
+                                    marginRight: 8,
+                                    borderWidth: 1,
+                                    borderColor: NAV.phaseDotBorder,
+                                  }}
+                                />
+                              )}
+                            />
+                          </View>
+                        );
+                      }
+                      return (
+                        <View key={number || p?.id || rowKey}>
+                          <SidebarItem
+                            fullWidth
+                            label={fullName || number}
+                            labelStyle={{ fontSize: NAV.rowFontSize }}
+                            onPress={onSelect}
+                            onLongPress={onOpenMenu}
+                            left={() => (
+                              <View
+                                style={{
+                                  width: 10,
+                                  height: 10,
+                                  borderRadius: 5,
+                                  backgroundColor: indicatorColor,
+                                  marginRight: 8,
+                                  borderWidth: 1,
+                                  borderColor: NAV.phaseDotBorder,
+                                }}
+                              />
+                            )}
+                          />
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              );
+            }
+
             if (selectedProject && projectPhaseKey) {
               if (phaseNavigationLoading) {
                 return (
