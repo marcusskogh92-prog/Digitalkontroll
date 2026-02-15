@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Animated, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import ContextMenu from '../ContextMenu';
 import { PRIMARY_TOPBAR_HEIGHT, SUB_TOPBAR, TOPBAR_ACCENT } from '../../constants/topbarTheme';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
@@ -78,6 +78,7 @@ function DraggableNavItem({
   item, idx, itemId, isActive, isHovered, isDragging, canDrag,
   subMenuItems, onReorder, onSelectItem, setHoveredId, setDraggingId, setDragOverIndex,
   handleContextMenu, styles, stripNumberPrefixForDisplay,
+  isLoading = false,
 }) {
   const elRef = useRef(null);
 
@@ -141,43 +142,8 @@ function DraggableNavItem({
     canDrag && styles.navItemDraggable,
   ];
 
-  if (canDrag) {
-    return (
-      <Pressable
-        ref={elRef}
-        style={style}
-        onMouseEnter={() => setHoveredId(itemId)}
-        onMouseLeave={() => setHoveredId(null)}
-        onContextMenu={handleContextMenu}
-        onPress={() => onSelectItem?.(itemId)}
-        accessibilityRole="button"
-        accessibilityState={{ selected: isActive }}
-      >
-        <Text
-          style={[
-            styles.label,
-            isActive && styles.labelActive,
-            isHovered && !isActive && styles.labelHover,
-          ]}
-          numberOfLines={1}
-        >
-          {stripNumberPrefixForDisplay(item?.name ?? item?.displayName ?? '')}
-        </Text>
-        {isActive && <View style={styles.underline} />}
-      </Pressable>
-    );
-  }
-
-  return (
-    <Pressable
-      style={style}
-      onPress={() => onSelectItem?.(itemId)}
-      onHoverIn={() => setHoveredId(itemId)}
-      onHoverOut={() => setHoveredId(null)}
-      onContextMenu={handleContextMenu}
-      accessibilityRole="button"
-      accessibilityState={{ selected: isActive }}
-    >
+  const labelEl = (
+    <>
       <Text
         style={[
           styles.label,
@@ -188,7 +154,45 @@ function DraggableNavItem({
       >
         {stripNumberPrefixForDisplay(item?.name ?? item?.displayName ?? '')}
       </Text>
+      {isLoading ? (
+        <ActivityIndicator
+          size="small"
+          color={isActive ? (TOPBAR_ACCENT ?? '#2563eb') : '#94a3b8'}
+          style={{ marginLeft: 6 }}
+        />
+      ) : null}
       {isActive && <View style={styles.underline} />}
+    </>
+  );
+
+  if (canDrag) {
+    return (
+      <Pressable
+        ref={elRef}
+        style={[style, isLoading && styles.navItemLoading]}
+        onMouseEnter={() => setHoveredId(itemId)}
+        onMouseLeave={() => setHoveredId(null)}
+        onContextMenu={handleContextMenu}
+        onPress={() => onSelectItem?.(itemId)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isActive }}
+      >
+        {labelEl}
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable
+      style={[style, isLoading && styles.navItemLoading]}
+      onPress={() => onSelectItem?.(itemId)}
+      onHoverIn={() => setHoveredId(itemId)}
+      onHoverOut={() => setHoveredId(null)}
+      onContextMenu={handleContextMenu}
+      accessibilityRole="button"
+      accessibilityState={{ selected: isActive }}
+    >
+      {labelEl}
     </Pressable>
   );
 }
@@ -204,6 +208,7 @@ export default function ProjectSubTopbar({
   onRequestRename,
   onRequestDelete,
   onReorder,
+  itemLoadingIds = [],
 }) {
   const [hoveredId, setHoveredId] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
@@ -382,6 +387,7 @@ export default function ProjectSubTopbar({
               {displayItems.map((item, displayIdx) => {
                 const originalIdx = (subMenuItems || []).findIndex((i) => i?.id === item?.id);
                 const itemId = item?.id ?? `item-${originalIdx}`;
+                const isLoading = Array.isArray(itemLoadingIds) && itemLoadingIds.includes(itemId);
                 return (
                   <View
                   key={itemId}
@@ -398,16 +404,17 @@ export default function ProjectSubTopbar({
                       isActive={activeItem === itemId}
                       isHovered={hoveredId === itemId}
                       isDragging={draggingId === item?.id}
-                      canDrag={canDrag}
+                      canDrag={canDrag && !item?.isSystemItem}
                       subMenuItems={subMenuItems}
                       onReorder={onReorder}
                       onSelectItem={onSelectItem}
                       setHoveredId={setHoveredId}
                       setDraggingId={setDraggingId}
                       setDragOverIndex={setDragOverIndex}
-                      handleContextMenu={(e) => isEditable && handleContextMenu(e, item, originalIdx)}
+                      handleContextMenu={(e) => isEditable && !item?.isSystemItem && handleContextMenu(e, item, originalIdx)}
                       styles={styles}
                       stripNumberPrefixForDisplay={stripNumberPrefixForDisplay}
+                      isLoading={isLoading}
                     />
                   </View>
                 );
@@ -508,14 +515,20 @@ const styles = StyleSheet.create({
   },
   navItem: {
     position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 8,
     minHeight: 32,
     justifyContent: 'center',
+    flexWrap: 'nowrap',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease' } : {}),
   },
   navItemDraggable: {
     ...(Platform.OS === 'web' ? { cursor: 'grab' } : {}),
+  },
+  navItemLoading: {
+    minWidth: 0,
   },
   navItemDragging: {
     opacity: 0.9,

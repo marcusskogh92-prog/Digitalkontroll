@@ -14,6 +14,7 @@ import HomeMainPaneContainer from '../components/common/HomeMainPaneContainer';
 import { HomeMobileProjectTreeContainer } from '../components/common/HomeMobileProjectTreeContainer';
 import { HomeTasksSection } from '../components/common/HomeTasksSection';
 import { IconRail } from '../components/common/IconRail';
+import RailActivityPanel from '../components/common/RailActivityPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
 import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
@@ -23,7 +24,7 @@ import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import ManageSharePointNavigation from './ManageSharePointNavigation';
 import ContextMenu from '../components/ContextMenu';
-import { auth, fetchCompanies, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
+import { auth, fetchCompanies, markAllNotificationsAsRead, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
@@ -546,6 +547,13 @@ export default function HomeScreen({ navigation, route }) {
   // expandedProjects och projektval hanteras av useHomeTreeInteraction / useHomeProjectSelection
   const [projectControlsRefreshNonce, setProjectControlsRefreshNonce] = useState(0);
 
+  // Phase navigation + module routing (måste definieras före useHomeProjectSelection)
+  const [phaseActiveSection, setPhaseActiveSection] = useState(null);
+  const [phaseActiveItem, setPhaseActiveItem] = useState(null);
+  const [phaseActiveNode, setPhaseActiveNode] = useState(null);
+  const [phaseHeaderLabels, setPhaseHeaderLabels] = useState({ sectionLabel: '', itemLabel: '' });
+  const [projectModuleRoute, setProjectModuleRoute] = useState(null);
+
   // Projektval + inline-editor centraliseras i useHomeProjectSelection
   const {
     selectedProject,
@@ -587,17 +595,14 @@ export default function HomeScreen({ navigation, route }) {
     newProjectNumber,
     setNewProjectNumber,
     setProjectControlsRefreshNonce,
+    setPhaseActiveSection,
+    setPhaseActiveItem,
+    setProjectModuleRoute,
   });
 
   useModalKeyboard(leaveProjectModalVisible, cancelLeaveProject, confirmLeaveProject);
 
   const [syncStatus, setSyncStatus] = useState('idle');
-  
-  // Phase navigation state (for PhaseLeftPanel in leftpanel)
-  const [phaseActiveSection, setPhaseActiveSection] = useState(null);
-  const [phaseActiveItem, setPhaseActiveItem] = useState(null);
-  const [phaseActiveNode, setPhaseActiveNode] = useState(null);
-  const [phaseHeaderLabels, setPhaseHeaderLabels] = useState({ sectionLabel: '', itemLabel: '' });
 
   const onPhaseHeaderLabels = useCallback(({ sectionLabel = '', itemLabel = '' } = {}) => {
     setPhaseHeaderLabels((prev) => (
@@ -606,10 +611,6 @@ export default function HomeScreen({ navigation, route }) {
         : { sectionLabel, itemLabel }
     ));
   }, []);
-
-  // Project module routing (web): decouple Offerter from kalkylskede PhaseLayout.
-  // When moduleId === 'offerter', WebMainPane renders OfferterLayout.
-  const [projectModuleRoute, setProjectModuleRoute] = useState(null); // { moduleId, itemId }
 
   // AF (Administrativa föreskrifter) explorer state (used to mirror folder contents in left panel).
   const [afRelativePath, setAfRelativePath] = useState('');
@@ -648,6 +649,18 @@ export default function HomeScreen({ navigation, route }) {
     return () => { try { unsub?.(); } catch (_e) {} };
   }, [effectiveCompanyIdForNotif, currentUserId]);
   const notificationsUnreadCount = userNotifications.filter((n) => !n?.read).length;
+  const [markAllAsReadLoading, setMarkAllAsReadLoading] = useState(false);
+  const handleMarkAllNotificationsAsRead = React.useCallback(async () => {
+    const unread = userNotifications.filter((n) => !n?.read);
+    if (unread.length === 0) return;
+    setMarkAllAsReadLoading(true);
+    try {
+      await markAllNotificationsAsRead(unread);
+    } catch (_e) {}
+    finally {
+      setMarkAllAsReadLoading(false);
+    }
+  }, [userNotifications]);
 
   const derivePhaseKeyFromProjectRootPath = React.useCallback((rootPath) => {
     const p = String(rootPath || '').trim().replace(/^\/+/, '');
@@ -999,6 +1012,20 @@ export default function HomeScreen({ navigation, route }) {
       setPhaseActiveItem(null);
     }
   }, [phaseNavigation, phaseActiveSection]);
+
+  // Sync phase state when projectModuleRoute has offerter (e.g. from URL or browser back)
+  React.useEffect(() => {
+    if (selectedProject && projectModuleRoute?.moduleId === 'offerter') {
+      const itemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
+      const normalized = (v) => {
+        if (!v) return 'forfragningar';
+        if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+        return v;
+      };
+      setPhaseActiveSection('offerter');
+      setPhaseActiveItem(normalized(itemId));
+    }
+  }, [selectedProject?.id, projectModuleRoute?.moduleId, projectModuleRoute?.itemId]);
 
   // Ladda SharePoint-mappar (funktioner) för valt projekt
   useHomeProjectFolders({
@@ -1900,6 +1927,24 @@ export default function HomeScreen({ navigation, route }) {
                           <Text style={{ fontSize: 12, color: '#94a3b8' }}>Översikt och senaste aktiviteter visas i innehållsområdet.</Text>
                         </View>
                       </View>
+                    ) : railActiveId === 'notiser' ? (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                        <LeftPanelRailHeader title="Aktiviteter" />
+                        <RailActivityPanel
+                          userNotifications={userNotifications}
+                          companyActivity={companyActivity}
+                          formatRelativeTime={formatRelativeTime}
+                          findProjectById={findProjectById}
+                          requestProjectSwitch={requestProjectSwitch}
+                          setPhaseActiveSection={setPhaseActiveSection}
+                          setPhaseActiveItem={setPhaseActiveItem}
+                          setProjectModuleRoute={setProjectModuleRoute}
+                          setSidePanelCollapsed={setSidePanelCollapsed}
+                          notificationsError={notificationsError}
+                          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+                          markAllAsReadLoading={markAllAsReadLoading}
+                        />
+                      </View>
                     ) : (appMode === 'project' || railActiveId === 'sharepoint' || railActiveId === 'projekt' || railActiveId === 'kalkylskede' || railActiveId === 'produktion' || railActiveId === 'avslut' || railActiveId === 'eftermarknad') ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
                       <SharePointLeftPanel
@@ -2059,12 +2104,27 @@ export default function HomeScreen({ navigation, route }) {
                       />
                     ) : (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title={railActiveId === 'notiser' ? 'Notiser' : 'Inställningar'} />
-                        <View style={{ padding: 16 }}>
-                          <Text style={{ fontSize: 13, color: '#64748b' }}>
-                            {railActiveId === 'notiser' ? 'Notiser visas här.' : 'Inställningar visas här.'}
-                          </Text>
-                        </View>
+                        <LeftPanelRailHeader title={railActiveId === 'notiser' ? 'Aktiviteter' : 'Inställningar'} />
+                        {railActiveId === 'notiser' ? (
+                          <RailActivityPanel
+                            userNotifications={userNotifications}
+                            companyActivity={companyActivity}
+                            formatRelativeTime={formatRelativeTime}
+                            findProjectById={findProjectById}
+                            requestProjectSwitch={requestProjectSwitch}
+                            setPhaseActiveSection={setPhaseActiveSection}
+                            setPhaseActiveItem={setPhaseActiveItem}
+                            setProjectModuleRoute={setProjectModuleRoute}
+                            setSidePanelCollapsed={setSidePanelCollapsed}
+                            notificationsError={notificationsError}
+                            onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+                            markAllAsReadLoading={markAllAsReadLoading}
+                          />
+                        ) : (
+                          <View style={{ padding: 16 }}>
+                            <Text style={{ fontSize: 13, color: '#64748b' }}>Inställningar visas här.</Text>
+                          </View>
+                        )}
                       </View>
                     )}
                   </GlobalSidePanel>

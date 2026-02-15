@@ -935,13 +935,58 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
   };
 }
 
-async function persistFFUAnalysisLatest({ companyId, projectId, doc }) {
+async function logAiAnalysisActivity({ companyId, projectId, kind, status, uid }) {
+  if (!uid) return;
+  try {
+    const projSnap = await db.doc(`foretag/${companyId}/projects/${projectId}`).get().catch(() => null);
+    const projData = projSnap && projSnap.exists ? projSnap.data() : null;
+    const projectName = String(projData?.name || projData?.projectName || '').trim() || projectId;
+    const label = kind === 'kalkyl' ? 'Kalkyl' : 'Förfrågningsunderlag';
+    const desc = status === 'error' ? `AI-analys (${label}) misslyckades` : `AI-analys (${label}) klar`;
+    const col = db.collection('foretag').doc(companyId).collection('activity');
+    await col.add({
+      type: 'AI-analys',
+      kind,
+      projectId,
+      projectName,
+      status: status || 'success',
+      desc,
+      uid,
+      ts: FieldValue.serverTimestamp(),
+      aiSection: kind === 'kalkyl' ? 'kalkyl' : 'forfragningsunderlag',
+      aiItem: kind === 'kalkyl' ? 'ai-kalkyl-analys' : 'ai-summary',
+    });
+    const notifCol = db.collection('foretag').doc(companyId).collection('projects').doc(projectId).collection('notifications');
+    await notifCol.add({
+      type: 'ai_analysis_complete',
+      userId: uid,
+      companyId,
+      projectId,
+      projectName,
+      kind,
+      status: status || 'success',
+      textPreview: desc,
+      authorName: 'DigitalKontroll',
+      createdAt: FieldValue.serverTimestamp(),
+      read: false,
+    });
+  } catch (e) {
+    console.warn('[AI Activity] Failed to log', String(e && e.message ? e.message : e));
+  }
+}
+
+async function persistFFUAnalysisLatest({ companyId, projectId, doc, uid }) {
   const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
   const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
 
   await canonicalRef.set(doc, { merge: false });
   // Mirror write for older clients/paths (best-effort).
   await legacyRef.set(doc, { merge: false }).catch(() => null);
+
+  const status = doc?.status || 'success';
+  if (status !== 'analyzing') {
+    await logAiAnalysisActivity({ companyId, projectId, kind: 'ffu', status, uid });
+  }
 
   const snap = await canonicalRef.get();
   return snap && snap.exists ? (snap.data() || {}) : (doc || {});
@@ -1229,7 +1274,7 @@ exports.analyzeFFUFromFiles = functions
         }
       : fallbackDoc;
 
-    const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+    const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
     console.log('[FFU] Analysis saved', { companyId, projectId, status: 'error' });
     return saved;
   }
@@ -1242,7 +1287,7 @@ exports.analyzeFFUFromFiles = functions
     meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
     model,
   });
-  const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave });
+  const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
   console.log('[FFU] Analysis saved', { companyId, projectId, status });
   return saved;
 });
@@ -1266,7 +1311,7 @@ function buildKalkylAnalysisPrompt(files) {
     acc[folder].push({
       name: f.name || '',
       path: path,
-      extractedText: String(f.extractedText || '').slice(0, 15000),
+      extractedText: String(f.extractedText || '').slice(0, 60000),
     });
     return acc;
   }, {});
@@ -1372,7 +1417,7 @@ exports.analyzeKalkylFromSharePoint = functions
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
     }
 
-    const maxFilesPerFolder = Number(process.env.KALKYL_AI_MAX_FILES_PER_FOLDER || 15);
+    const maxFilesPerFolder = Number(process.env.KALKYL_AI_MAX_FILES_PER_FOLDER || 40);
     const maxDepth = Number(process.env.KALKYL_AI_MAX_DEPTH || 8);
     const seenIds = new Set();
     const allSpFiles = [];
@@ -1421,7 +1466,11 @@ exports.analyzeKalkylFromSharePoint = functions
     }
 
     const totalChars = extractedFiles.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
-    const maxTotalChars = Number(process.env.FFU_MAX_TOTAL_CHARS || 120_000);
+    const maxTotalChars = Number(
+      process.env.KALKYL_AI_MAX_TOTAL_CHARS ||
+      process.env.FFU_MAX_TOTAL_CHARS ||
+      400_000
+    );
     const trunc = truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars);
     const status = trunc.truncated ? 'partial' : 'success';
     const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
@@ -1441,6 +1490,7 @@ exports.analyzeKalkylFromSharePoint = functions
         analyzedAt: FieldValue.serverTimestamp(),
       };
       await canonicalRef.set(fallback, { merge: true });
+      await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status: 'error', uid: context.auth?.uid });
       return fallback;
     }
 
@@ -1463,6 +1513,7 @@ exports.analyzeKalkylFromSharePoint = functions
         analyzedAt: FieldValue.serverTimestamp(),
       };
       await canonicalRef.set(fallback, { merge: true });
+      await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status: 'error', uid: context.auth?.uid });
       return fallback;
     }
 
@@ -1474,6 +1525,7 @@ exports.analyzeKalkylFromSharePoint = functions
       analyzedAt: FieldValue.serverTimestamp(),
     };
     await canonicalRef.set(doc, { merge: true });
+    await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status, uid: context.auth?.uid });
     return doc;
   });
 

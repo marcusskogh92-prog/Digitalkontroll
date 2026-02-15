@@ -41,12 +41,12 @@ const SECTION_DEFS = {
     // 3 undermappar + AI-analys (ingen mapp); AI-analys analyserar underlag + kalkyl.
     items: ['01 - Kalkylritningar', '02 - Kalkylanteckningar', '03 - Kalkyl'],
   },
-  // Inköp & offerter: single SharePoint folder "03 - Inköp och offerter", no fixed subfolders.
-  // Structure (byggdelar) is created by user and synced from Firestore; SharePoint follows.
+  // Inköp & offerter: två hårdkodade flikar (Förfrågningar, Offerter) + egna flikar med utforskare.
+  // Basflikar kan raderas om man vill köra enbart utforskare med egen mappstruktur.
   offerter: {
     title: 'Inköp och offerter',
     icon: 'document-outline',
-    items: [],
+    items: ['01 - Förfrågningar', '02 - Offerter'],
   },
   'konstruktion-berakningar': {
     title: 'Konstruktion och beräkningar',
@@ -175,8 +175,10 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'status-beslut', name: '05 - FrågaSvar', component: 'StatusBeslutView', order: 5, enabled: true },
           ];
         } else if (id === 'forfragningsunderlag') {
-          // GOLDEN RULE (FFU): no fixed item navigation; browse folders directly.
-          section.items = [];
+          // GOLDEN RULE (FFU): AI-analys alltid från start; övriga flikar = användarskapade mappar.
+          section.items = [
+            { id: 'ai-summary', name: 'AI-analys', component: 'FFUAISummaryView', order: 0, enabled: true, sharePointName: '', isSystemItem: true },
+          ];
         } else if (id === 'kalkyl') {
           section.items = [
             { id: 'kalkylritningar', name: '01 - Kalkylritningar', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
@@ -185,20 +187,22 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'ai-kalkyl-analys', name: '04 - AI-analys', component: 'AIKalkylAnalysView', order: 4, enabled: true },
           ];
         } else if (id === 'offerter') {
-          // Inköp & offerter: single table/data view (Förfrågningar), no folder sub-nav in SharePoint.
+          // Två hårdkodade flikar (inga utforskare) + egna flikar får DigitalkontrollsUtforskare.
           section.items = [
-            { id: 'forfragningar', name: 'Inköp och offerter', component: 'ForfragningarView', order: 1, enabled: true },
+            { id: 'forfragningar', name: '01 - Förfrågningar', component: 'ForfragningarView', order: 1, enabled: true },
+            { id: 'offerter', name: '02 - Offerter', component: 'OfferterView', order: 2, enabled: true },
           ];
         } else if (id === 'konstruktion-berakningar') {
+          // Flikar använder DigitalkontrollsUtforskare (samma mönster som Anbud/Kalkyl).
           section.items = [
-            { id: 'konstruktionsritningar', name: '01 - Konstruktionsritningar', component: 'KonstruktionsritningarView', order: 1, enabled: true },
-            { id: 'statik-hallfasthet', name: '02 - Statik och hållfasthet', component: 'StatikHallfasthetView', order: 2, enabled: true },
-            { id: 'brandskydd', name: '03 - Brandskydd', component: 'BrandskyddView', order: 3, enabled: true },
-            { id: 'tillganglighet', name: '04 - Tillgänglighet', component: 'TillganglighetView', order: 4, enabled: true },
-            { id: 'akustik', name: '05 - Akustik', component: 'AkustikView', order: 5, enabled: true },
-            { id: 'energiberakningar', name: '06 - Energiberäkningar', component: 'EnergiberakningarView', order: 6, enabled: true },
-            { id: 'geoteknik', name: '07 - Geoteknik', component: 'GeoteknikView', order: 7, enabled: true },
-            { id: 'teknisk-samordning', name: '08 - Teknisk samordning', component: 'TekniskSamordningView', order: 8, enabled: true },
+            { id: 'konstruktionsritningar', name: '01 - Konstruktionsritningar', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
+            { id: 'statik-hallfasthet', name: '02 - Statik och hållfasthet', component: 'DigitalkontrollsUtforskare', order: 2, enabled: true },
+            { id: 'brandskydd', name: '03 - Brandskydd', component: 'DigitalkontrollsUtforskare', order: 3, enabled: true },
+            { id: 'tillganglighet', name: '04 - Tillgänglighet', component: 'DigitalkontrollsUtforskare', order: 4, enabled: true },
+            { id: 'akustik', name: '05 - Akustik', component: 'DigitalkontrollsUtforskare', order: 5, enabled: true },
+            { id: 'energiberakningar', name: '06 - Energiberäkningar', component: 'DigitalkontrollsUtforskare', order: 6, enabled: true },
+            { id: 'geoteknik', name: '07 - Geoteknik', component: 'DigitalkontrollsUtforskare', order: 7, enabled: true },
+            { id: 'teknisk-samordning', name: '08 - Teknisk samordning', component: 'DigitalkontrollsUtforskare', order: 8, enabled: true },
           ];
         } else if (id === 'myndigheter') {
           // GOLDEN RULE (Myndigheter): no fixed item navigation; browse folders directly, create flikar.

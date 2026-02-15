@@ -20,6 +20,9 @@ export function useHomeProjectSelection({
   newProjectNumber,
   setNewProjectNumber,
   setProjectControlsRefreshNonce,
+  setPhaseActiveSection,
+  setPhaseActiveItem,
+  setProjectModuleRoute,
 }) {
   const [selectedProject, setSelectedProject] = React.useState(null);
   const [selectedProjectPath, setSelectedProjectPath] = React.useState(null);
@@ -55,6 +58,27 @@ export function useHomeProjectSelection({
     setIsInlineLocked(!!locked);
   }, []);
 
+  const applyPhaseTarget = React.useCallback((opts) => {
+    const pt = opts?.phaseTarget;
+    if (!pt) return;
+    setTimeout(() => {
+      try {
+        if (pt.kind === 'ffu') {
+          setProjectModuleRoute?.({ moduleId: 'ffu-ai-summary' });
+          setPhaseActiveSection?.('forfragningsunderlag');
+          setPhaseActiveItem?.('ai-summary');
+        } else if (pt.kind === 'kalkyl') {
+          setProjectModuleRoute?.(null);
+          setPhaseActiveSection?.('kalkyl');
+          setPhaseActiveItem?.('ai-kalkyl-analys');
+        } else if (pt.aiSection || pt.aiItem) {
+          if (pt.aiSection) setPhaseActiveSection?.(pt.aiSection);
+          if (pt.aiItem) setPhaseActiveItem?.(pt.aiItem);
+        }
+      } catch (_e) {}
+    }, 100);
+  }, [setPhaseActiveSection, setPhaseActiveItem, setProjectModuleRoute]);
+
   const applyPendingLeaveProject = React.useCallback(() => {
     const pending = pendingLeaveProjectRef.current;
     pendingLeaveProjectRef.current = null;
@@ -73,13 +97,15 @@ export function useHomeProjectSelection({
     const selectedActionProvided = Object.prototype.hasOwnProperty.call(opts, 'selectedAction');
     const clearActionAfter = !!opts.clearActionAfter;
     if (selectedActionProvided) setProjectSelectedAction(opts.selectedAction);
+    setInlineControlEditor(null);
     try {
       const p = opts.path;
       setSelectedProjectPath(p ? { ...p, projectId: String(nextProject?.id || '') } : null);
     } catch (_e) {}
     setSelectedProject(nextProject);
     if (clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
-  }, []);
+    applyPhaseTarget(opts);
+  }, [applyPhaseTarget]);
 
   const cancelLeaveProject = React.useCallback(() => {
     pendingLeaveProjectRef.current = null;
@@ -94,7 +120,7 @@ export function useHomeProjectSelection({
       const isClosing = !project;
       const isSwitchingToOther = currentId && (isClosing || nextId !== currentId);
 
-      if (current && isSwitchingToOther && Platform.OS === 'web' && !isInlineLocked) {
+      if (current && isSwitchingToOther && Platform.OS === 'web') {
         pendingLeaveProjectRef.current = { project, opts };
         setLeaveProjectCurrentLabel(formatProjectLabel(current));
         setLeaveProjectModalVisible(true);
@@ -146,8 +172,9 @@ export function useHomeProjectSelection({
       } catch (_e) {}
       setSelectedProject(nextProject);
       if (clearActionAfter) setTimeout(() => setProjectSelectedAction(null), 0);
+      applyPhaseTarget(opts);
     },
-    [isInlineLocked],
+    [isInlineLocked, applyPhaseTarget],
   );
 
   const closeSelectedProject = React.useCallback(() => {

@@ -565,7 +565,7 @@ export function useDashboard({
               const ts = ev.ts || ev.createdAt || ev.updatedAt || null;
               const projectId = ev.projectId || (ev.project && ev.project.id) || null;
               const projectName = ev.projectName || (ev.project && ev.project.name) || null;
-              const desc = ev.label || ev.message || ev.msg || '';
+              const desc = ev.label || ev.message || ev.msg || ev.desc || '';
               recent.push({
                 kind: ev.kind || 'company',
                 type: t,

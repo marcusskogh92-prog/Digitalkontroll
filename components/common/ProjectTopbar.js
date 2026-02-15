@@ -5,7 +5,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PRIMARY_TOPBAR } from '../../constants/topbarTheme';
 import { useProjectScroll } from '../../contexts/ProjectScrollContext';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
@@ -17,7 +17,7 @@ function calcSortKey(section) {
 }
 
 /** Sektioner markerade som klara under uppbyggnad – radera när alla är klara. */
-const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud'];
+const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud', 'kalkyl', 'konstruktion-berakningar'];
 
 function sortSections(sections) {
   return [...(sections || [])].sort((a, b) => {
@@ -30,7 +30,7 @@ function sortSections(sections) {
   });
 }
 
-export default function ProjectTopbar({ sections: sectionsProp, activeSection, onSelectSection, onLayout }) {
+export default function ProjectTopbar({ sections: sectionsProp, activeSection, onSelectSection, onLayout, sectionLoadingIds = [] }) {
   const [hoveredId, setHoveredId] = useState(null);
   const { scrollY = 0 } = useProjectScroll();
   const sections = sortSections(sectionsProp || []);
@@ -59,6 +59,7 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
             const sectionId = section?.id ?? `section-${idx}`;
             const isActive = activeSection === sectionId;
             const isHovered = hoveredId === sectionId;
+            const isLoading = Array.isArray(sectionLoadingIds) && sectionLoadingIds.includes(sectionId);
 
             return (
               <Pressable
@@ -87,7 +88,13 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                   >
                     {stripNumberPrefixForDisplay(section?.name ?? '')}
                   </Text>
-                  {COMPLETED_SECTIONS_DEV.includes(sectionId) ? (
+                  {isLoading ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={isActive ? (PRIMARY_TOPBAR.textActive || '#1e293b') : '#94a3b8'}
+                      style={{ marginLeft: 6 }}
+                    />
+                  ) : COMPLETED_SECTIONS_DEV.includes(sectionId) ? (
                     <Ionicons
                       name="checkmark-circle"
                       size={16}

@@ -30,7 +30,8 @@ function requireIds(companyId, projectId) {
   return { cid, pid };
 }
 
-export const RFQ_PACKAGE_STATUSES = ['Ej skickad', 'Skickad', 'Besvarad'];
+export const RFQ_PACKAGE_STATUSES = ['Ej skickad', 'Skickad', 'Väntar svar', 'Bekräftad', 'Avböjt'];
+export const RFQ_ATERKOPPLING_OPTIONS = ['Ej svar', 'Lämnar pris', 'Lämnar ej pris', 'Avböjt', 'Osäker'];
 
 const DEFAULT_BUILD_PARTS = [
   { nr: '6', name: 'Rivning' },
@@ -309,6 +310,7 @@ export async function createRfqPackage(companyId, projectId, data) {
 
   const statusCandidate = String(data?.status || 'Ej skickad').trim();
   const status = RFQ_PACKAGE_STATUSES.includes(statusCandidate) ? statusCandidate : 'Ej skickad';
+  const aterkoppling = String(data?.aterkoppling || '').trim() || null;
 
   const { uid, name } = nowUserMeta();
   const payload = {
@@ -320,6 +322,7 @@ export async function createRfqPackage(companyId, projectId, data) {
     contactName,
 
     status,
+    aterkoppling,
 
     sharePointFolderPath: String(data?.sharePointFolderPath || '').trim() || null,
 
@@ -354,14 +357,15 @@ export async function updateRfqPackage(companyId, projectId, packageId, patch) {
   };
 
   if (Object.prototype.hasOwnProperty.call(next, 'status')) {
-    const statusCandidate = String(next.status || '').trim();
+    let statusCandidate = String(next.status || '').trim();
+    if (statusCandidate === 'Besvarad') statusCandidate = 'Bekräftad'; // backward compat
     next.status = RFQ_PACKAGE_STATUSES.includes(statusCandidate) ? statusCandidate : 'Ej skickad';
 
     // Auto-stamp when reaching certain statuses.
     if (next.status === 'Skickad') {
       if (!Object.prototype.hasOwnProperty.call(next, 'sentAt')) next.sentAt = serverTimestamp();
     }
-    if (next.status === 'Besvarad') {
+    if (['Bekräftad', 'Avböjt'].includes(next.status)) {
       if (!Object.prototype.hasOwnProperty.call(next, 'answeredAt')) next.answeredAt = serverTimestamp();
     }
   }
@@ -373,6 +377,10 @@ export async function updateRfqPackage(companyId, projectId, packageId, patch) {
   if (Object.prototype.hasOwnProperty.call(next, 'contactName')) {
     const nextName = String(next.contactName || '').trim();
     next.contactName = nextName || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(next, 'aterkoppling')) {
+    const val = String(next.aterkoppling || '').trim();
+    next.aterkoppling = val || null;
   }
 
   await updateDoc(doc(colRef, pid), next);

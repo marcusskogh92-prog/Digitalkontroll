@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import ProjectSubTopbar from '../../../components/common/ProjectSubTopbar';
+import { subscribeLatestProjectFFUAnalysis, subscribeLatestProjectKalkylAnalysis } from '../../../components/firebase';
 import ProjectTopbar from '../../../components/common/ProjectTopbar';
 import DigitalkontrollsUtforskare from '../../../components/common/DigitalkontrollsUtforskare';
 import { CreateFolderModal, DeleteFolderConfirmModal, RenameFolderModal } from '../../../components/common/Modals/SectionFolderModals';
@@ -24,16 +25,21 @@ import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
 import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
 import AIKalkylAnalysView from '../../../Screens/AIKalkylAnalysView';
+import FFUAISummaryView from '../../../Screens/FFUAISummaryView';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
+import KonstruktionSection from './kalkylskede/sections/konstruktion/KonstruktionSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
+import OfferterSection from './kalkylskede/sections/offerter/OfferterSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
 
 const SECTION_COMPONENTS = {
   oversikt: OversiktSection,
   forfragningsunderlag: ForfragningsunderlagSection,
+  offerter: OfferterSection,
   bilder: BilderSection,
   myndigheter: MyndigheterSection,
   kalkyl: KalkylSection,
+  'konstruktion-berakningar': KonstruktionSection,
   anteckningar: AnteckningarSection,
   moten: MotenSection,
   anbud: AnbudSection
@@ -134,6 +140,43 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
 
   const [optimisticSubMenuItems, setOptimisticSubMenuItems] = useState(null);
   const effectiveSubMenuItems = optimisticSubMenuItems ?? subMenuItems;
+
+  // FFU + Kalkyl AI-analys pågår? Prenumeration måste vara aktiv oavsett sektion så analysen fortsätter i bakgrunden
+  const [ffuAiAnalyzing, setFfuAiAnalyzing] = useState(false);
+  const [kalkylAiAnalyzing, setKalkylAiAnalyzing] = useState(false);
+  const cid = String(companyId || project?.companyId || '').trim();
+  const pid = String(projectId || project?.id || '').trim();
+  useEffect(() => {
+    if (!cid || !pid) {
+      setFfuAiAnalyzing(false);
+      setKalkylAiAnalyzing(false);
+      return;
+    }
+    const unsubFfu = subscribeLatestProjectFFUAnalysis(cid, pid, {
+      onNext: (data) => {
+        const status = data?.status;
+        setFfuAiAnalyzing(String(status || '').toLowerCase() === 'analyzing');
+      },
+    });
+    const unsubKalkyl = subscribeLatestProjectKalkylAnalysis(cid, pid, {
+      onNext: (data) => {
+        const status = data?.status;
+        setKalkylAiAnalyzing(String(status || '').toLowerCase() === 'analyzing');
+      },
+    });
+    return () => {
+      try { unsubFfu?.(); } catch (_e) {}
+      try { unsubKalkyl?.(); } catch (_e) {}
+    };
+  }, [cid, pid]);
+  const itemLoadingIds = [
+    ...(ffuAiAnalyzing && activeSection === 'forfragningsunderlag' ? ['ai-summary'] : []),
+    ...(kalkylAiAnalyzing && activeSection === 'kalkyl' ? ['ai-kalkyl-analys'] : []),
+  ];
+  const sectionLoadingIds = [
+    ...(ffuAiAnalyzing ? ['forfragningsunderlag'] : []),
+    ...(kalkylAiAnalyzing ? ['kalkyl'] : []),
+  ];
 
   // Rensa optimistic när användaren byter sektion så vi inte behåller föråldrad state
   useEffect(() => {
@@ -273,7 +316,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   }, [deleteModalItem, companyId, projectRootPath, activeSectionConfig, effectiveSubMenuItems, saveItems, resolveSiteId, activeItem, activeSection, handleSelectItem]);
 
   const handleRequestDelete = useCallback(async (item) => {
-    if (!item || !companyId || !projectRootPath || !activeSectionConfig?.name) return;
+    if (!item || item?.isSystemItem || !companyId || !projectRootPath || !activeSectionConfig?.name) return;
     const sharePointName = item?.sharePointName ?? item?.name;
     if (!sharePointName) {
       setDeleteModalItem(item);
@@ -350,7 +393,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
-  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud', 'kalkyl'].includes(String(activeSection || ''));
+  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud', 'kalkyl', 'konstruktion-berakningar', 'offerter'].includes(String(activeSection || ''));
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -374,6 +417,16 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         <AIKalkylAnalysView
           companyId={companyId}
           projectId={projectId}
+          project={project}
+        />
+      );
+    }
+
+    if (activeItemConfig?.component === 'FFUAISummaryView') {
+      return (
+        <FFUAISummaryView
+          projectId={projectId}
+          companyId={companyId}
           project={project}
         />
       );
@@ -595,6 +648,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
           const h = e?.nativeEvent?.layout?.height;
           if (typeof h === 'number' && h > 0) setPrimaryTopbarHeight(h);
         }}
+        sectionLoadingIds={sectionLoadingIds}
       />
       <ProjectSubTopbar
         subMenuItems={effectiveSubMenuItems}
@@ -604,9 +658,10 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         isEditable={isEditable}
         sectionDisplayName={stripNumberPrefixForDisplay(activeSectionConfig?.name ?? '')}
         onRequestCreate={isEditable ? () => setCreateModalOpen(true) : undefined}
-        onRequestRename={isEditable ? setRenameModalItem : undefined}
+        onRequestRename={isEditable ? (item) => { if (!item?.isSystemItem) setRenameModalItem(item); } : undefined}
         onRequestDelete={isEditable ? handleRequestDelete : undefined}
         onReorder={isEditable ? handleReorder : undefined}
+        itemLoadingIds={itemLoadingIds}
       />
 
       {/* Main Content Area - Full width layout */}

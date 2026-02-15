@@ -4,7 +4,6 @@ import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import FFUAISummaryView from '../../Screens/FFUAISummaryView';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
-import OfferterLayout from '../../features/offerter/OfferterLayout';
 import { Dashboard } from './Dashboard';
 import InlineProjectCreationPanel from './InlineProjectCreationPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from './layoutConstants';
@@ -106,8 +105,6 @@ export default function WebMainPane(props) {
   // ProjectDetails manages its own scrolling.
   const showOuterScroll = !(selectedProject || (inlineControlEditor && inlineControlEditor.project));
 
-  const isOfferterModule = String(projectModuleRoute?.moduleId || '') === 'offerter';
-  const offerterActiveItemId = String(projectModuleRoute?.itemId || '').trim() || 'forfragningar';
   const isFfuAiSummaryModule = String(projectModuleRoute?.moduleId || '') === 'ffu-ai-summary';
 
   const mainContent = inlineControlEditor && inlineControlEditor.project ? (
@@ -145,15 +142,6 @@ export default function WebMainPane(props) {
       setSelectedProjectPath={setSelectedProjectPath}
       isProjectNumberUnique={isProjectNumberUnique}
     />
-  ) : selectedProject && isOfferterModule ? (
-    <View style={{ flex: 1 }}>
-      <OfferterLayout
-        companyId={companyId}
-        projectId={selectedProject?.id}
-        project={selectedProject}
-        activeItemId={offerterActiveItemId}
-      />
-    </View>
   ) : selectedProject && isFfuAiSummaryModule ? (
     <View style={{ flex: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}>
       <FFUAISummaryView projectId={selectedProject?.id} companyId={effectiveCompanyId} project={selectedProject} />

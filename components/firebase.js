@@ -1827,6 +1827,39 @@ export function subscribeUserNotifications(companyId, currentUserId, { onData, o
   };
 }
 
+/**
+ * Mark a single notification as read.
+ * @param {string} companyId
+ * @param {string} projectId
+ * @param {string} notificationId
+ */
+export async function markNotificationAsRead(companyId, projectId, notificationId) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  const nid = String(notificationId || '').trim();
+  if (!cid || !pid || !nid) return;
+  const ref = doc(db, 'foretag', cid, 'projects', pid, 'notifications', nid);
+  await updateDoc(ref, sanitizeForFirestore({ read: true }));
+}
+
+/**
+ * Mark all given notifications as read. Notifications must have companyId, projectId, id.
+ * Only updates those where read is not already true.
+ * @param {Array<{ companyId?: string, projectId?: string, id?: string, read?: boolean }>} notifications
+ */
+export async function markAllNotificationsAsRead(notifications) {
+  if (!Array.isArray(notifications) || notifications.length === 0) return;
+  const toUpdate = notifications.filter(
+    (n) => !n?.read && n?.companyId && n?.projectId && n?.id
+  );
+  for (const n of toUpdate) {
+    try {
+      const ref = doc(db, 'foretag', n.companyId, 'projects', n.projectId, 'notifications', n.id);
+      await updateDoc(ref, sanitizeForFirestore({ read: true }));
+    } catch (_e) {}
+  }
+}
+
 // Controls persistence helpers
 export async function saveControlToFirestore(control, companyIdOverride) {
   async function attemptWrite({ forceTokenRefresh } = { forceTokenRefresh: false }) {

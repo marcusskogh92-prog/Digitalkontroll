@@ -50,32 +50,43 @@ function ListRow({ item, selected, onPress }) {
   );
 }
 
-export default function OfferterView({ companyId, projectId }) {
+export default function OfferterView({ companyId, projectId, project }) {
   const isWeb = Platform.OS === 'web';
+  const effectiveCompanyId = companyId || project?.companyId;
+  const effectiveProjectId = projectId || project?.id;
+  const hasIds = Boolean(effectiveCompanyId && effectiveProjectId);
 
   const [packages, setPackages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPackageId, setSelectedPackageId] = useState(null);
 
   useEffect(() => {
-    if (!companyId || !projectId) return () => {};
+    if (!effectiveCompanyId || !effectiveProjectId) return () => {};
     setLoading(true);
-    const unsub = listenOfferterPackages(
-      companyId,
-      projectId,
-      (list) => {
-        setPackages(Array.isArray(list) ? list : []);
-        setLoading(false);
-      },
-      (_err) => setLoading(false),
-    );
+    let unsub;
+    try {
+      unsub = listenOfferterPackages(
+        effectiveCompanyId,
+        effectiveProjectId,
+        (list) => {
+          setPackages(Array.isArray(list) ? list : []);
+          setLoading(false);
+        },
+        (_err) => setLoading(false),
+      );
+    } catch (err) {
+      console.error('[OfferterView] listenOfferterPackages failed:', err);
+      setPackages([]);
+      setLoading(false);
+      return () => {};
+    }
 
     return () => {
       try {
         unsub?.();
       } catch (_e) {}
     };
-  }, [companyId, projectId]);
+  }, [effectiveCompanyId, effectiveProjectId]);
 
   useEffect(() => {
     if (!selectedPackageId && packages.length) setSelectedPackageId(packages[0]?.id || null);
@@ -85,6 +96,14 @@ export default function OfferterView({ companyId, projectId }) {
     () => packages.find((p) => String(p?.id || '') === String(selectedPackageId || '')) || null,
     [packages, selectedPackageId],
   );
+
+  if (!hasIds) {
+    return (
+      <View style={[styles.container, { padding: 24, justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={styles.muted}>Saknar projektkontext.</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, isWeb && styles.containerWeb]}>
@@ -101,9 +120,9 @@ export default function OfferterView({ companyId, projectId }) {
         ) : (
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {packages.length === 0 ? <Text style={styles.muted}>Inga offerter än.</Text> : null}
-            {packages.map((p) => (
+            {packages.map((p, idx) => (
               <ListRow
-                key={p.id}
+                key={p?.id || `pkg-${idx}`}
                 item={p}
                 selected={String(p.id) === String(selectedPackageId)}
                 onPress={() => setSelectedPackageId(p.id)}
@@ -142,8 +161,8 @@ export default function OfferterView({ companyId, projectId }) {
               ? `${safeText(selectedPackage?.byggdelLabel) || '—'} · ${safeText(selectedPackage?.supplierName) || '—'}`
               : ''
           }
-          companyId={companyId}
-          projectId={projectId}
+          companyId={effectiveCompanyId}
+          projectId={effectiveProjectId}
           selectedItem={selectedPackage}
           listenNotes={listenOfferterPackageNotes}
           addNote={addOfferterPackageNote}

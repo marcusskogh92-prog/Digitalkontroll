@@ -422,6 +422,12 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 		await updateRfqPackage(companyId, projectId, pkg.id, { status });
 	};
 
+	const updatePackage = async (pkg, patch) => {
+		if (!companyId || !projectId || !pkg?.id) return;
+		if (!tableEnabled) return;
+		await updateRfqPackage(companyId, projectId, pkg.id, patch);
+	};
+
 	const pickContactForPackage = async (pkg, contact) => {
 		if (!companyId || !projectId || !pkg?.id) return;
 		if (!tableEnabled) return;
@@ -704,6 +710,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 											packages={(packagesByByggdel?.[bid] || []).filter((p) => !p?.deleted)}
 											suppliers={suppliers}
 											contacts={contacts}
+											project={project}
 											onPickSupplier={async (s) => {
 												try {
 													await addSupplierFromRegistry(bd, s);
@@ -735,6 +742,7 @@ export default function ForfragningarView({ companyId, projectId, project, activ
 											onEditByggdel={startEditByggdel}
 											onRemoveByggdel={removeByggdel}
 											onSetStatus={setPackageStatus}
+											onUpdatePackage={updatePackage}
 											onOpenFolder={openFolder}
 											onRemove={removePackage}
 											canOpenFolder={canOpenFolder}

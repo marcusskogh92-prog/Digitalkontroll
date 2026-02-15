@@ -4,6 +4,7 @@
 
 import { StyleSheet, Text, View } from 'react-native';
 
+import ErrorBoundary from '../../../../../../components/ErrorBoundary';
 import OfferterView from '../../../../../../modules/offerter/offerter/OfferterView';
 import ForfragningarView from './items/Forfragningar/ForfragningarView';
 
@@ -27,26 +28,26 @@ const ITEM_COMPONENTS = {
 };
 
 export default function OfferterSection({ projectId, companyId, project, activeItem, navigation, navigationParams }) {
-  if (!activeItem) {
-    return <Placeholder label="Offerter" activeItem={null} />;
-  }
-
-  const ItemComponent = ITEM_COMPONENTS[activeItem];
+  // Default to förfrågningar when no item selected
+  const resolvedItem = activeItem || 'forfragningar';
+  const ItemComponent = ITEM_COMPONENTS[resolvedItem];
 
   if (!ItemComponent) {
-    return <Placeholder label="Offerter" activeItem={activeItem} />;
+    return <Placeholder label="Inköp och offerter" activeItem={resolvedItem} />;
   }
 
   return (
     <View style={styles.container}>
-      <ItemComponent
-        projectId={projectId}
-        companyId={companyId}
-        project={project}
-        activeItem={activeItem}
-        sectionNavigation={navigation}
-        navigationParams={navigationParams}
-      />
+      <ErrorBoundary>
+        <ItemComponent
+          projectId={projectId}
+          companyId={companyId}
+          project={project}
+          activeItem={resolvedItem}
+          sectionNavigation={navigation}
+          navigationParams={navigationParams}
+        />
+      </ErrorBoundary>
     </View>
   );
 }

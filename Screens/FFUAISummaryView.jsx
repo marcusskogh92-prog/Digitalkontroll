@@ -66,7 +66,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const [snapshotExists, setSnapshotExists] = useState(false);
 
   const [runError, setRunError] = useState('');
-  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisTriggered, setAnalysisTriggered] = useState(false);
 
   const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
   const subKeyRef = useRef('');
@@ -74,6 +74,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const hasSavedAnalysis = snapshotExists;
 
   const effectiveStatus = safeText(analysisDoc?.status);
+  const isAnalyzing = effectiveStatus === 'analyzing' || analysisTriggered;
   const meta = analysisDoc?.meta && typeof analysisDoc.meta === 'object' ? analysisDoc.meta : null;
   const analyzedAt = analysisDoc?.analyzedAt || null;
   const model = safeText(analysisDoc?.model);
@@ -93,7 +94,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     }
   }, [analyzedAt]);
 
-  const statusLabel = effectiveStatus === 'analyzing'
+  const statusLabel = isAnalyzing
     ? 'Analyseras'
     : effectiveStatus === 'error'
       ? 'Misslyckad'
@@ -101,7 +102,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
         : 'Ej analyserad';
 
-  const statusTone = effectiveStatus === 'analyzing'
+  const statusTone = isAnalyzing
     ? 'warning'
     : effectiveStatus === 'error'
       ? 'warning'
@@ -109,7 +110,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         ? 'success'
         : 'neutral';
 
-  const canRun = Boolean(cid && pid && !analysisRunning && !snapshotLoading && !rerunConfirm?.busy);
+  const canRun = Boolean(cid && pid && !isAnalyzing && !snapshotLoading && !rerunConfirm?.busy);
 
   useEffect(() => {
     if (!cid || !pid) {
@@ -130,6 +131,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         setSnapshotExists(exists);
         setAnalysisDoc(exists ? (data || {}) : null);
         setSnapshotLoading(false);
+        setAnalysisTriggered((prev) => (prev ? false : prev));
       },
       onError: (err) => {
         if (subKeyRef.current !== subKey) return;
@@ -150,27 +152,27 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     };
   }, [cid, pid]);
 
-  const runAnalysisAndPersist = useCallback(async () => {
+  const runAnalysisAndPersist = useCallback(() => {
     if (!canRun) return;
     if (!cid || !pid) return;
 
-    setAnalysisRunning(true);
     setRunError('');
+    setAnalysisTriggered(true);
 
-    try {
-      console.log('[FFU] Analysis started', { companyId: cid, projectId: pid });
-      const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
-      const res = await analyzeFFU({ companyId: cid, projectId: pid });
-      const data = res?.data || {};
-      console.log('[FFU] Analysis saved', { companyId: cid, projectId: pid, status: safeText(data?.status) || null });
-    } catch (e) {
-      console.error('❌ analyzeFFUFromFiles failed:', e);
+    console.log('[FFU] Analysis started in background', { companyId: cid, projectId: pid });
+    const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
+    analyzeFFU({ companyId: cid, projectId: pid }).catch((e) => {
+      const code = String(e?.code || '').trim();
       const msg = String(e?.details || e?.message || e?.code || '').trim();
-      setRunError(msg || 'Kunde inte köra AI-analys. Försök igen.');
-      throw e;
-    } finally {
-      setAnalysisRunning(false);
-    }
+      const isTimeout = code.includes('deadline') || code.includes('timeout') || msg.toLowerCase().includes('timeout');
+      if (isTimeout) {
+        console.log('[FFU] Client timeout – analysen fortsätter i bakgrunden', { companyId: cid, projectId: pid });
+      } else {
+        console.error('❌ analyzeFFUFromFiles failed to start:', e);
+        setAnalysisTriggered(false);
+        setRunError(msg || 'Kunde inte starta AI-analys. Försök igen.');
+      }
+    });
   }, [canRun, cid, pid]);
 
   const onRunAnalysis = useCallback(() => {
@@ -257,10 +259,13 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
                 <Text style={styles.hintText}>Laddar sparad analys…</Text>
               </View>
             ) : null}
-            {analysisRunning ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <ActivityIndicator size="small" color="#64748b" />
-                <Text style={styles.hintText}>AI analyserar förfrågningsunderlaget…</Text>
+            {isAnalyzing ? (
+              <View style={{ flexDirection: 'column', gap: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#64748b" />
+                  <Text style={styles.hintText}>AI analyserar förfrågningsunderlaget i bakgrunden…</Text>
+                </View>
+                <Text style={[styles.hintText, { marginLeft: 0 }]}>Du kan byta sektion – analysen fortsätter.</Text>
               </View>
             ) : null}
           </View>

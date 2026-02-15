@@ -13,7 +13,7 @@ const RAIL_DIVIDER = { type: 'divider' };
 
 const RAIL_NAV_ITEMS = [
   { id: 'dashboard', icon: 'home-outline', label: 'Dashboard' },
-  { id: 'notiser', icon: 'notifications-outline', label: 'Notiser' },
+  { id: 'notiser', icon: 'notifications-outline', label: 'Aktiviteter' },
   RAIL_DIVIDER,
   { id: 'kalkylskede', icon: 'calculator-outline', label: 'Kalkylskede' },
   { id: 'produktion', icon: 'hammer-outline', label: 'Produktion' },
