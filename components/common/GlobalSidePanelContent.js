@@ -58,12 +58,12 @@ const REGISTER_ITEMS = [
   { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier' },
 ];
 
-/** Administration: Användare, Roller, Företagsinställningar, Integrationer */
+/** Administration: Användare, Roller, Företagsinställningar, SharePoint-kopplingar */
 const ADMIN_ITEMS = [
   { key: 'anvandare', label: 'Användare', route: 'ManageUsers' },
   { key: 'roller', label: 'Roller', route: 'ManageControlTypes' },
   { key: 'foretagsinstallningar', label: 'Företagsinställningar', route: 'ManageCompany' },
-  { key: 'integrationer', label: 'Integrationer', route: 'ManageSharePointNavigation' },
+  { key: 'integrationer', label: 'SharePoint-kopplingar', route: 'ManageCompany', focus: 'sharepoint' },
 ];
 
 /** SharePoint: Siter, Projekt, Trädstruktur */

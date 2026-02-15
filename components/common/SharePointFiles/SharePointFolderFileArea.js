@@ -2,19 +2,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ensureDkBasStructure, ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
-import { getDriveItemByPath, moveDriveItemAcrossSitesByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
+import { ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
+import { createEmptyDocxBlob, createEmptyXlsxBlob } from '../../../utils/createEmptyOfficeFile';
+import { deleteDriveItemById, getDriveItemByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
 import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
 import { buildLockedFileRename, normalizeLockedRenameBase, splitBaseAndExt as splitLockedBaseAndExt } from '../../../utils/lockedFileRename';
 import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDirectoryFiles';
 import ContextMenu from '../../ContextMenu';
-import { getCompanySharePointSiteIdByRole, subscribeProjectFileComments } from '../../firebase';
+import { subscribeProjectFileComments } from '../../firebase';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
 import { useUploadManager } from '../uploads/UploadManagerContext';
 import SharePointFilePreviewPane from './SharePointFilePreviewPane';
+import { useFileSelection } from '../../../hooks/useFileSelection';
+import { useInlineRename } from '../../../hooks/useInlineRename';
+import { ICON_RAIL } from '../../../constants/iconRailTheme';
 import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
+import FileExplorerBreadcrumb from './FileExplorerBreadcrumb';
+import MoveFilesModal from './MoveFilesModal';
 
 const DND_MOVE_TYPE = 'application/x-digitalkontroll-move';
 
@@ -135,6 +141,21 @@ export default function SharePointFolderFileArea({
 
   // Optional: hide specific folders by name (case-insensitive).
   hiddenFolderNames = null,
+
+  // FFU layout: file exploration area fills space, drag-and-drop zone fixed at bottom (near rail).
+  bottomDropZone = false,
+
+  // When false, hides the "Skapa" dropdown (Ny mapp, Word, Excel). Used when section root
+  // uses lower topbar for folder tabs – create folders there, not in explorer.
+  showCreateFolderButton = true,
+
+  // När vi visar en custom mapp (t.ex. lower topbar-flik): klicka på första breadcrumb-segmentet
+  // (Förfrågningsunderlag) ska navigera tillbaka till sektionsroten.
+  onBreadcrumbNavigateToSection = null,
+
+  // false = skapa inte mapp vid laddning; endast när användare laddar upp fil, skapar undermapp eller släpper fil.
+  // Gäller alla sektioner – mapp skapas först vid faktisk användning.
+  ensureFolderOnLoad = false,
 }) {
   // Keep "Senast ändrad" anchored to the right, while letting other columns share space closer to Filnamn.
   const COL_DATE_W = 140;
@@ -246,6 +267,7 @@ export default function SharePointFolderFileArea({
   // Web drag/drop state (single source of truth)
   const [isDragging, setIsDragging] = useState(false);
   const [activeDropFolder, setActiveDropFolder] = useState(null); // relativePath | null
+  const [draggingIds, setDraggingIds] = useState([]); // ids being dragged (for opacity)
   const [tableHeaderHeight, setTableHeaderHeight] = useState(44);
 
   const fileInputRef = useRef(null);
@@ -267,6 +289,11 @@ export default function SharePointFolderFileArea({
 
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [createOfficeFileOpen, setCreateOfficeFileOpen] = useState(false);
+  const [createOfficeFileType, setCreateOfficeFileType] = useState('docx');
+  const [newOfficeFileName, setNewOfficeFileName] = useState('');
+  const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+  const createDropdownRef = useRef(null);
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState(null);
@@ -278,39 +305,240 @@ export default function SharePointFolderFileArea({
   const [deleteTargets, setDeleteTargets] = useState([]); // bulk: flera objekt att radera
   const [deleteError, setDeleteError] = useState('');
 
-  // Urval med cirklar (SharePoint-stil) för bulk Flytta/Radera
-  const [selectedIds, setSelectedIds] = useState([]);
-  const selectedItems = useMemo(() => {
-    const idSet = new Set(selectedIds.map(String).filter(Boolean));
-    return (Array.isArray(items) ? items : []).filter((it) => idSet.has(String(it?.id)));
-  }, [items, selectedIds]);
-  const selectableItems = useMemo(() => {
-    return (Array.isArray(items) ? items : []).filter((it) => {
-      if (!it?.id) return false;
-      if (it?.type === 'folder' && lockSystemFolder && isSystemFolder(it)) return false;
-      return true;
-    });
-  }, [items, lockSystemFolder, isSystemFolder]);
-  const toggleSelection = useCallback((id) => {
-    const s = String(id || '');
-    if (!s) return;
-    setSelectedIds((prev) => {
-      const set = new Set(prev.map(String));
-      if (set.has(s)) {
-        set.delete(s);
-      } else {
-        set.add(s);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('name'); // 'name' | 'type' | 'modified'
+  const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
+
+  const [colWidths, setColWidths] = useState({});
+  const resizeRef = useRef({ col: null, startX: 0, startW: 0 });
+  const COL_RESIZE_DEFAULTS = { name: 280, type: 107, uploadedBy: 165, modified: 140 };
+  const COL_RESIZE_MIN = { name: 120, type: 74, uploadedBy: 80, modified: 100 };
+  const COL_RESIZE_MAX = { name: 600, type: 200, uploadedBy: 300, modified: 220 };
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { col, startX, startW } = resizeRef.current;
+      if (!col) return;
+      const delta = e.clientX - startX;
+      const min = COL_RESIZE_MIN[col] ?? 80;
+      const max = COL_RESIZE_MAX[col] ?? 300;
+      const next = Math.max(min, Math.min(max, startW + delta));
+      setColWidths((w) => ({ ...w, [col]: next }));
+    };
+    const onUp = () => {
+      resizeRef.current = { col: null, startX: 0, startW: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [colWidths]);
+  const startResize = useCallback((col, e) => {
+    if (Platform.OS !== 'web') return;
+    try { e?.stopPropagation?.(); e?.preventDefault?.(); } catch (_) {}
+    const def = COL_RESIZE_DEFAULTS[col] ?? 140;
+    resizeRef.current = { col, startX: e?.nativeEvent?.clientX ?? 0, startW: colWidths[col] ?? def };
+  }, [colWidths]);
+
+  const colStyle = useCallback((key) => {
+    const w = colWidths[key];
+    const base = key === 'name' ? styles.colName : key === 'type' ? styles.colType : key === 'uploadedBy' ? styles.colUploadedBy : styles.colModified;
+    const extra = w != null ? { width: w, flexGrow: 0, flexShrink: 0 } : (key === 'modified' ? { width: COL_DATE_W } : {});
+    return [base, extra];
+  }, [colWidths]);
+
+  const ResizeHandle = useCallback(({ col }) => {
+    if (Platform.OS !== 'web') return null;
+    return (
+      <View
+        onMouseDown={(e) => startResize(col, e)}
+        style={styles.resizeHandle}
+        accessibilityRole="none"
+      />
+    );
+  }, [startResize]);
+
+  const displayedItems = useMemo(() => {
+    const raw = Array.isArray(items) ? items : [];
+    let filtered = raw;
+    const q = safeText(searchQuery).toLowerCase();
+    if (q) {
+      filtered = raw.filter((it) => {
+        const name = safeText(it?.name).toLowerCase();
+        const typeLabel = it?.type === 'folder' ? 'mapp' : (classifyFileType(it?.name)?.label || '').toLowerCase();
+        return name.includes(q) || typeLabel.includes(q);
+      });
+    }
+    const dir = sortDir === 'desc' ? -1 : 1;
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'name') {
+        return dir * safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' });
       }
-      return Array.from(set);
+      if (sortBy === 'type') {
+        const ta = a?.type === 'folder' ? 'mapp' : (classifyFileType(a?.name)?.label || '').toLowerCase();
+        const tb = b?.type === 'folder' ? 'mapp' : (classifyFileType(b?.name)?.label || '').toLowerCase();
+        const cmp = ta.localeCompare(tb, 'sv');
+        if (cmp !== 0) return dir * cmp;
+        return dir * safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' });
+      }
+      if (sortBy === 'modified') {
+        const da = new Date(a?.lastModified || 0).getTime();
+        const db = new Date(b?.lastModified || 0).getTime();
+        if (da !== db) return dir * (da - db);
+        return dir * safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' });
+      }
+      return 0;
+    });
+  }, [items, searchQuery, sortBy, sortDir]);
+
+  const toggleSort = useCallback((col) => {
+    setSortBy((prev) => {
+      if (prev === col) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return col;
+      }
+      setSortDir('asc');
+      return col;
     });
   }, []);
-  const isIdSelected = useCallback((id) => selectedIds.includes(String(id || '')), [selectedIds]);
-  const selectAll = useCallback(() => {
-    setSelectedIds(selectableItems.map((it) => String(it?.id)).filter(Boolean));
-  }, [selectableItems]);
-  const clearSelection = useCallback(() => setSelectedIds([]), []);
-  const allSelected = selectableItems.length > 0 && selectedIds.length >= selectableItems.length;
-  const someSelected = selectedIds.length > 0;
+
+  // Urval med Cmd/Ctrl+click och Shift+range (useFileSelection)
+  const {
+    selectedIds,
+    selectedItems,
+    selectableItems,
+    isIdSelected,
+    toggleSelection,
+    selectAll,
+    clearSelection,
+    handleRowClick,
+    allSelected,
+    someSelected,
+  } = useFileSelection({
+    items: displayedItems,
+    selectableFilter: (it) => !(it?.type === 'folder' && lockSystemFolder && isSystemFolder(it)),
+  });
+
+  // Toast för flytt-feedback
+  const toastTimeoutRef = useRef(null);
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const showToast = useCallback((message, timeoutMs = 3200) => {
+    try {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+      setToast({ visible: true, message: String(message || '') });
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast({ visible: false, message: '' });
+        toastTimeoutRef.current = null;
+      }, Math.max(800, Number(timeoutMs) || 3200));
+    } catch (_e) {}
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      } catch (_e) {}
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (!hasContext) return;
+    if (!safeText(siteId)) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      if (ensureFolderOnLoad) {
+        await ensureFolderPath(currentPath, cid, siteId, { siteRole: 'projects', strict: true });
+
+        if (ensureSystemFolder && safeText(systemFolderName) && (!systemFolderRootOnly || safeText(relativePath) === '')) {
+          await ensureFolderPath(joinPath(rootPath, systemFolderName), cid, siteId, { siteRole: 'projects', strict: true });
+        }
+      }
+
+      const next = await getSharePointFolderItems(siteId, `/${currentPath}`);
+
+      const folders = (Array.isArray(next) ? next : [])
+        .filter((x) => x?.type === 'folder')
+        .filter((x) => {
+          if (!hiddenFolderKeySet || hiddenFolderKeySet.size === 0) return true;
+          return !hiddenFolderKeySet.has(normalizeKey(x?.name));
+        });
+      const files = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file');
+
+      const systemFolderItems = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => isSystemFolder(f)) : [];
+      const otherFolders = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => !isSystemFolder(f)) : folders;
+
+      otherFolders.sort((a, b) =>
+        safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' })
+      );
+      files.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' }));
+
+      setItems([...otherFolders, ...files, ...systemFolderItems]);
+    } catch (e) {
+      setError(String(e?.message || e || 'Kunde inte läsa filer från SharePoint.'));
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    hasContext,
+    siteId,
+    currentPath,
+    cid,
+    ensureFolderOnLoad,
+    ensureSystemFolder,
+    systemFolderName,
+    systemFolderRootOnly,
+    relativePath,
+    rootPath,
+    pinSystemFolderLast,
+    lockSystemFolder,
+    isSystemFolder,
+    hiddenFolderKeySet,
+  ]);
+
+  // Inline rename (dubbelklick)
+  const existingNamesForRename = useMemo(() => {
+    return new Set((Array.isArray(items) ? items : []).map((it) => safeText(it?.name)).filter(Boolean));
+  }, [items]);
+  const performRenameItem = useCallback(async (item, newName) => {
+    if (!item?.id || !safeText(siteId)) throw new Error('Saknar data.');
+    const isFile = item?.type === 'file';
+    const currentName = safeText(item?.name);
+    const lockedExt = isFile ? fileExtFromName(currentName) : '';
+    const { nextName } = isFile && lockedExt
+      ? buildLockedFileRename({ originalName: currentName, inputBase: newName })
+      : { nextName: safeText(newName) };
+    if (!nextName) throw new Error('Ange ett namn.');
+    if (lockSystemFolder && isSystemFolder(item)) throw new Error('Denna systemmapp kan inte döpas om.');
+    if (nextName === currentName) return;
+    await renameDriveItemById(siteId, item.id, nextName);
+    await refresh();
+    if (typeof onDidMutate === 'function') onDidMutate();
+  }, [siteId, refresh, onDidMutate, lockSystemFolder, isSystemFolder]);
+  const {
+    editingId,
+    editValue,
+    setEditValue,
+    isSaving: renameSaving,
+    error: inlineRenameError,
+    inputRef: inlineRenameInputRef,
+    startEdit,
+    commitEdit,
+    cancelEdit,
+    handleKeyDown: handleInlineRenameKeyDown,
+    isEditing,
+  } = useInlineRename({
+    onRename: performRenameItem,
+    existingNames: existingNamesForRename,
+  });
 
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
@@ -340,6 +568,7 @@ export default function SharePointFolderFileArea({
     tableDragDepthRef.current = 0;
     setIsDraggingSafe(false);
     setActiveDropFolderSafe(null);
+    setDraggingIds([]);
   }, [setIsDraggingSafe, setActiveDropFolderSafe]);
 
   const isTableDragActive = Platform.OS === 'web' && enableWebDnD && isDragging && !safeText(activeDropFolder);
@@ -382,64 +611,6 @@ export default function SharePointFolderFileArea({
     const h = Dimensions.get('window')?.height || 800;
     return Math.max(320, Math.floor(h * 0.8));
   }, []);
-
-  const refresh = useCallback(async () => {
-    if (!hasContext) return;
-    if (!safeText(siteId)) return;
-
-    setLoading(true);
-    setError('');
-
-    try {
-      // Ensure folder exists (strict)
-      await ensureFolderPath(currentPath, cid, siteId, { siteRole: 'projects', strict: true });
-
-      if (ensureSystemFolder && safeText(systemFolderName) && (!systemFolderRootOnly || safeText(relativePath) === '')) {
-        // FFU: ensure system folder exists in the root.
-        await ensureFolderPath(joinPath(rootPath, systemFolderName), cid, siteId, { siteRole: 'projects', strict: true });
-      }
-
-      const next = await getSharePointFolderItems(siteId, `/${currentPath}`);
-
-      const folders = (Array.isArray(next) ? next : [])
-        .filter((x) => x?.type === 'folder')
-        .filter((x) => {
-          if (!hiddenFolderKeySet || hiddenFolderKeySet.size === 0) return true;
-          return !hiddenFolderKeySet.has(normalizeKey(x?.name));
-        });
-      const files = (Array.isArray(next) ? next : []).filter((x) => x?.type === 'file');
-
-      // AI-sammanställning (systemmapp) ska alltid vara längst ner i tabellen.
-      const systemFolderItems = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => isSystemFolder(f)) : [];
-      const otherFolders = (pinSystemFolderLast || lockSystemFolder) ? folders.filter((f) => !isSystemFolder(f)) : folders;
-
-      otherFolders.sort((a, b) =>
-        safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' })
-      );
-      files.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv', { numeric: true, sensitivity: 'base' }));
-
-      setItems([...otherFolders, ...files, ...systemFolderItems]);
-    } catch (e) {
-      setError(String(e?.message || e || 'Kunde inte läsa filer från SharePoint.'));
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    hasContext,
-    siteId,
-    currentPath,
-    cid,
-    ensureSystemFolder,
-    systemFolderName,
-    systemFolderRootOnly,
-    relativePath,
-    rootPath,
-    pinSystemFolderLast,
-    lockSystemFolder,
-    isSystemFolder,
-    hiddenFolderKeySet,
-  ]);
 
   const resolveDropTargetRelativePath = useCallback((dropTarget) => {
     if (dropTarget?.type === 'folder-row') return safeText(dropTarget?.relativePath);
@@ -700,6 +871,16 @@ export default function SharePointFolderFileArea({
   }, [enableWebDnD, resetDragState]);
 
   useEffect(() => {
+    if (!createDropdownOpen || Platform.OS !== 'web') return;
+    const onPointerDown = (e) => {
+      const el = createDropdownRef.current;
+      if (el && !el.contains?.(e.target)) setCreateDropdownOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [createDropdownOpen]);
+
+  useEffect(() => {
     if (!hasContext) {
       setSiteId('');
       setSiteError('');
@@ -756,6 +937,50 @@ export default function SharePointFolderFileArea({
     if (previewItem) return;
     closePreview();
   }, [previewModalOpen, previewItemId, previewItem, closePreview]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handler = (e) => {
+      const tag = String(e?.target?.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e?.target?.isContentEditable)) return;
+      const anyModalOpen = createFolderOpen || createOfficeFileOpen || renameOpen || deleteOpen || moveOpen;
+      if (anyModalOpen) return;
+
+      if (e?.key === 'Escape') {
+        if (previewModalOpen) {
+          e.preventDefault();
+          closePreview();
+        } else if (selectedIds.length > 0) {
+          e.preventDefault();
+          clearSelection();
+        }
+        return;
+      }
+      if (e?.key === 'Delete' || e?.key === 'Backspace') {
+        if (selectedItems.length > 0) {
+          e.preventDefault();
+          setDeleteTargets(selectedItems);
+          setDeleteTarget(null);
+          setDeleteError('');
+          setDeleteOpen(true);
+        }
+      }
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [
+    Platform.OS,
+    createFolderOpen,
+    createOfficeFileOpen,
+    renameOpen,
+    deleteOpen,
+    moveOpen,
+    previewModalOpen,
+    selectedIds.length,
+    selectedItems,
+    clearSelection,
+    closePreview,
+  ]);
 
   const pid = project?.id ?? project?.projectId ?? project?.projectNumber ?? null;
   useEffect(() => {
@@ -1064,6 +1289,8 @@ export default function SharePointFolderFileArea({
         uploadManager.setBatchMessage(batchId, 'Klart');
       }
     } finally {
+      // Kort fördröjning så SharePoint hinner indexera nya filer innan vi hämtar listan.
+      await new Promise((r) => setTimeout(r, 500));
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
@@ -1100,22 +1327,9 @@ export default function SharePointFolderFileArea({
   };
 
   const startMove = (it) => {
-    setMoveError('');
     setMoveTarget(it);
     setMoveTargets(it ? [it] : []);
-    setMoveSelectedPath('');
-    setFolderChildrenByPath({});
-    setFolderExpanded({});
-    setFolderLoading({});
     setMoveOpen(true);
-
-    // Preload root folders in scope
-    (async () => {
-      const scope = safeText(scopeRootPath);
-      if (!scope || !safeText(siteId)) return;
-      await loadFolderChildren(scope);
-      setFolderExpanded((prev) => ({ ...(prev || {}), [scope]: true }));
-    })();
   };
 
   const loadFolderChildren = async (path) => {
@@ -1207,16 +1421,32 @@ export default function SharePointFolderFileArea({
     }
     const destPath = joinPath(rootPath, targetRel);
     if (!destPath) return;
+    const idSet = new Set(ids.map(String));
+    const toMove = (Array.isArray(items) ? items : []).filter((it) => it?.id && idSet.has(String(it.id)));
+    for (const item of toMove) {
+      if (item?.type === 'folder') {
+        const itemPath = joinPath(relativePath, safeText(item?.name));
+        if (!itemPath) continue;
+        if (targetRel === itemPath || (String(targetRel || '').startsWith(itemPath + '/'))) {
+          setError(`Kan inte flytta mappen in i sig själv eller en undermapp.`);
+          return;
+        }
+      }
+    }
     setError('');
     try {
       const destItem = await getDriveItemByPath(siteId, `/${destPath}`);
       const destId = safeText(destItem?.id);
       if (!destId) throw new Error('Kunde inte identifiera målmappen.');
-      const idSet = new Set(ids.map(String));
-      const toMove = (Array.isArray(items) ? items : []).filter((it) => it?.id && idSet.has(String(it.id)));
       for (const item of toMove) {
         await moveDriveItemById(siteId, item.id, destId);
       }
+      const destLabel = targetRel ? targetRel.split('/').pop() || targetRel : 'mappen';
+      const n = toMove.length;
+      showToast(n === 1
+        ? `1 fil flyttades till ${destLabel}`
+        : `${n} filer flyttades till ${destLabel}`);
+      clearSelection();
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
@@ -1224,7 +1454,7 @@ export default function SharePointFolderFileArea({
     } catch (e) {
       setError(String(e?.message || e || 'Kunde inte flytta.'));
     }
-  }, [siteId, rootPath, items, refresh, onDidMutate, lockSystemFolder, systemFolderName]);
+  }, [siteId, rootPath, items, relativePath, refresh, onDidMutate, lockSystemFolder, systemFolderName, showToast, clearSelection]);
 
   useEffect(() => {
     moveItemsToFolderRef.current = moveItemsToFolder;
@@ -1267,9 +1497,9 @@ export default function SharePointFolderFileArea({
       },
       { isSeparator: true, key: 'sep2' },
       {
-        key: 'archive',
-        label: 'Arkivera',
-        iconName: 'archive-outline',
+        key: 'delete',
+        label: 'Radera',
+        iconName: 'trash-outline',
         danger: true,
         disabled: lockedSys || !(isFile || isFolder),
       },
@@ -1310,7 +1540,7 @@ export default function SharePointFolderFileArea({
       return;
     }
 
-    if (key === 'archive') {
+    if (key === 'delete') {
       setDeleteError('');
       setDeleteTarget(it);
       setDeleteTargets([it]);
@@ -1368,16 +1598,16 @@ export default function SharePointFolderFileArea({
   };
 
   const performDelete = async () => {
-    const toArchive = deleteTargets.length > 0 ? deleteTargets : (deleteTarget ? [deleteTarget] : []);
-    if (toArchive.length === 0) return;
+    const toDelete = deleteTargets.length > 0 ? deleteTargets : (deleteTarget ? [deleteTarget] : []);
+    if (toDelete.length === 0) return;
 
-    const lockedFolder = toArchive.find((it) => it?.type === 'folder' && lockSystemFolder && isSystemFolder(it));
+    const lockedFolder = toDelete.find((it) => it?.type === 'folder' && lockSystemFolder && isSystemFolder(it));
     if (lockedFolder) {
-      setDeleteError('En av de valda objekten är en skyddad systemmapp och kan inte arkiveras.');
+      setDeleteError('En av de valda objekten är en skyddad systemmapp och kan inte raderas.');
       return;
     }
     if (isWithinSystemFolder) {
-      setDeleteError('Skyddade filer i systemmappen kan inte arkiveras.');
+      setDeleteError('Skyddade filer i systemmappen kan inte raderas.');
       return;
     }
     if (!safeText(siteId)) {
@@ -1388,14 +1618,7 @@ export default function SharePointFolderFileArea({
     try {
       setDeleteError('');
 
-      const systemSiteId = await getCompanySharePointSiteIdByRole(cid, 'system', { syncIfMissing: true });
-      if (!systemSiteId) {
-        throw new Error('Ingen DK Bas-site hittades för arkivering.');
-      }
-
-      await ensureDkBasStructure(systemSiteId);
-
-      await runWithConcurrency(toArchive, 2, async (it) => {
+      await runWithConcurrency(toDelete, 2, async (it) => {
         if (!it?.id || !safeText(it?.name)) return;
         const kind = it?.type === 'folder' ? 'folder' : 'file';
         const sourcePath = joinPath(currentPath, safeText(it?.name));
@@ -1404,34 +1627,11 @@ export default function SharePointFolderFileArea({
           const rootLower = String(pathParts[0] || '').toLowerCase();
           const blockedRoots = new Set(['projekt', 'mappar', 'arkiv', 'metadata', 'system']);
           if (blockedRoots.has(rootLower)) {
-            throw new Error('Denna systemmapp kan inte arkiveras.');
+            throw new Error('Denna systemmapp kan inte raderas.');
           }
         }
-        const archiveBasePath = kind === 'folder'
-          ? (pathParts.length > 1 ? `Arkiv/Mappar/${pathParts.slice(0, -1).join('/')}` : 'Arkiv/Mappar')
-          : 'Arkiv/Filer';
 
-        console.log('[Archive][File] start', {
-          siteId,
-          path: sourcePath,
-          destSiteId: systemSiteId,
-          destParentPath: archiveBasePath,
-          destName: safeText(it?.name),
-          type: kind,
-        });
-
-        await moveDriveItemAcrossSitesByPath({
-          sourceSiteId: siteId,
-          sourcePath,
-          destSiteId: systemSiteId,
-          destParentPath: archiveBasePath,
-          destName: safeText(it?.name),
-        });
-
-        console.log('[Archive][File] moved', {
-          from: `${siteId}:${sourcePath}`,
-          to: `${systemSiteId}:${archiveBasePath}/${safeText(it?.name)}`,
-        });
+        await deleteDriveItemById(siteId, it.id);
       });
 
       setDeleteOpen(false);
@@ -1443,7 +1643,7 @@ export default function SharePointFolderFileArea({
         if (typeof onDidMutate === 'function') onDidMutate();
       } catch (_e) {}
     } catch (e) {
-      console.error('[Archive][File] error', e?.message || e);
+      console.error('[Delete][File] error', e?.message || e);
       setDeleteError(String(e?.message || e || 'Kunde inte arkivera.'));
     }
   };
@@ -1472,6 +1672,41 @@ export default function SharePointFolderFileArea({
       } catch (_e) {}
     } catch (e) {
       Alert.alert('Fel', String(e?.message || e || 'Kunde inte skapa mapp.'));
+    }
+  };
+
+  const normalizeOfficeFileName = (input, type) => {
+    const ext = type === 'docx' ? '.docx' : '.xlsx';
+    let base = safeText(input).replace(/[/\\]/g, '').trim();
+    if (!base) return type === 'docx' ? 'Dokument.docx' : 'Dokument.xlsx';
+    const hasExt = base.toLowerCase().endsWith(ext);
+    return hasExt ? base : `${base}${ext}`;
+  };
+
+  const performCreateOfficeFile = async (type, fileName) => {
+    setCreateOfficeFileOpen(false);
+    setNewOfficeFileName('');
+    setCreateDropdownOpen(false);
+    if (!hasContext || !safeText(siteId)) return;
+    const finalName = normalizeOfficeFileName(fileName || '', type);
+    const existingNames = new Set((Array.isArray(items) ? items : []).map((it) => safeText(it?.name).toLowerCase()).filter(Boolean));
+    const dedupedName = dedupeFileName(finalName, existingNames);
+    try {
+      if (type === 'docx') {
+        const blob = await createEmptyDocxBlob();
+        const file = new File([blob], dedupedName, { type: blob.type });
+        await uploadEntriesWithPaths([{ file, relativePath: dedupedName }], safeText(relativePath));
+      } else if (type === 'xlsx') {
+        const blob = createEmptyXlsxBlob();
+        const file = new File([blob], dedupedName, { type: blob.type });
+        await uploadEntriesWithPaths([{ file, relativePath: dedupedName }], safeText(relativePath));
+      }
+      await refresh();
+      try {
+        if (typeof onDidMutate === 'function') onDidMutate();
+      } catch (_e) {}
+    } catch (e) {
+      setError(String(e?.message || e || 'Kunde inte skapa fil.'));
     }
   };
 
@@ -1583,7 +1818,7 @@ export default function SharePointFolderFileArea({
         </>
       ) : null}
 
-      <View>
+      <View style={bottomDropZone ? styles.mainColumn : null}>
 
       {siteError && !sharePointNotLinked ? (
         <View style={styles.errorBox}>
@@ -1598,105 +1833,24 @@ export default function SharePointFolderFileArea({
       ) : null}
 
       {Array.isArray(breadcrumbParts) && breadcrumbParts.length > 0 ? (
-        <View style={styles.breadcrumbRow}>
+        <View style={[styles.breadcrumbRow, createDropdownOpen && Platform.OS === 'web' ? styles.breadcrumbRowDropdownOpen : null]}>
           <View style={styles.breadcrumbCrumbs}>
-            {breadcrumbParts.map((part, idx) => {
-              const isLast = idx === breadcrumbParts.length - 1;
-              const isActive = safeText(relativePath) === safeText(part.relativePath);
-              const canNavigate = !isLast || !isActive;
-              const rel = safeText(part.relativePath);
-              const isDragOver = Platform.OS === 'web' && rel === safeText(dragOverBreadcrumbRelPath);
-
-              return (
-                <View key={`${idx}-${part.label}`} style={styles.breadcrumbPart}>
-                  <Pressable
-                    onPress={() => {
-                      if (!canNavigate) return;
-                      if (selectedItemId !== null) setSelectedItemId(null);
-                      setRelativePath(part.relativePath || '');
-                    }}
-                    onDragOver={enableWebDnD ? ((e) => {
-                      try {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      } catch (_e) {}
-                      setDragOverBreadcrumbRelPath(rel);
-                    }) : undefined}
-                    onDragLeave={enableWebDnD ? (() => {
-                      setDragOverBreadcrumbRelPath('');
-                    }) : undefined}
-                    onDrop={enableWebDnD ? ((e) => {
-                      try {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      } catch (_e) {}
-                      setDragOverBreadcrumbRelPath('');
-
-                      (async () => {
-                        try {
-                          const dt = e?.dataTransfer;
-                          const entries = await filesFromDataTransfer(dt);
-                          if (entries.length > 0) {
-                            await uploadEntriesWithPaths(entries, rel);
-                            return;
-                          }
-                          const list = Array.from(dt?.files || []);
-                          if (list.length > 0) {
-                            const fileEntries = list.map((file) => ({ file, relativePath: safeText(file?.name) }));
-                            await uploadEntriesWithPaths(fileEntries, rel);
-                          }
-                        } catch (err) {
-                          setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
-                        }
-                      })();
-                    }) : undefined}
-                    style={({ hovered, pressed }) => ({
-                      paddingVertical: 2,
-                      paddingHorizontal: 4,
-                      borderRadius: 8,
-                      backgroundColor: isDragOver
-                        ? 'rgba(25, 118, 210, 0.14)'
-                        : (hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent'),
-                      ...(Platform.OS === 'web' ? { cursor: canNavigate ? 'pointer' : 'default' } : {}),
-                    })}
-                    {...(Platform.OS === 'web'
-                      ? { title: `Ladda upp till ${safeText(part.label) || 'mapp'}` }
-                      : {})}
-                  >
-                    <Text style={[styles.breadcrumbText, isLast ? styles.breadcrumbTextActive : null]} numberOfLines={1}>
-                      {part.label}
-                    </Text>
-                  </Pressable>
-
-                  {!isLast ? <Text style={styles.breadcrumbSep}>/</Text> : null}
-                </View>
-              );
-            })}
+            <FileExplorerBreadcrumb
+              parts={breadcrumbParts}
+              activePath={relativePath}
+              onNavigate={(path, idx) => {
+                if (typeof onBreadcrumbNavigateToSection === 'function' && idx === 0 && Array.isArray(breadcrumbBaseSegments) && breadcrumbBaseSegments.length > 1) {
+                  onBreadcrumbNavigateToSection();
+                  return;
+                }
+                if (selectedItemId !== null) setSelectedItemId(null);
+                setRelativePath(path || '');
+              }}
+            />
           </View>
 
           {Platform.OS === 'web' ? (
-            <View style={styles.breadcrumbActions}>
-              <Pressable
-                onPress={() => {
-                  setNewFolderName('');
-                  setCreateFolderOpen(true);
-                }}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-                accessibilityRole="button"
-              >
-                <Ionicons name="folder-outline" size={14} color="#1976D2" />
-                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Ny mapp</Text>
-              </Pressable>
-
+            <View ref={createDropdownRef} style={styles.breadcrumbActions}>
               <Pressable
                 onPress={() => {
                   try { fileInputRef.current?.click?.(); } catch (_e) {}
@@ -1704,13 +1858,13 @@ export default function SharePointFolderFileArea({
                 style={({ hovered, pressed }) => ({
                   paddingVertical: 6,
                   paddingHorizontal: 10,
-                  borderRadius: 10,
-                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
+                  borderRadius: 8,
+                  backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
                 accessibilityRole="button"
               >
-                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj filer</Text>
+                <Text style={{ color: '#525252', fontSize: 13, fontWeight: '500' }}>Välj filer</Text>
               </Pressable>
 
               <Pressable
@@ -1720,14 +1874,86 @@ export default function SharePointFolderFileArea({
                 style={({ hovered, pressed }) => ({
                   paddingVertical: 6,
                   paddingHorizontal: 10,
-                  borderRadius: 10,
-                  backgroundColor: hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.08)',
+                  borderRadius: 8,
+                  backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                 })}
                 accessibilityRole="button"
               >
-                <Text style={{ color: '#1976D2', fontSize: 12, fontWeight: '600' }}>Välj mapp</Text>
+                <Text style={{ color: '#525252', fontSize: 13, fontWeight: '500' }}>Välj mapp</Text>
               </Pressable>
+
+              {showCreateFolderButton ? (
+              <View style={{ position: 'relative' }}>
+                <Pressable
+                  onPress={() => setCreateDropdownOpen((v) => !v)}
+                  style={({ hovered, pressed }) => ({
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: hovered || pressed ? '#1a2d42' : (ICON_RAIL.bg || '#0f1b2d'),
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  })}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="add" size={16} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '500' }}>Skapa</Text>
+                  <Ionicons name={createDropdownOpen ? 'chevron-up' : 'chevron-down'} size={12} color="#fff" />
+                </Pressable>
+
+                {createDropdownOpen ? (
+                  <View style={styles.createDropdown} pointerEvents="box-none">
+                    <Pressable
+                      onPress={() => {
+                        setNewFolderName('');
+                        setCreateFolderOpen(true);
+                        setCreateDropdownOpen(false);
+                      }}
+                      style={({ hovered }) => [
+                        styles.createDropdownItem,
+                        hovered && styles.createDropdownItemHover,
+                      ]}
+                    >
+                      <Ionicons name="folder-outline" size={16} color="#525252" />
+                      <Text style={styles.createDropdownItemText}>Ny mapp</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setCreateOfficeFileType('docx');
+                        setNewOfficeFileName('');
+                        setCreateOfficeFileOpen(true);
+                        setCreateDropdownOpen(false);
+                      }}
+                      style={({ hovered }) => [
+                        styles.createDropdownItem,
+                        hovered && styles.createDropdownItemHover,
+                      ]}
+                    >
+                      <Ionicons name="document-text-outline" size={16} color="#525252" />
+                      <Text style={styles.createDropdownItemText}>Word-dokument</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setCreateOfficeFileType('xlsx');
+                        setNewOfficeFileName('');
+                        setCreateOfficeFileOpen(true);
+                        setCreateDropdownOpen(false);
+                      }}
+                      style={({ hovered }) => [
+                        styles.createDropdownItem,
+                        hovered && styles.createDropdownItemHover,
+                      ]}
+                    >
+                      <Ionicons name="grid-outline" size={16} color="#525252" />
+                      <Text style={styles.createDropdownItemText}>Excel-dokument</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -1735,16 +1961,44 @@ export default function SharePointFolderFileArea({
 
       <View style={[styles.splitRow, styles.splitRowSingle]}>
         <View style={[styles.listPane, styles.paneStretch]}>
+          {Array.isArray(items) && items.length > 0 ? (
+            <View style={[styles.searchRow, { marginBottom: 8 }]}>
+              <View style={styles.searchInputWrap}>
+                <Ionicons name="search" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Sök filer och mappar..."
+                  placeholderTextColor="#94A3B8"
+                  style={styles.searchInput}
+                  {...(Platform.OS === 'web' ? { cursor: 'text' } : {})}
+                />
+                {searchQuery ? (
+                  <Pressable
+                    onPress={() => setSearchQuery('')}
+                    style={({ hovered }) => ({
+                      padding: 4,
+                      borderRadius: 6,
+                      backgroundColor: hovered ? 'rgba(0,0,0,0.04)' : 'transparent',
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                    })}
+                    accessibilityLabel="Rensa sökning"
+                  >
+                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
           {someSelected ? (
             <View style={styles.bulkToolbar}>
               <Text style={styles.bulkToolbarText}>
-                {selectedIds.length} {selectedIds.length === 1 ? 'vald' : 'valda'}
+                {selectedIds.length} {selectedIds.length === 1 ? 'objekt markerat' : 'objekt markerade'}
               </Text>
               <Pressable
                 onPress={() => {
                   setMoveTargets(selectedItems);
                   setMoveTarget(null);
-                  setMoveSelectedPath(safeText(scopeRootPath) || '');
                   setMoveOpen(true);
                 }}
                 style={({ hovered, pressed }) => [
@@ -1754,6 +2008,22 @@ export default function SharePointFolderFileArea({
               >
                 <Ionicons name="return-up-forward-outline" size={16} color="#1976D2" />
                 <Text style={styles.bulkToolbarButtonText}>Flytta</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  const files = selectedItems.filter((x) => x?.type === 'file');
+                  files.forEach((f) => {
+                    const url = safeText(f?.downloadUrl || f?.webUrl);
+                    if (url) openUrl(url);
+                  });
+                }}
+                style={({ hovered, pressed }) => [
+                  styles.bulkToolbarButton,
+                  (hovered || pressed) && styles.bulkToolbarButtonHover,
+                ]}
+              >
+                <Ionicons name="download-outline" size={16} color="#1976D2" />
+                <Text style={styles.bulkToolbarButtonText}>Ladda ner</Text>
               </Pressable>
               <Pressable
                 onPress={() => {
@@ -1768,8 +2038,8 @@ export default function SharePointFolderFileArea({
                   (hovered || pressed) && styles.bulkToolbarButtonDangerHover,
                 ]}
               >
-                <Ionicons name="archive-outline" size={16} color="#B91C1C" />
-                <Text style={styles.bulkToolbarButtonTextDanger}>Arkivera</Text>
+                <Ionicons name="trash-outline" size={16} color="#B91C1C" />
+                <Text style={styles.bulkToolbarButtonTextDanger}>Radera</Text>
               </Pressable>
               <Pressable
                 onPress={clearSelection}
@@ -1891,16 +2161,64 @@ export default function SharePointFolderFileArea({
                       </Pressable>
                     ) : null}
                   </View>
-                  <Text style={[styles.th, styles.colName]} numberOfLines={1}>Filnamn</Text>
-                  <Text style={[styles.th, styles.colType]} numberOfLines={1}>Typ</Text>
+                  <View style={[colStyle('name'), styles.colWithResize]}>
+                    <Pressable
+                      onPress={() => toggleSort('name')}
+                      style={({ hovered }) => [styles.sortableHeader, hovered && styles.sortableHeaderHover]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Sortera på filnamn, ${sortBy === 'name' ? (sortDir === 'asc' ? 'stigande' : 'fallande') : 'klicka för att sortera'}`}
+                    >
+                      <Text style={[styles.th]} numberOfLines={1}>Filnamn</Text>
+                      {sortBy === 'name' ? (
+                        <Ionicons name={sortDir === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" style={{ marginLeft: 4 }} />
+                      ) : (
+                        <Ionicons name="swap-vertical-outline" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+                      )}
+                    </Pressable>
+                    <ResizeHandle col="name" />
+                  </View>
+                  <View style={[colStyle('type'), styles.colWithResize]}>
+                    <Pressable
+                      onPress={() => toggleSort('type')}
+                      style={({ hovered }) => [styles.sortableHeader, hovered && styles.sortableHeaderHover]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Sortera på typ, ${sortBy === 'type' ? (sortDir === 'asc' ? 'stigande' : 'fallande') : 'klicka för att sortera'}`}
+                    >
+                      <Text style={[styles.th]} numberOfLines={1}>Typ</Text>
+                      {sortBy === 'type' ? (
+                        <Ionicons name={sortDir === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" style={{ marginLeft: 4 }} />
+                      ) : (
+                        <Ionicons name="swap-vertical-outline" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+                      )}
+                    </Pressable>
+                    <ResizeHandle col="type" />
+                  </View>
                   {!isCompactTable ? (
-                    <Text style={[styles.th, styles.colUploadedBy]} numberOfLines={1}>Uppladdad av</Text>
+                    <View style={[colStyle('uploadedBy'), styles.colWithResize]}>
+                      <Text style={[styles.th]} numberOfLines={1}>Uppladdad av</Text>
+                      <ResizeHandle col="uploadedBy" />
+                    </View>
                   ) : null}
                   {!isCompactTable ? (
                     <Text style={[styles.th, styles.colCreated, { width: COL_DATE_W }]} numberOfLines={1}>Skapad</Text>
                   ) : null}
                   {!isCompactTable ? (
-                    <Text style={[styles.th, styles.colModified, { width: COL_DATE_W }]} numberOfLines={1}>Senast ändrad</Text>
+                    <View style={[colStyle('modified'), styles.colWithResize]}>
+                      <Pressable
+                        onPress={() => toggleSort('modified')}
+                        style={({ hovered }) => [styles.sortableHeader, hovered && styles.sortableHeaderHover]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Sortera på senast ändrad, ${sortBy === 'modified' ? (sortDir === 'asc' ? 'stigande' : 'fallande') : 'klicka för att sortera'}`}
+                      >
+                        <Text style={[styles.th]} numberOfLines={1}>Senast ändrad</Text>
+                        {sortBy === 'modified' ? (
+                          <Ionicons name={sortDir === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" style={{ marginLeft: 4 }} />
+                        ) : (
+                          <Ionicons name="swap-vertical-outline" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+                        )}
+                      </Pressable>
+                      <ResizeHandle col="modified" />
+                    </View>
                   ) : null}
                   <Text style={[styles.th, styles.colMenu, { width: COL_MENU_W }]} numberOfLines={1}>⋮</Text>
                 </View>
@@ -1918,34 +2236,35 @@ export default function SharePointFolderFileArea({
 
                 <ScrollView
                   style={{ flex: 1 }}
-                  contentContainerStyle={{ paddingBottom: 12 }}
+                  contentContainerStyle={[
+                    { paddingBottom: 12 },
+                    !loading && Array.isArray(displayedItems) && displayedItems.length === 0 ? { flexGrow: 1 } : {},
+                  ]}
                   pointerEvents="auto"
                 >
-              {!loading && Array.isArray(items) && items.length === 0 ? (
-                <View style={styles.tableHelpRow} pointerEvents="none">
-                  <View style={[styles.colSelect, { width: COL_SELECT_W }]} />
-                  <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
-                    <Ionicons name="cloud-upload-outline" size={16} color="#94A3B8" />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.tableHelpRowTitle} numberOfLines={1}>Inga filer eller mappar ännu.</Text>
-                      <Text style={styles.tableHelpRowHint} numberOfLines={1}>{dndTipText}</Text>
-                    </View>
+              {!loading && Array.isArray(displayedItems) && displayedItems.length === 0 ? (
+                <View style={styles.emptyStateRow} pointerEvents="none">
+                  <View style={styles.emptyStateContent}>
+                    <Ionicons name={searchQuery ? 'search-outline' : 'folder-open-outline'} size={40} color="#94A3B8" style={{ marginBottom: 12 }} />
+                    <Text style={styles.emptyStateTitle} numberOfLines={1}>
+                      {searchQuery ? 'Inga träffar' : 'Inga filer eller mappar ännu'}
+                    </Text>
+                    <Text style={styles.emptyStateHint} numberOfLines={2}>
+                      {searchQuery
+                        ? 'Prova ett annat sökord eller rensa sökfältet'
+                        : dndTipText}
+                    </Text>
                   </View>
-
-                  <View style={styles.colType} />
-                  {!isCompactTable ? <View style={styles.colUploadedBy} /> : null}
-                  {!isCompactTable ? <View style={[styles.colCreated, { width: COL_DATE_W }]} /> : null}
-                  {!isCompactTable ? <View style={[styles.colModified, { width: COL_DATE_W }]} /> : null}
-                  <View style={[styles.colMenu, { width: COL_MENU_W }]} />
                 </View>
               ) : null}
 
-              {(Array.isArray(items) ? items : []).map((it) => {
+              {(Array.isArray(displayedItems) ? displayedItems : []).map((it, idx) => {
             const name = safeText(it?.name) || (it?.type === 'folder' ? 'Mapp' : 'Fil');
             const isFolder = it?.type === 'folder';
             const isLockedFolder = isFolder && lockSystemFolder && isSystemFolder(it);
             const rowRelPath = isFolder ? joinPath(relativePath, name) : '';
             const isRowDragOver = enableWebDnD && isFolder && !isLockedFolder && safeText(activeDropFolder) === safeText(rowRelPath);
+            const isRowDragging = draggingIds.includes(String(it?.id || ''));
 
             // Row state model:
             // - hover: pointer over row (never persists)
@@ -1967,8 +2286,10 @@ export default function SharePointFolderFileArea({
                     draggable: true,
                     onDragStart: (e) => {
                       try {
-                        e.dataTransfer.setData(DND_MOVE_TYPE, JSON.stringify({ ids: [it.id] }));
+                        const ids = isIdSelected(it.id) ? selectedIds : [it.id];
+                        e.dataTransfer.setData(DND_MOVE_TYPE, JSON.stringify({ ids }));
                         e.dataTransfer.effectAllowed = 'move';
+                        setDraggingIds(ids);
                       } catch (_e) {}
                     },
                   }
@@ -2016,41 +2337,49 @@ export default function SharePointFolderFileArea({
 
                       try {
                         const dt = e?.dataTransfer;
-                        const filesLen = Number(dt?.files?.length || 0);
-                        const itemsLen = Number(dt?.items?.length || 0);
-
-                        // Defensive: nothing to upload -> reset and exit.
-                        if ((!dt || filesLen === 0) && itemsLen === 0) {
+                        if (dt && Array.from(dt.types || []).includes(DND_MOVE_TYPE)) {
+                          resetDragState();
                           return;
                         }
-
+                        const filesLen = Number(dt?.files?.length || 0);
+                        const itemsLen = Number(dt?.items?.length || 0);
+                        if ((!dt || filesLen === 0) && itemsLen === 0) return;
                         handleWebDropToDropTarget(e, { type: 'folder-row', relativePath: rowRelPath });
                       } finally {
-                        // Required: always reset drag state (even on error).
                         resetDragState();
                       }
                     },
                   }
                   : {})}
-                onPress={() => {
-                  if (isFolder) {
-                    if (selectedItemId !== null) setSelectedItemId(null);
-                    closePreview();
-                    openFolder(name);
-                    return;
-                  }
-                  const id = safeText(it?.id) || null;
-                  // Keep a non-visual "focus" id for possible external consumers,
-                  // but do not use it for row marking (selection is checkbox-only).
-                  if (id !== selectedItemId) setSelectedItemId(id);
-                  // Single click on file: open floating preview modal (no side-by-side pane).
-                  if (id) {
-                    setPreviewItemId(id);
-                    setPreviewModalOpen(true);
-                  } else {
-                    openUrl(it?.webUrl);
-                  }
+                onPress={(e) => {
+                  const handled = handleRowClick(it, idx, e, () => {
+                    if (isFolder) {
+                      if (selectedItemId !== null) setSelectedItemId(null);
+                      closePreview();
+                      openFolder(name);
+                      return;
+                    }
+                    const id = safeText(it?.id) || null;
+                    if (id !== selectedItemId) setSelectedItemId(id);
+                    if (id) {
+                      setPreviewItemId(id);
+                      setPreviewModalOpen(true);
+                    } else {
+                      openUrl(it?.webUrl);
+                    }
+                  });
+                  if (handled) return;
                 }}
+                onDoubleClick={Platform.OS === 'web' ? () => {
+                  if (isLockedFolder) return;
+                  const ext = it?.type === 'file' ? fileExtFromName(name) : '';
+                  const initialVal = ext ? splitLockedBaseAndExt(name).base : name;
+                  startEdit(it, initialVal);
+                } : undefined}
+                onContextMenu={Platform.OS === 'web' ? (e) => {
+                  try { e.preventDefault(); } catch (_) {}
+                  if (!isLockedFolder && (isFolder || it?.type === 'file')) openMenuFor(it, e);
+                } : undefined}
                 style={({ hovered, pressed }) => ({
                   position: 'relative',
                   flexDirection: 'row',
@@ -2060,15 +2389,14 @@ export default function SharePointFolderFileArea({
                   paddingHorizontal: 12,
                   borderBottomWidth: 1,
                   borderBottomColor: '#EEF2F7',
+                  opacity: isRowDragging ? 0.8 : 1,
                   ...(isRowDragOver
                     ? {
-                      backgroundColor: '#E3F2FD',
-                      borderLeftWidth: 4,
-                      borderLeftColor: '#1976D2',
+                      backgroundColor: '#E8F4FD',
+                      borderLeftWidth: 2,
+                      borderLeftColor: '#2563EB',
                     }
                     : {
-                      // Visual precedence: active/open > selected > hover.
-                      // (Hover should always work when nothing is active/open.)
                       backgroundColor: isRowActive
                         ? 'rgba(25, 118, 210, 0.12)'
                         : isRowSelected
@@ -2077,9 +2405,14 @@ export default function SharePointFolderFileArea({
                       borderLeftWidth: isRowActive ? 3 : 0,
                       borderLeftColor: isRowActive ? '#1976D2' : 'transparent',
                     }),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  ...(Platform.OS === 'web' ? { cursor: isRowDragging ? 'move' : 'pointer', transition: 'opacity 150ms ease, background-color 150ms ease' } : {}),
                 })}
               >
+                {isRowDragOver && enableWebDnD ? (
+                  <View style={styles.dropHintTooltip} pointerEvents="none">
+                    <Text style={styles.dropHintTooltipText}>Flytta hit</Text>
+                  </View>
+                ) : null}
                 {!isLockedFolder && safeText(it?.id) ? (
                   <Pressable
                     style={[styles.colSelect, styles.colSelectPressable, { width: COL_SELECT_W }]}
@@ -2100,9 +2433,44 @@ export default function SharePointFolderFileArea({
                 ) : (
                   <View style={[styles.colSelect, { width: COL_SELECT_W }]} />
                 )}
-                <View style={[styles.colName, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+                <View style={[colStyle('name'), { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
                   <Ionicons name={typeMeta.icon} size={16} color={isFolder ? '#475569' : '#64748b'} />
-                  <Text style={styles.tdName} numberOfLines={1}>{name}</Text>
+                  {isEditing(it.id) ? (
+                    <View style={styles.inlineRenameWrap}>
+                      {it?.type === 'file' && fileExtFromName(name) ? (
+                        <View style={styles.inlineRenameRow}>
+                          <TextInput
+                            ref={inlineRenameInputRef}
+                            value={editValue}
+                            onChangeText={setEditValue}
+                            onKeyDown={(e) => handleInlineRenameKeyDown(e, it)}
+                            onBlur={() => commitEdit(it)}
+                            style={styles.inlineRenameInput}
+                            placeholderTextColor="#9CA3AF"
+                            selectTextOnFocus
+                            editable={!renameSaving}
+                          />
+                          <Text style={styles.inlineRenameExt} numberOfLines={1}>{`.${fileExtFromName(name)}`}</Text>
+                        </View>
+                      ) : (
+                        <TextInput
+                          ref={inlineRenameInputRef}
+                          value={editValue}
+                          onChangeText={setEditValue}
+                          onKeyDown={(e) => handleInlineRenameKeyDown(e, it)}
+                          onBlur={() => commitEdit(it)}
+                          style={styles.inlineRenameInput}
+                          placeholderTextColor="#9CA3AF"
+                          selectTextOnFocus
+                          editable={!renameSaving}
+                        />
+                      )}
+                      {renameSaving ? <ActivityIndicator size="small" color="#64748b" style={styles.inlineRenameSpinner} /> : null}
+                      {inlineRenameError && isEditing(it.id) ? <Text style={styles.inlineRenameError} numberOfLines={1}>{inlineRenameError}</Text> : null}
+                    </View>
+                  ) : (
+                    <Text style={styles.tdName} numberOfLines={1}>{name}</Text>
+                  )}
                   {isLockedFolder ? (
                     <Ionicons name="lock-closed" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
                   ) : null}
@@ -2129,7 +2497,7 @@ export default function SharePointFolderFileArea({
                   ) : null}
                 </View>
 
-                <View style={[styles.colType, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                <View style={[colStyle('type'), { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
                   <View style={styles.typeBadge}>
                     <Text style={styles.typeBadgeText} numberOfLines={1}>
                       {(isFolder ? 'MAPP' : (typeMeta?.label || (ext ? ext.toUpperCase() : 'FIL'))).toUpperCase()}
@@ -2138,9 +2506,11 @@ export default function SharePointFolderFileArea({
                 </View>
 
                 {!isCompactTable ? (
-                  <Text style={[styles.tdUploader, styles.colUploadedBy]} numberOfLines={1}>
-                    {safeText(it?.createdBy) || '—'}
-                  </Text>
+                  <View style={colStyle('uploadedBy')}>
+                    <Text style={styles.tdUploader} numberOfLines={1}>
+                      {safeText(it?.createdBy) || '—'}
+                    </Text>
+                  </View>
                 ) : null}
 
                 {!isCompactTable ? (
@@ -2150,9 +2520,11 @@ export default function SharePointFolderFileArea({
                 ) : null}
 
                 {!isCompactTable ? (
-                  <Text style={[styles.td, styles.colModified, { width: COL_DATE_W }]} numberOfLines={1}>
-                    {toIsoDateText(it?.lastModified)}
-                  </Text>
+                  <View style={colStyle('modified')}>
+                    <Text style={styles.td} numberOfLines={1}>
+                      {toIsoDateText(it?.lastModified)}
+                    </Text>
+                  </View>
                 ) : null}
 
                 <Pressable
@@ -2180,17 +2552,67 @@ export default function SharePointFolderFileArea({
             </View>
           </View>
 
-          {enableWebDnD ? (
-            <View style={styles.tableDndHintRow} pointerEvents="none">
-              <Ionicons name="cloud-upload-outline" size={18} color="#94A3B8" style={{ marginRight: 8 }} />
-              <Text style={styles.tableDndHintRowText}>Dra och släpp filer eller mappar ovanför</Text>
-            </View>
+
+          {false && bottomDropZone && enableWebDnD ? (
+            <Pressable
+              onPress={() => {
+                try { fileInputRef.current?.click?.(); } catch (_e) {}
+              }}
+              style={[
+                styles.bottomDropZoneInline,
+                Platform.OS === 'web' && isDragging ? styles.bottomDropZoneActive : null,
+              ]}
+              onDragOver={Platform.OS === 'web' ? (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_e) {}
+              } : undefined}
+              onDragEnter={Platform.OS === 'web' ? (e) => {
+                try { e.preventDefault(); } catch (_e) {}
+              } : undefined}
+              onDrop={Platform.OS === 'web' ? (async (e) => {
+                try {
+                  e.preventDefault();
+                  e.stopPropagation();
+                } catch (_e) {}
+                resetDragState();
+                const dt = e?.dataTransfer;
+                if (!dt) return;
+                try {
+                  const entries = await filesFromDataTransfer(dt);
+                  if (entries.length > 0) {
+                    await uploadEntriesWithPaths(entries, safeText(relativePath));
+                    return;
+                  }
+                  const list = Array.from(dt?.files || []);
+                  if (list.length > 0) {
+                    const fileEntries = list.map((file) => ({ file, relativePath: safeText(file?.name) }));
+                    await uploadEntriesWithPaths(fileEntries, safeText(relativePath));
+                  }
+                } catch (err) {
+                  setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
+                }
+              }) : undefined}
+              accessibilityRole="button"
+            >
+              <View style={styles.bottomDropZoneContent}>
+                <Ionicons name="cloud-upload-outline" size={18} color={Platform.OS === 'web' && isDragging ? 'rgba(37, 99, 235, 0.9)' : '#94A3B8'} />
+                <Text style={[styles.bottomDropZoneText, Platform.OS === 'web' && isDragging ? styles.bottomDropZoneTextActive : null]}>
+                  Dra och släpp filer här
+                </Text>
+                <Text style={[styles.bottomDropZoneSubtext, Platform.OS === 'web' && isDragging ? styles.bottomDropZoneTextActive : null]}>
+                  eller klicka för att välja filer
+                </Text>
+              </View>
+            </Pressable>
           ) : null}
 
-          {loading ? (
+          {(loading || (uploadManager?.stats?.activeCount ?? 0) > 0) ? (
             <View style={styles.tableLoadingOverlay} pointerEvents="auto">
               <ActivityIndicator size="large" color="#1976D2" />
-              <Text style={styles.tableLoadingOverlayText}>Laddar…</Text>
+              <Text style={styles.tableLoadingOverlayText}>
+                {(uploadManager?.stats?.activeCount ?? 0) > 0
+                  ? `Laddar upp filer… ${Math.round((uploadManager?.stats?.progress ?? 0) * 100)}%`
+                  : 'Laddar…'}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -2244,40 +2666,75 @@ export default function SharePointFolderFileArea({
         onClose={() => setMenuVisible(false)}
       />
 
-      {/* Create folder modal */}
+      {/* Create folder modal – golden rule */}
       <FileActionModal
         visible={createFolderOpen}
-        title="Ny undermapp"
-        description="Skapar mapp i SharePoint och uppdaterar listan direkt."
-        onClose={() => setCreateFolderOpen(false)}
+        onClose={() => {
+          setCreateFolderOpen(false);
+          setNewFolderName('');
+        }}
+        bannerTitle="Ny undermapp – Skapa mapp i aktuell mapp"
         primaryLabel="Skapa"
+        primaryVariant="dark"
         onPrimary={createFolder}
         primaryDisabled={!safeText(newFolderName)}
       >
-        <TextInput
-          value={newFolderName}
-          onChangeText={setNewFolderName}
-          placeholder="Mappnamn"
-          placeholderTextColor="#9CA3AF"
-          style={styles.input}
-          autoFocus
-          onSubmitEditing={() => {
-            if (safeText(newFolderName)) createFolder();
-          }}
-          returnKeyType="done"
-        />
+        <View style={styles.createFolderModalBody}>
+          <Text style={styles.createFolderModalLabel}>Mappnamn</Text>
+          <TextInput
+            value={newFolderName}
+            onChangeText={setNewFolderName}
+            placeholder="Ange mappnamn"
+            placeholderTextColor="#9CA3AF"
+            style={styles.input}
+            autoFocus
+            onSubmitEditing={() => {
+              if (safeText(newFolderName)) createFolder();
+            }}
+            returnKeyType="done"
+          />
+        </View>
+      </FileActionModal>
+
+      <FileActionModal
+        visible={createOfficeFileOpen}
+        onClose={() => {
+          setCreateOfficeFileOpen(false);
+          setNewOfficeFileName('');
+        }}
+        bannerTitle={createOfficeFileType === 'docx' ? 'Nytt Word-dokument' : 'Nytt Excel-dokument'}
+        bannerSubtitle="Skapa fil i aktuell mapp"
+        primaryLabel="Skapa"
+        primaryVariant="dark"
+        onPrimary={() => performCreateOfficeFile(createOfficeFileType, newOfficeFileName)}
+        primaryDisabled={!safeText(newOfficeFileName)}
+      >
+        <View style={styles.createFolderModalBody}>
+          <Text style={styles.createFolderModalLabel}>Filnamn</Text>
+          <TextInput
+            value={newOfficeFileName}
+            onChangeText={setNewOfficeFileName}
+            placeholder={createOfficeFileType === 'docx' ? 'Ange filnamn (t.ex. Rapport.docx)' : 'Ange filnamn (t.ex. Budget.xlsx)'}
+            placeholderTextColor="#9CA3AF"
+            style={styles.input}
+            autoFocus
+            onSubmitEditing={() => {
+              if (safeText(newOfficeFileName)) performCreateOfficeFile(createOfficeFileType, newOfficeFileName);
+            }}
+            returnKeyType="done"
+          />
+        </View>
       </FileActionModal>
 
       <FileActionModal
         visible={renameOpen}
-        title="Byt namn"
-        description={(() => {
-          if (!renameTarget) return '';
+        bannerTitle={(() => {
+          if (!renameTarget) return 'Byt namn';
           const targetName = safeText(renameTarget?.name) || 'objekt';
           if (renameTarget?.type === 'file' && safeText(renameLockedExt)) {
-            return `Byter namn på "${targetName}". Filändelsen .${safeText(renameLockedExt)} behålls.`;
+            return `Byt namn – Byter namn på "${targetName}" (.${safeText(renameLockedExt)} behålls)`;
           }
-          return `Byter namn på "${targetName}".`;
+          return `Byt namn – Byter namn på "${targetName}"`;
         })()}
         onClose={() => {
           setRenameOpen(false);
@@ -2285,6 +2742,7 @@ export default function SharePointFolderFileArea({
           setRenameError('');
         }}
         primaryLabel="Spara"
+        primaryVariant="dark"
         onPrimary={performRename}
         primaryDisabled={!renameTarget || !safeText(renameValue)}
       >
@@ -2335,13 +2793,12 @@ export default function SharePointFolderFileArea({
 
       <FileActionModal
         visible={deleteOpen}
-        title="Arkivera"
-        description={
+        bannerTitle={
           deleteTargets.length > 1
-            ? `Arkiverar ${deleteTargets.length} objekt till Arkiv.`
+            ? `Radera – ${deleteTargets.length} objekt?`
             : (deleteTargets[0] || deleteTarget)
-              ? `Arkiverar "${safeText((deleteTargets[0] || deleteTarget)?.name) || 'objekt'}" till Arkiv.`
-              : ''
+              ? `Radera – "${safeText((deleteTargets[0] || deleteTarget)?.name) || 'objekt'}"?`
+              : 'Radera'
         }
         onClose={() => {
           setDeleteOpen(false);
@@ -2349,7 +2806,8 @@ export default function SharePointFolderFileArea({
           setDeleteTargets([]);
           setDeleteError('');
         }}
-        primaryLabel="Arkivera"
+        primaryLabel="Radera"
+        primaryVariant="danger"
         onPrimary={performDelete}
         primaryDisabled={deleteTargets.length === 0 && !deleteTarget}
       >
@@ -2358,54 +2816,45 @@ export default function SharePointFolderFileArea({
             <Text style={styles.errorText}>{deleteError}</Text>
           </View>
         ) : (
-          <Text style={{ fontSize: 12, fontWeight: '400', color: '#64748b' }}>
-            Åtgärden flyttar objekten till Arkiv.
+          <Text style={{ fontSize: 13, fontWeight: '400', color: '#64748b', lineHeight: 18 }}>
+            Objekten läggs i papperskorgen i SharePoint. Du kan återställa dem från papperskorgen under en tid om du behöver.
           </Text>
         )}
       </FileActionModal>
 
-      <FileActionModal
+      <MoveFilesModal
         visible={moveOpen}
-        title={moveTargets.length > 1 ? 'Flytta objekt' : 'Flytta fil'}
-        description="Välj en målmapp inom Förfrågningsunderlag."
         onClose={() => {
           setMoveOpen(false);
           setMoveTarget(null);
           setMoveTargets([]);
         }}
-        primaryLabel="Flytta"
-        onPrimary={performMove}
-        primaryDisabled={(!moveTarget && moveTargets.length === 0) || !safeText(moveSelectedPath)}
-        maxHeight={moveModalMaxHeight}
-      >
-        {moveError ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{moveError}</Text>
-          </View>
-        ) : null}
+        companyId={cid}
+        sourceSiteId={siteId}
+        itemsToMove={moveTargets.length > 0 ? moveTargets : (moveTarget ? [moveTarget] : [])}
+        sourceItemPaths={(moveTargets.length > 0 ? moveTargets : (moveTarget ? [moveTarget] : [])).map((it) => ({
+          id: it?.id,
+          path: joinPath(currentPath, safeText(it?.name)),
+        }))}
+        onMoveSuccess={async () => {
+          clearSelection();
+          await refresh();
+          try { if (typeof onDidMutate === 'function') onDidMutate(); } catch (_e) {}
+        }}
+        showToast={showToast}
+      />
 
-        <ScrollView style={{ borderWidth: 1, borderColor: '#E6E8EC', borderRadius: 12, backgroundColor: '#fff', maxHeight: moveModalMaxHeight ? Math.max(200, moveModalMaxHeight - 220) : 360 }} contentContainerStyle={{ padding: 10 }}>
-          {safeText(scopeRootPath) ? (
-            <>
-              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '500', marginBottom: 8 }}>
-                {`Rot: /${safeText(scopeRootPath)}`}
-              </Text>
-              {(Array.isArray(folderChildrenByPath[safeText(scopeRootPath)]) ? folderChildrenByPath[safeText(scopeRootPath)] : []).map((f) =>
-                folderRow(f, 0, safeText(scopeRootPath))
-              )}
-              {Boolean(folderLoading[safeText(scopeRootPath)]) ? (
-                <Text style={{ fontSize: 12, color: '#64748b', paddingVertical: 6 }}>Laddar…</Text>
-              ) : null}
-            </>
-          ) : (
-            <Text style={{ fontSize: 12, color: '#64748b' }}>Saknar scopeRootPath.</Text>
-          )}
-        </ScrollView>
-
-        <Text style={{ marginTop: 12, fontSize: 12, fontWeight: '400', color: '#64748b' }} numberOfLines={2}>
-          {moveSelectedPath ? `Mål: /${moveSelectedPath}` : 'Välj målmapp…'}
-        </Text>
-      </FileActionModal>
+      {toast.visible ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            Platform.OS === 'web' ? { position: 'fixed' } : { position: 'absolute' },
+          ]}
+        >
+          <Text style={styles.toastText}>{toast.message}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -2417,6 +2866,21 @@ const styles = StyleSheet.create({
     minHeight: 0,
     padding: 18,
     backgroundColor: '#fff',
+  },
+  toast: {
+    top: 16,
+    right: 16,
+    zIndex: 2147483647,
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : {}),
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '500',
   },
 
   containerOverBackground: {
@@ -2524,6 +2988,22 @@ const styles = StyleSheet.create({
     color: 'rgba(25, 118, 210, 0.95)',
   },
 
+  dropHintTooltip: {
+    position: 'absolute',
+    right: 12,
+    top: '50%',
+    marginTop: -12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+    zIndex: 3,
+  },
+  dropHintTooltipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#2563EB',
+  },
   folderRowDropHint: {
     position: 'absolute',
     right: 10,
@@ -2597,6 +3077,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 
+  emptyStateRow: {
+    flex: 1,
+    minHeight: 260,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+    backgroundColor: '#fff',
+  },
+
   tableHelpRowTitle: {
     fontSize: 12,
     fontWeight: '500',
@@ -2606,6 +3097,78 @@ const styles = StyleSheet.create({
   tableHelpRowHint: {
     fontSize: 11,
     color: '#94A3B8',
+  },
+
+  emptyStateContent: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+    minHeight: 120,
+  },
+  emptyStateTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  emptyStateHint: {
+    fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+  },
+
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    maxWidth: 320,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    color: '#334155',
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  sortableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  sortableHeaderHover: {
+    ...(Platform.OS === 'web' ? { backgroundColor: 'rgba(0,0,0,0.03)' } : {}),
+  },
+
+  colWithResize: {
+    position: 'relative',
+  },
+  resizeHandle: {
+    ...(Platform.OS === 'web'
+      ? {
+        position: 'absolute',
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 6,
+        cursor: 'col-resize',
+      }
+      : {}),
   },
 
   colSelect: {
@@ -2690,29 +3253,79 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
   },
 
-  tableDndHintRow: {
+  mainColumn: {
+    flex: 1,
+    minHeight: 0,
+  },
+
+  bottomDropZone: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 14,
-    minHeight: 140,
     flexShrink: 0,
-    paddingVertical: 20,
-    paddingHorizontal: 12,
-    marginTop: 6,
+    minHeight: 72,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    marginTop: 12,
+    marginHorizontal: -18,
+    marginBottom: -18,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
     backgroundColor: '#F8FAFC',
     borderStyle: 'dashed',
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    borderRadius: 10,
+    borderRadius: 0,
   },
 
-  tableDndHintRowText: {
+  bottomDropZoneInline: {
+    flexShrink: 0,
+    minHeight: 48,
+    maxHeight: 80,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginHorizontal: 0,
+    marginTop: 0,
+    marginBottom: 0,
+    borderRadius: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s, border-color 0.15s' } : {}),
+  },
+
+  bottomDropZoneContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+
+  bottomDropZoneActive: {
+    backgroundColor: 'rgba(37, 99, 235, 0.06)',
+    borderColor: 'rgba(37, 99, 235, 0.35)',
+  },
+
+  bottomDropZoneText: {
     fontSize: 13,
     fontWeight: '500',
     color: '#64748B',
+  },
+
+  bottomDropZoneSubtext: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#94A3B8',
+  },
+
+  bottomDropZoneTextActive: {
+    color: 'rgba(37, 99, 235, 0.95)',
   },
 
   tableInfoRow: {
@@ -2818,6 +3431,10 @@ const styles = StyleSheet.create({
     gap: 8,
     minWidth: 0,
   },
+  breadcrumbRowDropdownOpen: {
+    position: 'relative',
+    zIndex: 200,
+  },
   breadcrumbCrumbs: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2825,10 +3442,38 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  createDropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    minWidth: 180,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.12)' } : {}),
+    overflow: 'hidden',
+    zIndex: 300,
+  },
+  createDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  createDropdownItemHover: {
+    backgroundColor: 'rgba(0,0,0,0.04)',
+  },
+  createDropdownItemText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#171717',
+  },
   breadcrumbActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
+    marginLeft: 'auto',
   },
   breadcrumbPart: {
     flexDirection: 'row',
@@ -2939,13 +3584,61 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 10,
+    borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
     fontSize: 14,
     color: '#111',
     backgroundColor: '#fff',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+
+  createFolderModalBody: {
+    padding: 20,
+    paddingTop: 16,
+  },
+  createFolderModalLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#334155',
+    marginBottom: 8,
+  },
+
+  inlineRenameWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  inlineRenameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+  },
+  inlineRenameInput: {
+    flex: 1,
+    minWidth: 40,
+    fontSize: 13,
+    color: '#111',
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  inlineRenameExt: {
+    fontSize: 13,
+    color: '#64748b',
+    marginLeft: 2,
+  },
+  inlineRenameSpinner: {
+    position: 'absolute',
+    right: 0,
+    top: 2,
+  },
+  inlineRenameError: {
+    fontSize: 11,
+    color: '#DC2626',
+    marginTop: 2,
   },
 
   renameRow: {

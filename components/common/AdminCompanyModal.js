@@ -410,7 +410,7 @@ const styles = StyleSheet.create({
   saveSuccessText: { fontSize: 16, fontWeight: '600', color: '#fff' },
 });
 
-export default function AdminCompanyModal({ visible, companyId, onClose }) {
+export default function AdminCompanyModal({ visible, companyId, initialTab, onClose }) {
   const cid = String(companyId || '').trim();
   const {
     openKontoplanModal,
@@ -433,7 +433,15 @@ export default function AdminCompanyModal({ visible, companyId, onClose }) {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('oversikt');
+  const initialActiveTab = initialTab && TABS.some((t) => t.key === initialTab) ? initialTab : 'oversikt';
+  const [activeTab, setActiveTab] = useState(initialActiveTab);
+  useEffect(() => {
+    if (visible && initialTab && TABS.some((t) => t.key === initialTab)) {
+      setActiveTab(initialTab);
+    } else if (visible && !initialTab) {
+      setActiveTab('oversikt');
+    }
+  }, [visible, initialTab]);
   const [enabledPhases, setEnabledPhases] = useState([]);
   const [companyNameDraft, setCompanyNameDraft] = useState('');
   const [companyEnabled, setCompanyEnabled] = useState(true);

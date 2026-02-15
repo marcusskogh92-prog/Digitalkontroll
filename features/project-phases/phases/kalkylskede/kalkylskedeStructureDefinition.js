@@ -71,7 +71,8 @@ const SECTION_DEFS = {
   myndigheter: {
     title: 'Myndigheter',
     icon: 'business-outline',
-    items: ['01 - Bygglov', '02 - Tekniskt samråd', '03 - Startbesked', '04 - Kompletteringar', '05 - Slutbesked', '06 - Kommunikation'],
+    // GOLDEN RULE (Myndigheter): no fixed subfolder structure; users manage flikar/folders.
+    items: [],
   },
   'risk-mojligheter': {
     title: 'Risk och möjligheter',
@@ -87,7 +88,8 @@ const SECTION_DEFS = {
   bilder: {
     title: 'Bilder',
     icon: 'images-outline',
-    items: ['01 - Platsbesök', '02 - Befintliga förhållanden', '03 - Referensbilder', '04 - Skador och avvikelser', '05 - Övrigt'],
+    // GOLDEN RULE (Bilder): no fixed subfolder structure; users manage flikar/folders like Förfrågningsunderlag.
+    items: [],
   },
   moten: {
     title: 'Möten',
@@ -97,7 +99,8 @@ const SECTION_DEFS = {
   anbud: {
     title: 'Anbud',
     icon: 'document-outline',
-    items: ['01 - Anbudsdokument', '02 - Bilagor', '03 - Kalkylsammanfattning', '04 - Inlämnat anbud', '05 - Utfall och feedback'],
+    // Bilagor borttagen; flikar använder utforskaren (DigitalkontrollsUtforskare).
+    items: ['01 - Anbudsdokument', '03 - Kalkylsammanfattning', '04 - Inlämnat anbud', '05 - Utfall och feedback'],
   },
 };
 
@@ -206,14 +209,8 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'teknisk-samordning', name: '08 - Teknisk samordning', component: 'TekniskSamordningView', order: 8, enabled: true },
           ];
         } else if (id === 'myndigheter') {
-          section.items = [
-            { id: 'bygglov', name: '01 - Bygglov', component: 'BygglovView', order: 1, enabled: true },
-            { id: 'tekniskt-samrad', name: '02 - Tekniskt samråd', component: 'TeknisktSamradView', order: 2, enabled: true },
-            { id: 'startbesked', name: '03 - Startbesked', component: 'StartbeskedView', order: 3, enabled: true },
-            { id: 'kompletteringar', name: '04 - Kompletteringar', component: 'KompletteringarView', order: 4, enabled: true },
-            { id: 'slutbesked', name: '05 - Slutbesked', component: 'SlutbeskedView', order: 5, enabled: true },
-            { id: 'kommunikation', name: '06 - Kommunikation', component: 'KommunikationView', order: 6, enabled: true },
-          ];
+          // GOLDEN RULE (Myndigheter): no fixed item navigation; browse folders directly, create flikar.
+          section.items = [];
         } else if (id === 'risk-mojligheter') {
           section.items = [
             { id: 'identifierade-risker', name: '01 - Identifierade risker', component: 'IdentifieradeRiskerView', order: 1, enabled: true },
@@ -223,13 +220,8 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'ai-riskanalys', name: '05 - AI-riskanalys', component: 'AIRiskanalysView', order: 5, enabled: true },
           ];
         } else if (id === 'bilder') {
-          section.items = [
-            { id: 'platsbesok', name: '01 - Platsbesök', component: 'PlatsbesokView', order: 1, enabled: true },
-            { id: 'befintliga-forhallanden', name: '02 - Befintliga förhållanden', component: 'BefintligaForhallandenView', order: 2, enabled: true },
-            { id: 'referensbilder', name: '03 - Referensbilder', component: 'ReferensbilderView', order: 3, enabled: true },
-            { id: 'skador-avvikelser', name: '04 - Skador och avvikelser', component: 'SkadorAvvikelserView', order: 4, enabled: true },
-            { id: 'ovrigt-bilder', name: '05 - Övrigt', component: 'OvrigtBilderView', order: 5, enabled: true },
-          ];
+          // GOLDEN RULE (Bilder): no fixed item navigation; browse folders directly, create flikar.
+          section.items = [];
         } else if (id === 'moten') {
           section.items = [
             { id: 'startmote', name: '01 - Startmöte', component: 'StartmoteView', order: 1, enabled: true },
@@ -239,12 +231,12 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'protokoll', name: '05 - Protokoll', component: 'ProtokollView', order: 5, enabled: true },
           ];
         } else if (id === 'anbud') {
+          // Flikar använder DigitalkontrollsUtforskare; rootPath sätts i useMergedSectionItems.
           section.items = [
-            { id: 'anbudsdokument', name: '01 - Anbudsdokument', component: 'AnbudsdokumentView', order: 1, enabled: true },
-            { id: 'bilagor', name: '02 - Bilagor', component: 'BilagorView', order: 2, enabled: true },
-            { id: 'kalkylsammanfattning', name: '03 - Kalkylsammanfattning', component: 'KalkylsammanfattningView', order: 3, enabled: true },
-            { id: 'inlamnat-anbud', name: '04 - Inlämnat anbud', component: 'InlamnatAnbudView', order: 4, enabled: true },
-            { id: 'utfall-feedback', name: '05 - Utfall och feedback', component: 'UtfallFeedbackView', order: 5, enabled: true },
+            { id: 'anbudsdokument', name: '01 - Anbudsdokument', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
+            { id: 'kalkylsammanfattning', name: '03 - Kalkylsammanfattning', component: 'DigitalkontrollsUtforskare', order: 2, enabled: true },
+            { id: 'inlamnat-anbud', name: '04 - Inlämnat anbud', component: 'DigitalkontrollsUtforskare', order: 3, enabled: true },
+            { id: 'utfall-feedback', name: '05 - Utfall och feedback', component: 'DigitalkontrollsUtforskare', order: 4, enabled: true },
           ];
         } else {
           // Fallback to empty

@@ -8,6 +8,7 @@ import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native
 import { subscribeCompanyProjectOrganisation, subscribeCompanyProjects } from '../../../components/firebase';
 import { getPhaseConfig } from '../../../features/projects/constants';
 import DashboardBanner from './DashboardBanner';
+import StageOverviewCards from './StageOverviewCards';
 import { resolveProjectId } from './dashboardUtils';
 
 const DashboardAllProjects = ({
@@ -289,6 +290,21 @@ const DashboardAllProjects = ({
     });
   }, [allProjects, isAdmin, memberProjectsReady, memberProjectIds]);
 
+  const [stageFilter, setStageFilter] = useState(null);
+
+  const visibleProjectsFiltered = useMemo(() => {
+    if (!stageFilter) return visibleProjects;
+    return (visibleProjects || []).filter((p) => {
+      const phase = String(p?.phase || 'kalkylskede').trim().toLowerCase();
+      const key = phase === 'free' ? 'kalkylskede' : phase;
+      return key === stageFilter;
+    });
+  }, [visibleProjects, stageFilter]);
+
+  const handleStageFilter = (key) => {
+    setStageFilter(key);
+  };
+
   const tableHeaderStyle = useMemo(() => ({
     flexDirection: 'row',
     paddingVertical: 12,
@@ -338,6 +354,15 @@ const DashboardAllProjects = ({
 
   return (
     <>
+      {/* 4 skede-boxar högst upp – klick filtrerar projektlistan (visas alltid när data laddat) */}
+      {!membershipLoading && !projectsLoading && (companyProjectsReady || isAdmin) && (
+        <StageOverviewCards
+          projects={visibleProjects}
+          activeStageFilter={stageFilter}
+          onStageFilter={handleStageFilter}
+        />
+      )}
+
       {/* Contextual guidance text */}
       {membershipLoading ? (
         <DashboardBanner
@@ -367,12 +392,19 @@ const DashboardAllProjects = ({
           title="Du har inte blivit tilldelad något projekt än"
           message="Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller."
         />
-      ) : visibleProjects.length === 0 ? (
+      ) : visibleProjectsFiltered.length === 0 && !stageFilter ? (
         <DashboardBanner
           padding={16}
           accentColor="#1976D2"
           title="Inga av dina projekt hittades"
           message="Du är tilldelad projekt, men inga matchade i projektregistret. Kontrollera att projekten finns registrerade och att projektnumret (t.ex. 1010-10) är korrekt."
+        />
+      ) : visibleProjectsFiltered.length === 0 && stageFilter ? (
+        <DashboardBanner
+          padding={16}
+          accentColor="#64748B"
+          title="Inga projekt i detta skede"
+          message="Klicka på en annan skede-box ovanför för att visa projekt, eller klicka på samma box igen för att ta bort filter."
         />
       ) : visibleProjects.length === 1 && projectSummary ? (
         <DashboardBanner padding={12} accentColor="#43A047" title={null} message={null}>
@@ -451,7 +483,13 @@ const DashboardAllProjects = ({
             Kontakta din administratör för att bli tilldelad ett projekt i Organisation och roller.
           </Text>
         </View>
-      ) : visibleProjects.length === 0 ? (
+      ) : visibleProjectsFiltered.length === 0 && stageFilter ? (
+        <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, padding: 24, backgroundColor: '#f8fafc', alignItems: 'center' }}>
+          <Text style={{ color: '#64748b', fontSize: 14, textAlign: 'center' }}>
+            Inga projekt i detta skede. Klicka på en skede-box ovanför för att byta eller ta bort filter.
+          </Text>
+        </View>
+      ) : visibleProjectsFiltered.length === 0 ? (
         <View style={{ 
           borderWidth: 1, 
           borderColor: '#e0e0e0', 
@@ -494,7 +532,7 @@ const DashboardAllProjects = ({
 
           {/* Table Rows */}
           <ScrollView style={{ maxHeight: Platform.OS === 'web' ? 600 : 400 }}>
-            {visibleProjects.map((project, idx) => {
+            {visibleProjectsFiltered.map((project, idx) => {
               const projectPhase = project?.phase || 'kalkylskede';
               const phaseConfig = getPhaseConfig(projectPhase);
               const lastUpdated = project.updatedAt || project.createdAt || null;
@@ -608,7 +646,7 @@ const DashboardAllProjects = ({
                       paddingVertical: 12,
                       paddingLeft: 18,
                       paddingRight: 12,
-                      borderBottomWidth: idx === visibleProjects.length - 1 ? 0 : 1,
+                      borderBottomWidth: idx === visibleProjectsFiltered.length - 1 ? 0 : 1,
                       borderBottomStyle: 'solid',
                       borderBottomColor: '#f0f0f0',
                       backgroundColor: '#fff',
@@ -654,7 +692,7 @@ const DashboardAllProjects = ({
                   }}
                   style={[
                     tableRowStyle,
-                    idx === visibleProjects.length - 1 && { borderBottomWidth: 0 },
+                    idx === visibleProjectsFiltered.length - 1 && { borderBottomWidth: 0 },
                     Platform.OS === 'web' && {
                       ':hover': { backgroundColor: '#E3F2FD' },
                     },

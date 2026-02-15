@@ -5,6 +5,12 @@
 
 import { buildKalkylskedeNavigation, KALKYLSKEDE_STRUCTURE_VERSIONS } from './phases/kalkylskede/kalkylskedeStructureDefinition';
 
+/** Sektioner som kan anpassas (lägg till/ta bort/byta namn/ordna om mappar). Översikt ingår inte. */
+export const SECTIONS_EDITABLE = new Set([
+  'forfragningsunderlag', 'offerter', 'konstruktion-berakningar', 'myndigheter',
+  'risk-mojligheter', 'bilder', 'moten', 'kalkyl', 'anbud',
+]);
+
 // Consolidated structure: use v2 everywhere (single source of truth).
 export const DEFAULT_KALKYLSKEDE_NAVIGATION = buildKalkylskedeNavigation(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
 export const DEFAULT_KALKYLSKEDE_NAVIGATION_V2 = DEFAULT_KALKYLSKEDE_NAVIGATION;

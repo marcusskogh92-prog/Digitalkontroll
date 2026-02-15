@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
 import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile, fetchCompanyProject, fetchCompanySharePointSiteMetas, getCompanySharePointSiteIdByRole, formatSharePointProjectFolderName, hasDuplicateProjectNumber, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, updateSharePointProjectPropertiesFromFirestoreProject, upsertCompanyProject } from '../components/firebase';
+import { seedProjectChecklistFromTemplate } from '../features/checklist/checklistService';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
@@ -276,6 +277,14 @@ export function useCreateSharePointProjectModal({ companyId }) {
         console.warn('[useCreateSharePointProjectModal] Warning ensuring default organisation group:', e?.message || e);
       }
 
+      // Seed checklist from system template when project is in Kalkylskede (Anbud).
+      try {
+        await seedProjectChecklistFromTemplate(companyId, String(projectNumber), 'kalkylskede');
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[useCreateSharePointProjectModal] Warning seeding project checklist:', e?.message || e);
+      }
+
       // Persist metadata for phase/structure so UI can show the correct indicator
       try {
         const phaseKeyForMeta =
@@ -337,6 +346,12 @@ export function useCreateSharePointProjectModal({ companyId }) {
         try {
           if (phaseKey === 'kalkylskede') {
             await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
+            try {
+              await seedProjectChecklistFromTemplate(companyId, String(projectNumber), 'kalkylskede');
+            } catch (checklistErr) {
+              // eslint-disable-next-line no-console
+              console.warn('[useCreateSharePointProjectModal] Background: checklist seed warning', checklistErr?.message || checklistErr);
+            }
             // eslint-disable-next-line no-console
             console.log('[useCreateSharePointProjectModal] Background: kalkylskede structure complete');
             return;

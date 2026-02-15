@@ -66,6 +66,7 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
   const [kategoriSelectionContext, setKategoriSelectionContext] = useState(null);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companyModalCompanyId, setCompanyModalCompanyId] = useState('');
+  const [companyModalInitialTab, setCompanyModalInitialTab] = useState(null);
   const [createCompanyModalOpen, setCreateCompanyModalOpen] = useState(false);
   const selectionSavedListenerRef = useRef(null);
 
@@ -155,14 +156,16 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
     setKategoriSelectionContext(null);
   }, []);
 
-  const openCompanyModal = useCallback((companyId) => {
+  const openCompanyModal = useCallback((companyId, initialTab = null) => {
     setCompanyModalCompanyId(String(companyId || '').trim());
+    setCompanyModalInitialTab(initialTab || null);
     setCompanyModalOpen(true);
   }, []);
 
   const closeCompanyModal = useCallback(() => {
     setCompanyModalOpen(false);
     setCompanyModalCompanyId('');
+    setCompanyModalInitialTab(null);
   }, []);
 
   const openCreateCompanyModal = useCallback(() => {
@@ -261,8 +264,10 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
         onSelectionSaved={notifySelectionSaved}
       />
       <AdminCompanyModal
+        key={companyModalOpen ? `company-${companyModalCompanyId}-${companyModalInitialTab || 'oversikt'}` : 'company-closed'}
         visible={companyModalOpen}
         companyId={companyModalCompanyId}
+        initialTab={companyModalInitialTab}
         onClose={closeCompanyModal}
       />
       <AdminCreateCompanyModal

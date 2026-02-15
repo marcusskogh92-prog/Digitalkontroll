@@ -3883,14 +3883,18 @@ export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null)
       : [KALKYLSKEDE_LOCKED_STRUCTURE_V1, KALKYLSKEDE_LOCKED_STRUCTURE_V2];
 
   const out = [];
+  const sectionsWithLazySubfolders = new Set(['anbud']);
   for (const structure of structures) {
     for (const section of structure) {
       if (!section?.name) continue;
-      out.push(String(section.name));
+      const sectionName = String(section.name);
+      out.push(sectionName);
+      const sectionKey = sectionName.replace(/^\d+\s*[-–—.]\s*/i, '').trim().toLowerCase().replace(/\s+/g, '-');
+      if (sectionsWithLazySubfolders.has(sectionKey)) continue;
       const items = Array.isArray(section.items) ? section.items : [];
       for (const itemName of items) {
         if (!itemName) continue;
-        out.push(`${String(section.name)}/${String(itemName)}`);
+        out.push(`${sectionName}/${String(itemName)}`);
       }
     }
   }

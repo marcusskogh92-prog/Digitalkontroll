@@ -159,7 +159,7 @@ export default function WebMainPane(props) {
       <FFUAISummaryView projectId={selectedProject?.id} companyId={effectiveCompanyId} project={selectedProject} />
     </View>
   ) : selectedProject ? (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, minHeight: 0 }}>
       <ProjectDetails
         route={{
           params: {
@@ -318,7 +318,7 @@ export default function WebMainPane(props) {
             {mainContent}
           </ScrollView>
         ) : (
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
             {mainContent}
           </View>
         )}

@@ -1,30 +1,23 @@
 /**
- * ProjectTopbar - Modern SaaS primary navigation (sections)
- *
- * Horizontal nav bar: no button look, underline for active, sticky.
- * Premium enterprise style; same tone as system dark blue/slate.
+ * ProjectTopbar – Primary navigation (2026 SaaS).
+ * Segmented text nav: no pills/buttons, underline active, sticky with scroll shadow + blur.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { PRIMARY_TOPBAR } from '../../constants/topbarTheme';
+import { useProjectScroll } from '../../contexts/ProjectScrollContext';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
-
-const TOPBAR = {
-  text: '#1e293b',
-  textActive: '#0f172a',
-  textMuted: '#64748b',
-  underline: '#0f172a',
-  activeBgTint: 'rgba(15, 23, 42, 0.05)',
-  hoverBg: 'rgba(15, 23, 42, 0.04)',
-  borderBottom: '#e2e8f0',
-};
 
 function calcSortKey(section) {
   const numOrder = Number(section?.order);
   if (Number.isFinite(numOrder) && numOrder > 0) return numOrder;
   return 10_000;
 }
+
+/** Sektioner markerade som klara under uppbyggnad – radera när alla är klara. */
+const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud'];
 
 function sortSections(sections) {
   return [...(sections || [])].sort((a, b) => {
@@ -37,16 +30,25 @@ function sortSections(sections) {
   });
 }
 
-export default function ProjectTopbar({ sections: sectionsProp, activeSection, onSelectSection }) {
+export default function ProjectTopbar({ sections: sectionsProp, activeSection, onSelectSection, onLayout }) {
   const [hoveredId, setHoveredId] = useState(null);
+  const { scrollY = 0 } = useProjectScroll();
   const sections = sortSections(sectionsProp || []);
 
   if (sections.length === 0) return null;
 
   const isWeb = Platform.OS === 'web';
+  const isScrolled = scrollY > 8;
 
   return (
-    <View style={[styles.wrapper, isWeb && styles.wrapperSticky]}>
+    <View
+      onLayout={onLayout}
+      style={[
+        styles.wrapper,
+        isWeb && styles.wrapperSticky,
+        isWeb && isScrolled && styles.wrapperScrolled,
+      ]}
+    >
       <View style={styles.container}>
         <ScrollView
           horizontal
@@ -63,7 +65,6 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                 key={sectionId}
                 style={[
                   styles.navItem,
-                  isActive && styles.navItemActive,
                   isHovered && !isActive && styles.navItemHover,
                 ]}
                 onPress={() => onSelectSection?.(sectionId)}
@@ -74,7 +75,7 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                   <Ionicons
                     name={section.icon || 'folder-outline'}
                     size={18}
-                    color={isActive ? TOPBAR.textActive : TOPBAR.textMuted}
+                    color={isActive ? PRIMARY_TOPBAR.textActive : PRIMARY_TOPBAR.textInactive}
                     style={styles.icon}
                   />
                   <Text
@@ -86,6 +87,15 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                   >
                     {stripNumberPrefixForDisplay(section?.name ?? '')}
                   </Text>
+                  {COMPLETED_SECTIONS_DEV.includes(sectionId) ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#22c55e"
+                      style={{ marginLeft: 6 }}
+                      accessibilityLabel="Klart"
+                    />
+                  ) : null}
                 </View>
                 {isActive && <View style={styles.underline} />}
               </Pressable>
@@ -99,63 +109,73 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
 
 const styles = StyleSheet.create({
   wrapper: {
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderBottomWidth: 1,
-    borderBottomColor: TOPBAR.borderBottom,
+    borderBottomColor: 'rgba(0,0,0,0.06)',
+    ...(Platform.OS === 'web' ? { transition: 'box-shadow 0.25s ease, background-color 0.25s ease' } : {}),
   },
   wrapperSticky: {
     position: 'sticky',
     top: 0,
-    zIndex: 100,
+    zIndex: PRIMARY_TOPBAR.stickyZIndex,
+  },
+  wrapperScrolled: {
+    ...(Platform.OS === 'web'
+      ? {
+          boxShadow: PRIMARY_TOPBAR.scrollShadow,
+          backgroundColor: PRIMARY_TOPBAR.scrollBg,
+          backdropFilter: `blur(${PRIMARY_TOPBAR.scrollBlur}px)`,
+          WebkitBackdropFilter: `blur(${PRIMARY_TOPBAR.scrollBlur}px)`,
+        }
+      : {}),
   },
   container: {
-    minHeight: 44,
+    minHeight: 52,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
+    paddingVertical: PRIMARY_TOPBAR.paddingVertical,
+    paddingHorizontal: PRIMARY_TOPBAR.paddingHorizontal,
     flexDirection: 'row',
     alignItems: 'stretch',
-    gap: 4,
+    gap: PRIMARY_TOPBAR.itemGap,
   },
   navItem: {
     position: 'relative',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    minHeight: 44,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minHeight: 36,
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-  },
-  navItemActive: {
-    backgroundColor: TOPBAR.activeBgTint,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s ease, color 0.2s ease' } : {}),
   },
   navItemHover: {
-    backgroundColor: TOPBAR.hoverBg,
+    backgroundColor: PRIMARY_TOPBAR.hoverBg,
+    borderRadius: PRIMARY_TOPBAR.hoverBorderRadius,
   },
   itemInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: PRIMARY_TOPBAR.iconTextGap,
   },
   icon: {
     marginRight: 0,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: TOPBAR.textMuted,
+    fontSize: PRIMARY_TOPBAR.fontSize,
+    fontWeight: PRIMARY_TOPBAR.fontWeight,
+    color: PRIMARY_TOPBAR.textInactive,
+    ...(Platform.OS === 'web' ? { letterSpacing: PRIMARY_TOPBAR.letterSpacing } : {}),
   },
   labelActive: {
-    color: TOPBAR.textActive,
-    fontWeight: '600',
+    color: PRIMARY_TOPBAR.textActive,
   },
   underline: {
     position: 'absolute',
-    left: 14,
-    right: 14,
+    left: 10,
+    right: 10,
     bottom: 0,
-    height: 2.5,
-    backgroundColor: TOPBAR.underline,
-    borderRadius: 1,
+    height: PRIMARY_TOPBAR.underlineHeight,
+    backgroundColor: PRIMARY_TOPBAR.underlineColor,
+    borderRadius: PRIMARY_TOPBAR.underlineBorderRadius,
+    ...(Platform.OS === 'web' ? { transition: 'opacity 0.2s ease' } : {}),
   },
 });

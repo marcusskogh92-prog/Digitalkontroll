@@ -18,6 +18,7 @@ import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstan
 import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
 import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
+import ComingSoonPhaseModal from '../components/common/Modals/ComingSoonPhaseModal';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import ManageSharePointNavigation from './ManageSharePointNavigation';
@@ -48,6 +49,7 @@ import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
+import { ProjectScrollContext } from '../contexts/ProjectScrollContext';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 
 // Web-only: lazily resolve ReactDOM.createPortal at runtime so the file
@@ -83,6 +85,7 @@ export default function HomeScreen({ navigation, route }) {
   const [spinSidebarRefresh, setSpinSidebarRefresh] = useState(0);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const [headerHeight, setHeaderHeight] = useState(0);
+  const [projectScrollY, setProjectScrollY] = useState(0);
   const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [userMenuPos, setUserMenuPos] = useState({ x: 20, y: 64 });
   const leftTreeScrollRef = useRef(null);
@@ -361,7 +364,6 @@ export default function HomeScreen({ navigation, route }) {
   }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
 
   const handleAdminItemPress = useCallback(async (item) => {
-    // Markera inte SharePoint Nav som aktiv när vi öppnar modalen (ingen navigering) – då "fastnar" inte highlight.
     if (item.route !== 'ManageSharePointNavigation') {
       setActiveSidePanelItemKey(item.key);
     }
@@ -371,8 +373,11 @@ export default function HomeScreen({ navigation, route }) {
         navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.route === 'ManageControlTypes') {
         navigation.navigate('ManageControlTypes', { companyId: cid });
+      } else if (item.route === 'ManageCompany' && item.focus === 'sharepoint') {
+        // Integrationer → Företagsinställningar med SharePoint-flik direkt öppen
+        if (openCompanyModal && cid) openCompanyModal(cid, 'sharepoint');
+        else navigation.navigate('ManageCompany', { companyId: cid, focus: 'sharepoint' });
       } else if (item.route === 'ManageCompany') {
-        // Superadmin/admin: visa företagslistan utan att förvälja ett företag
         if (isSuperAdminResolved) {
           navigation.navigate('ManageCompany', { showCompanyList: true });
         } else {
@@ -384,7 +389,7 @@ export default function HomeScreen({ navigation, route }) {
         return;
       }
     } catch (_e) {}
-  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved]);
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openCompanyModal]);
 
   const handleSharePointItemPress = useCallback(async (item) => {
     setActiveSidePanelItemKey(item.key);
@@ -1801,35 +1806,11 @@ export default function HomeScreen({ navigation, route }) {
                       setUserMenuVisible(true);
                     } : undefined}
                   />
-                  <Modal
+                  <ComingSoonPhaseModal
                     visible={Boolean(inactivePhaseModal)}
-                    transparent
-                    animationType="fade"
-                    onRequestClose={() => setInactivePhaseModal(null)}
-                  >
-                    <Pressable
-                      style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
-                      onPress={() => setInactivePhaseModal(null)}
-                    >
-                      <Pressable
-                        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, minWidth: 280, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
-                        onPress={(e) => e.stopPropagation()}
-                      >
-                        <Text style={{ fontSize: 18, fontWeight: '600', color: '#1e293b', marginBottom: 8 }}>
-                          {inactivePhaseModal ? getPhaseMeta(inactivePhaseModal).label : ''}
-                        </Text>
-                        <Text style={{ fontSize: 14, color: '#64748b', textAlign: 'center', marginBottom: 20 }}>
-                          Under uppbyggnad
-                        </Text>
-                        <TouchableOpacity
-                          onPress={() => setInactivePhaseModal(null)}
-                          style={{ backgroundColor: '#1976D2', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}
-                        >
-                          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>OK</Text>
-                        </TouchableOpacity>
-                      </Pressable>
-                    </Pressable>
-                  </Modal>
+                    phase={inactivePhaseModal}
+                    onClose={() => setInactivePhaseModal(null)}
+                  />
                   <Modal
                     visible={leaveProjectModalVisible}
                     transparent
@@ -2354,7 +2335,10 @@ export default function HomeScreen({ navigation, route }) {
                   style={{ flex: 1, backgroundColor: 'transparent' }}
                   scrollEnabled={scrollEnabled}
                   contentContainerStyle={{ flexGrow: 1, paddingBottom: DK_MIDDLE_PANE_BOTTOM_GUTTER }}
+                  onScroll={(e) => setProjectScrollY(e?.nativeEvent?.contentOffset?.y ?? 0)}
+                  scrollEventThrottle={16}
                 >
+                <ProjectScrollContext.Provider value={{ scrollY: projectScrollY }}>
         {Platform.OS === 'web' ? (
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <SharePointLeftPanel
@@ -2622,6 +2606,7 @@ export default function HomeScreen({ navigation, route }) {
             searchRotate={searchRotate}
             openSearchModal={openSearchModal}
           />
+                </ProjectScrollContext.Provider>
                 </ScrollView>
               </View>
 

@@ -285,12 +285,24 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Section structure overrides (per-project customizable folders in lower topbar)
+    // Path: foretag/{company}/projects/{projectId}/sectionStructure/{sectionId}
+    match /foretag/{company}/projects/{projectId}/sectionStructure/{sectionId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
     // Project members (optional per-project access; used by file_comments).
     // Collection: foretag/{company}/projects/{projectId}/members/{userId}
     // When present, file_comments allow read/write for these users; otherwise company members only.
     match /foretag/{company}/projects/{projectId}/members/{userId} {
       allow read: if request.auth != null && isCompanyMember(company);
       allow write: if request.auth != null && isCompanyMember(company);
+    }
+
+    // Checklist items (stage-based project checklist, e.g. Anbudsprocess)
+    // Samma åtkomst som filkommentarer: företagsmedlem ELLER projektmedlem ELLER global admin
+    match /foretag/{company}/projects/{projectId}/checklist_items/{itemId} {
+      allow read, write: if isCompanyMember(company) || isGlobalAdmin() || canAccessFileComments(company, projectId);
     }
 
     // File comments (company-scoped, project-specific)

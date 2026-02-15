@@ -2,12 +2,17 @@
  * Generic Phase Layout - Works for all project phases
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import ProjectSubTopbar from '../../../components/common/ProjectSubTopbar';
 import ProjectTopbar from '../../../components/common/ProjectTopbar';
+import DigitalkontrollsUtforskare from '../../../components/common/DigitalkontrollsUtforskare';
+import { CreateFolderModal, DeleteFolderConfirmModal, RenameFolderModal } from '../../../components/common/Modals/SectionFolderModals';
+import { ICON_RAIL } from '../../../constants/iconRailTheme';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
 import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
+import { createSectionFolder, deleteSectionFolder, renameSectionFolder } from '../services/sectionFolderOperations';
+import { useMergedSectionItems } from './hooks/useMergedSectionItems';
 import { usePhaseNavigation } from './hooks/usePhaseNavigation';
 import { useProjectNavigation } from './hooks/useProjectNavigation';
 import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
@@ -15,7 +20,9 @@ import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
 // Import kalkylskede sections (for now, other phases can use these or have their own)
 import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
 import AnteckningarSection from './kalkylskede/sections/anteckningar/AnteckningarSection';
+import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
+import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
@@ -23,6 +30,8 @@ import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
 const SECTION_COMPONENTS = {
   oversikt: OversiktSection,
   forfragningsunderlag: ForfragningsunderlagSection,
+  bilder: BilderSection,
+  myndigheter: MyndigheterSection,
   kalkyl: KalkylSection,
   anteckningar: AnteckningarSection,
   moten: MotenSection,
@@ -102,13 +111,223 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     setActiveItem(sectionId, itemId, meta);
   };
 
-  const { sections: navSections, subMenuItems, activeSectionConfig } = useProjectNavigation(navigation, activeSection);
-  const activeItemConfig = activeSectionConfig && activeItem
-    ? (activeSectionConfig.items || []).find(i => i.id === activeItem) || null
+  const { sections: navSections, subMenuItems: baseSubMenuItems, activeSectionConfig } = useProjectNavigation(navigation, activeSection);
+
+  const projectRootPath = String(
+    project?.rootFolderPath ||
+    project?.rootPath ||
+    project?.sharePointPath ||
+    project?.projectPath ||
+    project?.path ||
+    '',
+  ).replace(/^\/+|\/+$/g, '');
+
+  const { subMenuItems, structure, isEditable, saveItems } = useMergedSectionItems(
+    companyId || project?.companyId,
+    projectId || project?.id,
+    activeSection,
+    baseSubMenuItems,
+    activeSectionConfig,
+    projectRootPath,
+  );
+
+  const [optimisticSubMenuItems, setOptimisticSubMenuItems] = useState(null);
+  const effectiveSubMenuItems = optimisticSubMenuItems ?? subMenuItems;
+
+  // Rensa optimistic när användaren byter sektion så vi inte behåller föråldrad state
+  useEffect(() => {
+    setOptimisticSubMenuItems(null);
+  }, [activeSection]);
+
+  const activeItemConfig = activeItem
+    ? (effectiveSubMenuItems || []).find((i) => i?.id === activeItem) || null
     : null;
 
   const headerSectionLabel = activeSectionConfig ? formatNavLabel(activeSectionConfig.name) : '';
-  const headerItemLabel = activeItemConfig ? formatNavLabel(activeItemConfig.name) : '';
+  const headerItemLabel = activeItemConfig ? formatNavLabel(activeItemConfig.name ?? activeItemConfig.displayName ?? '') : '';
+
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [renameModalItem, setRenameModalItem] = useState(null);
+  const [deleteModalItem, setDeleteModalItem] = useState(null);
+  const [deleteModalHasFiles, setDeleteModalHasFiles] = useState(false);
+  const [folderActionLoading, setFolderActionLoading] = useState(false);
+  const [reorderToast, setReorderToast] = useState({ visible: false, message: '' });
+  const reorderToastTimeoutRef = useRef(null);
+
+  const resolveSiteId = useCallback(async () => {
+    const fromProject = String(project?.sharePointSiteId || project?.siteId || project?.siteID || '').trim();
+    if (fromProject) return fromProject;
+    try {
+      const { getCompanySharePointSiteId } = await import('../../../components/firebase');
+      const id = await getCompanySharePointSiteId(companyId);
+      return String(id || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  }, [companyId, project]);
+
+  const handleCreateFolder = useCallback(async (displayName) => {
+    const cid = companyId || project?.companyId;
+    if (!cid || !projectRootPath || !activeSectionConfig?.name) return;
+    setFolderActionLoading(true);
+    try {
+      const siteId = await resolveSiteId();
+      if (!siteId) throw new Error('SharePoint-site hittades inte');
+      const { sharePointName, displayName: safeDisplay } = await createSectionFolder({
+        siteId,
+        companyId: cid,
+        projectRootPath,
+        sectionFolderName: activeSectionConfig.name,
+        folderDisplayName: displayName,
+      });
+      const customId = `custom-${Date.now()}`;
+      // Använd effectiveSubMenuItems så vi inkluderar tidigare optimistiska mappar (t.ex. första mappen)
+      const existing = effectiveSubMenuItems || [];
+      const nextOrder = Math.max(0, ...existing.map((i) => Number(i?.order) || 0)) + 1;
+      const newItem = {
+        id: customId,
+        sharePointName,
+        displayName: safeDisplay,
+        name: safeDisplay,
+        order: nextOrder,
+        isCustom: true,
+        component: 'DigitalkontrollsUtforskare',
+        rootPath: [projectRootPath, activeSectionConfig.name, sharePointName].filter(Boolean).join('/').replace(/\/+/g, '/'),
+      };
+      setOptimisticSubMenuItems([...existing, newItem]);
+      setCreateModalOpen(false);
+      await saveItems([...existing, newItem]);
+      setFolderActionLoading(false);
+      // Rensa inte optimistic här – Firestore-load kan vara försenad och subMenuItems
+      // har inte nya mappen än. Rensas när användaren byter sektion (useEffect).
+    } catch (e) {
+      console.warn('[PhaseLayout] create folder error:', e);
+      setOptimisticSubMenuItems(null);
+      setFolderActionLoading(false);
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') window.alert(e?.message || 'Kunde inte skapa mappen');
+      else Alert.alert('Fel', e?.message || 'Kunde inte skapa mappen');
+    }
+  }, [companyId, project?.companyId, projectRootPath, activeSectionConfig, effectiveSubMenuItems, saveItems, resolveSiteId]);
+
+  const handleRenameFolder = useCallback(async (newDisplayName) => {
+    const item = renameModalItem;
+    if (!item || !companyId || !projectRootPath || !activeSectionConfig?.name || !item.sharePointName) return;
+    setFolderActionLoading(true);
+    try {
+      const siteId = await resolveSiteId();
+      if (!siteId) throw new Error('SharePoint-site hittades inte');
+      const { sharePointName, displayName } = await renameSectionFolder({
+        siteId,
+        projectRootPath,
+        sectionFolderName: activeSectionConfig.name,
+        currentSharePointName: item.sharePointName,
+        newDisplayName,
+      });
+      const existing = effectiveSubMenuItems || [];
+      const next = existing.map((i) =>
+        i?.id === item.id ? { ...i, sharePointName, displayName, name: displayName } : i,
+      );
+      setOptimisticSubMenuItems(next);
+      await saveItems(next);
+      setRenameModalItem(null);
+    } catch (e) {
+      console.warn('[PhaseLayout] rename folder error:', e);
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') window.alert(e?.message || 'Kunde inte byta namn');
+      else Alert.alert('Fel', e?.message || 'Kunde inte byta namn');
+    } finally {
+      setFolderActionLoading(false);
+    }
+  }, [renameModalItem, companyId, projectRootPath, activeSectionConfig, effectiveSubMenuItems, saveItems, resolveSiteId]);
+
+  const handleDeleteFolder = useCallback(async () => {
+    const item = deleteModalItem;
+    if (!item || !companyId || !projectRootPath || !activeSectionConfig?.name) return;
+    const sharePointName = item?.sharePointName ?? item?.name;
+    setFolderActionLoading(true);
+    try {
+      const siteId = await resolveSiteId();
+      if (!siteId) throw new Error('SharePoint-site hittades inte');
+      if (sharePointName) {
+        await deleteSectionFolder({
+          siteId,
+          projectRootPath,
+          sectionFolderName: activeSectionConfig.name,
+          sharePointName,
+        });
+      }
+      const existing = effectiveSubMenuItems || [];
+      const next = existing.filter((i) => i?.id !== item.id);
+      setOptimisticSubMenuItems(next);
+      const isBaseItem = !item?.isCustom;
+      await saveItems(next, isBaseItem ? { removedBaseIds: [item.id] } : {});
+      setDeleteModalItem(null);
+      if (activeItem === item.id) handleSelectItem(activeSection, null, { activeNode: null });
+    } catch (e) {
+      console.warn('[PhaseLayout] delete folder error:', e);
+      if (Platform.OS === 'web' && typeof window?.alert === 'function') window.alert(e?.message || 'Kunde inte radera mappen');
+      else Alert.alert('Fel', e?.message || 'Kunde inte radera mappen');
+    } finally {
+      setFolderActionLoading(false);
+    }
+  }, [deleteModalItem, companyId, projectRootPath, activeSectionConfig, effectiveSubMenuItems, saveItems, resolveSiteId, activeItem, activeSection, handleSelectItem]);
+
+  const handleRequestDelete = useCallback(async (item) => {
+    if (!item || !companyId || !projectRootPath || !activeSectionConfig?.name) return;
+    const sharePointName = item?.sharePointName ?? item?.name;
+    if (!sharePointName) {
+      setDeleteModalItem(item);
+      setDeleteModalHasFiles(false);
+      return;
+    }
+    setFolderActionLoading(true);
+    try {
+      const siteId = await resolveSiteId();
+      if (!siteId) {
+        setDeleteModalItem(item);
+        setDeleteModalHasFiles(false);
+        setFolderActionLoading(false);
+        return;
+      }
+      const { getSharePointFolderItems } = await import('../../../services/sharepoint/sharePointStructureService');
+      const folderPath = `${projectRootPath}/${activeSectionConfig.name}/${sharePointName}`.replace(/\/+/g, '/');
+      const items = await getSharePointFolderItems(siteId, `/${folderPath}`);
+      const hasFiles = (items || []).some((it) => it?.type === 'file');
+      setDeleteModalItem(item);
+      setDeleteModalHasFiles(hasFiles);
+    } catch (_e) {
+      setDeleteModalItem(item);
+      setDeleteModalHasFiles(false);
+    } finally {
+      setFolderActionLoading(false);
+    }
+  }, [companyId, projectRootPath, activeSectionConfig, resolveSiteId]);
+
+  const handleReorder = useCallback(
+    async (reordered) => {
+      const withOrder = (reordered || []).map((it, idx) => ({ ...it, order: idx }));
+      setOptimisticSubMenuItems(withOrder);
+      setReorderToast({ visible: true, message: 'Uppdaterar ordning…' });
+      try {
+        await saveItems(withOrder);
+        setReorderToast({ visible: true, message: 'Flikordningen uppdaterad' });
+      } catch (e) {
+        setReorderToast({ visible: false, message: '' });
+        return;
+      }
+      if (reorderToastTimeoutRef.current) clearTimeout(reorderToastTimeoutRef.current);
+      reorderToastTimeoutRef.current = setTimeout(() => {
+        setReorderToast({ visible: false, message: '' });
+        reorderToastTimeoutRef.current = null;
+      }, 3000);
+    },
+    [saveItems],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (reorderToastTimeoutRef.current) clearTimeout(reorderToastTimeoutRef.current);
+    };
+  }, []);
 
   // Rapportera header-labels till parent (t.ex. MinimalTopbar) så rubriken kan visas på samma rad som kalender.
   useEffect(() => {
@@ -130,7 +349,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
-  const lockViewportForSection = Platform.OS === 'web' && String(activeSection || '') === 'forfragningsunderlag';
+  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud'].includes(String(activeSection || ''));
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -149,6 +368,23 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       );
     }
 
+    if (activeItemConfig?.component === 'DigitalkontrollsUtforskare' && activeItemConfig?.rootPath) {
+      return (
+        <DigitalkontrollsUtforskare
+            companyId={companyId}
+            project={project}
+            rootPath={activeItemConfig.rootPath}
+            scopeRootPath={activeItemConfig.rootPath}
+            title={stripNumberPrefixForDisplay(activeItemConfig.name ?? activeItemConfig.displayName ?? '')}
+            subtitle="SharePoint (källan till sanning)"
+            breadcrumbBaseSegments={[activeSectionConfig?.name, activeItemConfig.sharePointName].filter(Boolean)}
+            onBreadcrumbNavigateToSection={() => handleSelectItem(activeSection, null)}
+            showCreateFolderButton
+            iconName="folder-outline"
+        />
+      );
+    }
+
     const SectionComponent = SECTION_COMPONENTS[activeSection];
 
     if (!SectionComponent) {
@@ -159,6 +395,14 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       );
     }
 
+    const fromEffective = (effectiveSubMenuItems || [])
+      .filter((i) => i?.isCustom && (i?.sharePointName || i?.name))
+      .map((i) => i.sharePointName || i.name);
+    const fromStructure = (structure?.items || [])
+      .filter((s) => s?.isCustom && (s?.sharePointName || s?.name))
+      .map((s) => s.sharePointName || s.name);
+    const customFolderNames = [...new Set([...fromEffective, ...fromStructure])];
+
     return (
       <SectionComponent
         projectId={projectId}
@@ -166,6 +410,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         project={project}
         activeItem={activeItem}
         activeNode={activeNode}
+        hiddenCustomFolderNames={customFolderNames}
         afRelativePath={afRelativePath}
         setAfRelativePath={setAfRelativePath}
         afSelectedItemId={afSelectedItemId}
@@ -308,6 +553,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
 
   const [spinHome, setSpinHome] = useState(0);
   const [spinRefresh, setSpinRefresh] = useState(0);
+  const [primaryTopbarHeight, setPrimaryTopbarHeight] = useState(52);
 
   return (
     <View style={[styles.container, lockViewportForSection ? styles.lockViewport : null]}>
@@ -334,11 +580,22 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         sections={navSections}
         activeSection={activeSection}
         onSelectSection={handleSelectSection}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (typeof h === 'number' && h > 0) setPrimaryTopbarHeight(h);
+        }}
       />
       <ProjectSubTopbar
-        subMenuItems={subMenuItems}
+        subMenuItems={effectiveSubMenuItems}
         activeItem={activeItem}
         onSelectItem={(itemId) => handleSelectItem(activeSection, itemId, null)}
+        primaryTopbarHeight={primaryTopbarHeight}
+        isEditable={isEditable}
+        sectionDisplayName={stripNumberPrefixForDisplay(activeSectionConfig?.name ?? '')}
+        onRequestCreate={isEditable ? () => setCreateModalOpen(true) : undefined}
+        onRequestRename={isEditable ? setRenameModalItem : undefined}
+        onRequestDelete={isEditable ? handleRequestDelete : undefined}
+        onReorder={isEditable ? handleReorder : undefined}
       />
 
       {/* Main Content Area - Full width layout */}
@@ -362,6 +619,44 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
           <View style={[styles.contentBody, lockViewportForSection ? styles.contentBodyLocked : null]}>{renderContent()}</View>
         </View>
       </View>
+
+      {/* Section folder modals */}
+      <CreateFolderModal
+        visible={createModalOpen}
+        sectionDisplayName={stripNumberPrefixForDisplay(activeSectionConfig?.name ?? '')}
+        onClose={() => setCreateModalOpen(false)}
+        onConfirm={handleCreateFolder}
+        loading={folderActionLoading}
+      />
+      <RenameFolderModal
+        visible={!!renameModalItem}
+        currentDisplayName={renameModalItem ? (renameModalItem.displayName ?? stripNumberPrefixForDisplay(renameModalItem.name ?? '')) : ''}
+        onClose={() => setRenameModalItem(null)}
+        onConfirm={handleRenameFolder}
+        loading={folderActionLoading}
+      />
+      <DeleteFolderConfirmModal
+        visible={!!deleteModalItem}
+        folderDisplayName={deleteModalItem ? (deleteModalItem.displayName ?? stripNumberPrefixForDisplay(deleteModalItem.name ?? '')) : ''}
+        hasFiles={deleteModalHasFiles}
+        onClose={() => setDeleteModalItem(null)}
+        onConfirm={handleDeleteFolder}
+        loading={folderActionLoading}
+      />
+
+      {/* Reorder toast – bottom right, rail-färg, 3s auto-hide */}
+      {reorderToast.visible ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.reorderToast,
+            Platform.OS === 'web' ? { position: 'fixed' } : { position: 'absolute' },
+          ]}
+        >
+          <Text style={styles.reorderToastIcon}>✓</Text>
+          <Text style={styles.reorderToastText}>{reorderToast.message}</Text>
+        </View>
+      ) : null}
 
       {/* Loading overlay - initial load */}
       {loadingPhase && !changingPhase && (
@@ -549,5 +844,38 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#999'
-  }
+  },
+  reorderToast: {
+    bottom: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: ICON_RAIL?.bg ?? '#0f1b2d',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    zIndex: 2147483647,
+    ...(Platform.OS === 'web'
+      ? {
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.15,
+          shadowRadius: 8,
+          elevation: 8,
+        }),
+  },
+  reorderToastIcon: {
+    color: '#4ade80',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  reorderToastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '500',
+  },
 });

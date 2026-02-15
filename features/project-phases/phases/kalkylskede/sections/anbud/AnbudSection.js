@@ -1,17 +1,37 @@
 /**
- * Anbud Section
+ * Anbud Section – utforskare på sektionsrot + flikar (Anbudsdokument, Kalkylsammanfattning, etc.).
+ * När ingen flik är vald: visar utforskaren för Anbud-roten.
+ * När en flik är vald: PhaseLayout visar utforskaren för den undermappen direkt.
  */
 
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import AnbudRootFileListView from './items/AnbudRootFileListView';
 
-export default function AnbudSection({ projectId, companyId, project, activeItem, navigation }) {
+export default function AnbudSection({
+  companyId,
+  project,
+  activeItem,
+  navigation,
+  afRelativePath = '',
+  setAfRelativePath = null,
+  afSelectedItemId = null,
+  setAfSelectedItemId = null,
+  bumpAfMirrorRefreshNonce = null,
+  hiddenCustomFolderNames = [],
+}) {
   return (
     <View style={styles.container}>
-      <Text style={styles.placeholderText}>
-        Anbud kommer att implementeras här
-      </Text>
-      {activeItem && <Text style={styles.itemText}>Aktivt item: {activeItem}</Text>}
+      <AnbudRootFileListView
+        companyId={companyId}
+        project={project}
+        showCreateFolderButton
+        hiddenCustomFolderNames={hiddenCustomFolderNames}
+        anbudRelativePath={afRelativePath}
+        setAnbudRelativePath={setAfRelativePath}
+        anbudSelectedItemId={afSelectedItemId}
+        setAnbudSelectedItemId={setAfSelectedItemId}
+        bumpAnbudMirrorRefreshNonce={bumpAfMirrorRefreshNonce}
+      />
     </View>
   );
 }
@@ -19,17 +39,6 @@ export default function AnbudSection({ projectId, companyId, project, activeItem
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center'
+    minHeight: 0,
   },
-  placeholderText: {
-    fontSize: 16,
-    color: '#999',
-    textAlign: 'center'
-  },
-  itemText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: '#666'
-  }
 });

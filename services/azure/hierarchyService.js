@@ -1127,7 +1127,7 @@ export async function moveDriveItemAcrossSitesByPath({ sourceSiteId, sourcePath,
   if (!srcSite) throw new Error('sourceSiteId is required');
   if (!dstSite) throw new Error('destSiteId is required');
   if (!srcPath) throw new Error('sourcePath is required');
-  if (!dstParentPath) throw new Error('destParentPath is required');
+  // dstParentPath kan vara tom för att flytta till site-roten
 
   const srcItem = await getDriveItemByPath(srcSite, srcPath);
   const srcItemId = String(srcItem?.id || '').trim();
