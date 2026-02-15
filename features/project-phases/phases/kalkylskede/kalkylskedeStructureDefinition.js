@@ -38,14 +38,8 @@ const SECTION_DEFS = {
   kalkyl: {
     title: 'Kalkyl',
     icon: 'calculator-outline',
-    items: [
-      '01 - Kalkylritningar',
-      '02 - Kalkylanteckningar',
-      '03 - Nettokalkyl',
-      '04 - Offertkalkyl',
-      '05 - Omkostnadskalkyl',
-      '06 - Slutsida',
-    ],
+    // 3 undermappar + AI-analys (ingen mapp); AI-analys analyserar underlag + kalkyl.
+    items: ['01 - Kalkylritningar', '02 - Kalkylanteckningar', '03 - Kalkyl'],
   },
   // Inköp & offerter: single SharePoint folder "03 - Inköp och offerter", no fixed subfolders.
   // Structure (byggdelar) is created by user and synced from Firestore; SharePoint follows.
@@ -185,12 +179,10 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
           section.items = [];
         } else if (id === 'kalkyl') {
           section.items = [
-            { id: 'kalkylritningar', name: '01 - Kalkylritningar', component: 'KalkylritningarView', order: 1, enabled: true },
-            { id: 'kalkylanteckningar', name: '02 - Kalkylanteckningar', component: 'KalkylanteckningarView', order: 2, enabled: true },
-            { id: 'nettokalkyl', name: '03 - Nettokalkyl', component: 'NettokalkylView', order: 3, enabled: true },
-            { id: 'offertkalkyl', name: '04 - Offertkalkyl', component: 'OffertkalkylView', order: 4, enabled: true },
-            { id: 'omkostnadskalkyl', name: '05 - Omkostnadskalkyl', component: 'OmkostnadskalkylView', order: 5, enabled: true },
-            { id: 'slutsida', name: '06 - Slutsida', component: 'SlutsidaView', order: 6, enabled: true },
+            { id: 'kalkylritningar', name: '01 - Kalkylritningar', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
+            { id: 'kalkylanteckningar', name: '02 - Kalkylanteckningar', component: 'DigitalkontrollsUtforskare', order: 2, enabled: true },
+            { id: 'kalkyl-samling', name: '03 - Kalkyl', component: 'DigitalkontrollsUtforskare', order: 3, enabled: true },
+            { id: 'ai-kalkyl-analys', name: '04 - AI-analys', component: 'AIKalkylAnalysView', order: 4, enabled: true },
           ];
         } else if (id === 'offerter') {
           // Inköp & offerter: single table/data view (Förfrågningar), no folder sub-nav in SharePoint.

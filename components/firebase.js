@@ -216,6 +216,21 @@ export function subscribeLatestProjectFFUAnalysis(companyId, projectId, { onNext
   };
 }
 
+function getLatestKalkylAnalysisDocRef(companyId, projectId) {
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid) throw new Error('Kalkyl analysis: companyId is required');
+  if (!pid) throw new Error('Kalkyl analysis: projectId is required');
+  return doc(db, 'companies', cid, 'projects', pid, 'ai_kalkyl_analysis', 'latest');
+}
+
+export function subscribeLatestProjectKalkylAnalysis(companyId, projectId, { onNext, onError } = {}) {
+  const ref = getLatestKalkylAnalysisDocRef(companyId, projectId);
+  return onSnapshot(ref, (snap) => {
+    onNext?.(snap.exists() ? snap.data() || {} : null, snap);
+  }, (err) => onError?.(err));
+}
+
 export async function fetchLatestProjectFFUAnalysis(companyId, projectId) {
   const { canonical, legacy } = getLatestFFUAnalysisDocRefs(companyId, projectId);
   const snap = await getDoc(canonical);
@@ -3873,7 +3888,8 @@ export async function getSharePointNavigationConfig(companyIdOverride) {
 const KALKYLSKEDE_LOCKED_STRUCTURE_V1 = buildKalkylskedeLockedStructure(KALKYLSKEDE_STRUCTURE_VERSIONS.V1);
 const KALKYLSKEDE_LOCKED_STRUCTURE_V2 = buildKalkylskedeLockedStructure(KALKYLSKEDE_STRUCTURE_VERSIONS.V2);
 
-export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null) {
+export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null, options = {}) {
+  const forLockCheck = options.forLockCheck === true;
   const v = String(structureVersion || '').trim().toLowerCase();
   const structures =
     v === String(KALKYLSKEDE_STRUCTURE_VERSIONS.V2)
@@ -3884,6 +3900,7 @@ export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null)
 
   const out = [];
   const sectionsWithLazySubfolders = new Set(['anbud']);
+  const sectionsWithDeletableSubfolders = new Set(['kalkyl']);
   for (const structure of structures) {
     for (const section of structure) {
       if (!section?.name) continue;
@@ -3891,6 +3908,7 @@ export function getKalkylskedeLockedRelativeFolderPaths(structureVersion = null)
       out.push(sectionName);
       const sectionKey = sectionName.replace(/^\d+\s*[-–—.]\s*/i, '').trim().toLowerCase().replace(/\s+/g, '-');
       if (sectionsWithLazySubfolders.has(sectionKey)) continue;
+      if (forLockCheck && sectionsWithDeletableSubfolders.has(sectionKey)) continue;
       const items = Array.isArray(section.items) ? section.items : [];
       for (const itemName of items) {
         if (!itemName) continue;
@@ -3942,7 +3960,7 @@ export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemP
   const rel = path.slice(root.length + 1); // remove root + '/'
   if (!rel) return true;
 
-  const lockedRel = getKalkylskedeLockedRelativeFolderPaths(structureVersion);
+  const lockedRel = getKalkylskedeLockedRelativeFolderPaths(structureVersion, { forLockCheck: true });
   return lockedRel.includes(rel);
 }
 

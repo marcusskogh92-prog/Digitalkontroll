@@ -23,6 +23,7 @@ import AnteckningarSection from './kalkylskede/sections/anteckningar/Anteckninga
 import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
 import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
+import AIKalkylAnalysView from '../../../Screens/AIKalkylAnalysView';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
@@ -349,7 +350,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
-  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud'].includes(String(activeSection || ''));
+  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud', 'kalkyl'].includes(String(activeSection || ''));
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -365,6 +366,16 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>Välj en sektion för att börja</Text>
         </View>
+      );
+    }
+
+    if (activeItemConfig?.component === 'AIKalkylAnalysView') {
+      return (
+        <AIKalkylAnalysView
+          companyId={companyId}
+          projectId={projectId}
+          project={project}
+        />
       );
     }
 

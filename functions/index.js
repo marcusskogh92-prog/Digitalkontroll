@@ -819,12 +819,15 @@ function truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars) {
     const remaining = maxChars - used;
     const sliced = text.length > remaining ? text.slice(0, remaining) : text;
     used += sliced.length;
-    out.push({
+    const entry = {
       id: f?.id != null ? String(f.id) : '',
       name: f?.name != null ? String(f.name) : '',
       type: f?.type != null ? String(f.type) : '',
       extractedText: sliced,
-    });
+    };
+    if (f?.sourcePath != null) entry.sourcePath = String(f.sourcePath);
+    if (f?.path != null) entry.path = String(f.path);
+    out.push(entry);
   }
 
   const originalTotal = input.reduce((sum, f) => sum + String(f?.extractedText || '').length, 0);
@@ -1243,6 +1246,236 @@ exports.analyzeFFUFromFiles = functions
   console.log('[FFU] Analysis saved', { companyId, projectId, status });
   return saved;
 });
+
+// --- AI: Kalkyl analysis from SharePoint ---
+// Lists and extracts from: FFU, Inköp/offerter, Risk, Möten, Kalkyl (all subfolders).
+// Verifies that fliken "Kalkyl" (03 - Kalkyl) contains everything expected.
+const KALKYL_ANALYSIS_FOLDERS_V2 = [
+  '02 - Förfrågningsunderlag',
+  '03 - Inköp och offerter',
+  '06 - Risk och möjligheter',
+  '08 - Möten',
+  '09 - Kalkyl',
+];
+
+function buildKalkylAnalysisPrompt(files) {
+  const grouped = (files || []).reduce((acc, f) => {
+    const path = String(f.sourcePath || f.path || '').trim();
+    const folder = path ? path.split('/').pop() || 'överig' : 'överig';
+    if (!acc[folder]) acc[folder] = [];
+    acc[folder].push({
+      name: f.name || '',
+      path: path,
+      extractedText: String(f.extractedText || '').slice(0, 15000),
+    });
+    return acc;
+  }, {});
+
+  const blocks = Object.entries(grouped).map(([folder, items]) => {
+    const texts = items.map((i) => `[Fil: ${i.name}] (${i.path})\n${i.extractedText}`).join('\n\n---\n\n');
+    return `## ${folder}\n${texts}`;
+  });
+
+  const userContent = blocks.length > 0 ? blocks.join('\n\n') : '(Inget extraherat innehåll)';
+
+  const system = `Du är en expert på kalkylhantering i byggprojekt. Din uppgift är att analysera projektets underlag och kalkyl.
+
+Du får dokument från följande SharePoint-sektioner:
+- 02 - Förfrågningsunderlag (inkl. alla undermappar)
+- 03 - Inköp och offerter (inkl. alla undermappar)
+- 06 - Risk och möjligheter (inkl. alla undermappar)
+- 08 - Möten (inkl. alla undermappar)
+- 09 - Kalkyl (inkl. Kalkylritningar, Kalkylanteckningar, Kalkyl)
+
+Analysera:
+1. Vad som framgår av förfrågningsunderlaget (krav, specifikationer, upphandlingsvillkor).
+2. Inköp och offerter – vilka offerter finns, vilka belopp, leverantörer.
+3. Risk och möjligheter – identifierade risker, möjligheter, åtgärder.
+4. Möten – relevanta beslut, anteckningar som påverkar kalkylen.
+5. Kalkyl – innehållet i Kalkylritningar, Kalkylanteckningar och särskilt fliken "03 - Kalkyl".
+
+Verifiera att fliken "03 - Kalkyl" (eller motsvarande Kalkyl-mapp) innehåller allt som bör ligga i en komplett kalkyl:
+- Nettokalkyl (byggkostnader)
+- Offertepris/kostnadsöversikt
+- Omkostnader (t.ex. projekthantering, kontroll, säkerhet)
+- Slutsida/sammanfattning
+- Eventuella justeringar, risk- eller möjlighetsbelopp
+
+Svara ENDAST med ett giltigt JSON-objekt (inga markdown-filer, inga \`\`\`). Format:
+{
+  "summary": "Kort sammanfattning av analysen på 2–4 meningar.",
+  "gaps": ["Saknas: X", "Saknas: Y"],
+  "recommendations": ["Rekommendation 1", "Rekommendation 2"],
+  "completenessNote": "Beskrivning av om fliken Kalkyl verkar komplett eller vilka delar som fattas.",
+  "sectionsAnalyzed": "Förfrågningsunderlag, Inköp och offerter, Risk och möjligheter, Möten, Kalkyl (Kalkylritningar, Kalkylanteckningar, Kalkyl)"
+}`;
+
+  const user = `Analysera följande projektunderlag och ge analysen i det begärda JSON-formatet:\n\n${userContent}`;
+  return { system, user };
+}
+
+function normalizeKalkylAnalysisResult(parsed) {
+  const p = parsed && typeof parsed === 'object' ? parsed : {};
+  return {
+    summary: typeof p.summary === 'string' ? p.summary : '',
+    gaps: Array.isArray(p.gaps) ? p.gaps.map((g) => String(g || '').trim()).filter(Boolean) : [],
+    recommendations: Array.isArray(p.recommendations) ? p.recommendations.map((r) => String(r || '').trim()).filter(Boolean) : [],
+    completenessNote: typeof p.completenessNote === 'string' ? p.completenessNote : '',
+    sectionsAnalyzed: typeof p.sectionsAnalyzed === 'string' ? p.sectionsAnalyzed : '',
+  };
+}
+
+exports.analyzeKalkylFromSharePoint = functions
+  .runWith({
+    timeoutSeconds: 540,
+    memory: '2GB',
+  })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+    const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+    if (!companyId || !projectId) {
+      throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+    }
+
+    assertAnalyzeFFUPermission({ companyId, context });
+
+    const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+    try {
+      await canonicalRef.set({ status: 'analyzing', analyzingAt: FieldValue.serverTimestamp() }, { merge: true });
+    } catch (e) {
+      console.warn('[Kalkyl AI] Failed to set analyzing status', String(e && e.message ? e.message : e));
+    }
+
+    const seed = await ensureCompany5555SharePointSeedIfMissing(companyId);
+    if (!seed.ok) {
+      throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
+    }
+
+    let accessToken;
+    try {
+      accessToken = await getSharePointGraphAccessToken();
+    } catch (e) {
+      throw new functions.https.HttpsError('failed-precondition', `SharePoint Graph access token not configured: ${String(e && e.message ? e.message : e)}`);
+    }
+
+    const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
+    }
+
+    const basePath = await getProjectSharePointBasePath({ companyId, projectId });
+    if (!basePath) {
+      throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
+    }
+
+    const maxFilesPerFolder = Number(process.env.KALKYL_AI_MAX_FILES_PER_FOLDER || 15);
+    const maxDepth = Number(process.env.KALKYL_AI_MAX_DEPTH || 8);
+    const seenIds = new Set();
+    const allSpFiles = [];
+
+    for (const folder of KALKYL_ANALYSIS_FOLDERS_V2) {
+      const rootPath = `${basePath}/${folder}`.replace(/^\/+/, '').replace(/\/+/g, '/');
+      const files = await graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth, maxFiles: maxFilesPerFolder });
+      for (const f of files || []) {
+        if (f && f.id && !seenIds.has(f.id)) {
+          seenIds.add(f.id);
+          allSpFiles.push({ ...f, sourcePath: rootPath });
+        }
+      }
+    }
+
+    if (allSpFiles.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'Inga filer hittades i de konfigurerade mapparna (Förfrågningsunderlag, Inköp och offerter, Risk och möjligheter, Möten, Kalkyl).');
+    }
+
+    const minChars = Number(process.env.FFU_EXTRACT_MIN_CHARS || 30);
+    const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
+    const extractedFiles = [];
+
+    for (let i = 0; i < allSpFiles.length; i += 1) {
+      const f = allSpFiles[i] || {};
+      const name = String(f.name || '').trim();
+      const mimeType = guessMimeTypeFromName(name);
+      if (!mimeType) continue;
+      try {
+        const { buffer } = await graphDownloadItemAsBuffer({ siteId, itemId: f.id, accessToken, maxBytes });
+        const { text } = await extractTextByMimeType({ mimeType, buffer });
+        if (!text || String(text).trim().length < minChars) continue;
+        extractedFiles.push({
+          id: `sp-${String(f.id).slice(0, 16)}`,
+          name,
+          sourcePath: f.sourcePath || f.path || '',
+          extractedText: text,
+        });
+      } catch (e) {
+        console.warn('[Kalkyl AI] Failed to extract file', { index: i, name, message: String(e && e.message ? e.message : e) });
+      }
+    }
+
+    if (extractedFiles.length === 0) {
+      throw new functions.https.HttpsError('failed-precondition', 'Ingen text kunde extraheras från filerna. Kontrollera att det finns PDF, Word eller Excel-filer med läsbart innehåll.');
+    }
+
+    const totalChars = extractedFiles.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
+    const maxTotalChars = Number(process.env.FFU_MAX_TOTAL_CHARS || 120_000);
+    const trunc = truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars);
+    const status = trunc.truncated ? 'partial' : 'success';
+    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+
+    const { system, user } = buildKalkylAnalysisPrompt(trunc.files);
+    const apiKey = getOpenAIKey();
+    if (!apiKey) {
+      const fallback = {
+        status: 'error',
+        summary: '',
+        gaps: [],
+        recommendations: [],
+        completenessNote: 'AI-analys är inte konfigurerad (saknar API-nyckel).',
+        sectionsAnalyzed: '',
+        meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+        model: '',
+        analyzedAt: FieldValue.serverTimestamp(),
+      };
+      await canonicalRef.set(fallback, { merge: true });
+      return fallback;
+    }
+
+    let analysis;
+    try {
+      const output = await callOpenAIForFFUAnalysis({ apiKey, system, user });
+      const parsed = JSON.parse(output);
+      analysis = normalizeKalkylAnalysisResult(parsed);
+    } catch (e) {
+      console.error('[Kalkyl AI] OpenAI failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+      const fallback = {
+        status: 'error',
+        summary: '',
+        gaps: [],
+        recommendations: [],
+        completenessNote: 'Kunde inte generera analys. Försök igen eller kontrollera underlaget.',
+        sectionsAnalyzed: '',
+        meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+        model,
+        analyzedAt: FieldValue.serverTimestamp(),
+      };
+      await canonicalRef.set(fallback, { merge: true });
+      return fallback;
+    }
+
+    const doc = {
+      status,
+      ...analysis,
+      meta: { totalChars, filesUsed: trunc.filesUsed, truncated: trunc.truncated },
+      model,
+      analyzedAt: FieldValue.serverTimestamp(),
+    };
+    await canonicalRef.set(doc, { merge: true });
+    return doc;
+  });
 
 function encodeGraphPath(path) {
   const clean = String(path || '')
