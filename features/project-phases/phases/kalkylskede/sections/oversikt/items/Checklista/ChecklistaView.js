@@ -5,25 +5,27 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  LayoutAnimation,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    LayoutAnimation,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from 'react-native';
-import { fetchCompanyMembers } from '../../../../../../../../components/firebase';
 import IsoDatePickerModal from '../../../../../../../../components/common/Modals/IsoDatePickerModal';
+import { fetchCompanyMembers } from '../../../../../../../../components/firebase';
+import { ICON_RAIL } from '../../../../../../../../constants/iconRailTheme';
+import { useChecklistEdit } from '../../../../../../../../contexts/ChecklistEditContext';
 import { useProjectChecklist } from '../../../../../../../../hooks/useProjectChecklist';
 import { DEFAULT_CHECKLIST_STATUS } from '../../../../../../../../lib/defaultChecklistTemplate';
-import { ICON_RAIL } from '../../../../../../../../constants/iconRailTheme';
 
 const STATUS_LABELS = {
   pending: 'Ej utfört',
@@ -41,8 +43,8 @@ function normalizeStatus(s) {
 const RADIUS = 12;
 const CARD_RADIUS = 12;
 
-// Grid columns: 1.5fr 120px 160px 40px 120px (Titel | Datum | Ansvariga | Kommentar | Status)
-const GRID_COLUMNS = '1.5fr 120px 160px 40px 120px';
+// Premium table columns (web grid): Titel | Obl | Datum | Ansvariga | Kommentar | Status
+const GRID_COLUMNS = '1.35fr 48px 130px 180px 1fr 140px';
 const ROW_HEIGHT = 46;
 const SHADOW = Platform.select({
   web: { boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)' },
@@ -98,13 +100,18 @@ function GridColumnHeader() {
       <View style={styles.gridHeaderCellTitle}>
         <Text style={styles.gridHeaderText}>TITEL</Text>
       </View>
+      <View style={styles.gridHeaderCellObl}>
+        <Text style={styles.gridHeaderText}>OBL</Text>
+      </View>
       <View style={styles.gridHeaderCellDate}>
         <Text style={styles.gridHeaderText}>DATUM</Text>
       </View>
       <View style={styles.gridHeaderCellResponsible}>
         <Text style={styles.gridHeaderText}>ANSVARIGA</Text>
       </View>
-      <View style={styles.gridHeaderCellComment} />
+      <View style={styles.gridHeaderCellComment}>
+        <Text style={styles.gridHeaderText}>KOMMENTAR</Text>
+      </View>
       <View style={styles.gridHeaderCellStatus}>
         <Text style={[styles.gridHeaderText, styles.gridHeaderStatus]}>STATUS</Text>
       </View>
@@ -337,10 +344,13 @@ function ResponsiblePicker({ companyId, value, onChange }) {
   );
 }
 
-function CommentBlock({ companyId, value, onChange, onBlur }) {
+function CommentBlock({ companyId, value, onChange, onBlur, onSubmit, singleLine = false }) {
   const [members, setMembers] = useState([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const atPositionRef = useRef(0);
+  const inputRef = useRef(null);
+  const [mentionAnchor, setMentionAnchor] = useState(null);
+  const MENTION_MAX_HEIGHT = 220;
 
   useEffect(() => {
     if (!companyId) return;
@@ -373,6 +383,38 @@ function CommentBlock({ companyId, value, onChange, onBlur }) {
     setMentionOpen(false);
   };
 
+  const closeMentions = () => setMentionOpen(false);
+
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const node = inputRef.current;
+    if (!node?.measureInWindow) return;
+
+    const raf = requestAnimationFrame(() => {
+      try {
+        node.measureInWindow((x, y, width, height) => {
+          const win = Dimensions.get('window');
+          const safePad = 12;
+
+          const dropdownWidth = Math.min(Math.max(240, width || 320), 520);
+          let left = Number(x) || safePad;
+          if (left + dropdownWidth > win.width - safePad) left = Math.max(safePad, win.width - safePad - dropdownWidth);
+
+          const belowTop = (Number(y) || 0) + (Number(height) || 32) + 6;
+          const aboveTop = (Number(y) || 0) - MENTION_MAX_HEIGHT - 6;
+          const openUp = belowTop + MENTION_MAX_HEIGHT > win.height - safePad && aboveTop >= safePad;
+          const top = openUp ? aboveTop : belowTop;
+
+          setMentionAnchor({ left, top, width: dropdownWidth });
+        });
+      } catch (_) {
+        // ignore
+      }
+    });
+
+    return () => cancelAnimationFrame(raf);
+  }, [mentionOpen, value, singleLine]);
+
   const mentionMatches = useMemo(() => {
     if (!mentionOpen || !value) return members;
     const afterAt = (value.slice(atPositionRef.current + 1) || '').trim().toLowerCase();
@@ -392,34 +434,103 @@ function CommentBlock({ companyId, value, onChange, onBlur }) {
     return [...new Set(list)];
   }, [value]);
 
+  const mentionVisible = mentionOpen && mentionMatches.length > 0;
+
   return (
     <View style={styles.itemRowCommentBlock}>
       <TextInput
-        style={styles.itemRowCommentInput}
-        value={value}
+        ref={inputRef}
+        style={[styles.itemRowCommentInput, singleLine && styles.itemRowCommentInputSingle]}
+        value={value == null ? '' : String(value)}
         onChangeText={handleChange}
-        onBlur={onBlur}
+        onBlur={() => {
+          closeMentions();
+          onBlur?.();
+        }}
         placeholder="Kommentar... Skriv @ för att nämna någon"
         placeholderTextColor="#94a3b8"
-        multiline
+        multiline={!singleLine}
+        numberOfLines={singleLine ? 1 : undefined}
+        blurOnSubmit={!!singleLine}
+        onSubmitEditing={() => {
+          if (!singleLine) return;
+          closeMentions();
+          onSubmit?.();
+        }}
+        {...(Platform.OS === 'web'
+          ? {
+              onKeyPress: (e) => {
+                const key = e?.nativeEvent?.key;
+                if (!singleLine) return;
+                if (key === 'Enter') {
+                  try { e?.preventDefault?.(); } catch (_e) {}
+                  closeMentions();
+                  onSubmit?.();
+                  try { inputRef.current?.blur?.(); } catch (_e2) {}
+                }
+              },
+            }
+          : {})}
       />
-      {mentionOpen && mentionMatches.length > 0 ? (
-        <View style={styles.mentionDropdown}>
-          {mentionMatches.slice(0, 8).map((mem) => {
-            const name = mem.displayName || mem.name || mem.email || mem.uid || mem.id;
-            return (
-              <Pressable
-                key={mem.uid || mem.id}
-                onPress={() => insertMention(name)}
-                style={styles.mentionOption}
-              >
-                <Text style={styles.mentionOptionText} numberOfLines={1}>{name}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+      {mentionVisible ? (
+        <Modal
+          transparent
+          visible={mentionVisible}
+          animationType="fade"
+          onRequestClose={closeMentions}
+        >
+          <Pressable style={styles.mentionModalBackdrop} onPress={closeMentions}>
+            <Pressable
+              style={[
+                styles.mentionModalCard,
+                mentionAnchor
+                  ? {
+                      left: mentionAnchor.left,
+                      top: mentionAnchor.top,
+                      width: mentionAnchor.width,
+                    }
+                  : null,
+              ]}
+              onPress={(e) => e?.stopPropagation?.()}
+              {...(Platform.OS === 'web'
+                ? {
+                    onMouseDown: (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    },
+                  }
+                : {})}
+            >
+              <ScrollView style={styles.mentionDropdownScroll} keyboardShouldPersistTaps="handled">
+                {mentionMatches.slice(0, 40).map((mem) => {
+                  const name = mem.displayName || mem.name || mem.email || mem.uid || mem.id;
+                  return (
+                    <Pressable
+                      key={mem.uid || mem.id}
+                      onPress={() => {
+                        insertMention(name);
+                        setTimeout(() => inputRef.current?.focus?.(), 0);
+                      }}
+                      style={styles.mentionOption}
+                      {...(Platform.OS === 'web'
+                        ? {
+                            onMouseDown: (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            },
+                          }
+                        : {})}
+                    >
+                      <Text style={styles.mentionOptionText} numberOfLines={1}>{name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
       ) : null}
-      {parsedMentions.length > 0 ? (
+      {!singleLine && parsedMentions.length > 0 ? (
         <View style={styles.mentionBadgesWrap}>
           {parsedMentions.map((name) => (
             <View key={name} style={styles.mentionBadge}>
@@ -441,15 +552,14 @@ function ChecklistItemRow({
   onClearNewItemFocus,
   onOpenDatePicker,
 }) {
-  const [commentExpanded, setCommentExpanded] = useState(false);
-  const [localComment, setLocalComment] = useState(item.comment ?? '');
-  const [localTitle, setLocalTitle] = useState(item.title || item.customTitle || '');
+  const { persistedData, draftData, markDirty, commitItemPatch } = useChecklistEdit();
+  const draft = draftData?.[item.id] || {};
+  const persisted = persistedData?.[item.id] || {};
+
+  const localComment = draft.comment ?? (item.comment ?? '');
+  const localTitle = (draft.title ?? draft.customTitle) ?? (item.title || item.customTitle || '');
   const isNewItemFocus = item.isCustomItem && item.id === newItemIdForFocus;
   const titleInputRef = useRef(null);
-
-  useEffect(() => {
-    setLocalTitle(item.title || item.customTitle || '');
-  }, [item.id, item.title, item.customTitle]);
 
   useEffect(() => {
     if (isNewItemFocus && titleInputRef.current?.focus) {
@@ -457,40 +567,69 @@ function ChecklistItemRow({
     }
   }, [isNewItemFocus]);
 
-  const debouncedComment = useCallback(() => {
-    if (String(localComment).trim() !== String(item.comment ?? '').trim()) {
-      updateItem(item.id, { comment: localComment.trim() || null });
-    }
-  }, [item.id, item.comment, localComment, updateItem]);
+  const handleCommentChange = useCallback((text) => {
+    markDirty((prev) => ({
+      ...(prev || {}),
+      [item.id]: {
+        ...((prev && prev[item.id]) || {}),
+        comment: text,
+      },
+    }));
+  }, [item.id, markDirty]);
 
-  const handleStatusChange = (status) => {
+  const commitComment = useCallback(async () => {
+    const nextText = String(localComment ?? '');
+    const trimmed = nextText.trim();
+    const next = trimmed ? trimmed : null;
+    const persistedText = String(persisted.comment ?? (item.comment ?? '')).trim();
+    const nextComparable = String(next ?? '').trim();
+    if (persistedText === nextComparable) return;
+    await commitItemPatch(item.id, { comment: next });
+  }, [commitItemPatch, item.comment, item.id, localComment, persisted.comment]);
+
+  const handleStatusChange = async (status) => {
     const payload = { status };
     if (status === 'done' || status === 'Done') {
-      const hasDate = item.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dueDate));
+      const candidateDate = draft.dueDate ?? item.dueDate;
+      const hasDate = candidateDate && /^\d{4}-\d{2}-\d{2}$/.test(String(candidateDate));
       if (!hasDate) payload.dueDate = new Date().toISOString().slice(0, 10);
     }
-    updateItem(item.id, payload);
+    await commitItemPatch(item.id, payload);
   };
 
-  const handleTitleBlur = () => {
+  const handleTitleChange = useCallback((text) => {
+    markDirty((prev) => ({
+      ...(prev || {}),
+      [item.id]: {
+        ...((prev && prev[item.id]) || {}),
+        title: text,
+      },
+    }));
+  }, [item.id, markDirty]);
+
+  const commitTitle = useCallback(async () => {
     const t = String(localTitle || '').trim();
-    const current = String(item.title || item.customTitle || '').trim();
-    if (t !== current) {
-      updateItem(item.id, { title: t || 'Ny punkt', customTitle: t || 'Ny punkt' });
+    const next = t || 'Ny punkt';
+    const persistedTitle = String((persisted.title ?? persisted.customTitle) ?? (item.title || item.customTitle || '')).trim();
+    if (persistedTitle === next) {
+      if (isNewItemFocus && onClearNewItemFocus) onClearNewItemFocus();
+      return;
     }
+    await commitItemPatch(item.id, { title: next, customTitle: next });
     if (isNewItemFocus && onClearNewItemFocus) onClearNewItemFocus();
-  };
+  }, [commitItemPatch, isNewItemFocus, item.customTitle, item.id, item.title, localTitle, onClearNewItemFocus, persisted.customTitle, persisted.title]);
 
   const assignedToArray = useMemo(() => {
-    const a = item.assignedTo;
+    const a = draft.assignedTo ?? item.assignedTo;
     if (Array.isArray(a)) return a.filter(Boolean);
     if (a) return [a];
     if (item.responsibleUserId) return [item.responsibleUserId];
     return [];
-  }, [item.assignedTo, item.responsibleUserId]);
+  }, [draft.assignedTo, item.assignedTo, item.responsibleUserId]);
 
-  const handleResponsibleChange = (ids) => {
-    updateItem(item.id, { assignedTo: Array.isArray(ids) ? ids : (ids ? [ids] : []) });
+  const handleResponsibleChange = async (ids) => {
+    const next = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+    await commitItemPatch(item.id, { assignedTo: next });
   };
 
   const handleHide = () => {
@@ -505,8 +644,9 @@ function ChecklistItemRow({
   };
 
   const isDone = normalizeStatus(item.status) === 'done';
-  const dueDateDisplay = item.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dueDate))
-    ? item.dueDate
+  const rawDueDate = draft.dueDate ?? item.dueDate;
+  const dueDateDisplay = rawDueDate && /^\d{4}-\d{2}-\d{2}$/.test(String(rawDueDate))
+    ? String(rawDueDate)
     : null;
   const [hovered, setHovered] = useState(false);
 
@@ -525,11 +665,13 @@ function ChecklistItemRow({
               ref={titleInputRef}
               style={styles.itemRowTitleInput}
               value={localTitle}
-              onChangeText={setLocalTitle}
-              onBlur={handleTitleBlur}
+              onChangeText={handleTitleChange}
+              onBlur={commitTitle}
               placeholder="Titel på punkt"
               placeholderTextColor="#94a3b8"
               selectTextOnFocus={!!newItemIdForFocus}
+              blurOnSubmit
+              onSubmitEditing={commitTitle}
             />
           ) : (
             <Text
@@ -540,10 +682,16 @@ function ChecklistItemRow({
               {item.title || item.customTitle || '—'}
             </Text>
           )}
-          {(item.isMandatory || item.required) ? (
-            <Text style={styles.itemRowMandatory}>Obl.</Text>
-          ) : null}
         </View>
+          <View style={styles.gridCellObl}>
+            {(item.isMandatory || item.required) ? (
+              <View style={styles.oblPill}>
+                <Text style={styles.oblPillText}>Obl</Text>
+              </View>
+            ) : (
+              <Text style={styles.oblDash}>—</Text>
+            )}
+          </View>
         <Pressable onPress={() => onOpenDatePicker(item.id)} style={styles.gridCellDate}>
           <Ionicons name="calendar-outline" size={12} color="#64748b" />
           <Text style={styles.gridCellDateText} numberOfLines={1}>
@@ -558,32 +706,74 @@ function ChecklistItemRow({
           />
         </View>
         <View style={styles.gridCellComment}>
-          <Pressable
-            onPress={() => { setCommentExpanded(!commentExpanded); if (commentExpanded) debouncedComment(); }}
-            style={styles.gridCellCommentBtn}
-          >
-            <Ionicons name={localComment ? 'chatbubble' : 'chatbubble-outline'} size={14} color={localComment ? NAVY : '#94a3b8'} />
-          </Pressable>
-          {item.isSystemItem && !item.isCustomItem ? (
-            <Pressable onPress={handleHide} style={styles.gridCellCommentBtn} hitSlop={8}>
-              <Ionicons name="eye-off-outline" size={12} color="#94a3b8" />
-            </Pressable>
-          ) : null}
+            <CommentBlock
+              companyId={companyId}
+              value={localComment}
+              onChange={handleCommentChange}
+              onBlur={commitComment}
+              onSubmit={commitComment}
+              singleLine
+            />
         </View>
         <View style={styles.gridCellStatus}>
-          <StatusBadges value={item.status} onChange={handleStatusChange} />
+          <StatusBadges value={draft.status ?? item.status} onChange={handleStatusChange} />
         </View>
       </View>
-      {commentExpanded ? (
-        <CommentBlock
-          companyId={companyId}
-          value={localComment}
-          onChange={setLocalComment}
-          onBlur={debouncedComment}
-        />
-      ) : null}
     </View>
   );
+}
+
+function isChecklistCompletedStatus(status) {
+  const s = normalizeStatus(status);
+  return s === 'done' || s === 'not_applicable';
+}
+
+function computeSectionMetrics(items) {
+  const list = Array.isArray(items) ? items : [];
+  const total = list.length;
+  const done = list.filter((i) => isChecklistCompletedStatus(i?.status)).length;
+  const required = list.filter((i) => i?.required === true || i?.isMandatory === true);
+  const missingRequired = required.filter((i) => !isChecklistCompletedStatus(i?.status)).length;
+  const progressPct = total === 0 ? 0 : Math.round((done / total) * 100);
+  return { total, done, requiredTotal: required.length, missingRequired, progressPct };
+}
+
+function deriveSectionStatusPresentation(metrics) {
+  const { total, done, missingRequired, progressPct } = metrics;
+
+  if (total === 0) {
+    return { text: 'Inga punkter', color: '#94a3b8', bar: '#cbd5e1', track: 'rgba(148, 163, 184, 0.25)', progressPct: 0 };
+  }
+
+  if (missingRequired > 0) {
+    return {
+      text: `${missingRequired} obligatoriska saknas`,
+      color: '#dc2626',
+      bar: '#dc2626',
+      track: 'rgba(220, 38, 38, 0.14)',
+      progressPct,
+    };
+  }
+
+  if (done >= total) {
+    return { text: '✓ Klar', color: '#16a34a', bar: '#16a34a', track: 'rgba(22, 163, 74, 0.16)', progressPct: 100 };
+  }
+
+  if (done === 0) {
+    return { text: `${done} / ${total} klara`, color: '#94a3b8', bar: '#94a3b8', track: 'rgba(148, 163, 184, 0.22)', progressPct };
+  }
+
+  const ratio = total === 0 ? 0 : done / total;
+  const isOrange = ratio >= 0.5;
+  const activeColor = isOrange ? '#f59e0b' : '#2563eb';
+
+  return {
+    text: `${done} / ${total} klara – ${Math.max(0, total - done)} kvar`,
+    color: activeColor,
+    bar: activeColor,
+    track: isOrange ? 'rgba(245, 158, 11, 0.16)' : 'rgba(37, 99, 235, 0.14)',
+    progressPct,
+  };
 }
 
 function CategorySection({
@@ -600,7 +790,8 @@ function CategorySection({
   onOpenDatePicker,
 }) {
   const { categoryId, categoryName, items } = category;
-  const doneCount = items.filter((i) => i.status === 'done' || i.status === 'Done').length;
+  const metrics = computeSectionMetrics(items);
+  const statusPresentation = deriveSectionStatusPresentation(metrics);
   const nextSortOrder = Math.max(0, ...items.map((i) => i.sortOrder ?? 0)) + 1;
 
   const handleAddItem = async () => {
@@ -621,18 +812,40 @@ function CategorySection({
           <View style={[styles.categoryChevronWrap, expanded && styles.categoryChevronExpanded]}>
             <Ionicons name="chevron-down" size={16} color="#475569" />
           </View>
-          <Text style={styles.categorySectionTitle}>{categoryName}</Text>
-          <Text style={styles.categorySectionCount}>({doneCount} / {items.length})</Text>
+          <Text style={styles.categorySectionTitle} numberOfLines={1}>{categoryName}</Text>
         </Pressable>
-        {expanded ? (
-          <Pressable onPress={handleAddItem} style={styles.addPointBtn}>
-            <Ionicons name="add" size={14} color={NAVY} />
-            <Text style={styles.addPointBtnText}>Lägg till punkt</Text>
-          </Pressable>
-        ) : null}
+
+        <View style={styles.categorySectionHeaderCenter}>
+          <View style={[styles.categoryHeaderProgressTrack, { backgroundColor: statusPresentation.track }]}>
+            <View
+              style={[
+                styles.categoryHeaderProgressFill,
+                {
+                  width: `${Math.max(0, Math.min(100, statusPresentation.progressPct || 0))}%`,
+                  backgroundColor: statusPresentation.bar,
+                },
+              ]}
+            />
+          </View>
+        </View>
+
+        <View style={styles.categorySectionHeaderRight}>
+          <Text
+            style={[styles.categoryHeaderStatusText, { color: statusPresentation.color }]}
+            numberOfLines={1}
+          >
+            {statusPresentation.text}
+          </Text>
+        </View>
       </View>
       {expanded ? (
         <View style={styles.categorySectionBody}>
+          <View style={styles.categorySectionBodyTopRow}>
+            <Pressable onPress={handleAddItem} style={styles.addPointBtn}>
+              <Ionicons name="add" size={14} color={NAVY} />
+              <Text style={styles.addPointBtnText}>Lägg till punkt</Text>
+            </Pressable>
+          </View>
           <GridColumnHeader />
           {items.map((item) => (
             <ChecklistItemRow
@@ -656,6 +869,15 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
   const effectiveProjectId = projectId || project?.id;
   const effectiveCompanyId = companyId || project?.companyId;
   const {
+    persistedData,
+    draftData,
+    isDirty,
+    setPersistedFromBackend,
+    registerCommitAdapter,
+    commitItemPatch,
+  } = useChecklistEdit();
+  const {
+    items,
     byCategory,
     totalProgress,
     categoryProgress,
@@ -674,6 +896,40 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
     addCategoryAndItem,
   } = useProjectChecklist(effectiveCompanyId, effectiveProjectId, 'kalkylskede');
 
+  // Adapter so the context can commit patches (used by Save & leave and per-field commits).
+  useEffect(() => {
+    registerCommitAdapter(async (itemId, patch) => {
+      await updateItem(itemId, patch);
+    });
+    return () => registerCommitAdapter(null);
+  }, [registerCommitAdapter, updateItem]);
+
+  // Sync persisted baseline from backend snapshot.
+  const backendPersistedSnapshot = useMemo(() => {
+    const list = Array.isArray(items) ? items : [];
+    const map = {};
+    for (const it of list) {
+      if (!it?.id) continue;
+      if (it?.isHidden) continue;
+      const assignedTo = Array.isArray(it.assignedTo)
+        ? it.assignedTo.filter(Boolean)
+        : (it.assignedTo ? [it.assignedTo].filter(Boolean) : (it.responsibleUserId ? [it.responsibleUserId] : []));
+      map[String(it.id)] = {
+        status: it.status ?? 'pending',
+        dueDate: it.dueDate ?? null,
+        assignedTo,
+        comment: it.comment ?? null,
+        title: it.title ?? null,
+        customTitle: it.customTitle ?? null,
+      };
+    }
+    return map;
+  }, [items]);
+
+  useEffect(() => {
+    setPersistedFromBackend(backendPersistedSnapshot);
+  }, [backendPersistedSnapshot, setPersistedFromBackend]);
+
   const [openCategoryId, setOpenCategoryId] = useState(null);
   const [addCategoryModal, setAddCategoryModal] = useState(false);
   const [seeding, setSeeding] = useState(false);
@@ -681,6 +937,22 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
   const [datePickerForItemId, setDatePickerForItemId] = useState(null);
   const [newItemIdForFocus, setNewItemIdForFocus] = useState(null);
   const hasAutoSeededRef = useRef(false);
+
+  const [toastMessage, setToastMessage] = useState(null);
+  const toastTimeoutRef = useRef(null);
+  const prevCategoryCompletionRef = useRef({});
+  const hasInitializedCategoryCompletionRef = useRef(false);
+  const prevReadyRef = useRef(false);
+  const hasInitializedReadyRef = useRef(false);
+
+  const showToast = (message) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(message);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 3000);
+  };
 
   const hasSetInitialOpenRef = useRef(false);
   useEffect(() => {
@@ -735,9 +1007,56 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
   };
 
   const toggleCategory = (categoryId) => {
-    setOpenCategoryId((prev) => (prev === categoryId ? null : categoryId));
+    setOpenCategoryId(categoryId);
     if (Platform.OS !== 'web') LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
   };
+
+  const allVisibleItems = useMemo(() => byCategory.flatMap((c) => c.items || []), [byCategory]);
+  const globalMetrics = useMemo(() => computeSectionMetrics(allVisibleItems), [allVisibleItems]);
+
+  const categoryCompletionSnapshot = useMemo(() => {
+    const snapshot = {};
+    for (const cat of byCategory) {
+      const m = computeSectionMetrics(cat.items || []);
+      snapshot[cat.categoryId] = {
+        categoryName: cat.categoryName,
+        isComplete: m.total > 0 && m.done >= m.total,
+      };
+    }
+    return snapshot;
+  }, [byCategory]);
+
+  useEffect(() => {
+    if (!hasInitializedCategoryCompletionRef.current) {
+      hasInitializedCategoryCompletionRef.current = true;
+      prevCategoryCompletionRef.current = Object.fromEntries(
+        Object.entries(categoryCompletionSnapshot).map(([id, v]) => [id, Boolean(v?.isComplete)])
+      );
+      return;
+    }
+
+    const prev = prevCategoryCompletionRef.current || {};
+    for (const [id, v] of Object.entries(categoryCompletionSnapshot)) {
+      if (v?.isComplete && !prev[id]) {
+        showToast(`${v.categoryName || 'Sektion'} är nu komplett`);
+      }
+    }
+    prevCategoryCompletionRef.current = Object.fromEntries(
+      Object.entries(categoryCompletionSnapshot).map(([id, v]) => [id, Boolean(v?.isComplete)])
+    );
+  }, [categoryCompletionSnapshot]);
+
+  useEffect(() => {
+    if (!hasInitializedReadyRef.current) {
+      hasInitializedReadyRef.current = true;
+      prevReadyRef.current = Boolean(isReadyForAnbud);
+      return;
+    }
+    if (Boolean(isReadyForAnbud) && !prevReadyRef.current) {
+      showToast('🟢 Redo för anbud');
+    }
+    prevReadyRef.current = Boolean(isReadyForAnbud);
+  }, [isReadyForAnbud]);
 
   const datePickerItem = useMemo(() => {
     if (!datePickerForItemId) return null;
@@ -747,6 +1066,13 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
     }
     return null;
   }, [byCategory, datePickerForItemId]);
+
+  const datePickerValue = useMemo(() => {
+    if (!datePickerForItemId) return '';
+    const d = draftData?.[datePickerForItemId]?.dueDate;
+    if (typeof d === 'string') return d;
+    return String(datePickerItem?.dueDate || '');
+  }, [datePickerForItemId, draftData, datePickerItem]);
 
   const handleAddCategory = async () => {
     const name = String(newCategoryName || '').trim();
@@ -793,19 +1119,30 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
           </Pressable>
         </View>
       ) : null}
-      {/* Kompakt header: tunn progressbar + inline text */}
       <View style={styles.stickyHeader}>
-        <View style={styles.totalProgressRow}>
-          <Text style={styles.totalProgressTitle}>
-            {completedRequired ?? 0} / {totalRequired ?? 0} avklarade
-            {isReadyForAnbud && byCategory.length > 0 ? (
-              <Text style={styles.totalProgressReady}> · Redo för anbud</Text>
-            ) : mandatoryIncomplete > 0 && mandatoryTotal > 0 ? (
-              <Text style={styles.totalProgressWarning}> · Obligatoriska saknas ({mandatoryIncomplete})</Text>
-            ) : null}
-          </Text>
-          <View style={styles.totalProgressBarWrap}>
-            <ChecklistProgressBar progress={progressPercent ?? totalProgress} height={4} />
+        <View style={[styles.globalStatusCard, SHADOW]}>
+          <View style={styles.globalStatusRow}>
+            <Text style={styles.globalStatusLeftText}>
+              {globalMetrics.done} / {globalMetrics.total} klara
+            </Text>
+            <View style={styles.globalStatusRight}>
+              {globalMetrics.missingRequired > 0 ? (
+                <Text style={styles.globalStatusMissingText}>
+                  🔴 {globalMetrics.missingRequired} obligatoriska saknas
+                </Text>
+              ) : byCategory.length > 0 ? (
+                <Text style={styles.globalStatusReadyText}>🟢 Redo för anbud</Text>
+              ) : null}
+              <View style={styles.saveIndicator}>
+                <View style={[styles.saveDot, isDirty ? styles.saveDotDirty : styles.saveDotSaved]} />
+                <Text style={[styles.saveIndicatorText, isDirty ? styles.saveIndicatorTextDirty : styles.saveIndicatorTextSaved]}>
+                  {isDirty ? 'Ospard ändring' : 'Sparad'}
+                </Text>
+              </View>
+            </View>
+          </View>
+          <View style={styles.globalStatusBarWrap}>
+            <ChecklistProgressBar progress={globalMetrics.progressPct} height={4} />
           </View>
         </View>
       </View>
@@ -868,6 +1205,14 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
         )}
       </ScrollView>
 
+      {toastMessage ? (
+        <View pointerEvents="none" style={styles.toastWrap}>
+          <View style={[styles.toastCard, SHADOW]}>
+            <Text style={styles.toastText}>{toastMessage}</Text>
+          </View>
+        </View>
+      ) : null}
+
       {addCategoryModal ? (
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, SHADOW]}>
@@ -901,17 +1246,21 @@ export default function ChecklistaView({ projectId, companyId, project, hidePage
       <IsoDatePickerModal
         visible={!!datePickerForItemId}
         title="Välj datum"
-        value={datePickerItem?.dueDate ?? ''}
-        onSelect={(iso) => {
-          if (datePickerForItemId) updateItem(datePickerForItemId, { dueDate: String(iso || '').trim() || null });
+        value={datePickerValue}
+        onSelect={async (iso) => {
+          const id = datePickerForItemId;
           setDatePickerForItemId(null);
+          if (!id) return;
+          const next = String(iso || '').trim() || null;
+          await commitItemPatch(id, { dueDate: next });
         }}
         onClose={() => setDatePickerForItemId(null)}
         onDelete={
           datePickerForItemId
             ? () => {
-                updateItem(datePickerForItemId, { dueDate: null });
+                const id = datePickerForItemId;
                 setDatePickerForItemId(null);
+                if (id) commitItemPatch(id, { dueDate: null });
               }
             : undefined
         }
@@ -1020,7 +1369,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.06)',
-    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { overflow: 'visible' } : { overflow: 'hidden' }),
   },
   categorySectionHeader: {
     flexDirection: 'row',
@@ -1037,6 +1386,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 8,
   },
+  categorySectionHeaderCenter: {
+    flex: 1,
+    minWidth: 80,
+    justifyContent: 'center',
+  },
+  categorySectionHeaderRight: {
+    minWidth: 160,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   categoryChevronWrap: {
     transform: [{ rotate: '-90deg' }],
   },
@@ -1049,9 +1408,18 @@ const styles = StyleSheet.create({
     color: '#334155',
     flex: 1,
   },
-  categorySectionCount: {
+  categoryHeaderProgressTrack: {
+    height: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  categoryHeaderProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  categoryHeaderStatusText: {
     fontSize: 12,
-    color: '#64748b',
+    fontWeight: '600',
   },
   addPointBtn: {
     flexDirection: 'row',
@@ -1071,6 +1439,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(15, 23, 42, 0.06)',
     paddingHorizontal: 12,
+  },
+  categorySectionBodyTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingTop: 10,
+    paddingBottom: 6,
   },
   gridRow: {
     flexDirection: 'row',
@@ -1095,30 +1469,36 @@ const styles = StyleSheet.create({
     minHeight: 32,
   },
   gridHeaderCellTitle: {
-    flex: 1.5,
+    flex: 1.35,
     minWidth: 0,
     ...(Platform.OS === 'web' ? { gridColumn: 1 } : {}),
   },
-  gridHeaderCellDate: {
-    width: 120,
-    minWidth: 120,
-    ...(Platform.OS === 'web' ? { gridColumn: 2 } : {}),
+  gridHeaderCellObl: {
+    width: 48,
+    minWidth: 48,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { gridColumn: 2, justifySelf: 'center' } : {}),
   },
-  gridHeaderCellResponsible: {
-    width: 160,
-    minWidth: 160,
+  gridHeaderCellDate: {
+    width: 130,
+    minWidth: 130,
     ...(Platform.OS === 'web' ? { gridColumn: 3 } : {}),
   },
-  gridHeaderCellComment: {
-    width: 40,
-    minWidth: 40,
+  gridHeaderCellResponsible: {
+    width: 180,
+    minWidth: 180,
     ...(Platform.OS === 'web' ? { gridColumn: 4 } : {}),
   },
+  gridHeaderCellComment: {
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' ? { gridColumn: 5 } : {}),
+  },
   gridHeaderCellStatus: {
-    width: 120,
-    minWidth: 120,
+    width: 140,
+    minWidth: 140,
     alignItems: 'flex-end',
-    ...(Platform.OS === 'web' ? { gridColumn: 5, justifySelf: 'end' } : {}),
+    ...(Platform.OS === 'web' ? { gridColumn: 6, justifySelf: 'end' } : {}),
   },
   gridHeaderText: {
     fontSize: 11,
@@ -1139,27 +1519,53 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.025)',
   },
   gridCellTitle: {
-    flex: 1.5,
+    flex: 1.35,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     minWidth: 0,
     ...(Platform.OS === 'web' ? { gridColumn: 1, minWidth: 0 } : {}),
   },
+  gridCellObl: {
+    width: 48,
+    minWidth: 48,
+    maxWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { gridColumn: 2, justifySelf: 'center' } : {}),
+  },
+  oblPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(220, 38, 38, 0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.20)',
+  },
+  oblPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#dc2626',
+    letterSpacing: 0.3,
+  },
+  oblDash: {
+    fontSize: 12,
+    color: '#cbd5e1',
+  },
   gridCellDate: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    width: 120,
-    minWidth: 120,
-    maxWidth: 120,
+    width: 130,
+    minWidth: 130,
+    maxWidth: 130,
     paddingVertical: 4,
     paddingHorizontal: 6,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: 'rgba(15, 23, 42, 0.08)',
     backgroundColor: '#fff',
-    ...(Platform.OS === 'web' ? { gridColumn: 2 } : {}),
+    ...(Platform.OS === 'web' ? { gridColumn: 3 } : {}),
   },
   gridCellDateText: {
     fontSize: 11,
@@ -1167,31 +1573,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   gridCellResponsible: {
-    width: 160,
-    minWidth: 160,
-    maxWidth: 160,
-    ...(Platform.OS === 'web' ? { gridColumn: 3 } : {}),
+    width: 180,
+    minWidth: 180,
+    maxWidth: 180,
+    ...(Platform.OS === 'web' ? { gridColumn: 4 } : {}),
   },
   gridCellComment: {
-    width: 40,
-    minWidth: 40,
-    maxWidth: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    ...(Platform.OS === 'web' ? { gridColumn: 4 } : {}),
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' ? { gridColumn: 5, minWidth: 0 } : {}),
   },
   gridCellCommentBtn: {
     padding: 2,
   },
   gridCellStatus: {
-    width: 120,
-    minWidth: 120,
-    maxWidth: 120,
+    width: 140,
+    minWidth: 140,
+    maxWidth: 140,
     alignItems: 'flex-end',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { gridColumn: 5, justifySelf: 'end' } : {}),
+    ...(Platform.OS === 'web' ? { gridColumn: 6, justifySelf: 'end' } : {}),
   },
   itemRow: {
     borderBottomWidth: 1,
@@ -1314,18 +1715,27 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   itemRowCommentBlock: {
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    paddingLeft: 12,
+    position: 'relative',
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    paddingLeft: 0,
   },
-  mentionDropdown: {
-    marginTop: 4,
+  mentionDropdownScroll: {
+    maxHeight: 220,
+  },
+  mentionModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(248, 250, 252, 0.94)',
+  },
+  mentionModalCard: {
+    position: 'absolute',
     backgroundColor: '#fff',
     borderRadius: RADIUS,
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
-    maxHeight: 200,
+    borderColor: 'rgba(15, 23, 42, 0.10)',
+    overflow: 'hidden',
     ...SHADOW,
+    zIndex: 100000,
   },
   mentionOption: {
     paddingHorizontal: 12,
@@ -1364,6 +1774,97 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     minHeight: 56,
     textAlignVertical: 'top',
+  },
+  itemRowCommentInputSingle: {
+    minHeight: 32,
+    paddingVertical: 4,
+    fontSize: 12,
+  },
+
+  globalStatusCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.06)',
+  },
+  globalStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  globalStatusLeftText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  globalStatusRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  globalStatusMissingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#dc2626',
+  },
+  globalStatusReadyText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#16a34a',
+  },
+  saveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  saveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  saveDotSaved: {
+    backgroundColor: '#16a34a',
+  },
+  saveDotDirty: {
+    backgroundColor: '#f59e0b',
+  },
+  saveIndicatorText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  saveIndicatorTextSaved: {
+    color: '#16a34a',
+  },
+  saveIndicatorTextDirty: {
+    color: '#b45309',
+  },
+  globalStatusBarWrap: {
+    marginTop: 8,
+  },
+
+  toastWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 16,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  toastCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    maxWidth: 520,
+    width: '100%',
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   responsibleWrap: {
     position: 'relative',

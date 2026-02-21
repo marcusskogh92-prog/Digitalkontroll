@@ -230,7 +230,7 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
           // Flikar använder DigitalkontrollsUtforskare; rootPath sätts i useMergedSectionItems.
           section.items = [
             { id: 'anbudsdokument', name: '01 - Anbudsdokument', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
-            { id: 'kalkylsammanfattning', name: '03 - Kalkylsammanfattning', component: 'DigitalkontrollsUtforskare', order: 2, enabled: true },
+            { id: 'ai-anbud-analys', name: '03 - AI-analys', component: 'AIKalkylAnalysView', order: 2, enabled: true, isSystemItem: true },
             { id: 'inlamnat-anbud', name: '04 - Inlämnat anbud', component: 'DigitalkontrollsUtforskare', order: 3, enabled: true },
             { id: 'utfall-feedback', name: '05 - Utfall och feedback', component: 'DigitalkontrollsUtforskare', order: 4, enabled: true },
           ];

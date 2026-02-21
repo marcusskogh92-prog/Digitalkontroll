@@ -61,6 +61,14 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
             const isHovered = hoveredId === sectionId;
             const isLoading = Array.isArray(sectionLoadingIds) && sectionLoadingIds.includes(sectionId);
 
+            const iconName = sectionId === 'risk-mojligheter'
+              ? 'sparkles-outline'
+              : (section.icon || 'folder-outline');
+
+            const labelText = sectionId === 'risk-mojligheter'
+              ? 'AI-analys'
+              : stripNumberPrefixForDisplay(section?.name ?? '');
+
             return (
               <Pressable
                 key={sectionId}
@@ -74,7 +82,7 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
               >
                 <View style={styles.itemInner}>
                   <Ionicons
-                    name={section.icon || 'folder-outline'}
+                    name={iconName}
                     size={18}
                     color={isActive ? PRIMARY_TOPBAR.textActive : PRIMARY_TOPBAR.textInactive}
                     style={styles.icon}
@@ -86,7 +94,7 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                     ]}
                     numberOfLines={1}
                   >
-                    {stripNumberPrefixForDisplay(section?.name ?? '')}
+                    {labelText}
                   </Text>
                   {isLoading ? (
                     <ActivityIndicator

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import StandardModal from '../../../../components/common/StandardModal';
+import { MODAL_THEME } from '../../../../constants/modalTheme';
 import { RFQ_STRUCTURE_MODES } from '../forfragningarModuleService';
 
 function safeText(v) {
@@ -52,116 +54,80 @@ export default function StructurePickerModal({
 	const canConfirm = Boolean(selected);
 
 	return (
-		<Modal
+		<StandardModal
 			visible={!!visible}
-			transparent
-			animationType={Platform.OS === 'web' ? 'none' : 'fade'}
-			onRequestClose={onClose}
+			onClose={onClose}
+			title="Välj struktur"
+			subtitle="Förfrågningar"
+			iconName="list-outline"
+			saveLabel="Spara val"
+			onSave={() => {
+				if (!canConfirm) return;
+				onConfirm?.(selected);
+			}}
+			saveDisabled={!canConfirm}
+			defaultWidth={620}
+			defaultHeight={420}
+			minWidth={520}
+			minHeight={340}
 		>
-			<View style={styles.backdrop}>
-				<View style={styles.card}>
-					<View style={styles.header}>
-						<Text style={styles.title}>Välj struktur</Text>
-						<Text style={styles.subtitle}>
-							Välj hur förfrågningar ska organiseras i projektet.
-						</Text>
-					</View>
-
-					<View style={styles.options}>
-						<OptionCard
-							title="Byggdelstabell"
-							descriptionLines={[
-								'Arbeta byggdel för byggdel i en tabell.',
-								'Rader kan expanderas för UE/leverantörer.',
-								'SharePoint-mappar skapas automatiskt.',
-							]}
-							active={selected === RFQ_STRUCTURE_MODES.COMPLETE_TABLE}
-							onPress={() => setSelected(RFQ_STRUCTURE_MODES.COMPLETE_TABLE)}
-						/>
-						<OptionCard
-							title="Valfri mappstruktur"
-							descriptionLines={[
-								'Ingen tabellstyrning i appen.',
-								'Organisera endast via SharePoint-mappar.',
-								'Du skapar mappar manuellt.',
-							]}
-							active={selected === RFQ_STRUCTURE_MODES.MANUAL_FOLDERS}
-							onPress={() => setSelected(RFQ_STRUCTURE_MODES.MANUAL_FOLDERS)}
-						/>
-					</View>
-
-					<View style={styles.footer}>
-						<Pressable
-							onPress={onClose}
-							style={({ pressed }) => [styles.ghostBtn, pressed ? styles.btnPressed : null]}
-						>
-							<Text style={styles.ghostBtnText}>Avbryt</Text>
-						</Pressable>
-
-						<Pressable
-							onPress={() => onConfirm?.(selected)}
-							disabled={!canConfirm}
-							style={({ pressed }) => [
-								styles.primaryBtn,
-								!canConfirm ? styles.btnDisabled : null,
-								pressed && canConfirm ? styles.btnPressed : null,
-							]}
-						>
-							<Text style={styles.primaryBtnText}>{safeText(selected) ? 'Spara val' : 'Välj ett alternativ'}</Text>
-						</Pressable>
-					</View>
+			<View style={styles.body}>
+				<Text style={styles.bodyIntro}>
+					Välj hur förfrågningar ska organiseras i projektet.
+				</Text>
+				<View style={styles.options}>
+					<OptionCard
+						title="Byggdelstabell"
+						descriptionLines={[
+							'Arbeta byggdel för byggdel i en tabell.',
+							'Rader kan expanderas för UE/leverantörer.',
+							'SharePoint-mappar skapas automatiskt.',
+						]}
+						active={selected === RFQ_STRUCTURE_MODES.COMPLETE_TABLE}
+						onPress={() => setSelected(RFQ_STRUCTURE_MODES.COMPLETE_TABLE)}
+					/>
+					<OptionCard
+						title="Valfri mappstruktur"
+						descriptionLines={[
+							'Ingen tabellstyrning i appen.',
+							'Organisera endast via SharePoint-mappar.',
+							'Du skapar mappar manuellt.',
+						]}
+						active={selected === RFQ_STRUCTURE_MODES.MANUAL_FOLDERS}
+						onPress={() => setSelected(RFQ_STRUCTURE_MODES.MANUAL_FOLDERS)}
+					/>
 				</View>
 			</View>
-		</Modal>
+		</StandardModal>
 	);
 }
 
 const styles = StyleSheet.create({
-	backdrop: {
+	body: {
 		flex: 1,
-		backgroundColor: 'rgba(15, 23, 42, 0.45)',
-		alignItems: 'center',
-		justifyContent: 'center',
+		minHeight: 0,
 		padding: 18,
 	},
-	card: {
-		width: '100%',
-		maxWidth: 560,
-		borderRadius: 14,
-		backgroundColor: '#fff',
-		borderWidth: 1,
-		borderColor: '#E2E8F0',
-		padding: 14,
-	},
-	header: {
-		gap: 6,
-		marginBottom: 12,
-	},
-	title: {
-		fontSize: 16,
-		fontWeight: '500',
-		color: '#0f172a',
-	},
-	subtitle: {
-		fontSize: 12,
-		fontWeight: '400',
-		color: '#475569',
+	bodyIntro: {
+		fontSize: MODAL_THEME.body.labelFontSize,
+		color: MODAL_THEME.body.labelColor,
 		lineHeight: 18,
+		marginBottom: 12,
 	},
 	options: {
 		gap: 10,
 	},
 	option: {
 		borderWidth: 1,
-		borderColor: '#E2E8F0',
+		borderColor: 'rgba(15, 23, 42, 0.14)',
 		borderRadius: 12,
 		padding: 12,
 		backgroundColor: '#fff',
 		...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
 	},
 	optionActive: {
-		borderColor: '#94A3B8',
-		backgroundColor: '#F8FAFC',
+		borderColor: 'rgba(15, 27, 45, 0.55)',
+		backgroundColor: 'rgba(15, 27, 45, 0.04)',
 	},
 	optionPressed: {
 		opacity: 0.9,
@@ -177,60 +143,22 @@ const styles = StyleSheet.create({
 		height: 14,
 		borderRadius: 999,
 		borderWidth: 1,
-		borderColor: '#CBD5E1',
+		borderColor: 'rgba(15, 23, 42, 0.25)',
 		backgroundColor: '#fff',
 	},
 	radioActive: {
-		borderColor: '#64748b',
-		backgroundColor: '#64748b',
+		borderColor: MODAL_THEME.banner.backgroundColor,
+		backgroundColor: MODAL_THEME.banner.backgroundColor,
 	},
 	optionTitle: {
-		fontSize: 13,
-		fontWeight: '500',
-		color: '#0f172a',
+		fontSize: MODAL_THEME.body.sectionTitleFontSize,
+		fontWeight: '600',
+		color: MODAL_THEME.body.valueColor,
 	},
 	optionLine: {
-		fontSize: 12,
+		fontSize: MODAL_THEME.body.labelFontSize,
 		fontWeight: '400',
-		color: '#475569',
+		color: MODAL_THEME.body.labelColor,
 		lineHeight: 18,
-	},
-	footer: {
-		marginTop: 14,
-		flexDirection: 'row',
-		justifyContent: 'flex-end',
-		gap: 10,
-	},
-	primaryBtn: {
-		paddingHorizontal: 12,
-		paddingVertical: 10,
-		borderRadius: 10,
-		backgroundColor: '#0f172a',
-		...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-	},
-	primaryBtnText: {
-		color: '#fff',
-		fontSize: 12,
-		fontWeight: '500',
-	},
-	ghostBtn: {
-		paddingHorizontal: 12,
-		paddingVertical: 10,
-		borderRadius: 10,
-		borderWidth: 1,
-		borderColor: '#E2E8F0',
-		backgroundColor: '#fff',
-		...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-	},
-	ghostBtnText: {
-		fontSize: 12,
-		fontWeight: '500',
-		color: '#0f172a',
-	},
-	btnDisabled: {
-		opacity: 0.5,
-	},
-	btnPressed: {
-		opacity: 0.9,
 	},
 });

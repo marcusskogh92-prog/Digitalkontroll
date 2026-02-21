@@ -5,12 +5,12 @@
  * Top-notch 2026 UX: lift on drag, vertical drop indicator, push animation, toast feedback.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import ContextMenu from '../ContextMenu';
 import { PRIMARY_TOPBAR_HEIGHT, SUB_TOPBAR, TOPBAR_ACCENT } from '../../constants/topbarTheme';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
+import ContextMenu from '../ContextMenu';
 
 const DND_TYPE = 'application/x-digitalkontroll-subtopbar-item';
 
@@ -142,8 +142,28 @@ function DraggableNavItem({
     canDrag && styles.navItemDraggable,
   ];
 
+  const displayLabel = stripNumberPrefixForDisplay(item?.name ?? item?.displayName ?? '');
+  const isAiTab = (() => {
+    const id = String(item?.id || '').toLowerCase();
+    const label = String(displayLabel || '').toLowerCase();
+    if (id.startsWith('ai-')) return true;
+    // Common Swedish labels
+    return label.includes('ai-analys') || label.includes('ai riskanalys') || label.includes('ai-riskanalys');
+  })();
+
+  const aiIconName = isAiTab ? 'sparkles-outline' : null;
+
   const labelEl = (
     <>
+      {aiIconName ? (
+        <Ionicons
+          name={aiIconName}
+          size={16}
+          color={isActive ? (TOPBAR_ACCENT ?? '#2563eb') : '#64748b'}
+          style={{ marginRight: 6 }}
+          accessibilityLabel="AI-analys"
+        />
+      ) : null}
       <Text
         style={[
           styles.label,
@@ -152,7 +172,7 @@ function DraggableNavItem({
         ]}
         numberOfLines={1}
       >
-        {stripNumberPrefixForDisplay(item?.name ?? item?.displayName ?? '')}
+        {displayLabel}
       </Text>
       {isLoading ? (
         <ActivityIndicator

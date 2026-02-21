@@ -40,6 +40,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
 
   const projectName = String(project?.name || project?.title || project?.projectName || '').trim();
 
+
   function normalizeSectionId(sectionId) {
     const raw = String(sectionId || '').trim();
     if (!raw) return raw;
@@ -167,7 +168,7 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
       <PhaseTopNavigator
         navigation={navigation}
         activeSection={activeSection}
-        onSelectSection={handleSelectSection}
+        onSelectSection={(sectionId) => handleSelectSection(sectionId)}
       />
 
       {/* Main Content Area */}
@@ -177,8 +178,8 @@ export default function KalkylskedeLayout({ companyId, projectId, project }) {
           navigation={navigation}
           activeSection={activeSection}
           activeItem={activeItem}
-          onSelectSection={handleSelectSection}
-          onSelectItem={handleSelectItem}
+          onSelectSection={(sectionId) => handleSelectSection(sectionId)}
+          onSelectItem={(sectionId, itemId, params) => handleSelectItem(sectionId, itemId, params)}
           projectName={projectName}
           companyId={companyId}
           project={project}

@@ -3,13 +3,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Platform, StyleSheet, Text, View } from 'react-native';
-import ProjectSubTopbar from '../../../components/common/ProjectSubTopbar';
-import { subscribeLatestProjectFFUAnalysis, subscribeLatestProjectKalkylAnalysis } from '../../../components/firebase';
-import ProjectTopbar from '../../../components/common/ProjectTopbar';
+import { ActivityIndicator, Alert, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DigitalkontrollsUtforskare from '../../../components/common/DigitalkontrollsUtforskare';
 import { CreateFolderModal, DeleteFolderConfirmModal, RenameFolderModal } from '../../../components/common/Modals/SectionFolderModals';
+import ProjectSubTopbar from '../../../components/common/ProjectSubTopbar';
+import ProjectTopbar from '../../../components/common/ProjectTopbar';
+import { subscribeLatestProjectFFUAnalysis, subscribeLatestProjectKalkylAnalysis } from '../../../components/firebase';
 import { ICON_RAIL } from '../../../constants/iconRailTheme';
+import { ChecklistEditProvider } from '../../../contexts/ChecklistEditContext';
 import { DEFAULT_PHASE, getProjectPhase, PROJECT_PHASES } from '../../../features/projects/constants';
 import { stripNumberPrefixForDisplay } from '../../../utils/labelUtils';
 import { createSectionFolder, deleteSectionFolder, renameSectionFolder } from '../services/sectionFolderOperations';
@@ -19,16 +20,16 @@ import { useProjectNavigation } from './hooks/useProjectNavigation';
 import PhaseLeftPanel from './kalkylskede/components/PhaseLeftPanel';
 
 // Import kalkylskede sections (for now, other phases can use these or have their own)
+import AIKalkylAnalysView from '../../../Screens/AIKalkylAnalysView';
+import FFUAISummaryView from '../../../Screens/FFUAISummaryView';
 import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
 import AnteckningarSection from './kalkylskede/sections/anteckningar/AnteckningarSection';
 import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
-import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
-import AIKalkylAnalysView from '../../../Screens/AIKalkylAnalysView';
-import FFUAISummaryView from '../../../Screens/FFUAISummaryView';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
 import KonstruktionSection from './kalkylskede/sections/konstruktion/KonstruktionSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
+import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
 import OfferterSection from './kalkylskede/sections/offerter/OfferterSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
 
@@ -80,6 +81,57 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
       }
     }
   };
+
+  const checklistEditRef = useRef(null);
+  const [checklistIsDirty, setChecklistIsDirty] = useState(false);
+  const [showDirtyConfirm, setShowDirtyConfirm] = useState(false);
+  const pendingNavRef = useRef(null);
+
+  const performPendingNavigation = useCallback(() => {
+    const fn = pendingNavRef.current;
+    pendingNavRef.current = null;
+    if (typeof fn === 'function') fn();
+  }, []);
+
+  const attemptNavigate = useCallback((fn) => {
+    const state = checklistEditRef.current?.getState?.();
+    if (state?.isDirty) {
+      pendingNavRef.current = fn;
+      setShowDirtyConfirm(true);
+      return;
+    }
+    if (typeof fn === 'function') fn();
+  }, []);
+
+  // React Navigation: guard when leaving the screen.
+  useEffect(() => {
+    if (!reactNavigation?.addListener) return;
+    const unsubscribe = reactNavigation.addListener('beforeRemove', (e) => {
+      const state = checklistEditRef.current?.getState?.();
+      if (!state?.isDirty) return;
+      e.preventDefault();
+      pendingNavRef.current = () => {
+        try {
+          reactNavigation?.dispatch?.(e.data.action);
+        } catch (_e) {}
+      };
+      setShowDirtyConfirm(true);
+    });
+    return unsubscribe;
+  }, [reactNavigation]);
+
+  // Web: protect against refresh/tab-close when checklist has unsaved draft edits.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (e) => {
+      if (!checklistIsDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [checklistIsDirty]);
   
   const [loadingPhase, setLoadingPhase] = useState(true);
 
@@ -108,14 +160,18 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   }, [companyId, projectId, phaseKey]);
 
   const handleSelectSection = (sectionId) => {
-    setActiveSection(sectionId);
-    // Don't auto-select first item - show section summary instead
-    setActiveItem(sectionId, null, { activeNode: null });
+    attemptNavigate(() => {
+      setActiveSection(sectionId);
+      // Don't auto-select first item - show section summary instead
+      setActiveItem(sectionId, null, { activeNode: null });
+    });
   };
 
   const handleSelectItem = (sectionId, itemId, meta = null) => {
-    setActiveSection(sectionId);
-    setActiveItem(sectionId, itemId, meta);
+    attemptNavigate(() => {
+      setActiveSection(sectionId);
+      setActiveItem(sectionId, itemId, meta);
+    });
   };
 
   const { sections: navSections, subMenuItems: baseSubMenuItems, activeSectionConfig } = useProjectNavigation(navigation, activeSection);
@@ -620,6 +676,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const [primaryTopbarHeight, setPrimaryTopbarHeight] = useState(52);
 
   return (
+    <ChecklistEditProvider ref={checklistEditRef} onDirtyChange={setChecklistIsDirty}>
     <View style={[styles.container, lockViewportForSection ? styles.lockViewport : null]}>
       {/* Phase selector, home, and refresh buttons are now in GlobalPhaseToolbar - removed from here */}
       {false && onPhaseChange && (
@@ -709,6 +766,60 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         onConfirm={handleDeleteFolder}
         loading={folderActionLoading}
       />
+
+      {/* Unsaved changes confirmation (Checklist) */}
+      <Modal
+        visible={showDirtyConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDirtyConfirm(false)}
+      >
+        <Pressable style={styles.dirtyBackdrop} onPress={() => setShowDirtyConfirm(false)}>
+          <Pressable style={styles.dirtyModal} onPress={() => {}}>
+            <Text style={styles.dirtyTitle}>Ospard ändring</Text>
+            <Text style={styles.dirtyText}>Du har ändringar i checklistan som inte är sparade.</Text>
+
+            <View style={styles.dirtyActions}>
+              <Pressable
+                style={[styles.dirtyButton, styles.dirtyPrimary]}
+                onPress={async () => {
+                  try {
+                    await checklistEditRef.current?.commitChanges?.();
+                    setShowDirtyConfirm(false);
+                    performPendingNavigation();
+                  } catch (_e) {
+                    try {
+                      Alert.alert('Kunde inte spara', 'Kontrollera anslutningen och försök igen.');
+                    } catch (_e2) {}
+                  }
+                }}
+              >
+                <Text style={[styles.dirtyButtonText, styles.dirtyPrimaryText]}>Spara och lämna</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.dirtyButton, styles.dirtyDanger]}
+                onPress={() => {
+                  try {
+                    checklistEditRef.current?.resetDirty?.();
+                  } catch (_e) {}
+                  setShowDirtyConfirm(false);
+                  performPendingNavigation();
+                }}
+              >
+                <Text style={styles.dirtyButtonText}>Lämna utan att spara</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.dirtyButton, styles.dirtyNeutral]}
+                onPress={() => setShowDirtyConfirm(false)}
+              >
+                <Text style={styles.dirtyButtonText}>Avbryt</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Reorder toast – bottom right, rail-färg, 3s auto-hide */}
       {reorderToast.visible ? (
@@ -829,6 +940,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
         </Modal>
       )}
     </View>
+    </ChecklistEditProvider>
   );
 }
 
@@ -943,5 +1055,68 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '500',
+  },
+
+  dirtyBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  dirtyModal: {
+    width: '100%',
+    maxWidth: 520,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  dirtyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  dirtyText: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#374151',
+  },
+  dirtyActions: {
+    marginTop: 14,
+    gap: 10,
+  },
+  dirtyButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#fff',
+  },
+  dirtyButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  dirtyPrimary: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  dirtyPrimaryText: {
+    color: '#fff',
+  },
+  dirtyDanger: {
+    backgroundColor: '#fff',
+    borderColor: '#FCA5A5',
+  },
+  dirtyNeutral: {
+    backgroundColor: '#F9FAFB',
   },
 });
