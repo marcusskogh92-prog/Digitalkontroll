@@ -19,6 +19,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
 import {
     addContactToSupplier,
     createSupplier,
@@ -69,24 +70,50 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
   titleIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#eff6ff',
+    width: 28,
+    height: 28,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
-  subtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { padding: 8 },
+  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
+  titleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+    flexWrap: 'nowrap',
+  },
+  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
+  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95, flexShrink: 1, minWidth: 0 },
+  closeBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web'
+      ? {
+          cursor: 'pointer',
+          transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease`,
+        }
+      : {}),
+  },
   statusOverlay: {
     position: 'absolute',
     left: 20,
@@ -840,15 +867,20 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="business-outline" size={22} color="#1976D2" />
+                <Ionicons name="business-outline" size={18} color={ICON_RAIL.iconColorActive} />
               </View>
-              <View>
-                <Text style={styles.title}>Leverantörer</Text>
-                <Text style={styles.subtitle}>Register över leverantörer</Text>
+              <View style={styles.titleLine}>
+                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                  Leverantörer
+                </Text>
+                <Text style={styles.titleDot}>•</Text>
+                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+                  Register över leverantörer
+                </Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={24} color="#475569" />
+              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
             </TouchableOpacity>
           </View>
 
@@ -1097,10 +1129,34 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
             }}
             onPress={(e) => e.stopPropagation()}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>Lägg till leverantör</Text>
-              <TouchableOpacity onPress={() => !addModalSaving && setAddModalVisible(false)} hitSlop={10}>
-                <Ionicons name="close" size={22} color="#475569" />
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingVertical: 8,
+                paddingHorizontal: 14,
+                borderBottomWidth: 1,
+                borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+                backgroundColor: ICON_RAIL.bg,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                <View style={styles.titleIcon}>
+                  <Ionicons name="add" size={18} color={ICON_RAIL.iconColorActive} />
+                </View>
+                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                  Lägg till leverantör
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => !addModalSaving && setAddModalVisible(false)}
+                style={styles.closeBtn}
+                accessibilityLabel="Stäng"
+                hitSlop={10}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: '75vh' }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">

@@ -6,38 +6,39 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import ContextMenu from '../ContextMenu';
-import ConfirmModal from './Modals/ConfirmModal';
-import ContactRegistryTable from './ContactRegistryTable';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
 import {
-  buildAndDownloadExcel,
-  computeSyncPlan,
-  parseExcelFromBuffer,
-  validateHeaders,
-  KONTAKTER_EXCEL,
+    buildAndDownloadExcel,
+    computeSyncPlan,
+    KONTAKTER_EXCEL,
+    parseExcelFromBuffer,
+    validateHeaders,
 } from '../../utils/registerExcel';
+import ContextMenu from '../ContextMenu';
 import {
-  createCompanyContact,
-  deleteCompanyContact,
-  ensureCompaniesFromKunderAndLeverantorer,
-  fetchCompanyContacts,
-  fetchCompanyCustomers,
-  fetchCompanyProfile,
-  fetchCompanySuppliers,
-  updateCompanyContact,
+    createCompanyContact,
+    deleteCompanyContact,
+    ensureCompaniesFromKunderAndLeverantorer,
+    fetchCompanyContacts,
+    fetchCompanyCustomers,
+    fetchCompanyProfile,
+    fetchCompanySuppliers,
+    updateCompanyContact,
 } from '../firebase';
+import ContactRegistryTable from './ContactRegistryTable';
+import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
@@ -60,17 +61,50 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  titleIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
-  subtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { padding: 8 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  titleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
+  titleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+    flexWrap: 'nowrap',
+  },
+  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
+  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95, flexShrink: 1, minWidth: 0 },
+  closeBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web'
+      ? {
+          cursor: 'pointer',
+          transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease`,
+        }
+      : {}),
+  },
   statusOverlay: { position: 'absolute', left: 20, right: 20, top: 100, zIndex: 100, alignItems: 'center', pointerEvents: 'none' },
   statusBox: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, maxWidth: 400, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8 },
   statusBoxSuccess: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
@@ -102,10 +136,21 @@ const styles = StyleSheet.create({
   selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
   footer: { flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 12, paddingHorizontal: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', backgroundColor: '#f8fafc' },
   footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
-  addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
   addModalBox: { backgroundColor: '#fff', borderRadius: 12, width: Platform.OS === 'web' ? 440 : '90%', maxWidth: 440, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 },
-  addModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-  addModalTitle: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
+  addModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+  },
+  addModalHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  addModalTitle: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive, flexShrink: 1, minWidth: 0 },
+  addModalCloseBtn: { padding: 5, borderRadius: ICON_RAIL.activeBgRadius, backgroundColor: ICON_RAIL.activeBg },
   addModalBody: { padding: 18 },
   addModalField: { marginBottom: 14 },
   addModalLabel: { fontSize: 12, fontWeight: '500', color: '#475569', marginBottom: 4 },
@@ -670,15 +715,20 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="book-outline" size={22} color="#1976D2" />
+                <Ionicons name="book-outline" size={18} color={ICON_RAIL.iconColorActive} />
               </View>
-              <View>
-                <Text style={styles.title}>Kontaktregister</Text>
-                <Text style={styles.subtitle}>Administrera kontakter</Text>
+              <View style={styles.titleLine}>
+                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                  Kontaktregister
+                </Text>
+                <Text style={styles.titleDot}>•</Text>
+                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+                  Administrera kontakter
+                </Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={24} color="#475569" />
+              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
             </TouchableOpacity>
           </View>
 
@@ -825,9 +875,22 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         <Pressable style={styles.addModalBack} onPress={() => !addModalSaving && setAddModalVisible(false)}>
           <Pressable style={styles.addModalBox} onPress={(e) => e.stopPropagation()}>
             <View style={styles.addModalHeader}>
-              <Text style={styles.addModalTitle}>Lägg till kontakt</Text>
-              <TouchableOpacity onPress={() => !addModalSaving && setAddModalVisible(false)} hitSlop={10}>
-                <Ionicons name="close" size={22} color="#475569" />
+              <View style={styles.addModalHeaderLeft}>
+                <View style={styles.titleIcon}>
+                  <Ionicons name="person-add-outline" size={18} color={ICON_RAIL.iconColorActive} />
+                </View>
+                <Text style={styles.addModalTitle} numberOfLines={1} ellipsizeMode="tail">
+                  Lägg till kontakt
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => !addModalSaving && setAddModalVisible(false)}
+                style={styles.addModalCloseBtn}
+                accessibilityLabel="Stäng"
+                hitSlop={10}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 400 }} contentContainerStyle={styles.addModalBody} keyboardShouldPersistTaps="handled">

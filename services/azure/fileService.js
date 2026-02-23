@@ -1181,9 +1181,16 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
       const navigation = getDefaultNavigation('kalkylskede');
       
       // Create folders for each section
-      const sectionFolders = navigation.sections.map(section => {
-        // Remove "01 - ", "02 - " etc. prefixes and clean up name
-        const folderName = section.name.replace(/^\d+\s*-\s*/, '').replace(/\s+/g, ' ');
+      const sectionFolders = navigation.sections.map((section) => {
+        const sectionId = String(section?.id || '').trim();
+        const rawName = String(section?.name || '').trim();
+        const cleaned = rawName.replace(/\s+/g, ' ');
+
+        // Compatibility: older builds used "AI-analys" label for risk section.
+        const folderName = (sectionId === 'risk-mojligheter' && cleaned.toLowerCase() === 'ai-analys')
+          ? '06 - Risk och möjligheter'
+          : cleaned;
+
         return `${projectPath}/${folderName}`;
       });
       

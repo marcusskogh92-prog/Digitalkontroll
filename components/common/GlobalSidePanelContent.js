@@ -5,7 +5,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { AnimatedChevron } from './leftNavMicroAnimations';
@@ -54,7 +54,7 @@ const REGISTER_ITEMS = [
   { key: 'leverantorer', label: 'Leverantörer', route: 'Suppliers' },
   { key: 'kunder', label: 'Kunder', route: 'Customers' },
   { key: 'byggdelar', label: 'Byggdelar', route: 'ManageCompany', focus: 'byggdel' },
-  { key: 'konton', label: 'Konton', route: 'ManageCompany', focus: 'kontoplan' },
+  { key: 'konton', label: 'Kontoplan', route: 'ManageCompany', focus: 'kontoplan' },
   { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier' },
 ];
 
@@ -80,13 +80,32 @@ const ICON_COLOR_HOVER = LEFT_NAV.hoverIcon;
 const COMPANY_ICON_ACTIVE = '#22c55e';
 const COMPANY_ICON_PAUSED = '#dc2626';
 
-function SectionList({ title, items, activeRouteName, activeItemKey, onPress }) {
+function SectionList({ title, headerIcon = null, items, activeRouteName, activeItemKey, onPress }) {
   const [hoveredKey, setHoveredKey] = useState(null);
+
+  // When a modal closes, HomeScreen clears activeItemKey.
+  // Also clear any cached hover so a row doesn't look selected/hovered after close.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (activeItemKey) return;
+    setHoveredKey(null);
+  }, [activeItemKey]);
 
   return (
     <View style={styles.container}>
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>{title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {headerIcon ? (
+            <Ionicons
+              name={headerIcon}
+              size={18}
+              color={LEFT_NAV.textDefault}
+              style={{ marginTop: 1 }}
+              accessibilityLabel={`${title} ikon`}
+            />
+          ) : null}
+          <Text style={styles.sectionTitle}>{title}</Text>
+        </View>
       </View>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: GRID * 2 }} keyboardShouldPersistTaps="handled">
         {items.map((item) => {
@@ -216,6 +235,7 @@ export function GlobalSidePanelContent({
     return (
       <SectionList
         title="Register"
+        headerIcon="grid-outline"
         items={REGISTER_ITEMS}
         activeRouteName={activeRouteName}
         activeItemKey={activeItemKey}
@@ -227,6 +247,7 @@ export function GlobalSidePanelContent({
     return (
       <SectionList
         title="Administration"
+        headerIcon="business-outline"
         items={ADMIN_ITEMS}
         activeRouteName={activeRouteName}
         activeItemKey={activeItemKey}

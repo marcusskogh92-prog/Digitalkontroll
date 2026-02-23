@@ -1,150 +1,51 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useState } from 'react';
+import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
-    addInkopsplanRowSupplier,
-    ensureDefaultInkopsplanEmailTemplate,
-    fetchCompanyPartiesForInkopsplan,
-    listInkopsplanEmailTemplates,
+    INKOPSPLAN_SUPPLIER_REQUEST_STATUS,
+    markInkopsplanRowSupplierQuoteReceived,
+    markInkopsplanRowSupplierRequestSent,
     removeInkopsplanRowSupplier,
-    setInkopsplanRowEmailTemplateId,
+    resetInkopsplanRowSupplierRequest,
 } from '../inkopsplanService';
-import EmailTemplateEditorModal from './EmailTemplateEditorModal';
+import AddInkopsplanSupplierModal from './AddInkopsplanSupplierModal';
 
 function safeText(v) {
   const s = String(v ?? '').trim();
   return s || '';
 }
 
-function isWeb() {
-  return Platform.OS === 'web';
+function normalizeSupplierKeyLocal(party) {
+  const existing = safeText(party?.key);
+  if (existing) return existing;
+  const t = safeText(party?.registryType);
+  const id = safeText(party?.registryId || party?.id);
+  if (t && id) return `${t}:${id}`;
+  return safeText(party?.id) || safeText(party?.companyName) || safeText(party?.name) || '';
 }
 
-function SmallButton({ label, onPress, disabled, tone = 'neutral' }) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed, hovered }) => [
-        styles.smallBtn,
-        tone === 'primary' && styles.smallBtnPrimary,
-        (pressed || hovered) && !disabled && styles.smallBtnHover,
-        disabled && { opacity: 0.5 },
-      ]}
-    >
-      <Text style={[styles.smallBtnText, tone === 'primary' && styles.smallBtnTextPrimary]} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
-  );
+function formatYYYYMMDD(fsTs) {
+  try {
+    const dt = typeof fsTs?.toDate === 'function' ? fsTs.toDate() : null;
+    if (!dt) return '';
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (_e) {
+    return '';
+  }
+}
+
+function isWeb() {
+  return Platform.OS === 'web';
 }
 
 export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
   const suppliers = Array.isArray(row?.suppliers) ? row.suppliers : [];
 
-  const [showAddSupplier, setShowAddSupplier] = useState(false);
-  const [partyQuery, setPartyQuery] = useState('');
-  const [parties, setParties] = useState([]);
-  const [partiesLoading, setPartiesLoading] = useState(false);
-  const [partiesError, setPartiesError] = useState('');
-
-  const [templates, setTemplates] = useState([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [templatesError, setTemplatesError] = useState('');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [savingTemplate, setSavingTemplate] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
-
-  const selectedTemplateId = safeText(row?.emailTemplateId) || 'default';
-
-  const selectedTemplateLabel = useMemo(() => {
-    const list = Array.isArray(templates) ? templates : [];
-    const found = list.find((t) => safeText(t?.id) === selectedTemplateId);
-    return safeText(found?.name) || (selectedTemplateId === 'default' ? 'Standardmall' : selectedTemplateId);
-  }, [templates, selectedTemplateId]);
-
-  useEffect(() => {
-    let alive = true;
-    if (!companyId || !projectId) return;
-    setTemplatesLoading(true);
-    setTemplatesError('');
-
-    const run = async () => {
-      try {
-        await ensureDefaultInkopsplanEmailTemplate(companyId, projectId);
-        const list = await listInkopsplanEmailTemplates(companyId, projectId);
-        if (!alive) return;
-        setTemplates(list);
-      } catch (e) {
-        if (!alive) return;
-        setTemplatesError(String(e?.message || e || 'Kunde inte läsa mallar.'));
-      } finally {
-        if (!alive) return;
-        setTemplatesLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [companyId, projectId]);
-
-  useEffect(() => {
-    let alive = true;
-    if (!showAddSupplier) return;
-    if (!companyId) return;
-    if (Array.isArray(parties) && parties.length > 0) return;
-    setPartiesLoading(true);
-    setPartiesError('');
-
-    const run = async () => {
-      try {
-        const list = await fetchCompanyPartiesForInkopsplan(companyId);
-        if (!alive) return;
-        setParties(Array.isArray(list) ? list : []);
-      } catch (e) {
-        if (!alive) return;
-        setPartiesError(String(e?.message || e || 'Kunde inte läsa registret.'));
-      } finally {
-        if (!alive) return;
-        setPartiesLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [showAddSupplier, companyId, parties]);
-
-  const matches = useMemo(() => {
-    const q = String(partyQuery || '').trim().toLowerCase();
-    const list = Array.isArray(parties) ? parties : [];
-    if (!q) return list.slice(0, 8);
-    return list
-      .map((p) => {
-        const name = safeText(p?.companyName).toLowerCase();
-        const idx = name.indexOf(q);
-        return { p, idx };
-      })
-      .filter((x) => x.idx >= 0)
-      .sort((a, b) => a.idx - b.idx || safeText(a?.p?.companyName).localeCompare(safeText(b?.p?.companyName), 'sv'))
-      .slice(0, 8)
-      .map((x) => x.p);
-  }, [parties, partyQuery]);
-
-  const handlePickParty = async (party) => {
-    const rowId = safeText(row?.id);
-    if (!companyId || !projectId || !rowId) return;
-    try {
-      await addInkopsplanRowSupplier({ companyId, projectId, rowId, party });
-      setPartyQuery('');
-      setShowAddSupplier(false);
-    } catch (e) {
-      Alert.alert('Kunde inte lägga till', e?.message || 'Okänt fel');
-    }
-  };
+  const [addSupplierOpen, setAddSupplierOpen] = useState(false);
+  const [supplierBusyKey, setSupplierBusyKey] = useState('');
 
   const handleRemoveSupplier = async (supplierKey) => {
     const rowId = safeText(row?.id);
@@ -158,176 +59,183 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
     }
   };
 
-  const handleSelectTemplate = async (tid) => {
+  const setBusy = (key) => setSupplierBusyKey(safeText(key));
+
+  const handleMarkSent = async (supplierKey) => {
     const rowId = safeText(row?.id);
-    const nextId = safeText(tid) || 'default';
-    if (!companyId || !projectId || !rowId) return;
-    setMenuOpen(false);
-    setSavingTemplate(true);
-    setTemplatesError('');
+    const key = safeText(supplierKey);
+    if (!companyId || !projectId || !rowId || !key) return;
+    setBusy(key);
     try {
-      await setInkopsplanRowEmailTemplateId({
-        companyId,
-        projectId,
-        rowId,
-        emailTemplateId: nextId,
-      });
+      await markInkopsplanRowSupplierRequestSent({ companyId, projectId, rowId, supplierKey: key });
     } catch (e) {
-      setTemplatesError(String(e?.message || e || 'Kunde inte spara val av mall.'));
+      Alert.alert('Kunde inte markera skickad', e?.message || 'Okänt fel');
     } finally {
-      setSavingTemplate(false);
+      setBusy('');
+    }
+  };
+
+  const handleMarkQuoteReceived = async (supplierKey) => {
+    const rowId = safeText(row?.id);
+    const key = safeText(supplierKey);
+    if (!companyId || !projectId || !rowId || !key) return;
+    setBusy(key);
+    try {
+      await markInkopsplanRowSupplierQuoteReceived({ companyId, projectId, rowId, supplierKey: key });
+    } catch (e) {
+      Alert.alert('Kunde inte markera svar mottaget', e?.message || 'Okänt fel');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleResetRequest = async (supplierKey) => {
+    const rowId = safeText(row?.id);
+    const key = safeText(supplierKey);
+    if (!companyId || !projectId || !rowId || !key) return;
+    setBusy(key);
+    try {
+      await resetInkopsplanRowSupplierRequest({ companyId, projectId, rowId, supplierKey: key });
+    } catch (e) {
+      Alert.alert('Kunde inte ångra', e?.message || 'Okänt fel');
+    } finally {
+      setBusy('');
     }
   };
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.title, { marginBottom: 0 }]}>Mailmall</Text>
-        <View style={styles.headerActions}>
-          <SmallButton
-            label="Redigera"
-            onPress={() => setEditorOpen(true)}
-            disabled={!companyId || !projectId}
-          />
-        </View>
-      </View>
-
-      {templatesError ? <Text style={styles.errorText}>{templatesError}</Text> : null}
-
-      <View style={styles.templateRow}>
-        <Pressable
-          onPress={() => setMenuOpen((v) => !v)}
-          disabled={!companyId || !projectId || templatesLoading || savingTemplate}
-          style={({ hovered, pressed }) => [
-            styles.select,
-            (hovered || pressed) && styles.selectHover,
-            (!companyId || !projectId || templatesLoading || savingTemplate) && { opacity: 0.7 },
-          ]}
-        >
-          <Text style={styles.selectText} numberOfLines={1}>
-            {templatesLoading ? 'Laddar mallar…' : selectedTemplateLabel}
-          </Text>
-          <Text style={styles.selectChevron}>{menuOpen ? '▴' : '▾'}</Text>
-        </Pressable>
-
-        <Text style={styles.hint} numberOfLines={2}>
-          Variabler ersätts vid generering/skick.
-        </Text>
-      </View>
-
-      {menuOpen ? (
-        <View style={styles.selectMenu}>
-          {(Array.isArray(templates) && templates.length ? templates : [{ id: 'default', name: 'Standardmall' }]).map((t) => {
-            const tid = safeText(t?.id) || 'default';
-            const active = tid === selectedTemplateId;
-            return (
-              <Pressable
-                key={tid}
-                onPress={() => handleSelectTemplate(tid)}
-                style={({ hovered, pressed }) => [
-                  styles.selectItem,
-                  (hovered || pressed) && styles.selectItemHover,
-                  active && styles.selectItemActive,
-                ]}
-              >
-                <Text style={[styles.selectItemText, active && styles.selectItemTextActive]} numberOfLines={1}>
-                  {safeText(t?.name) || tid}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
-
-      <View style={styles.divider} />
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.title}>Leverantörer</Text>
-        <View style={styles.headerActions}>
-          <SmallButton
-            label={showAddSupplier ? 'Stäng' : '+ Lägg till'}
-            onPress={() => setShowAddSupplier((v) => !v)}
-            disabled={!companyId || !projectId}
-          />
-        </View>
-      </View>
-
-      {showAddSupplier ? (
-        <View style={styles.addSupplierBox}>
-          {partiesError ? <Text style={styles.errorText}>{partiesError}</Text> : null}
-          <View style={styles.addSupplierRow}>
-            <TextInput
-              value={partyQuery}
-              onChangeText={setPartyQuery}
-              placeholder="Sök kund eller leverantör…"
-              style={styles.addSupplierInput}
-              editable={!partiesLoading}
-            />
+      <View style={styles.childTable}>
+        <View style={styles.childHeader}>
+          <Text style={[styles.childHCell, styles.colCompany]}>Företag</Text>
+          <Text style={[styles.childHCell, styles.colContact]}>Kontakt</Text>
+          <Text style={[styles.childHCell, styles.colMobile]}>Mobil</Text>
+          <Text style={[styles.childHCell, styles.colPhone]}>Telefon</Text>
+          <Text style={[styles.childHCell, styles.colEmail]}>Email</Text>
+          <Text style={[styles.childHCell, styles.colRequest]}>Förfrågan</Text>
+          <View style={[styles.colStatus, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }]}
+          >
+            <Text style={styles.childHCell}>Status</Text>
+            <Pressable
+              onPress={() => setAddSupplierOpen(true)}
+              disabled={!companyId || !projectId}
+              style={({ hovered, pressed }) => [
+                styles.addLinkWrap,
+                (hovered || pressed) && styles.addLinkHover,
+                (!companyId || !projectId) && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={styles.addLink}>+ Lägg till leverantör</Text>
+            </Pressable>
           </View>
-
-          {partiesLoading ? <Text style={styles.muted}>Laddar register…</Text> : null}
-
-          {matches.length > 0 ? (
-            <View style={styles.suggestBox}>
-              {matches.map((p) => {
-                const label = safeText(p?.companyName) || '—';
-                const kind = safeText(p?.registryType) === 'customer' ? 'Kund' : 'Leverantör';
-                const meta = safeText(p?.category);
-                const key = safeText(p?.key) || `${label}-${kind}`;
-                return (
-                  <Pressable
-                    key={key}
-                    onPress={() => handlePickParty(p)}
-                    style={({ pressed, hovered }) => [
-                      styles.suggestRow,
-                      (pressed || hovered) && styles.suggestRowHover,
-                    ]}
-                  >
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.suggestText} numberOfLines={1}>{label}</Text>
-                      <Text style={styles.suggestMeta} numberOfLines={1}>
-                        {kind}{meta ? ` · ${meta}` : ''}
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : partyQuery ? (
-            <Text style={styles.muted}>Inga träffar.</Text>
-          ) : null}
         </View>
-      ) : null}
 
-      {suppliers.length === 0 ? (
-        <Text style={styles.muted}>Inga leverantörer kopplade ännu.</Text>
-      ) : (
-        suppliers.map((s, idx) => {
-          const label = safeText(s?.companyName || s?.name || s?.id || s);
-          const key = safeText(s?.key) || `${label}-${idx}`;
-          return (
-            <View key={key} style={styles.supplierRow}>
-              <Text style={styles.supplier} numberOfLines={1}>{label}</Text>
-              <Pressable
-                onPress={() => handleRemoveSupplier(s?.key)}
-                style={({ hovered, pressed }) => [
-                  styles.removeLinkWrap,
-                  (hovered || pressed) && styles.removeLinkHover,
-                ]}
-              >
-                <Text style={styles.removeLink}>Ta bort</Text>
-              </Pressable>
-            </View>
-          );
-        })
-      )}
+        {suppliers.length === 0 ? (
+          <View style={styles.childEmpty}>
+            <Text style={styles.muted}>Inga leverantörer kopplade ännu.</Text>
+          </View>
+        ) : (
+          suppliers.map((s, idx) => {
+            const label = safeText(s?.companyName || s?.name || s?.id || s);
+            const supplierKey = normalizeSupplierKeyLocal(s);
+            const key = supplierKey || `${label}-${idx}`;
 
-      <EmailTemplateEditorModal
-        visible={editorOpen}
-        onClose={() => setEditorOpen(false)}
+            const explicitStatus = safeText(s?.requestStatus);
+            let status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD;
+            if (explicitStatus === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET;
+            else if (explicitStatus === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
+            else if (s?.quoteReceivedAt) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET;
+            else if (s?.requestSentAt) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
+
+            const sentDate = formatYYYYMMDD(s?.requestSentAt);
+            const requestText = status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD
+              ? 'Ej skickad'
+              : (sentDate ? `Skickad ${sentDate}` : 'Skickad');
+
+            const statusText = status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET
+              ? 'Svar mottaget'
+              : status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD
+                ? 'Skickad'
+                : 'Ej skickad';
+
+            const busy = supplierKey && supplierBusyKey === supplierKey;
+            const canMarkSent = !busy && supplierKey && status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD;
+            const canMarkQuoteReceived = !busy && supplierKey && status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
+            const canReset = !busy && supplierKey && status !== INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD;
+
+            return (
+              <View key={key} style={styles.childRow}>
+                <Text style={[styles.childCellText, styles.colCompany]} numberOfLines={1}>{label || '—'}</Text>
+                <Text style={[styles.childCellText, styles.colContact]} numberOfLines={1}>{safeText(s?.contactName) || '—'}</Text>
+                <Text style={[styles.childCellText, styles.colMobile]} numberOfLines={1}>{safeText(s?.mobile) || '—'}</Text>
+                <Text style={[styles.childCellText, styles.colPhone]} numberOfLines={1}>{safeText(s?.phone) || '—'}</Text>
+                <Text style={[styles.childCellText, styles.colEmail]} numberOfLines={1}>{safeText(s?.email) || '—'}</Text>
+                <Text style={[styles.childCellText, styles.colRequest]} numberOfLines={1}>{requestText}</Text>
+                <View style={[styles.colStatus, styles.childStatusCell]}>
+                  <Text style={styles.childCellText} numberOfLines={1}>{statusText}</Text>
+                  <View style={styles.childActions}>
+                    {canMarkSent ? (
+                      <Pressable
+                        onPress={() => handleMarkSent(supplierKey)}
+                        disabled={!canMarkSent}
+                        style={({ hovered, pressed }) => [
+                          styles.actionLinkWrap,
+                          (hovered || pressed) && styles.actionLinkHover,
+                        ]}
+                      >
+                        <Text style={styles.actionLink}>Skickad</Text>
+                      </Pressable>
+                    ) : null}
+                    {canMarkQuoteReceived ? (
+                      <Pressable
+                        onPress={() => handleMarkQuoteReceived(supplierKey)}
+                        disabled={!canMarkQuoteReceived}
+                        style={({ hovered, pressed }) => [
+                          styles.actionLinkWrap,
+                          (hovered || pressed) && styles.actionLinkHover,
+                        ]}
+                      >
+                        <Text style={styles.actionLink}>Svar</Text>
+                      </Pressable>
+                    ) : null}
+                    {canReset ? (
+                      <Pressable
+                        onPress={() => handleResetRequest(supplierKey)}
+                        disabled={!canReset}
+                        style={({ hovered, pressed }) => [
+                          styles.actionLinkWrap,
+                          (hovered || pressed) && styles.actionLinkHover,
+                        ]}
+                      >
+                        <Text style={styles.actionLinkMuted}>Ångra</Text>
+                      </Pressable>
+                    ) : null}
+
+                    <Pressable
+                      onPress={() => handleRemoveSupplier(supplierKey)}
+                      disabled={busy}
+                      style={({ hovered, pressed }) => [
+                        styles.removeLinkWrap,
+                        (hovered || pressed) && styles.removeLinkHover,
+                        busy && { opacity: 0.6 },
+                      ]}
+                    >
+                      <Text style={styles.removeLink}>Ta bort</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
+
+      <AddInkopsplanSupplierModal
+        visible={addSupplierOpen}
+        onClose={() => setAddSupplierOpen(false)}
         companyId={companyId}
         projectId={projectId}
-        templateId={selectedTemplateId}
+        row={row}
       />
     </View>
   );
@@ -335,11 +243,131 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
 
 const styles = StyleSheet.create({
   wrap: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: '#F8FAFC',
+    paddingVertical: 8,
+    backgroundColor: '#FAFAFA',
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+  },
+  topRowLabel: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '700',
+    width: 44,
+  },
+  templateSelect: {
+    height: 32,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  templateSelectHover: { backgroundColor: '#F8FAFC' },
+  templateSelectText: { fontSize: 13, color: '#0F172A', fontWeight: '600', flex: 1, minWidth: 0 },
+  templateSelectChevron: { color: '#64748B', fontWeight: '800' },
+
+  childTable: {
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
+    backgroundColor: 'transparent',
+  },
+  childHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 44,
+    paddingHorizontal: 12,
+    backgroundColor: '#FAFAFA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  childHCell: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    minWidth: 0,
+  },
+  childRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 44,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  childEmpty: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  childCellText: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '600',
+    minWidth: 0,
+  },
+  colCompany: { flex: 1.2 },
+  colContact: { flex: 1.1 },
+  colMobile: { width: 110 },
+  colPhone: { width: 110 },
+  colEmail: { flex: 1.5 },
+  colRequest: { width: 110 },
+  colStatus: { width: 220, minWidth: 220, flexShrink: 0 },
+
+  childStatusCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  childActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+  },
+
+  actionLinkWrap: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  actionLinkHover: {
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+  },
+  actionLink: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  actionLinkMuted: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#64748B',
+  },
+
+  addLinkWrap: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  addLinkHover: {
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+  },
+  addLink: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2563EB',
   },
   sectionHeader: {
     flexDirection: 'row',

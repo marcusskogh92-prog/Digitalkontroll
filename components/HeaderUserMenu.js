@@ -99,6 +99,14 @@ export default function HeaderUserMenu() {
           setMenuVisible(false);
           
           if (it.key === 'logout') {
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              try {
+                window.dispatchEvent(new CustomEvent('dkRequestLogout'));
+                return;
+              } catch (_e) {
+                // Fallback to direct sign out below
+              }
+            }
             try { await AsyncStorage.removeItem('dk_companyId'); } catch(_e) {}
             try { await auth.signOut(); } catch(_e) {}
             try {

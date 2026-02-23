@@ -30,16 +30,27 @@ function RadioOption({ label, selected, onPress }) {
   );
 }
 
-function CheckRow({ label, checked, onToggle }) {
+function CheckRow({ label, checked, disabled, onToggle }) {
   return (
     <Pressable
-      onPress={onToggle}
-      style={({ hovered, pressed }) => [styles.checkRow, (hovered || pressed) && styles.checkRowHover]}
+      onPress={disabled ? undefined : onToggle}
+      style={({ hovered, pressed }) => [
+        styles.checkRow,
+        (hovered || pressed) && !disabled && styles.checkRowHover,
+        disabled && styles.checkRowDisabled,
+      ]}
     >
       <View style={[styles.checkBox, checked && styles.checkBoxChecked]} />
       <Text style={styles.checkLabel} numberOfLines={1}>{label}</Text>
     </Pressable>
   );
+}
+
+function isExistingItem({ selectedRegisterType, effectiveExistingSet, item }) {
+  const id = safeText(item?.id);
+  if (!id || !selectedRegisterType) return false;
+  const key = `${selectedRegisterType}:${id}`;
+  return Boolean(effectiveExistingSet?.[key]);
 }
 
 function formatRegisterItem(registerType, item) {
@@ -138,23 +149,19 @@ export default function CreateInkopsplanModal({
     return existingRowKeySet && typeof existingRowKeySet === 'object' ? existingRowKeySet : {};
   }, [existingRowKeySet]);
 
-  const selectableItems = useMemo(() => {
-    const items = Array.isArray(registerItems) ? registerItems : [];
-    if (!selectedRegisterType) return items;
-    if (mode !== 'add') return items;
-
-    // When adding, hide items already in plan.
-    return items.filter((it) => {
-      const id = safeText(it?.id);
-      if (!id) return false;
-      const key = `${selectedRegisterType}:${id}`;
-      return !effectiveExistingSet[key];
-    });
-  }, [registerItems, selectedRegisterType, effectiveExistingSet, mode]);
+  const displayItems = useMemo(() => {
+    return Array.isArray(registerItems) ? registerItems : [];
+  }, [registerItems]);
 
   const selectedCount = useMemo(() => {
-    return Object.values(selectedItems).filter(Boolean).length;
-  }, [selectedItems]);
+    if (mode !== 'add') return Object.values(selectedItems).filter(Boolean).length;
+    return displayItems.filter((it) => {
+      const id = safeText(it?.id);
+      if (!id) return false;
+      if (isExistingItem({ selectedRegisterType, effectiveExistingSet, item: it })) return false;
+      return Boolean(selectedItems?.[id]);
+    }).length;
+  }, [selectedItems, displayItems, mode, selectedRegisterType, effectiveExistingSet]);
 
   const canSave = Boolean(companyId && projectId && selectedRegisterType && selectedCount > 0 && !saving);
 
@@ -166,9 +173,11 @@ export default function CreateInkopsplanModal({
 
   const markAll = () => {
     const next = {};
-    selectableItems.forEach((it) => {
+    displayItems.forEach((it) => {
       const id = safeText(it?.id);
-      if (id) next[id] = true;
+      if (!id) return;
+      if (mode === 'add' && isExistingItem({ selectedRegisterType, effectiveExistingSet, item: it })) return;
+      next[id] = true;
     });
     setSelectedItems(next);
   };
@@ -178,7 +187,13 @@ export default function CreateInkopsplanModal({
   const handleSave = async () => {
     if (!canSave) return;
 
-    const items = selectableItems.filter((it) => selectedItems[safeText(it?.id)]);
+    const items = displayItems.filter((it) => {
+      const id = safeText(it?.id);
+      if (!id) return false;
+      if (!selectedItems?.[id]) return false;
+      if (mode === 'add' && isExistingItem({ selectedRegisterType, effectiveExistingSet, item: it })) return false;
+      return true;
+    });
     if (items.length === 0) return;
 
     setSaving(true);
@@ -280,22 +295,27 @@ export default function CreateInkopsplanModal({
             <View style={styles.center}>
               <Text style={styles.muted}>Välj registertyp för att se innehåll.</Text>
             </View>
-          ) : selectableItems.length === 0 ? (
+          ) : displayItems.length === 0 ? (
             <View style={styles.center}>
-              <Text style={styles.muted}>Inga nya poster att lägga till.</Text>
+              <Text style={styles.muted}>Inga poster i registret.</Text>
             </View>
           ) : (
             <ScrollView contentContainerStyle={styles.listContent}>
-              {selectableItems.map((it) => {
+              {displayItems.map((it) => {
                 const id = safeText(it?.id);
                 const label = formatRegisterItem(selectedRegisterType, it);
-                const checked = Boolean(selectedItems[id]);
+                const existing = mode === 'add' && isExistingItem({ selectedRegisterType, effectiveExistingSet, item: it });
+                const checked = existing || Boolean(selectedItems[id]);
                 return (
                   <CheckRow
                     key={id}
                     label={label}
                     checked={checked}
-                    onToggle={() => toggleItem(id)}
+                    disabled={existing}
+                    onToggle={() => {
+                      if (existing) return;
+                      toggleItem(id);
+                    }}
                   />
                 );
               })}
@@ -425,6 +445,10 @@ const styles = StyleSheet.create({
   checkRowHover: {
     borderColor: '#D1D5DB',
     backgroundColor: '#F8FAFC',
+  },
+  checkRowDisabled: {
+    opacity: 0.65,
+    ...(isWeb() ? { cursor: 'default' } : {}),
   },
   checkBox: {
     width: 16,

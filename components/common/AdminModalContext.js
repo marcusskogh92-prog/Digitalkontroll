@@ -4,16 +4,16 @@
  */
 
 import React, { useCallback, useRef, useState } from 'react';
-import AdminContactRegistryModal from './AdminContactRegistryModal';
-import AdminCustomersModal from './AdminCustomersModal';
-import AdminSuppliersModal from './AdminSuppliersModal';
-import AdminByggdelModal from './AdminByggdelModal';
-import AdminKontoplanModal from './AdminKontoplanModal';
-import MallarModal from './MallarModal';
 import AdminAIPromptsModal from './AdminAIPromptsModal';
-import AdminKategoriModal from './AdminKategoriModal';
+import AdminByggdelModal from './AdminByggdelModal';
 import AdminCompanyModal from './AdminCompanyModal';
+import AdminContactRegistryModal from './AdminContactRegistryModal';
 import AdminCreateCompanyModal from './AdminCreateCompanyModal';
+import AdminCustomersModal from './AdminCustomersModal';
+import AdminKategoriModal from './AdminKategoriModal';
+import AdminKontoplanModal from './AdminKontoplanModal';
+import AdminSuppliersModal from './AdminSuppliersModal';
+import MallarModal from './MallarModal';
 
 const defaultContext = {
   openCustomersModal: () => {},
@@ -39,6 +39,7 @@ const defaultContext = {
   navigationRef: null,
   registerSelectionSavedListener: () => {},
   isSubModalOpen: false,
+  isAnyModalOpen: false,
 };
 
 export const AdminModalContext = React.createContext(defaultContext);
@@ -188,6 +189,18 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
 
   const isSubModalOpen = byggdelOpen || kontoplanOpen || kategoriOpen || mallarOpen || aiPromptsOpen;
 
+  const isAnyModalOpen =
+    customersOpen ||
+    contactRegistryOpen ||
+    suppliersOpen ||
+    byggdelOpen ||
+    kontoplanOpen ||
+    mallarOpen ||
+    aiPromptsOpen ||
+    kategoriOpen ||
+    companyModalOpen ||
+    createCompanyModalOpen;
+
   const value = {
     openCustomersModal,
     closeCustomersModal,
@@ -212,6 +225,7 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
     navigationRef: navigationRefProp ?? null,
     registerSelectionSavedListener,
     isSubModalOpen,
+    isAnyModalOpen,
   };
 
   return (

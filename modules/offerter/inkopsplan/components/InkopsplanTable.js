@@ -39,7 +39,7 @@ export default function InkopsplanTable({
   rows,
   onRowsChanged,
 }) {
-  const [expandedId, setExpandedId] = useState(null);
+  const [openRowId, setOpenRowId] = useState(null);
 
   const [manualNr, setManualNr] = useState('');
   const [manualName, setManualName] = useState('');
@@ -52,7 +52,7 @@ export default function InkopsplanTable({
   const handleToggleExpand = (row) => {
     const id = safeText(row?.id);
     if (!id) return;
-    setExpandedId((prev) => (prev === id ? null : id));
+    setOpenRowId((prev) => (prev === id ? null : id));
   };
 
   const canSaveManual = Boolean(companyId && projectId && safeText(manualName));
@@ -84,16 +84,18 @@ export default function InkopsplanTable({
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.headerRow}>
-        <Text style={[styles.hCell, styles.nr]}>Nr</Text>
-        <Text style={[styles.hCell, styles.name]}>Benämning</Text>
-        <Text style={[styles.hCell, styles.type]}>Typ</Text>
-        <Text style={[styles.hCell, styles.suppliers]}>Leverantörer</Text>
-        <Text style={[styles.hCell, styles.status]}>Status</Text>
-        <Text style={[styles.hCell, styles.actions]}>Åtgärder</Text>
-      </View>
+      <View style={styles.table}>
+        <View style={styles.headerRow}>
+          <Text style={[styles.hCell, styles.chevron]}>{' '}</Text>
+          <Text style={[styles.hCell, styles.bd]}>BD</Text>
+          <Text style={[styles.hCell, styles.name]}>Benämning</Text>
+          <Text style={[styles.hCell, styles.type]}>Typ</Text>
+          <Text style={[styles.hCell, styles.suppliers]}>Lev</Text>
+          <Text style={[styles.hCell, styles.request]}>Förfrågan</Text>
+          <Text style={[styles.hCell, styles.status]}>Status</Text>
+        </View>
 
-      <View style={styles.body}>
+        <View style={styles.body}>
         {list.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Ingen inköpsplan ännu</Text>
@@ -103,14 +105,19 @@ export default function InkopsplanTable({
 
         {list.map((r) => {
           const id = safeText(r?.id);
-          const expanded = expandedId === id;
+          const expanded = openRowId === id;
           return (
             <View key={id || Math.random()} style={styles.rowWrap}>
               <InkopsplanRow row={r} isExpanded={expanded} onToggleExpand={handleToggleExpand} />
-              {expanded ? <InkopsplanRowExpanded row={r} companyId={companyId} projectId={projectId} /> : null}
+              {expanded ? (
+                <View style={styles.expandedWrap}>
+                  <InkopsplanRowExpanded row={r} companyId={companyId} projectId={projectId} />
+                </View>
+              ) : null}
             </View>
           );
         })}
+        </View>
       </View>
 
       <View style={styles.manualWrap}>
@@ -196,11 +203,21 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
+  table: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#F6F7F9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
   hCell: {
     fontSize: 12,
@@ -209,25 +226,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
-  nr: { width: 90 },
+  chevron: { width: 32 },
+  bd: { width: 70 },
   name: { flex: 1 },
-  type: { width: 160 },
-  suppliers: { width: 110 },
-  status: { width: 120 },
-  actions: { width: 110, textAlign: 'right' },
+  type: { width: 140 },
+  suppliers: { width: 60, textAlign: 'right' },
+  request: { width: 120 },
+  status: { width: 90 },
   body: {
     flex: 1,
     minHeight: 0,
-    gap: 10,
   },
   rowWrap: {
     gap: 0,
   },
+  expandedWrap: {
+    backgroundColor: '#FAFAFA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
   empty: {
     padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
   },
   emptyTitle: {

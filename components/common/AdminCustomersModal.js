@@ -18,6 +18,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
 import KundForm from '../../modules/kunder/KundForm';
 import KunderTable from '../../modules/kunder/KunderTable';
 import {
@@ -68,24 +69,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
   titleIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#eff6ff',
+    width: 28,
+    height: 28,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
-  subtitle: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  closeBtn: { padding: 8 },
+  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
+  titleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+    flexWrap: 'nowrap',
+  },
+  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
+  subtitle: {
+    fontSize: 12,
+    color: ICON_RAIL.iconColor,
+    fontWeight: '400',
+    opacity: 0.95,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  closeBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web'
+      ? {
+          cursor: 'pointer',
+          transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease`,
+        }
+      : {}),
+  },
   statusOverlay: {
     position: 'absolute',
     left: 20,
@@ -198,30 +232,40 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   modalBox: {
     backgroundColor: '#fff',
-    borderRadius: 18,
+    borderRadius: 14,
     width: 560,
     maxWidth: '96%',
     maxHeight: '85%',
     overflow: 'hidden',
   },
   modalHeader: {
-    height: 56,
+    flexShrink: 0,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: ICON_RAIL.bg,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
   },
-  modalClose: { position: 'absolute', right: 12, top: 10, padding: 6 },
+  modalHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  modalTitle: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive, flexShrink: 1, minWidth: 0 },
+  modalCloseBtn: {
+    padding: 5,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    backgroundColor: ICON_RAIL.activeBg,
+  },
   footer: {
     flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderTopWidth: 1,
@@ -721,15 +765,20 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="people-outline" size={22} color="#1976D2" />
+                <Ionicons name="people-outline" size={18} color={ICON_RAIL.iconColorActive} />
               </View>
-              <View>
-                <Text style={styles.title}>Kunder</Text>
-                <Text style={styles.subtitle}>Administrera kunder</Text>
+              <View style={styles.titleLine}>
+                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+                  Kunder
+                </Text>
+                <Text style={styles.titleDot}>•</Text>
+                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+                  Administrera kunder
+                </Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={24} color="#475569" />
+              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
             </TouchableOpacity>
           </View>
 
@@ -930,13 +979,18 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
         <Pressable style={styles.modalBack} onPress={() => !saving && setFormModalVisible(false)}>
           <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>Lägg till kund</Text>
+              <View style={styles.modalHeaderLeft}>
+                <View style={styles.titleIcon}>
+                  <Ionicons name="person-add-outline" size={18} color={ICON_RAIL.iconColorActive} />
+                </View>
+                <Text style={styles.modalTitle}>Lägg till kund</Text>
+              </View>
               <TouchableOpacity
-                style={styles.modalClose}
+                style={styles.modalCloseBtn}
                 onPress={() => !saving && setFormModalVisible(false)}
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
-                <Ionicons name="close" size={22} color="#334155" />
+                <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: '75vh' }} contentContainerStyle={{ paddingBottom: 20 }}>
@@ -1080,9 +1134,18 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           <Pressable style={styles.modalBack} onPress={() => !contactEditSaving && setContactEditOpen(false)}>
             <Pressable style={[styles.modalBox, { width: 420 }]} onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalHeader}>
-                <Text style={{ fontSize: 16, fontWeight: '600', color: '#0f172a' }}>Redigera kontakt</Text>
-                <TouchableOpacity style={styles.modalClose} onPress={() => !contactEditSaving && setContactEditOpen(false)}>
-                  <Ionicons name="close" size={22} color="#334155" />
+                <View style={styles.modalHeaderLeft}>
+                  <View style={styles.titleIcon}>
+                    <Ionicons name="create-outline" size={18} color={ICON_RAIL.iconColorActive} />
+                  </View>
+                  <Text style={styles.modalTitle}>Redigera kontakt</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => !contactEditSaving && setContactEditOpen(false)}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
                 </TouchableOpacity>
               </View>
               <View style={{ padding: 16, gap: 10 }}>

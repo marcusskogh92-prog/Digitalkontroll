@@ -9,6 +9,7 @@ import {
     query,
     serverTimestamp,
     setDoc,
+    where,
     writeBatch,
 } from 'firebase/firestore';
 
@@ -223,6 +224,12 @@ export const INKOPSPLAN_ROW_TYPE = {
   CATEGORY: 'category',
 };
 
+export const INKOPSPLAN_SUPPLIER_REQUEST_STATUS = {
+  EJ_SKICKAD: 'ej_skickad',
+  SKICKAD: 'skickad',
+  SVAR_MOTTAGET: 'svar_mottaget',
+};
+
 function normalizePartyKey(party) {
   const existing = safeText(party?.key);
   if (existing) return existing;
@@ -275,6 +282,83 @@ export async function fetchCompanyPartiesForInkopsplan(companyId) {
   }
 }
 
+export async function fetchCompanySuppliersForInkopsplan(companyId) {
+  const cid = safeText(companyId);
+  if (!cid) return [];
+
+  try {
+    const suppliersSnap = await getDocs(collection(db, 'foretag', cid, 'leverantorer'));
+    const suppliers = suppliersSnap.docs.map((d) => {
+      const data = d.data() || {};
+      const registryId = d.id;
+      const companyName = safeText(data?.companyName) || 'Leverantör';
+      return {
+        key: `supplier:${registryId}`,
+        registryType: 'supplier',
+        registryId,
+        companyName,
+        category: safeText(data?.category) || null,
+        companyId: safeText(data?.companyId) || null,
+      };
+    });
+
+    suppliers.sort((a, b) => safeText(a?.companyName).localeCompare(safeText(b?.companyName), 'sv'));
+    return suppliers;
+  } catch (e) {
+    throw withFsContext('Kunde inte läsa leverantörsregister', e, { companyId: cid });
+  }
+}
+
+export async function fetchSupplierContactsForInkopsplan({ companyId, supplierRegistryId, supplierCompanyId = null }) {
+  const cid = safeText(companyId);
+  const sid = safeText(supplierRegistryId);
+  const scid = safeText(supplierCompanyId) || null;
+  if (!cid || !sid) return [];
+
+  const contactsCol = collection(db, 'foretag', cid, 'kontakter');
+
+  const normalize = (c, id) => {
+    const mobile = safeText(c?.phone);
+    const workPhone = safeText(c?.workPhone);
+    return {
+      id: safeText(id) || safeText(c?.id) || null,
+      name: safeText(c?.name) || null,
+      role: safeText(c?.role) || null,
+      mobile: mobile || null,
+      phone: workPhone || null,
+      email: safeText(c?.email) || null,
+      linkedSupplierId: safeText(c?.linkedSupplierId) || null,
+      companyId: safeText(c?.companyId) || null,
+    };
+  };
+
+  try {
+    const byLink = query(contactsCol, where('linkedSupplierId', '==', sid));
+    const snap1 = await getDocs(byLink);
+    const out = [];
+    snap1.forEach((d) => out.push(normalize(d.data() || {}, d.id)));
+
+    if (out.length === 0 && scid) {
+      const byCompany = query(contactsCol, where('companyId', '==', scid));
+      const snap2 = await getDocs(byCompany);
+      snap2.forEach((d) => out.push(normalize(d.data() || {}, d.id)));
+    }
+
+    const uniq = new Map();
+    out.forEach((c) => {
+      const key = safeText(c?.id) || `${safeText(c?.name)}|${safeText(c?.email)}|${safeText(c?.mobile)}|${safeText(c?.phone)}`;
+      if (!key) return;
+      if (!uniq.has(key)) uniq.set(key, c);
+    });
+
+    const list = Array.from(uniq.values());
+    list.sort((a, b) => safeText(a?.name).localeCompare(safeText(b?.name), 'sv'));
+    return list;
+  } catch (e) {
+    throw withFsContext('Kunde inte läsa kontaktregister för leverantör', e, { companyId: cid, supplierRegistryId: sid, supplierCompanyId: scid });
+  }
+}
+
 export async function addInkopsplanRowSupplier({ companyId, projectId, rowId, party }) {
   const { cid, pid } = requireIds(companyId, projectId);
   const rid = safeText(rowId);
@@ -303,6 +387,15 @@ export async function addInkopsplanRowSupplier({ companyId, projectId, rowId, pa
     companyName,
     companyId: safeText(party?.companyId) || null,
     category: safeText(party?.category) || null,
+    // Optional: chosen contact from central contact registry
+    contactId: safeText(party?.contactId) || null,
+    contactName: safeText(party?.contactName) || null,
+    mobile: safeText(party?.mobile) || null,
+    phone: safeText(party?.phone) || null,
+    email: safeText(party?.email) || null,
+    requestStatus: INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD,
+    requestSentAt: null,
+    quoteReceivedAt: null,
   };
 
   const exists = list.some((s) => normalizePartyKey(s) === key);
@@ -323,6 +416,117 @@ export async function addInkopsplanRowSupplier({ companyId, projectId, rowId, pa
   } catch (e) {
     throw withFsContext('Inköpsplan: kunde inte lägga till leverantör', e, { path: rowRef?.path, companyId: cid, projectId: pid, rowId: rid });
   }
+}
+
+function normalizeSupplierRequestStatus(status) {
+  const s = safeText(status).toLowerCase();
+  if (s === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET) return INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET;
+  if (s === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD) return INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
+  return INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD;
+}
+
+async function patchInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey, patch }) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const rid = safeText(rowId);
+  const key = safeText(supplierKey);
+  if (!rid || !key) throw new Error('rowId and supplierKey are required');
+
+  const rowsCol = getInkopsplanRowsCollectionRef(cid, pid);
+  const rowRef = doc(rowsCol, rid);
+
+  let snap;
+  try {
+    snap = await getDoc(rowRef);
+  } catch (e) {
+    throw withFsContext('Inköpsplan: kunde inte läsa rad (leverantör patch)', e, { path: rowRef?.path, companyId: cid, projectId: pid, rowId: rid });
+  }
+
+  const current = snap.exists() ? (snap.data() || {}) : {};
+  const list = Array.isArray(current?.suppliers) ? current.suppliers : [];
+  const idx = list.findIndex((s) => normalizePartyKey(s) === key);
+  if (idx < 0) return;
+
+  const next = [...list];
+  next[idx] = {
+    ...(next[idx] && typeof next[idx] === 'object' ? next[idx] : {}),
+    ...(patch && typeof patch === 'object' ? patch : {}),
+  };
+
+  const { uid, name } = nowUserMeta();
+  try {
+    await setDoc(
+      rowRef,
+      {
+        suppliers: next,
+        updatedAt: serverTimestamp(),
+        updatedByUid: uid,
+        updatedByName: name,
+      },
+      { merge: true },
+    );
+  } catch (e) {
+    throw withFsContext('Inköpsplan: kunde inte uppdatera leverantör på rad', e, { path: rowRef?.path, companyId: cid, projectId: pid, rowId: rid, supplierKey: key });
+  }
+}
+
+export async function setInkopsplanRowSupplierRequestStatus({ companyId, projectId, rowId, supplierKey, requestStatus }) {
+  const status = normalizeSupplierRequestStatus(requestStatus);
+  const patch = { requestStatus: status };
+  if (status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD) {
+    patch.requestSentAt = null;
+    patch.quoteReceivedAt = null;
+  }
+  if (status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD) {
+    patch.requestSentAt = serverTimestamp();
+    patch.quoteReceivedAt = null;
+  }
+  if (status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET) {
+    patch.requestSentAt = serverTimestamp();
+    patch.quoteReceivedAt = serverTimestamp();
+  }
+  await patchInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey, patch });
+}
+
+export async function markInkopsplanRowSupplierRequestSent({ companyId, projectId, rowId, supplierKey }) {
+  await patchInkopsplanRowSupplier({
+    companyId,
+    projectId,
+    rowId,
+    supplierKey,
+    patch: {
+      requestStatus: INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD,
+      requestSentAt: serverTimestamp(),
+      quoteReceivedAt: null,
+    },
+  });
+}
+
+export async function markInkopsplanRowSupplierQuoteReceived({ companyId, projectId, rowId, supplierKey }) {
+  await patchInkopsplanRowSupplier({
+    companyId,
+    projectId,
+    rowId,
+    supplierKey,
+    patch: {
+      requestStatus: INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET,
+      requestSentAt: serverTimestamp(),
+      quoteReceivedAt: serverTimestamp(),
+    },
+  });
+}
+
+export async function resetInkopsplanRowSupplierRequest({ companyId, projectId, rowId, supplierKey }) {
+  await patchInkopsplanRowSupplier({
+    companyId,
+    projectId,
+    rowId,
+    supplierKey,
+    patch: {
+      requestStatus: INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD,
+      requestSentAt: null,
+      quoteReceivedAt: null,
+    },
+  });
 }
 
 export async function removeInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey }) {

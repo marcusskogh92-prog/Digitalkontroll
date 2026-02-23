@@ -22,8 +22,7 @@ function getTone(status) {
 export default function InkopsplanStatusBadge({ status }) {
   const tone = getTone(status);
   return (
-    <View style={[styles.badge, { backgroundColor: tone.bg, borderColor: tone.border }]}
-    >
+    <View style={[styles.badge, { backgroundColor: 'transparent', borderColor: 'transparent' }]}>
       <Text style={[styles.text, { color: tone.text }]} numberOfLines={1}>
         {titleCase(status || 'utkast')}
       </Text>
@@ -34,10 +33,10 @@ export default function InkopsplanStatusBadge({ status }) {
 const styles = StyleSheet.create({
   badge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    height: 24,
-    borderRadius: 999,
-    borderWidth: 1,
+    paddingHorizontal: 0,
+    height: 18,
+    borderRadius: 0,
+    borderWidth: 0,
     justifyContent: 'center',
   },
   text: {
