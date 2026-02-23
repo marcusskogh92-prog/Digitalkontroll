@@ -191,6 +191,7 @@ export default function KategoriTable({
   const kebabRefs = useRef({});
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
+  /* eslint-disable react-hooks/exhaustive-deps */
   React.useEffect(() => {
     if (editingItem) {
       setEditDraft({
@@ -201,6 +202,7 @@ export default function KategoriTable({
       setEditDraft({ name: '', note: '' });
     }
   }, [editingId, editingItem?.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleEditKeyDown = (e, item) => {
     if (Platform.OS !== 'web') return;

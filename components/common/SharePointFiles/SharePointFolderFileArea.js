@@ -2,11 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { ICON_RAIL } from '../../../constants/iconRailTheme';
+import { useFileSelection } from '../../../hooks/useFileSelection';
+import { useInlineRename } from '../../../hooks/useInlineRename';
 import { ensureFolderPath, uploadFile } from '../../../services/azure/fileService';
-import { createEmptyDocxBlob, createEmptyXlsxBlob } from '../../../utils/createEmptyOfficeFile';
 import { deleteDriveItemById, getDriveItemByPath, moveDriveItemById, renameDriveItemById } from '../../../services/azure/hierarchyService';
 import { getSiteByUrl } from '../../../services/azure/siteService';
 import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
+import { createEmptyDocxBlob, createEmptyXlsxBlob } from '../../../utils/createEmptyOfficeFile';
 import { buildLockedFileRename, normalizeLockedRenameBase, splitBaseAndExt as splitLockedBaseAndExt } from '../../../utils/lockedFileRename';
 import { filesFromDataTransfer, filesFromFileList } from '../../../utils/webDirectoryFiles';
 import ContextMenu from '../../ContextMenu';
@@ -14,13 +17,10 @@ import { subscribeProjectFileComments } from '../../firebase';
 import FileActionModal from '../Modals/FileActionModal';
 import FilePreviewModal from '../Modals/FilePreviewModal';
 import { useUploadManager } from '../uploads/UploadManagerContext';
-import SharePointFilePreviewPane from './SharePointFilePreviewPane';
-import { useFileSelection } from '../../../hooks/useFileSelection';
-import { useInlineRename } from '../../../hooks/useInlineRename';
-import { ICON_RAIL } from '../../../constants/iconRailTheme';
-import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
 import FileExplorerBreadcrumb from './FileExplorerBreadcrumb';
 import MoveFilesModal from './MoveFilesModal';
+import SharePointFilePreviewPane from './SharePointFilePreviewPane';
+import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
 
 const DND_MOVE_TYPE = 'application/x-digitalkontroll-move';
 
@@ -282,6 +282,8 @@ export default function SharePointFolderFileArea({
 
   const uploadManager = useUploadManager();
   const [dragOverBreadcrumbRelPath, setDragOverBreadcrumbRelPath] = useState('');
+  void dragOverBreadcrumbRelPath;
+  void setDragOverBreadcrumbRelPath;
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
@@ -311,9 +313,9 @@ export default function SharePointFolderFileArea({
 
   const [colWidths, setColWidths] = useState({});
   const resizeRef = useRef({ col: null, startX: 0, startW: 0 });
-  const COL_RESIZE_DEFAULTS = { name: 280, type: 107, uploadedBy: 165, modified: 140 };
-  const COL_RESIZE_MIN = { name: 120, type: 74, uploadedBy: 80, modified: 100 };
-  const COL_RESIZE_MAX = { name: 600, type: 200, uploadedBy: 300, modified: 220 };
+  const COL_RESIZE_DEFAULTS = useMemo(() => ({ name: 280, type: 107, uploadedBy: 165, modified: 140 }), []);
+  const COL_RESIZE_MIN = useMemo(() => ({ name: 120, type: 74, uploadedBy: 80, modified: 100 }), []);
+  const COL_RESIZE_MAX = useMemo(() => ({ name: 600, type: 200, uploadedBy: 300, modified: 220 }), []);
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onMove = (e) => {
@@ -334,13 +336,13 @@ export default function SharePointFolderFileArea({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [colWidths]);
+  }, [colWidths, COL_RESIZE_MIN, COL_RESIZE_MAX]);
   const startResize = useCallback((col, e) => {
     if (Platform.OS !== 'web') return;
     try { e?.stopPropagation?.(); e?.preventDefault?.(); } catch (_) {}
     const def = COL_RESIZE_DEFAULTS[col] ?? 140;
     resizeRef.current = { col, startX: e?.nativeEvent?.clientX ?? 0, startW: colWidths[col] ?? def };
-  }, [colWidths]);
+  }, [colWidths, COL_RESIZE_DEFAULTS]);
 
   const colStyle = useCallback((key) => {
     const w = colWidths[key];
@@ -539,6 +541,8 @@ export default function SharePointFolderFileArea({
     onRename: performRenameItem,
     existingNames: existingNamesForRename,
   });
+  void editingId;
+  void cancelEdit;
 
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
@@ -548,6 +552,7 @@ export default function SharePointFolderFileArea({
   const [folderExpanded, setFolderExpanded] = useState({});
   const [folderLoading, setFolderLoading] = useState({});
   const [moveError, setMoveError] = useState('');
+  void moveError;
 
   const dndTipText = 'Du kan dra och släppa filer och mappar direkt i listan';
   const enableWebDnD = Platform.OS === 'web';
@@ -611,6 +616,7 @@ export default function SharePointFolderFileArea({
     const h = Dimensions.get('window')?.height || 800;
     return Math.max(320, Math.floor(h * 0.8));
   }, []);
+  void moveModalMaxHeight;
 
   const resolveDropTargetRelativePath = useCallback((dropTarget) => {
     if (dropTarget?.type === 'folder-row') return safeText(dropTarget?.relativePath);
@@ -969,7 +975,6 @@ export default function SharePointFolderFileArea({
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
   }, [
-    Platform.OS,
     createFolderOpen,
     createOfficeFileOpen,
     renameOpen,
@@ -1411,6 +1416,7 @@ export default function SharePointFolderFileArea({
       setMoveError(String(e?.message || e || 'Kunde inte flytta.'));
     }
   };
+  void performMove;
 
   const moveItemsToFolder = useCallback(async (itemIds, targetRel) => {
     const ids = Array.isArray(itemIds) ? itemIds.filter(Boolean) : [];
@@ -1772,6 +1778,7 @@ export default function SharePointFolderFileArea({
       </View>
     );
   };
+  void folderRow;
 
   if (!hasContext) {
     return (

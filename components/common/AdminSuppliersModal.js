@@ -19,9 +19,6 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { AdminModalContext } from './AdminModalContext';
-import LeverantorerTable from '../../modules/leverantorer/LeverantorerTable';
-import LeverantorForm from '../../modules/leverantorer/LeverantorForm';
 import {
     addContactToSupplier,
     createSupplier,
@@ -32,6 +29,8 @@ import {
     removeContactFromSupplier,
     updateSupplier,
 } from '../../modules/leverantorer/leverantorerService';
+import LeverantorerTable from '../../modules/leverantorer/LeverantorerTable';
+import LeverantorForm from '../../modules/leverantorer/LeverantorForm';
 import {
     buildAndDownloadExcel,
     computeSyncPlan,
@@ -41,6 +40,7 @@ import {
 } from '../../utils/registerExcel';
 import ContextMenu from '../ContextMenu';
 import { createCategory, fetchByggdelar, fetchCategories, fetchCompanyProfile, fetchKontoplan } from '../firebase';
+import { AdminModalContext } from './AdminModalContext';
 import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
@@ -215,6 +215,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const { openByggdelModal, openKontoplanModal, openKategoriModal, registerSelectionSavedListener } = useContext(AdminModalContext);
 
   const [companyName, setCompanyName] = useState('');
+  void companyName;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');

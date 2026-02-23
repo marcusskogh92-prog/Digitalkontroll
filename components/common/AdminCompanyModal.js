@@ -7,46 +7,40 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Image,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Image,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import LoadingState from './LoadingState';
-import {
-  adminFetchCompanyMembers,
-  fetchCompanyMembers,
-  fetchCompanyProfile,
-  resolveCompanyLogoUrl,
-  saveCompanyProfile,
-  setCompanyStatusRemote,
-  setCompanyUserLimitRemote,
-  setCompanyNameRemote,
-  uploadCompanyLogo,
-} from '../firebase';
 import { ICON_RAIL, PROGRESS_THEME } from '../../constants/iconRailTheme';
 import { PROJECT_PHASES } from '../../features/projects/constants';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import CompanyAIPromptsContent from '../CompanyAIPromptsContent';
 import CompanySharePointContent from '../CompanySharePointContent';
 import CompanyUsersContent from '../CompanyUsersContent';
+import {
+    adminFetchCompanyMembers,
+    fetchCompanyMembers,
+    fetchCompanyProfile,
+    resolveCompanyLogoUrl,
+    saveCompanyProfile,
+    setCompanyNameRemote,
+    setCompanyStatusRemote,
+    setCompanyUserLimitRemote,
+    uploadCompanyLogo,
+} from '../firebase';
 import { AdminModalContext } from './AdminModalContext';
+import LoadingState from './LoadingState';
 
 const MODULE_PHASES = PROJECT_PHASES.filter((p) => p.key !== 'free');
-const MODULE_DISPLAY_NAMES = {
-  kalkylskede: 'Kalkyl',
-  produktion: 'Produktion',
-  avslut: 'Avslutat',
-  eftermarknad: 'Eftermarknad',
-};
 
 // Alla 5 moduler inkl. AI-analys. Produktion, Avslutat, Eftermarknad kan aktiveras för rail-layout; klick i rail visar "Kommer snart".
 const ALL_MODULES = [
@@ -416,9 +410,6 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     openKontoplanModal,
     openByggdelModal,
     openKategoriModal,
-    openMallarModal,
-    openAIPromptsModal,
-    navigationRef,
   isSubModalOpen = false,
   } = useContext(AdminModalContext) || {};
 
@@ -670,20 +661,6 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       setError(err?.message || 'Kunde inte ladda upp logotyp');
     }
   }, [cid]);
-
-  const openDataLink = useCallback((item) => {
-    if (item.openModal) {
-      if (item.openModal === 'openKontoplanModal') openKontoplanModal?.(cid);
-      if (item.openModal === 'openByggdelModal') openByggdelModal?.(cid);
-      if (item.openModal === 'openKategoriModal') openKategoriModal?.(cid);
-      if (item.openModal === 'openMallarModal') openMallarModal?.(cid);
-      onClose?.();
-    }
-    if (item.screen && navigationRef?.current) {
-      navigationRef.current.navigate(item.screen, { companyId: cid });
-      onClose?.();
-    }
-  }, [cid, onClose, openKontoplanModal, openByggdelModal, openKategoriModal, openMallarModal, navigationRef]);
 
   /** Öppna register-modal (Kontoplan, Byggdelar, Kategorier) ovanpå företagsinställningar – stäng inte company-modalen. Mallar visar "Kommer snart". */
   const openRegisterLink = useCallback((item) => {

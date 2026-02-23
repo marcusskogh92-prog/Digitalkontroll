@@ -14,23 +14,23 @@ import HomeMainPaneContainer from '../components/common/HomeMainPaneContainer';
 import { HomeMobileProjectTreeContainer } from '../components/common/HomeMobileProjectTreeContainer';
 import { HomeTasksSection } from '../components/common/HomeTasksSection';
 import { IconRail } from '../components/common/IconRail';
-import RailActivityPanel from '../components/common/RailActivityPanel';
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../components/common/layoutConstants';
 import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
-import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
 import ComingSoonPhaseModal from '../components/common/Modals/ComingSoonPhaseModal';
+import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
+import RailActivityPanel from '../components/common/RailActivityPanel';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
-import ManageSharePointNavigation from './ManageSharePointNavigation';
 import ContextMenu from '../components/ContextMenu';
 import { auth, fetchCompanies, markAllNotificationsAsRead, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
 import { LAYOUT_2026 } from '../constants/iconRailTheme';
+import { ProjectScrollContext } from '../contexts/ProjectScrollContext';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
-import { DEFAULT_PHASE, getPhaseMeta, getProjectPhase } from '../features/projects/constants';
+import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
 import useBackgroundSync from '../hooks/useBackgroundSync';
 import { useCompanyControlTypes } from '../hooks/useCompanyControlTypes';
@@ -40,18 +40,18 @@ import { useHomeInlineBrowserIntegration } from '../hooks/useHomeInlineBrowserIn
 import { useHomePaneResizing } from '../hooks/useHomePaneResizing';
 import { useHomeProjectFolders } from '../hooks/useHomeProjectFolders';
 import { useHomeProjectSelection } from '../hooks/useHomeProjectSelection';
-import { useModalKeyboard } from '../hooks/useModalKeyboard';
 import { useHomeSearchAndScroll } from '../hooks/useHomeSearchAndScroll';
 import { useHomeTasksSection } from '../hooks/useHomeTasksSection';
 import { useHomeTreeInteraction } from '../hooks/useHomeTreeInteraction';
 import { useHomeUserActivity } from '../hooks/useHomeUserActivity';
 import { useHomeWebNavigation } from '../hooks/useHomeWebNavigation';
+import { useModalKeyboard } from '../hooks/useModalKeyboard';
 import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
-import { ProjectScrollContext } from '../contexts/ProjectScrollContext';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
+import ManageSharePointNavigation from './ManageSharePointNavigation';
 
 // Web-only: lazily resolve ReactDOM.createPortal at runtime so the file
 // still works in native bundles where react-dom is not available.
@@ -1026,6 +1026,71 @@ export default function HomeScreen({ navigation, route }) {
       setPhaseActiveItem(normalized(itemId));
     }
   }, [selectedProject?.id, projectModuleRoute?.moduleId, projectModuleRoute?.itemId]);
+
+  // Ensure Offerter always uses the standalone module route (avoid two parallel "modes")
+  // and default to last used subtab (per project) when entering the section.
+  React.useEffect(() => {
+    if (!selectedProject || !selectedProject.id) return;
+
+    const normalizeOfferterItemId = (raw) => {
+      const v = String(raw || '').trim();
+      if (!v) return 'forfragningar';
+      if (v === 'inkomna-offerter' || v === '02-offerter' || v === '02_offerter') return 'offerter';
+      return v;
+    };
+
+    const cid = (companyId != null) ? String(companyId).trim() : '';
+    const pid = String(selectedProject.id).trim();
+    const storageKey = (cid && pid) ? `dk_offerter_last_item:${cid}:${pid}` : null;
+
+    const readRememberedItem = () => {
+      try {
+        if (!storageKey) return '';
+        if (Platform.OS !== 'web') return '';
+        if (typeof window === 'undefined' || !window.localStorage) return '';
+        const v = window.localStorage.getItem(storageKey);
+        const normalized = normalizeOfferterItemId(v);
+        return normalized || '';
+      } catch (_e) {
+        return '';
+      }
+    };
+
+    const writeRememberedItem = (itemId) => {
+      try {
+        if (!storageKey) return;
+        if (Platform.OS !== 'web') return;
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        const v = normalizeOfferterItemId(itemId);
+        if (!v) return;
+        window.localStorage.setItem(storageKey, v);
+      } catch (_e) {}
+    };
+
+    const isOfferterSection = String(phaseActiveSection || '').trim() === 'offerter';
+    const isOfferterRoute = String(projectModuleRoute?.moduleId || '').trim() === 'offerter';
+    const currentPhaseItem = String(phaseActiveItem || '').trim();
+
+    if (isOfferterSection) {
+      const desiredItem = currentPhaseItem
+        ? normalizeOfferterItemId(currentPhaseItem)
+        : (readRememberedItem() || 'forfragningar');
+      if (!currentPhaseItem || currentPhaseItem !== desiredItem) {
+        setPhaseActiveItem(desiredItem);
+      }
+      const currentRouteItem = normalizeOfferterItemId(projectModuleRoute?.itemId || '');
+      if (!isOfferterRoute || currentRouteItem !== desiredItem) {
+        setProjectModuleRoute({ moduleId: 'offerter', itemId: desiredItem });
+      }
+      writeRememberedItem(desiredItem);
+      return;
+    }
+
+    // Only clear the offerter module route once phaseActiveSection is known and not offerter.
+    if (phaseActiveSection && isOfferterRoute) {
+      setProjectModuleRoute(null);
+    }
+  }, [companyId, selectedProject?.id, phaseActiveSection, phaseActiveItem, projectModuleRoute?.moduleId, projectModuleRoute?.itemId]);
 
   // Ladda SharePoint-mappar (funktioner) för valt projekt
   useHomeProjectFolders({

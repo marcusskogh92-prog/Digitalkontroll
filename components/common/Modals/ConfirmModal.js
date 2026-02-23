@@ -9,14 +9,14 @@
  * Används för: radera leverantör, kund, kontakt, byggdel, konto, kategori m.m.
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
-  ActivityIndicator,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  View,
+    ActivityIndicator,
+    Modal,
+    Platform,
+    Pressable,
+    Text,
+    View,
 } from 'react-native';
 
 // Design tokens – samma känsla som övriga systemet
@@ -98,19 +98,19 @@ export default function ConfirmModal({
   const cancelRef = useRef(null);
   const confirmRef = useRef(null);
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     if (busy) return;
     try {
       onCancel?.();
     } catch (_e) {}
-  };
+  }, [busy, onCancel]);
 
-  const handleConfirm = () => {
+  const handleConfirm = useCallback(() => {
     if (busy) return;
     try {
       onConfirm?.();
     } catch (_e) {}
-  };
+  }, [busy, onConfirm]);
 
   // ESC = Avbryt, ENTER = Bekräfta (samma som Radera)
   useEffect(() => {
@@ -128,7 +128,7 @@ export default function ConfirmModal({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [visible, busy]);
+  }, [visible, handleCancel, handleConfirm]);
 
   // Default fokus på Avbryt när modalen öppnas
   useEffect(() => {

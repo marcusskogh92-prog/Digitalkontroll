@@ -5,20 +5,15 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { fetchCompanySharePointSiteMetas, getCompanySharePointSiteIdByRole, syncSharePointSiteVisibilityRemote } from '../../firebase';
-import { getDriveItemByPath, moveDriveItemById, moveDriveItemAcrossSitesByPath } from '../../../services/azure/hierarchyService';
-import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
 import { ICON_RAIL } from '../../../constants/iconRailTheme';
+import { getDriveItemByPath, moveDriveItemAcrossSitesByPath, moveDriveItemById } from '../../../services/azure/hierarchyService';
+import { getSharePointFolderItems } from '../../../services/sharepoint/sharePointStructureService';
+import { fetchCompanySharePointSiteMetas, getCompanySharePointSiteIdByRole, syncSharePointSiteVisibilityRemote } from '../../firebase';
 
 const RAIL_BG = ICON_RAIL?.bg ?? '#0f1b2d';
-
-function safeText(v) {
-  if (v == null) return '';
-  return String(v).trim();
-}
 
 function normalizeRole(role) {
   const r = String(role || '').trim().toLowerCase();
@@ -50,7 +45,10 @@ export default function MoveFilesModal({
   const [moveError, setMoveError] = useState('');
   const [isMoving, setIsMoving] = useState(false);
 
-  const toMove = Array.isArray(itemsToMove) ? itemsToMove.filter((it) => it?.id) : [];
+  const toMove = useMemo(
+    () => (Array.isArray(itemsToMove) ? itemsToMove.filter((it) => it?.id) : []),
+    [itemsToMove]
+  );
 
   const loadSites = useCallback(async () => {
     if (!companyId) {
@@ -82,7 +80,7 @@ export default function MoveFilesModal({
         .filter((s) => !!s.id);
       list.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { sensitivity: 'base' }));
       setSites(list);
-    } catch (e) {
+    } catch (_e) {
       setSites([]);
     } finally {
       setSitesLoading(false);
@@ -239,6 +237,7 @@ export default function MoveFilesModal({
     isMoving,
     toMove,
     selectedSite,
+    selectedFolder?.name,
     destFolderId,
     destFolderPath,
     sourceSiteId,

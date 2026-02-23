@@ -19,6 +19,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { ICON_RAIL } from '../../constants/iconRailTheme';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import {
     buildAndDownloadExcel,
     computeSyncPlan,
@@ -31,13 +33,11 @@ import {
     createKontoplanAccount,
     deleteKontoplanAccount,
     fetchKontoplan,
-    updateKontoplanAccount,
     updateCompanySupplier,
+    updateKontoplanAccount,
 } from '../firebase';
 import KontoplanTable from './KontoplanTable';
 import ConfirmModal from './Modals/ConfirmModal';
-import { ICON_RAIL } from '../../constants/iconRailTheme';
-import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -280,12 +280,14 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
     load();
   }, [visible, load]);
 
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (visible && selectionContext?.selectedKonton) {
       setLocalSelectedKonton(Array.isArray(selectionContext.selectedKonton) ? [...selectionContext.selectedKonton] : []);
       setFilterOnlySelected(false);
     }
   }, [visible, selectionContext?.entityId]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;

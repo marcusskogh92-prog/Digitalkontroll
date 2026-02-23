@@ -92,7 +92,6 @@ export default function UserEditModal({ visible, member, companyId, onClose, onS
   const lastNameMissing = isNew && String(lastName || '').trim().length === 0;
   const emailMissing = isNew && !emailIsValid;
   const passwordMissing = isNew && !passwordOptional && String(password || '').length === 0;
-  const roleMissing = isNew && String(role || '').length === 0;
   const licenseWarning = isNew && typeof usagePercent === 'number' && usagePercent >= 90;
 
   const generateTempPassword = () => {

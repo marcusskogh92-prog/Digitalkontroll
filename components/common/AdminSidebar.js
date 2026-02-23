@@ -9,8 +9,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useCallback, useContext, useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
-import { AdminModalContext } from './AdminModalContext';
 import { auth, fetchCompanies } from '../firebase';
+import { AdminModalContext } from './AdminModalContext';
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -184,20 +184,20 @@ export default function AdminSidebar({
     return items;
   };
 
-  const normalizeCompanyLabel = (company) => String(company?.name || company?.id || '').trim();
-  const isMsByggsystem = (company) => {
+  const normalizeCompanyLabel = useCallback((company) => String(company?.name || company?.id || '').trim(), []);
+  const isMsByggsystem = useCallback((company) => {
     const label = normalizeCompanyLabel(company);
     return label === 'MS Byggsystem' || String(company?.id || '').trim() === 'MS Byggsystem';
-  };
+  }, [normalizeCompanyLabel]);
 
-  const getSortedCompanies = () => {
+  const getSortedCompanies = useCallback(() => {
     const list = Array.isArray(companies) ? [...companies] : [];
     const pinned = list.filter(isMsByggsystem);
     const rest = list.filter(c => !isMsByggsystem(c));
     rest.sort((a, b) => normalizeCompanyLabel(a).localeCompare(normalizeCompanyLabel(b), 'sv'));
     // If there are multiple MS Byggsystem entries for some reason, keep their relative order.
     return [...pinned, ...rest];
-  };
+  }, [companies, isMsByggsystem, normalizeCompanyLabel]);
 
   const persistCompanySelection = async (cid, companyObj) => {
     try {
@@ -304,7 +304,7 @@ export default function AdminSidebar({
       }
       dispatchWindowEvent('dkGoHome');
     } catch (_e) {}
-  }, [isSuperadmin, primaryCompanyId, companies]);
+  }, [isSuperadmin, primaryCompanyId, getSortedCompanies]);
 
   const handleHardRefresh = async () => {
     // Refresh current admin screen (web) + refresh companies list (superadmin)

@@ -204,6 +204,7 @@ export default function ByggdelTable({
   const kebabRefs = useRef({});
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
+  /* eslint-disable react-hooks/exhaustive-deps */
   React.useEffect(() => {
     if (editingItem) {
       setEditDraft({
@@ -215,6 +216,7 @@ export default function ByggdelTable({
       setEditDraft({ byggdel: '', beskrivning: '', anteckningar: '' });
     }
   }, [editingId, editingItem?.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleEditKeyDown = (e, item) => {
     if (Platform.OS !== 'web') return;

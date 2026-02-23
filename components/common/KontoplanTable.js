@@ -205,6 +205,7 @@ export default function KontoplanTable({
   const kontoHintTimeoutRef = useRef(null);
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
+  /* eslint-disable react-hooks/exhaustive-deps */
   React.useEffect(() => {
     if (editingItem) {
       setEditDraft({
@@ -216,6 +217,7 @@ export default function KontoplanTable({
       setEditDraft({ konto: '', benamning: '', beskrivning: '' });
     }
   }, [editingId, editingItem?.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleEditKeyDown = (e, item) => {
     if (Platform.OS !== 'web') return;

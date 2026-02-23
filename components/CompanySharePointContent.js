@@ -6,28 +6,28 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Linking,
-  Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Linking,
+    Platform,
+    ScrollView,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import {
-  fetchCompanySharePointSiteMetas,
-  getCompanySharePointSiteId,
-  getCompanySharePointSiteIdByRole,
-  getSharePointNavigationConfig,
-  saveSharePointNavigationConfig,
-  syncSharePointSiteVisibilityRemote,
-  upsertCompanySharePointSiteMeta,
-} from './firebase';
-import ContextMenu from './ContextMenu';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
+import ContextMenu from './ContextMenu';
+import {
+    fetchCompanySharePointSiteMetas,
+    getCompanySharePointSiteId,
+    getCompanySharePointSiteIdByRole,
+    getSharePointNavigationConfig,
+    saveSharePointNavigationConfig,
+    syncSharePointSiteVisibilityRemote,
+    upsertCompanySharePointSiteMeta,
+} from './firebase';
 
 const normalizeRoleLabel = (role) => {
   const r = String(role || '').trim().toLowerCase();
@@ -147,7 +147,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
       if (weight(a.role) !== weight(b.role)) return weight(a.role) - weight(b.role);
       return String(a.siteName || a.siteId).localeCompare(String(b.siteName || b.siteId), undefined, { sensitivity: 'base' });
     });
-  }, [metas, systemMeta, projectMeta, sortedMetas, projectSiteId, systemSiteId, resolvedProjectName, resolvedProjectUrl, resolvedSystemName, resolvedSystemUrl]);
+  }, [systemMeta, projectMeta, sortedMetas, projectSiteId, systemSiteId, resolvedProjectName, resolvedProjectUrl, resolvedSystemName, resolvedSystemUrl]);
 
   const typLabel = (entry) => {
     const r = entry?.role;
@@ -193,7 +193,6 @@ export default function CompanySharePointContent({ companyId, companyName }) {
       if (Platform.OS !== 'web') Alert.alert('Info', 'Skapande av siter stöds i webbläget.');
       return;
     }
-    const baseName = String(companyName || cid).trim();
     const namePart = String((typeof window !== 'undefined' && window.prompt('Namn på ny site', '')) || '').trim();
     if (!namePart) return;
     setCreating(true);
@@ -228,7 +227,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     } finally {
       setCreating(false);
     }
-  }, [cid, companyName, reload]);
+  }, [cid, reload]);
 
   const handleDeleteSite = useCallback(async (siteId, siteName) => {
     if (!cid || !siteId) return;
@@ -380,7 +379,6 @@ export default function CompanySharePointContent({ companyId, companyName }) {
               const status = spStatusInfo(entry);
               const pill = spStatusPillStyle(status.tone);
               const siteName = String(entry?.siteName || 'SharePoint-site').trim();
-              const siteUrl = String(entry?.siteUrl || '').trim();
               return (
                 <View
                   key={sid}

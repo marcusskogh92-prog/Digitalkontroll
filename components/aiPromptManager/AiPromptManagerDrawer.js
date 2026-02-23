@@ -3,24 +3,23 @@
  * Multi-prompt manager: lista, redigera, aktiv/inaktiv, standard, statistik.
  */
 
-import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  View,
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    Text,
+    View,
 } from 'react-native';
 import {
-  deleteCompanyAIPromptTemplate,
-  fetchCompanyAIPromptTemplates,
-  getCompanyAIPrompt,
-  saveCompanyAIPromptTemplate,
+    deleteCompanyAIPromptTemplate,
+    fetchCompanyAIPromptTemplates,
+    getCompanyAIPrompt,
+    getDefaultAIPrompt,
+    saveCompanyAIPromptTemplate,
 } from '../firebase';
-import { getDefaultAIPrompt } from '../firebase';
 import PromptEditor from './PromptEditor';
 import PromptHeader from './PromptHeader';
 import PromptList from './PromptList';

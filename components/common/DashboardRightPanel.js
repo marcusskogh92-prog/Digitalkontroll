@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { getPhaseConfig, getProjectPhase } from '../../features/projects/constants';
@@ -49,24 +49,24 @@ function CompactMonthCalendar({ activityDates = [], activityColorsByDate = new M
 
   const goPrevMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
   const goNextMonth = () => setViewDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
-  const today = new Date();
-  const isToday = (d) => d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
   const activitySet = useMemo(() => new Set(Array.isArray(activityDates) ? activityDates : []), [activityDates]);
   const colorsByDate = useMemo(
     () => (activityColorsByDate instanceof Map && activityColorsByDate.size > 0 ? activityColorsByDate : buildActivityColorsByDate(upcomingTimelineItems, upcomingItems)),
     [activityColorsByDate, upcomingTimelineItems, upcomingItems]
   );
 
-  const { firstDay, daysInMonth, startOffset } = useMemo(() => {
+  const { daysInMonth, startOffset } = useMemo(() => {
     const first = new Date(year, month, 1);
     const last = new Date(year, month + 1, 0);
     const daysInMonth = last.getDate();
     const dayOfWeek = first.getDay();
     const startOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    return { firstDay: first, daysInMonth, startOffset };
+    return { daysInMonth, startOffset };
   }, [year, month]);
 
   const gridCells = useMemo(() => {
+    const today = new Date();
+    const isToday = (d) => d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
     const cells = [];
     for (let i = 0; i < startOffset; i++) cells.push({ key: `empty-${i}`, empty: true });
     for (let d = 1; d <= daysInMonth; d++) {
@@ -148,15 +148,6 @@ function CompactMonthCalendar({ activityDates = [], activityColorsByDate = new M
       </View>
     </View>
   );
-}
-
-function formatDueDate(ms) {
-  if (!ms) return '';
-  try {
-    return new Date(ms).toLocaleDateString('sv-SE', { day: 'numeric', month: 'short', year: 'numeric' });
-  } catch (_e) {
-    return '';
-  }
 }
 
 /** Formatera datum som "13 Februari" (rubrik) */

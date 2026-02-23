@@ -2,15 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Platform, Pressable, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
-import { showAlert } from '../../utils/alerts';
-import { HEADER_ICON_SIZE, SUB_HEADER_PADDING_VERTICAL, SUB_HEADER_PADDING_HORIZONTAL, SUB_HEADER_ITEM_GAP } from './layoutConstants';
-import { fetchCompanySharePointSiteMetas } from '../firebase';
 import { checkSharePointSiteById } from '../../services/azure/hierarchyService';
-import { AdminModalContext } from './AdminModalContext';
+import { showAlert } from '../../utils/alerts';
 import ContextMenu from '../ContextMenu';
 import HeaderDisplayName from '../HeaderDisplayName';
 import HeaderUserMenu from '../HeaderUserMenu';
+import { fetchCompanySharePointSiteMetas } from '../firebase';
 import { formatPersonName } from '../formatPersonName';
+import { AdminModalContext } from './AdminModalContext';
+import { HEADER_ICON_SIZE, SUB_HEADER_ITEM_GAP, SUB_HEADER_PADDING_HORIZONTAL, SUB_HEADER_PADDING_VERTICAL } from './layoutConstants';
 let createPortal = null;
 if (typeof Platform !== 'undefined' && Platform.OS === 'web') {
   try { createPortal = require('react-dom').createPortal; } catch (_e) { createPortal = null; }
@@ -492,7 +492,7 @@ export function HomeHeader({
                       {isCommentMention ? (
                         <>
                           <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} nämnde dig i en kommentar</Text>
-                          {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>"{textPreview}{textPreview.length >= 120 ? '…' : ''}"</Text> : null}
+                          {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>“{textPreview}{textPreview.length >= 120 ? '…' : ''}”</Text> : null}
                         </>
                       ) : (
                         <Text style={{ fontSize: 13, color: '#0F172A' }}>{n?.textPreview || 'Ny händelse'}</Text>
@@ -873,7 +873,7 @@ export function HomeHeader({
                         {isCommentMention ? (
                           <>
                             <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} nämnde dig i en kommentar</Text>
-                            {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>"{textPreview}{textPreview.length >= 120 ? '…' : ''}"</Text> : null}
+                            {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>“{textPreview}{textPreview.length >= 120 ? '…' : ''}”</Text> : null}
                           </>
                         ) : (
                           <Text style={{ fontSize: 13, color: '#0F172A' }}>{n?.textPreview || 'Ny händelse'}</Text>

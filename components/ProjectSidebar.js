@@ -1,20 +1,21 @@
 
-
-
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Platform, TouchableOpacity } from 'react-native';
+
 import { LEFT_NAV } from '../constants/leftNavTheme';
+import { ensureDkBasStructure } from '../services/azure/fileService';
+import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
+import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
+
+import ContextMenu from './ContextMenu';
+import UserEditModal from './UserEditModal';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteIdByRole, provisionCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+
 const CHEVRON_SIZE = LEFT_NAV.chevronSize ?? 12;
 const INDENT_PER_LEVEL = LEFT_NAV.indentPerLevel ?? 12;
 const ROW_FONT_SIZE = LEFT_NAV.rowFontSize ?? 13;
 const EXPAND_TRANSITION_MS = LEFT_NAV.expandTransitionMs ?? 200;
-import { ensureDkBasStructure } from '../services/azure/fileService';
-import { checkSharePointConnection, createSharePointFolder, getSharePointHierarchy, loadFolderChildren, moveDriveItemAcrossSitesByPath } from '../services/azure/hierarchyService';
-import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
-import ContextMenu from './ContextMenu';
-import UserEditModal from './UserEditModal';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteIdByRole, provisionCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 
 const PRIMARY_BLUE = '#1976D2';
 const HOVER_BG = 'rgba(25, 118, 210, 0.10)';

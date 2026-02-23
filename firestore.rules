@@ -361,6 +361,20 @@ service cloud.firestore {
       allow read, write: if isCompanyMember(company);
     }
 
+    // Inköpsplan (company + project scoped)
+    // Path: foretag/{company}/projects/{projectId}/inkopsplan/inkopsplan
+    // Subcollection: foretag/{company}/projects/{projectId}/inkopsplan/inkopsplan/rows/{rowId}
+    match /foretag/{company}/projects/{projectId}/inkopsplan/{document=**} {
+      // Same access model as file comments/checklist: company member OR explicit project member.
+      allow read, write: if canAccessFileComments(company, projectId) || isGlobalAdmin();
+    }
+
+    // Inköpsplan mailmallar (company + project scoped)
+    // Path: foretag/{company}/projects/{projectId}/inkopsplanEmailTemplates/{templateId}
+    match /foretag/{company}/projects/{projectId}/inkopsplanEmailTemplates/{templateId} {
+      allow read, write: if canAccessFileComments(company, projectId) || isGlobalAdmin();
+    }
+
     // FFU AI analysis (persisted per project)
     // Path: foretag/{company}/projects/{projectId}/ai_ffu_analysis/latest
     // - Read: all company members + global admins

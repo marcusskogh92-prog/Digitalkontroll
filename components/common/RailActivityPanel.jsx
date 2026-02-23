@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { ActivityIndicator, Alert, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 function toTsMs(ts) {
@@ -219,7 +219,7 @@ export default function RailActivityPanel({
                     </Text>
                     {!isAiAnalysisComplete && textPreview ? (
                       <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>
-                        "{textPreview}{textPreview.length >= 100 ? '…' : ''}"
+                        “{textPreview}{textPreview.length >= 100 ? '…' : ''}”
                       </Text>
                     ) : null}
                     {(n?.projectName || n?.projectId) && isAiAnalysisComplete ? (

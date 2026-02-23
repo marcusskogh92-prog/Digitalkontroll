@@ -6,15 +6,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import {
-  adminFetchCompanyMembers,
-  auth,
-  createUserRemote,
-  deleteUserRemote,
-  fetchCompanyMembers,
-  updateUserRemote,
-  uploadUserAvatar,
+    adminFetchCompanyMembers,
+    auth,
+    createUserRemote,
+    deleteUserRemote,
+    fetchCompanyMembers,
+    updateUserRemote,
+    uploadUserAvatar,
 } from './firebase';
 import UserEditModal from './UserEditModal';
 import UsersTable from './UsersTable';

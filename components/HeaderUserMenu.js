@@ -40,10 +40,6 @@ export default function HeaderUserMenu() {
   };
 
   const displayName = (auth && auth.currentUser) ? formatPersonName(auth.currentUser.displayName || auth.currentUser.email || '') : 'Användare';
-  const [isOwner, setIsOwner] = useState(false);
-  const [isMsAdmin, setIsMsAdmin] = useState(false);
-  const [isCompanyAdmin, setIsCompanyAdmin] = useState(false);
-  const [isSuperadmin, setIsSuperadmin] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -51,7 +47,6 @@ export default function HeaderUserMenu() {
       try {
         const email = String(auth?.currentUser?.email || '').toLowerCase();
         if (!active) return;
-        setIsOwner(email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se');
         // Try to read claims and local fallback for companyId
         let tokenRes = null;
         try { tokenRes = await auth.currentUser?.getIdTokenResult(true).catch(() => null); } catch(_e) { tokenRes = null; }
@@ -61,10 +56,8 @@ export default function HeaderUserMenu() {
         const companyId = companyFromClaims || stored || '';
         const adminClaim = !!(claims && (claims.admin === true || claims.role === 'admin'));
         if (!active) return;
-        // MS Byggsystem-admin (behörighet till globala företagsverktyg)
-        setIsMsAdmin(adminClaim && companyId === 'MS Byggsystem');
-        // Admin i valfritt företag (ska kunna hantera sina egna användare)
-        setIsCompanyAdmin(adminClaim);
+        void adminClaim;
+        void companyId;
 
         // Beräkna rolltext och superadmin-flagga för headern
         const emailLower = email;
@@ -77,7 +70,6 @@ export default function HeaderUserMenu() {
         else label = 'Användare';
         if (active) {
           setRoleLabel(label);
-          setIsSuperadmin(superadminFlag);
         }
       } catch(_e) {}
     })();

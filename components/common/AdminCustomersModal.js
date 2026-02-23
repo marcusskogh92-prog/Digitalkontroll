@@ -6,42 +6,41 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    Modal,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import { auth, deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../firebase';
-import ContextMenu from '../ContextMenu';
-import ConfirmModal from './Modals/ConfirmModal';
-import KundContacts from '../../modules/kunder/KundContacts';
 import KundForm from '../../modules/kunder/KundForm';
 import KunderTable from '../../modules/kunder/KunderTable';
 import {
-  createCustomer,
-  deleteCustomer,
-  fetchContacts,
-  fetchCustomers,
-  normalizeCustomerType,
-  addContactToCustomer,
-  linkExistingContactToCustomer,
-  removeContactFromCustomer,
-  updateCustomer,
+    addContactToCustomer,
+    createCustomer,
+    deleteCustomer,
+    fetchContacts,
+    fetchCustomers,
+    linkExistingContactToCustomer,
+    normalizeCustomerType,
+    removeContactFromCustomer,
+    updateCustomer,
 } from '../../modules/kunder/kunderService';
 import {
-  buildAndDownloadExcel,
-  computeSyncPlan,
-  parseExcelFromBuffer,
-  validateHeaders,
-  KUNDER_EXCEL,
+    buildAndDownloadExcel,
+    computeSyncPlan,
+    KUNDER_EXCEL,
+    parseExcelFromBuffer,
+    validateHeaders,
 } from '../../utils/registerExcel';
+import ContextMenu from '../ContextMenu';
+import { deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../firebase';
+import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -244,6 +243,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
   const hasCompany = Boolean(cid);
 
   const [companyName, setCompanyName] = useState('');
+  void companyName;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -477,8 +477,6 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
       setSortDirection('asc');
     }
   };
-
-  const editingCustomer = editingId ? (customers.find((c) => c.id === editingId) || null) : null;
 
   const handleSaveForm = async (values) => {
     if (!cid) return;

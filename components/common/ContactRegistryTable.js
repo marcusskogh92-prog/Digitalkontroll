@@ -6,8 +6,10 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 let createPortal = null;
 try {
@@ -15,8 +17,6 @@ try {
 } catch (_e) {
   createPortal = null;
 }
-
-import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 // Flexandelar för flexibla kolumner (Namn, Företag, Roll, E-post). Fasta bredder för Mobil, Arbete, Åtgärder.
 const FLEX = { name: 1.2, company: 1.5, role: 1.1, email: 2 };
@@ -372,6 +372,7 @@ export default function ContactRegistryTable({
   };
 
   const editingContact = editingId ? (contacts.find((c) => c.id === editingId) || null) : null;
+  /* eslint-disable react-hooks/exhaustive-deps */
   React.useEffect(() => {
     if (editingContact) {
       setEditDraft({
@@ -390,6 +391,7 @@ export default function ContactRegistryTable({
       setEditDraft(null);
     }
   }, [editingId, editingContact?.id]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const handleEditKeyDown = (e, contact) => {
     if (Platform.OS !== 'web') return;

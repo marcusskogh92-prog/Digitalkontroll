@@ -1,6 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import FFUAISummaryView from '../../Screens/FFUAISummaryView';
 import ProjectDetails from '../../Screens/ProjectDetails';
 import TemplateControlScreen from '../../Screens/TemplateControlScreen';
@@ -13,7 +11,6 @@ export default function WebMainPane(props) {
     authClaims,
     webPaneHeight,
     rightPaneScrollRef,
-    activityScrollRef,
     inlineControlEditor,
     closeInlineControlEditor,
     handleInlineControlFinished,
@@ -75,8 +72,6 @@ export default function WebMainPane(props) {
     companyProfile,
     companyId,
     routeCompanyId,
-    rightWidth,
-    panResponderRight,
     phaseActiveSection,
     phaseActiveItem,
     phaseActiveNode,

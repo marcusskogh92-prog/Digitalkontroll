@@ -5,8 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { Platform, Text, TextInput, View } from 'react-native';
-import FileActionModal from './FileActionModal';
-import { FILE_ACTION_MODAL_STYLES } from './FileActionModal';
+import FileActionModal, { FILE_ACTION_MODAL_STYLES } from './FileActionModal';
 
 const inputStyle = {
   borderWidth: 1,

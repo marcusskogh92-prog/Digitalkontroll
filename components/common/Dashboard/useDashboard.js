@@ -713,6 +713,7 @@ export function useDashboard({
     }
 
     const unsubs = [];
+    const timelineByProject = timelineByProjectRef.current;
     for (const pid of pids) {
       const ref = doc(db, 'foretag', cid, 'project_timeline', pid);
       const unsub = onSnapshot(
@@ -735,7 +736,7 @@ export function useDashboard({
     }
     return () => {
       unsubs.forEach((u) => { try { u(); } catch (_e) {} });
-      pids.forEach((pid) => { delete timelineByProjectRef.current[pid]; });
+      pids.forEach((pid) => { delete timelineByProject[pid]; });
     };
   }, [companyId, routeCompanyId, authClaims?.companyId, memberProjectsReady, memberProjectIds]);
 

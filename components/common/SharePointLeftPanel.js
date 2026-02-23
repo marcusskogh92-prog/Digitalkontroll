@@ -550,6 +550,11 @@ export function SharePointLeftPanel({
   const syncEnsureDoneRef = useRef(false);
   const lastCompanyIdRef = useRef(null);
 
+  void siteSectionToggleTick;
+  void hoveredSectionKey;
+  void setHoveredSectionKey;
+  void archivingProjectId;
+
   const setSyncState = useCallback((nextState, errorMessage = null) => {
     setSharepointSyncState(nextState);
     setSharepointSyncError(errorMessage);
@@ -953,6 +958,9 @@ export function SharePointLeftPanel({
     // Micro-feedback trigger (once per click)
     setSiteSectionToggleTick((prev) => ({ ...(prev || {}), [k]: (prev?.[k] || 0) + 1 }));
   };
+
+  void isSiteSectionExpanded;
+  void toggleSiteSectionExpanded;
 
   const openProjectContextMenu = (event, target) => {
     if (!canArchiveProjects) return;
