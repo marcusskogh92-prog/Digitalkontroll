@@ -19,6 +19,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import {
@@ -36,7 +37,9 @@ import {
     updateCompanySupplier,
     updateKontoplanAccount,
 } from '../firebase';
+import ModalBase from './ModalBase';
 import KontoplanTable from './KontoplanTable';
+import AddKontoplanModal from './Modals/AddKontoplanModal';
 import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
@@ -122,8 +125,8 @@ const styles = StyleSheet.create({
   statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   toolbarSection: {
     flexShrink: 0,
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
     paddingBottom: 12,
     backgroundColor: '#fff',
   },
@@ -135,12 +138,14 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#eee',
     marginTop: 12,
-    marginHorizontal: -20,
+    marginHorizontal: -D.contentPadding,
   },
   tableScroll: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  tableScrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
+  tableScrollContent: { paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: D.contentPadding },
+  tableScrollHorizontal: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
+  tableWrap: {},
   searchWrap: {
     flex: 1,
     maxWidth: 400,
@@ -155,23 +160,24 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1f5f9',
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e2e8f0',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#a7f3d0',
@@ -207,6 +213,7 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
+  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
   footerBtnPrimary: {
     borderColor: ICON_RAIL.bg,
     backgroundColor: ICON_RAIL.bg,
@@ -224,7 +231,8 @@ const styles = StyleSheet.create({
 export default function AdminKontoplanModal({ visible, companyId, selectionContext, onClose, onSelectionSaved }) {
   const cid = String(companyId || '').trim();
   const hasCompany = Boolean(cid);
-  const isSelectionMode = Boolean(selectionContext?.entityId);
+  const isFormMode = selectionContext?.forForm === true;
+  const isSelectionMode = isFormMode || Boolean(selectionContext?.entityId);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -239,6 +247,9 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
   const [inlineBenamning, setInlineBenamning] = useState('');
   const [inlineBeskrivning, setInlineBeskrivning] = useState('');
   const [inlineSaving, setInlineSaving] = useState(false);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
+  const [addKontoplanModalVisible, setAddKontoplanModalVisible] = useState(false);
+  const [addKontoplanSaving, setAddKontoplanSaving] = useState(false);
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuItem, setRowMenuItem] = useState(null);
@@ -286,7 +297,7 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
       setLocalSelectedKonton(Array.isArray(selectionContext.selectedKonton) ? [...selectionContext.selectedKonton] : []);
       setFilterOnlySelected(false);
     }
-  }, [visible, selectionContext?.entityId]);
+  }, [visible, selectionContext?.entityId, selectionContext?.forForm, selectionContext?.selectedKonton]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
@@ -304,12 +315,17 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        onClose?.();
+        e.stopImmediatePropagation();
+        if (addKontoplanModalVisible) {
+          setAddKontoplanModalVisible(false);
+        } else {
+          onClose?.();
+        }
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [visible, onClose]);
+  }, [visible, onClose, addKontoplanModalVisible]);
 
   useLayoutEffect(() => {
     if (!notice && !error) return;
@@ -379,7 +395,13 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
   }, [sorted, isSelectionMode, filterOnlySelected, localSelectedKonton]);
 
   const handleSaveSelection = async () => {
-    if (!cid || !selectionContext?.entityId) return;
+    if (!cid) return;
+    if (isFormMode) {
+      onSelectionSaved?.({ forFormKonton: true, selectedKonton: localSelectedKonton });
+      onClose();
+      return;
+    }
+    if (!selectionContext?.entityId) return;
     setSavingSelection(true);
     setError('');
     try {
@@ -437,6 +459,31 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
       setError(formatWriteError(e));
     } finally {
       setInlineSaving(false);
+    }
+  };
+
+  const handleAddKontoplanSave = async (payload) => {
+    if (!cid) return;
+    const konto = normalizeKonto(payload.konto);
+    const exists = (accounts || []).some((a) => String(a.konto ?? '').trim() === konto);
+    if (exists) {
+      throw new Error('Kontonumret finns redan. Varje konto ska vara unikt.');
+    }
+    setAddKontoplanSaving(true);
+    try {
+      await createKontoplanAccount(
+        {
+          konto,
+          benamning: String(payload.benamning ?? '').trim(),
+          beskrivning: String(payload.beskrivning ?? '').trim(),
+        },
+        cid
+      );
+      await load();
+      showNotice('Konto tillagt');
+      setAddKontoplanModalVisible(false);
+    } finally {
+      setAddKontoplanSaving(false);
     }
   };
 
@@ -611,36 +658,45 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
     minHeight: 300,
   });
 
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition ? {} : { width: Platform.OS === 'web' ? '90vw' : '90%', maxWidth: 720, height: Platform.OS === 'web' ? '85vh' : '85%' };
+
   if (!visible) return null;
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[styles.overlay, overlayStyle]} onPress={onClose}>
-        <Pressable style={[styles.box, boxStyle]} onPress={(e) => e.stopPropagation()}>
-          <View
-            style={[styles.header, headerProps.style]}
-            {...(Platform.OS === 'web' ? { onMouseDown: headerProps.onMouseDown } : {})}
-          >
-            <View style={styles.headerLeft}>
-              <View style={styles.titleIcon}>
-                <Ionicons name="list-outline" size={18} color={ICON_RAIL.iconColorActive} />
-              </View>
-              <View style={styles.titleLine}>
-                <Text style={styles.title} numberOfLines={1}>Kontoplan</Text>
-                <Text style={styles.titleDot}>•</Text>
-                <Text style={styles.subtitle} numberOfLines={1}>Register över konton</Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              accessibilityLabel="Stäng"
-              {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}
-            >
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-            </TouchableOpacity>
-          </View>
+  const footer = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+      {isSelectionMode ? (
+        <TouchableOpacity
+          style={[styles.footerBtn, styles.footerBtnPrimary]}
+          onPress={handleSaveSelection}
+          disabled={savingSelection}
+          {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
+        >
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara val</Text>
+        </TouchableOpacity>
+      ) : null}
+      <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Kontoplan"
+      subtitle="Register över konton"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="list-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
           <View style={styles.toolbarSection}>
             {!showContent ? (
               <View style={styles.selectCompany}>
@@ -677,7 +733,7 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                         {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                       >
                         <Text style={{ fontSize: 13, fontWeight: '500', color: filterOnlySelected ? '#2563eb' : '#64748b' }}>
-                          Endast valda för {selectionContext?.entityName || 'leverantör'}
+                          Endast valda för {selectionContext?.entityName || (isFormMode ? 'formulär' : 'leverantör')}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -696,6 +752,26 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {!isSelectionMode && (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                        onPress={() => setShowInlineAddRow((v) => !v)}
+                        activeOpacity={0.7}
+                        accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: showInlineAddRow }}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Ionicons
+                          name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                          size={18}
+                          color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                        />
+                        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                          Lägg till snabbt
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                     {Platform.OS === 'web' && (
                       <TouchableOpacity
                         ref={excelBtnRef}
@@ -714,32 +790,24 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                         accessibilityLabel="Importera / exportera Excel"
                         {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                       >
-                        <Ionicons name="grid-outline" size={18} color="#167534" />
-                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                        <Ionicons name="document-outline" size={14} color="#167534" />
+                        <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
                       </TouchableOpacity>
                     )}
-                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => {
-                        const r = tableScrollRef.current;
-                        if (r?.scrollTo) r.scrollTo({ y: 0, animated: true });
-                        else if (Platform.OS === 'web' && r) {
-                          const node = r.getScrollableNode?.() ?? r;
-                          if (node?.scrollTop !== undefined) node.scrollTop = 0;
-                        }
-                      }}
+                      onPress={() => setAddKontoplanModalVisible(true)}
                       accessibilityLabel="Lägg till konto"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="add" size={18} color="#fff" />
+                      <Ionicons name="add" size={16} color="#fff" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.iconBtn}
                       onPress={load}
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="refresh" size={16} color="#475569" />
+                      <Ionicons name="refresh" size={14} color="#475569" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -754,13 +822,19 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            {!showContent ? null : (
-              <View>
-                {loading ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>Laddar kontoplan…</Text>
-                  </View>
-                ) : (
+            {!showContent ? null : loading ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>Laddar kontoplan…</Text>
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                contentContainerStyle={{ flexGrow: 1, minHeight: '100%', minWidth: '100%' }}
+                keyboardShouldPersistTaps="handled"
+                style={styles.tableScrollHorizontal}
+              >
+                <View style={[styles.tableWrap, { minWidth: '100%', flex: 1 }]}>
                   <KontoplanTable
                     items={sortedForDisplay}
                     sortColumn={sortColumn}
@@ -771,7 +845,9 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={() => setEditingId(null)}
                     onRowMenu={openRowMenu}
-                    inlineEnabled={showContent && !isSelectionMode}
+                    onRowContextMenu={openRowMenu}
+                    onRowDoubleClick={(item) => setEditingId(item.id)}
+                    inlineEnabled={showContent && !isSelectionMode && showInlineAddRow}
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       konto: inlineKonto,
@@ -788,31 +864,10 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
                     selectedKonton={localSelectedKonton}
                     onSelectionChange={isSelectionMode ? setLocalSelectedKonton : undefined}
                   />
-                )}
-              </View>
+                </View>
+              </ScrollView>
             )}
           </ScrollView>
-
-          <View style={styles.footer}>
-            {isSelectionMode ? (
-              <TouchableOpacity
-                style={[styles.footerBtn, styles.footerBtnPrimary]}
-                onPress={handleSaveSelection}
-                disabled={savingSelection}
-                {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
-              >
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
-              </TouchableOpacity>
-            ) : null}
-            <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDark]} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Stäng</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
-            </View>
-          </View>
-
-          {resizeHandles}
 
           {(notice || error) ? (
             <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">
@@ -831,8 +886,7 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
               </View>
             </Animated.View>
           ) : null}
-        </Pressable>
-      </Pressable>
+    </ModalBase>
 
       <ContextMenu
         visible={rowMenuVisible}
@@ -863,6 +917,13 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
         busy={deleting}
         onCancel={() => setDeleteConfirmItem(null)}
         onConfirm={confirmDelete}
+      />
+
+      <AddKontoplanModal
+        visible={addKontoplanModalVisible}
+        onClose={() => setAddKontoplanModalVisible(false)}
+        onSave={handleAddKontoplanSave}
+        saving={addKontoplanSaving}
       />
 
       {Platform.OS === 'web' && (
@@ -908,6 +969,6 @@ export default function AdminKontoplanModal({ visible, companyId, selectionConte
         onCancel={() => { setImportConfirmVisible(false); setImportPlan(null); }}
         onConfirm={runImport}
       />
-    </Modal>
+    </>
   );
 }

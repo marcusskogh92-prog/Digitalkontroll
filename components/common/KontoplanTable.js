@@ -1,35 +1,41 @@
 /**
- * Tabell för Kontoplan – kolumner: Konto, Benämning, Beskrivning/Anteckning, Åtgärder (sticky kebab).
- * Samma DataGrid-pattern som Kunder/Byggdelstabell: inline-redigering, Enter/Esc, diskreta ✔ ✕.
+ * Tabell för Kontoplan – kolumner: Konto, Benämning, Beskrivning/Anteckning.
+ * Samma DataGrid-pattern som Kunder/Byggdel: ingen kebab (högerklick/dubbelklick), justerbara kolumner, MODAL_DESIGN_2026.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
-const FLEX = { benamning: 1.5, beskrivning: 1.5 };
-const FIXED = { konto: 90, actions: 30, select: 44 };
+const TABLE = MODAL_DESIGN_2026;
+
+const DEFAULT_COLUMN_WIDTHS = { konto: 100, benamning: 180, beskrivning: 180 };
+const MIN_COLUMN_WIDTH = 60;
+const RESIZE_HANDLE_WIDTH = 6;
+const FIXED_SELECT = 44;
 
 const styles = StyleSheet.create({
   tableWrap: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 12,
+    borderRadius: TABLE.tableRadius,
     overflow: 'hidden',
     backgroundColor: '#fff',
-    minWidth: '100%',
+    alignSelf: 'flex-start',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 14,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
+  headerGapWeb: { gap: 0 },
   headerCell: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -46,54 +52,43 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
   },
+  headerColumnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'stretch',
+  },
   headerText: { fontSize: 12, fontWeight: '500', color: '#475569' },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
-  cellMono: { fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
-  inlineInputCell: {
-    paddingHorizontal: 0,
-    margin: 0,
-    flex: 1,
-    alignSelf: 'stretch',
-    minWidth: 0,
-  },
-  actionsCol: {
-    width: FIXED.actions,
-    minWidth: FIXED.actions,
-    maxWidth: FIXED.actions,
-    flexShrink: 0,
-    borderLeftWidth: 1,
-    borderLeftColor: '#e2e8f0',
-    backgroundColor: 'transparent',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 3,
-    paddingLeft: 0,
-    paddingRight: 0,
-  },
-  actionsColHeader: { backgroundColor: '#f1f5f9', paddingVertical: 5 },
-  actionsColInline: { backgroundColor: '#eff6ff' },
+  cellSpacer: { flex: 1, minWidth: 0 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 3,
-    paddingHorizontal: 14,
+    minHeight: TABLE.tableRowHeight,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#fff',
   },
+  rowGapWeb: { gap: RESIZE_HANDLE_WIDTH },
   rowAlt: { backgroundColor: '#f8fafc' },
   rowHover: { backgroundColor: '#eef6ff' },
+  inlineAddWrap: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#f0f9ff',
+  },
+  inlineAddHint: { fontSize: 11, color: '#64748b', marginLeft: 8, flexShrink: 0 },
   inlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 2,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eef0f3',
-    backgroundColor: '#eff6ff',
+    paddingVertical: 6,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
+    backgroundColor: '#f0f9ff',
   },
   inlineInput: {
     fontSize: 13,
@@ -102,7 +97,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 6,
+    borderRadius: 0,
     backgroundColor: '#fff',
     flexShrink: 0,
     minWidth: 0,
@@ -111,11 +106,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 3,
-    paddingHorizontal: 14,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#eff6ff',
+  },
+  editRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
   },
   editRowBtn: {
     width: 24,
@@ -130,17 +131,10 @@ const styles = StyleSheet.create({
   },
   editRowBtnPrimary: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
   editRowBtnCancel: { borderColor: '#cbd5e1', backgroundColor: 'transparent' },
-  rowMenuBtn: {
-    padding: 4,
-    borderRadius: 6,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   selectCol: {
-    width: FIXED.select,
-    minWidth: FIXED.select,
-    maxWidth: FIXED.select,
+    width: FIXED_SELECT,
+    minWidth: FIXED_SELECT,
+    maxWidth: FIXED_SELECT,
     flexShrink: 0,
     borderRightWidth: 1,
     borderRightColor: '#e2e8f0',
@@ -161,11 +155,23 @@ const styles = StyleSheet.create({
   checkboxChecked: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
   cellText: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
-  kontoHintText: {
-    fontSize: 11,
-    color: '#b45309',
-    marginTop: 2,
-    marginLeft: 2,
+  kontoHintText: { fontSize: 11, color: '#b45309', marginTop: 2, marginLeft: 2 },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
   },
 });
 
@@ -189,6 +195,8 @@ export default function KontoplanTable({
   onSaveEdit,
   onCancelEdit,
   onRowMenu,
+  onRowContextMenu,
+  onRowDoubleClick,
   inlineEnabled = false,
   inlineValues,
   inlineSaving = false,
@@ -201,8 +209,47 @@ export default function KontoplanTable({
   const [hoveredId, setHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState({ konto: '', benamning: '', beskrivning: '' });
   const [showKontoHint, setShowKontoHint] = useState(false);
-  const kebabRefs = useRef({});
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
   const kontoHintTimeoutRef = useRef(null);
+  const lastTapRef = useRef({ id: null, time: 0 });
+  const DOUBLE_TAP_MS = 350;
+
+  const w = columnWidths;
+  const col = (key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 });
+  const gapBetweenCols = Platform.OS === 'web' ? RESIZE_HANDLE_WIDTH : 8;
+  const totalTableWidth =
+    (selectionMode ? FIXED_SELECT : 0) + w.konto + w.benamning + w.beskrivning + gapBetweenCols * 2;
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   const editingItem = editingId ? (items.find((i) => i.id === editingId) || null) : null;
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -233,12 +280,7 @@ export default function KontoplanTable({
       }
     } else if (key === 'Escape') {
       e.preventDefault();
-      const id = editingId;
       onCancelEdit?.();
-      setTimeout(() => {
-        const el = id ? kebabRefs.current[id] : null;
-        if (el && typeof el.focus === 'function') el.focus();
-      }, 0);
     }
   };
 
@@ -249,7 +291,6 @@ export default function KontoplanTable({
       <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
     );
 
-  const stickyRight = Platform.OS === 'web' ? { position: 'sticky', right: 0 } : {};
   const handleInlineEnter = (e) => {
     if (Platform.OS !== 'web') return;
     const key = e.key ?? e.nativeEvent?.key;
@@ -299,111 +340,117 @@ export default function KontoplanTable({
   };
 
   return (
-    <View style={styles.tableWrap}>
-      <View style={styles.header}>
+    <View style={[styles.tableWrap, { minWidth: totalTableWidth, width: '100%' }]}>
+      <View style={[styles.header, Platform.OS === 'web' && styles.headerGapWeb]}>
         {selectionMode ? (
           <View style={[styles.selectCol, styles.selectColHeader]}>
             <Text style={[styles.headerText, { fontSize: 11 }]}>Val</Text>
           </View>
         ) : null}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.konto }]}
+          style={[styles.headerCell, styles.cellFixed, col('konto')]}
           onPress={() => onSort('konto')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <View style={styles.columnContent}>
-            <Text style={[styles.headerText, styles.cellMono]}>Konto</Text>
+          <View style={[styles.columnContent, styles.headerColumnContent]}>
+            <Text style={styles.headerText}>Konto</Text>
             <SortIcon col="konto" />
           </View>
         </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('konto', e)}><View style={styles.resizeHandleLine} /></View>}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.benamning }]}
+          style={[styles.headerCell, styles.cellFlex, col('benamning')]}
           onPress={() => onSort('benamning')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <View style={styles.columnContent}>
+          <View style={[styles.columnContent, styles.headerColumnContent]}>
             <Text style={styles.headerText}>Benämning</Text>
             <SortIcon col="benamning" />
           </View>
         </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('benamning', e)}><View style={styles.resizeHandleLine} /></View>}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.beskrivning }]}
+          style={[styles.headerCell, styles.cellFlex, col('beskrivning')]}
           onPress={() => onSort('beskrivning')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
         >
-          <View style={styles.columnContent}>
+          <View style={[styles.columnContent, styles.headerColumnContent]}>
             <Text style={styles.headerText}>Beskrivning / Anteckning</Text>
             <SortIcon col="beskrivning" />
           </View>
         </TouchableOpacity>
-        <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('beskrivning', e)}><View style={styles.resizeHandleLine} /></View>}
+        <View style={styles.cellSpacer} />
       </View>
 
       {inlineEnabled && (
-        <View
-          style={styles.inlineRow}
-          {...(Platform.OS === 'web'
-            ? {
-                onKeyDownCapture: (e) => {
-                  const key = e.key ?? e.nativeEvent?.key;
-                  const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
-                  if (key === 'Enter' || keyCode === 13) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
-                  }
-                },
-              }
-            : {})}
-        >
-          {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f8fafc' }]} /> : null}
-          <View style={[styles.cellFixed, { width: FIXED.konto }]}>
+        <View style={styles.inlineAddWrap}>
+          <View
+            style={[styles.inlineRow, Platform.OS === 'web' && styles.rowGapWeb]}
+            {...(Platform.OS === 'web'
+              ? {
+                  onKeyDownCapture: (e) => {
+                    const key = e.key ?? e.nativeEvent?.key;
+                    const keyCode = e.keyCode ?? e.nativeEvent?.keyCode;
+                    if (key === 'Enter' || keyCode === 13) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!inlineSaving) requestAnimationFrame(() => onInlineSave?.());
+                    }
+                  },
+                }
+              : {})}
+          >
+            {selectionMode ? <View style={[styles.selectCol, { backgroundColor: '#f0f9ff' }]} /> : null}
+            <View style={[styles.cellFixed, col('konto')]}>
+              <TextInput
+                value={inlineValues?.konto ?? ''}
+                onChangeText={(v) => onInlineChange?.('konto', normalizeKonto(v))}
+                placeholder="t.ex. 4510"
+                keyboardType="number-pad"
+                maxLength={12}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                style={[styles.inlineInput, { width: '100%' }]}
+                placeholderTextColor="#94a3b8"
+                onBlur={handleKontoBlur}
+                onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+                {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleKontoKeyDown, inputMode: 'numeric' } : {})}
+              />
+              {showKontoHint && (
+                <Text style={styles.kontoHintText}>Endast siffror (0–9)</Text>
+              )}
+            </View>
             <TextInput
-              value={inlineValues?.konto ?? ''}
-              onChangeText={(v) => onInlineChange?.('konto', normalizeKonto(v))}
-              placeholder="t.ex. 4510"
-              keyboardType="number-pad"
-              maxLength={12}
+              value={inlineValues?.benamning ?? ''}
+              onChangeText={(v) => onInlineChange?.('benamning', v)}
+              placeholder="Benämning (ny)"
+              multiline={false}
               returnKeyType="done"
               blurOnSubmit={false}
-              style={[styles.inlineInput, styles.cellMono, { width: '100%' }]}
-              placeholderTextColor="#94a3b8"
-              onBlur={handleKontoBlur}
               onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleKontoKeyDown, inputMode: 'numeric' } : {})}
+              style={[styles.inlineInput, col('benamning')]}
+              placeholderTextColor="#94a3b8"
+              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
             />
-            {showKontoHint && (
-              <Text style={styles.kontoHintText}>Endast siffror (0–9)</Text>
-            )}
+            <TextInput
+              value={inlineValues?.beskrivning ?? ''}
+              onChangeText={(v) => onInlineChange?.('beskrivning', v)}
+              placeholder="Beskrivning (ny)"
+              multiline={false}
+              returnKeyType="done"
+              blurOnSubmit={false}
+              onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
+              style={[styles.inlineInput, col('beskrivning')]}
+              placeholderTextColor="#94a3b8"
+              {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
+            />
+            <View style={styles.cellSpacer} />
+            <Text style={styles.inlineAddHint}>Fyll i och tryck Enter för att spara</Text>
           </View>
-          <TextInput
-            value={inlineValues?.benamning ?? ''}
-            onChangeText={(v) => onInlineChange?.('benamning', v)}
-            placeholder="Benämning (ny)"
-            multiline={false}
-            returnKeyType="done"
-            blurOnSubmit={false}
-            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.benamning }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
-          />
-          <TextInput
-            value={inlineValues?.beskrivning ?? ''}
-            onChangeText={(v) => onInlineChange?.('beskrivning', v)}
-            placeholder="Beskrivning (ny)"
-            multiline={false}
-            returnKeyType="done"
-            blurOnSubmit={false}
-            onSubmitEditing={() => { if (!inlineSaving) onInlineSave?.(); }}
-            style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
-            placeholderTextColor="#94a3b8"
-            {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: handleInlineEnter, onKeyPress: handleInlineEnter } : {})}
-          />
-          <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
         </View>
       )}
 
@@ -411,7 +458,7 @@ export default function KontoplanTable({
         const konto = String(item.konto ?? item.id ?? '').trim();
         const isSelected = selectionMode && selectedKonton.includes(konto);
         return editingId === item.id && editDraft ? (
-          <View key={item.id} style={styles.editRow}>
+          <View key={item.id} style={[styles.editRow, Platform.OS === 'web' && styles.rowGapWeb]}>
             {selectionMode ? <View style={styles.selectCol} /> : null}
             <TextInput
               value={editDraft.konto}
@@ -419,7 +466,7 @@ export default function KontoplanTable({
               placeholder="t.ex. 4510"
               keyboardType="number-pad"
               maxLength={12}
-              style={[styles.inlineInput, styles.cellFixed, styles.cellMono, { width: FIXED.konto }]}
+              style={[styles.inlineInput, col('konto')]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => { const k = e.key ?? e.nativeEvent?.key; const allow = ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Home', 'End']; if (!allow.includes(k) && !/^[0-9]$/.test(k)) e.preventDefault(); handleEditKeyDown(e, item); } } : {})}
             />
@@ -427,7 +474,7 @@ export default function KontoplanTable({
               value={editDraft.benamning}
               onChangeText={(v) => setEditDraft((d) => ({ ...d, benamning: v }))}
               placeholder="Benämning"
-              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.benamning }]}
+              style={[styles.inlineInput, col('benamning')]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
             />
@@ -435,11 +482,12 @@ export default function KontoplanTable({
               value={editDraft.beskrivning}
               onChangeText={(v) => setEditDraft((d) => ({ ...d, beskrivning: v }))}
               placeholder="Beskrivning"
-              style={[styles.inlineInput, styles.cellFlex, { flex: FLEX.beskrivning }]}
+              style={[styles.inlineInput, col('beskrivning')]}
               placeholderTextColor="#94a3b8"
               {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, item) } : {})}
             />
-            <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
+            <View style={styles.cellSpacer} />
+            <View style={styles.editRowActions}>
               <TouchableOpacity
                 style={[styles.editRowBtn, styles.editRowBtnPrimary]}
                 onPress={() => {
@@ -469,12 +517,36 @@ export default function KontoplanTable({
             </View>
           </View>
         ) : (
-          <TouchableOpacity
+          <View
             key={item.id}
-            style={[styles.row, idx % 2 === 1 ? styles.rowAlt : null, hoveredId === item.id ? styles.rowHover : null]}
-            onPress={() => {}}
+            style={{ alignSelf: 'stretch' }}
+            {...(Platform.OS === 'web'
+              ? {
+                  onContextMenu: (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRowMenu?.(e, item);
+                  },
+                  ...(onRowDoubleClick ? { onDoubleClick: (e) => { e.stopPropagation(); onRowDoubleClick(item); } } : {}),
+                }
+              : {})}
+          >
+          <TouchableOpacity
+            style={[styles.row, Platform.OS === 'web' && styles.rowGapWeb, idx % 2 === 1 ? styles.rowAlt : null, hoveredId === item.id ? styles.rowHover : null]}
+            onPress={() => {
+              if (Platform.OS !== 'web' && onRowDoubleClick) {
+                const now = Date.now();
+                if (lastTapRef.current.id === item.id && now - lastTapRef.current.time < DOUBLE_TAP_MS) {
+                  lastTapRef.current = { id: null, time: 0 };
+                  onRowDoubleClick(item);
+                  return;
+                }
+                lastTapRef.current = { id: item.id, time: now };
+              }
+            }}
+            onLongPress={(e) => onRowContextMenu?.(e, item)}
             activeOpacity={0.7}
-            {...(Platform.OS === 'web' ? { cursor: 'default', onMouseEnter: () => setHoveredId(item.id), onMouseLeave: () => setHoveredId(null) } : {})}
+            {...(Platform.OS === 'web' ? { cursor: 'pointer', onMouseEnter: () => setHoveredId(item.id), onMouseLeave: () => setHoveredId(null) } : {})}
           >
             {selectionMode ? (
               <View style={styles.selectCol}>
@@ -488,33 +560,24 @@ export default function KontoplanTable({
                 </TouchableOpacity>
               </View>
             ) : null}
-            <View style={[styles.cellFixed, { width: FIXED.konto }]}>
+            <View style={[styles.cellFixed, col('konto')]}>
               <View style={styles.columnContent}>
-                <Text style={[styles.cellText, styles.cellMono]} numberOfLines={1}>{safeText(item.konto)}</Text>
+                <Text style={styles.cellText} numberOfLines={1}>{safeText(item.konto)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.benamning }]}>
+            <View style={[styles.cellFlex, col('benamning')]}>
               <View style={styles.columnContent}>
                 <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.benamning)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.beskrivning }]}>
+            <View style={[styles.cellFlex, col('beskrivning')]}>
               <View style={styles.columnContent}>
                 <Text style={styles.cellMuted} numberOfLines={1}>{safeText(item.beskrivning)}</Text>
               </View>
             </View>
-            <View style={[styles.actionsCol, stickyRight]}>
-              <TouchableOpacity
-                ref={(r) => { kebabRefs.current[item.id] = r; }}
-                style={styles.rowMenuBtn}
-                onPress={(e) => onRowMenu?.(e, item)}
-                activeOpacity={0.8}
-                {...(Platform.OS === 'web' ? { cursor: 'pointer', tabIndex: 0 } : {})}
-              >
-                <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-              </TouchableOpacity>
-            </View>
+            <View style={styles.cellSpacer} />
           </TouchableOpacity>
+          </View>
         );
       })}
     </View>

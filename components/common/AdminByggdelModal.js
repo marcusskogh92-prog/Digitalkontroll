@@ -27,6 +27,7 @@ import {
     parseExcelFromBuffer,
     validateHeaders,
 } from '../../utils/registerExcel';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 import ContextMenu from '../ContextMenu';
 import {
     createByggdel,
@@ -35,7 +36,9 @@ import {
     updateByggdel,
     updateCompanySupplier,
 } from '../firebase';
+import ModalBase from './ModalBase';
 import ByggdelTable from './ByggdelTable';
+import AddByggdelModal from './Modals/AddByggdelModal';
 import ConfirmModal from './Modals/ConfirmModal';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
@@ -123,8 +126,8 @@ const styles = StyleSheet.create({
   statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   toolbarSection: {
     flexShrink: 0,
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
     paddingBottom: 12,
     backgroundColor: '#fff',
   },
@@ -136,43 +139,47 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#eee',
     marginTop: 12,
-    marginHorizontal: -20,
+    marginHorizontal: -D.contentPadding,
   },
   tableScroll: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  tableScrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
+  tableScrollContent: { paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: D.contentPadding },
+  tableScrollHorizontal: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
+  tableWrap: {},
   searchWrap: {
     flex: 1,
     maxWidth: 400,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
+    borderColor: '#ddd',
+    borderRadius: D.inputRadius,
     backgroundColor: '#fff',
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1f5f9',
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#ddd',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#a7f3d0',
@@ -214,6 +221,7 @@ const styles = StyleSheet.create({
     borderRadius: ICON_RAIL.activeBgRadius,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease` } : {}),
   },
+  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
   footerBtnDark: {
     borderColor: ICON_RAIL.bg,
     backgroundColor: ICON_RAIL.bg,
@@ -241,6 +249,7 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   const [sortDirection, setSortDirection] = useState('asc');
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
   const [inlineByggdel, setInlineByggdel] = useState('');
   const [inlineBeskrivning, setInlineBeskrivning] = useState('');
   const [inlineAnteckningar, setInlineAnteckningar] = useState('');
@@ -262,6 +271,8 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
   /** Lokala val för leverantör/kund (koder) */
   const [localSelectedCodes, setLocalSelectedCodes] = useState([]);
   const [savingSelection, setSavingSelection] = useState(false);
+  const [addByggdelModalVisible, setAddByggdelModalVisible] = useState(false);
+  const [addByggdelSaving, setAddByggdelSaving] = useState(false);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -311,12 +322,17 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        onClose?.();
+        e.stopImmediatePropagation();
+        if (addByggdelModalVisible) {
+          setAddByggdelModalVisible(false);
+        } else {
+          onClose?.();
+        }
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [visible, onClose]);
+  }, [visible, onClose, addByggdelModalVisible]);
 
   useLayoutEffect(() => {
     if (!notice && !error) return;
@@ -625,6 +641,23 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     }
   };
 
+  const handleAddByggdelSave = async (payload) => {
+    if (!cid) return;
+    const exists = (allByggdelar || []).some((b) => String(b.code ?? '').trim() === (payload.code ?? '').trim());
+    if (exists) throw new Error('BD-numret finns redan. Varje BD ska vara unikt.');
+    setAddByggdelSaving(true);
+    try {
+      await createByggdel(
+        { code: payload.code, name: payload.name, notes: payload.notes },
+        cid
+      );
+      await load();
+      showNotice('Byggdel tillagd');
+    } finally {
+      setAddByggdelSaving(false);
+    }
+  };
+
   const openRowMenu = (e, item) => {
     if (Platform.OS !== 'web') {
       Alert.alert('Byggdel', `${item.code ?? ''} ${item.name ?? ''}`.trim(), [
@@ -654,36 +687,45 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
     minHeight: 300,
   });
 
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition ? {} : { width: Platform.OS === 'web' ? '90vw' : '90%', maxWidth: 720, height: Platform.OS === 'web' ? '85vh' : '85%' };
+
   if (!visible) return null;
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[styles.overlay, overlayStyle]} onPress={onClose}>
-        <Pressable style={[styles.box, boxStyle]} onPress={(e) => e.stopPropagation()}>
-          <View
-            style={[styles.header, headerProps.style]}
-            {...(Platform.OS === 'web' ? { onMouseDown: headerProps.onMouseDown } : {})}
-          >
-            <View style={styles.headerLeft}>
-              <View style={styles.titleIcon}>
-                <Ionicons name="layers-outline" size={18} color={ICON_RAIL.iconColorActive} />
-              </View>
-              <View style={styles.titleLine}>
-                <Text style={styles.title} numberOfLines={1}>Byggdelstabell</Text>
-                <Text style={styles.titleDot}>•</Text>
-                <Text style={styles.subtitle} numberOfLines={1}>Register över byggdelar</Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              accessibilityLabel="Stäng"
-              {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}
-            >
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-            </TouchableOpacity>
-          </View>
+  const footer = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+      {isSelectionMode ? (
+        <TouchableOpacity
+          style={[styles.footerBtn, styles.footerBtnPrimary]}
+          onPress={handleSaveSelection}
+          disabled={savingSelection}
+          {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
+        >
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara val</Text>
+        </TouchableOpacity>
+      ) : null}
+      <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Byggdelstabell"
+      subtitle="Register över byggdelar"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="layers-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
           <View style={styles.toolbarSection}>
             {!showContent ? (
               <View style={styles.selectCompany}>
@@ -739,6 +781,24 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                      onPress={() => setShowInlineAddRow((v) => !v)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: showInlineAddRow }}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer', title: showInlineAddRow ? 'Avmarkera för att dölja snabbläggningsrad' : 'Markera för att visa rad för snabbläggning' } : {})}
+                    >
+                      <Ionicons
+                        name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                        size={18}
+                        color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                      />
+                      <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                        Lägg till snabbt
+                      </Text>
+                    </TouchableOpacity>
                     {Platform.OS === 'web' && (
                       <TouchableOpacity
                         style={styles.excelBtn}
@@ -756,32 +816,24 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
                         accessibilityLabel="Importera / exportera Excel"
                         {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                       >
-                        <Ionicons name="grid-outline" size={18} color="#167534" />
-                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                        <Ionicons name="document-outline" size={14} color="#167534" />
+                        <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
                       </TouchableOpacity>
                     )}
-                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => {
-                        const r = tableScrollRef.current;
-                        if (r?.scrollTo) r.scrollTo({ y: 0, animated: true });
-                        else if (Platform.OS === 'web' && r) {
-                          const node = r.getScrollableNode?.() ?? r;
-                          if (node?.scrollTop !== undefined) node.scrollTop = 0;
-                        }
-                      }}
+                      onPress={() => setAddByggdelModalVisible(true)}
                       accessibilityLabel="Lägg till byggdel"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="add" size={18} color="#fff" />
+                      <Ionicons name="add" size={16} color="#fff" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.iconBtn}
                       onPress={load}
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="refresh" size={16} color="#475569" />
+                      <Ionicons name="refresh" size={14} color="#475569" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -795,66 +847,58 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
             style={styles.tableScroll}
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
           >
             {!showContent ? null : (
-              <View>
+              <View style={styles.tableWrap}>
                 {loading ? (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyTitle}>Laddar byggdelar…</Text>
                   </View>
                 ) : (
-                  <ByggdelTable
-                    items={tableItems}
-                    sortColumn={sortColumn === 'code' ? 'moment' : sortColumn === 'notes' ? 'anteckningar' : sortColumn}
-                    sortDirection={sortDirection}
-                    onSort={handleSort}
-                    editingId={editingId}
-                    saving={saving}
-                    onSaveEdit={handleSaveEdit}
-                    onCancelEdit={() => setEditingId(null)}
-                    onRowMenu={openRowMenu}
-                    inlineEnabled={showContent && !isSelectionMode}
-                    inlineSaving={inlineSaving}
-                    inlineValues={{
-                      byggdel: inlineByggdel,
-                      beskrivning: inlineBeskrivning,
-                      anteckningar: inlineAnteckningar,
-                    }}
-                    onInlineChange={(field, value) => {
-                      if (field === 'byggdel') setInlineByggdel(normalizeCode(value));
-                      if (field === 'beskrivning') setInlineBeskrivning(value);
-                      if (field === 'anteckningar') setInlineAnteckningar(value);
-                    }}
-                    onInlineSave={handleInlineSave}
-                    selectionMode={isSelectionMode}
-                    selectedCodes={localSelectedCodes}
-                    onSelectionChange={isSelectionMode ? setLocalSelectedCodes : undefined}
-                  />
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator
+                    contentContainerStyle={{ flexGrow: 1, minHeight: '100%', minWidth: '100%' }}
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.tableScrollHorizontal}
+                  >
+                    <View style={[styles.tableWrap, { minWidth: '100%', flex: 1 }]}>
+                      <ByggdelTable
+                        items={tableItems}
+                        sortColumn={sortColumn === 'code' ? 'moment' : sortColumn === 'notes' ? 'anteckningar' : sortColumn}
+                        sortDirection={sortDirection}
+                        onSort={handleSort}
+                        editingId={editingId}
+                        saving={saving}
+                        onSaveEdit={handleSaveEdit}
+                        onCancelEdit={() => setEditingId(null)}
+                        onRowMenu={openRowMenu}
+                        onRowContextMenu={openRowMenu}
+                        onRowDoubleClick={(item) => setEditingId(item.id)}
+                        inlineEnabled={showContent && !isSelectionMode && showInlineAddRow}
+                        inlineSaving={inlineSaving}
+                        inlineValues={{
+                          byggdel: inlineByggdel,
+                          beskrivning: inlineBeskrivning,
+                          anteckningar: inlineAnteckningar,
+                        }}
+                        onInlineChange={(field, value) => {
+                          if (field === 'byggdel') setInlineByggdel(normalizeCode(value));
+                          if (field === 'beskrivning') setInlineBeskrivning(value);
+                          if (field === 'anteckningar') setInlineAnteckningar(value);
+                        }}
+                        onInlineSave={handleInlineSave}
+                        selectionMode={isSelectionMode}
+                        selectedCodes={localSelectedCodes}
+                        onSelectionChange={isSelectionMode ? setLocalSelectedCodes : undefined}
+                      />
+                    </View>
+                  </ScrollView>
                 )}
               </View>
             )}
           </ScrollView>
-
-          <View style={styles.footer}>
-            {isSelectionMode ? (
-              <TouchableOpacity
-                style={[styles.footerBtn, styles.footerBtnPrimary]}
-                onPress={handleSaveSelection}
-                disabled={savingSelection}
-                {...(Platform.OS === 'web' ? { cursor: savingSelection ? 'wait' : 'pointer' } : {})}
-              >
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
-              </TouchableOpacity>
-            ) : null}
-            <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={[styles.footerBtn, styles.footerBtnDark]} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>Stäng</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
-            </View>
-          </View>
-
-          {resizeHandles}
 
           {(notice || error) ? (
             <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">
@@ -873,8 +917,7 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
               </View>
             </Animated.View>
           ) : null}
-        </Pressable>
-      </Pressable>
+    </ModalBase>
 
       <ContextMenu
         visible={rowMenuVisible}
@@ -905,6 +948,13 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
         busy={deleting}
         onCancel={() => setDeleteConfirmByggdel(null)}
         onConfirm={performDeleteByggdel}
+      />
+
+      <AddByggdelModal
+        visible={addByggdelModalVisible}
+        onClose={() => setAddByggdelModalVisible(false)}
+        onSave={handleAddByggdelSave}
+        saving={addByggdelSaving}
       />
 
       {Platform.OS === 'web' && (
@@ -950,6 +1000,6 @@ export default function AdminByggdelModal({ visible, companyId, selectionContext
         onCancel={() => { setImportConfirmVisible(false); setImportPlan(null); }}
         onConfirm={runImport}
       />
-    </Modal>
+    </>
   );
 }

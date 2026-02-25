@@ -1,76 +1,29 @@
-# Modal-standard (Golden Rule)
+# Modal-standard (SaaS 2026 B2B)
 
-Alla modaler i Digitalkontroll ska följa samma utseende och beteende som **Företagsinställningar** (AdminCompanyModal). Detta dokument beskriver hur man implementerar och underhåller standarden.
+**Full spec och golden rule:** `docs/MODAL_GOLDEN_RULE.md` – alla nya modaler ska följa den från och med nu.
+
+Alla modaler använder **MODAL_DESIGN_2026** och **ModalBase**.
+
+---
 
 ## Referens
 
-- **Referensmodal:** `components/common/AdminCompanyModal.js`
-- **Tema:** `constants/iconRailTheme.js` (ICON_RAIL)
+- **Komponent:** `components/common/ModalBase.js`
+- **Tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026)
+- **Referensmodal:** `components/common/AdminContactRegistryModal.js` (Kontaktregister + Redigera kontakt)
 - **Hook för drag/resize:** `hooks/useDraggableResizableModal.js`
 
 ---
 
-## 1. Utseende
+## Snabböversikt
 
-### Banner (header)
+- **Modal:** radius 8px, shadow `0 10px 30px rgba(0,0,0,0.08)`, overlay `rgba(0,0,0,0.35)` + max 4px blur.
+- **Header (standard för nya modaler):** Neutral – mörk `#1E2A38`, vit text, ikon + titel (+ undertitel med "—"). Stäng (X) vit, diskret hover.
+- **Stäng-knapp i footer:** Dimmad blå – bakgrund `#475569`, vit text.
+- **Formulärmodaler:** Avbryt = dimmad röd (#fef2f2, #fecaca, #b91c1c). Spara = dimmad blå (#475569, vit text). Dirty-prompt vid stängning; ESC/Enter som stäng respektive spara.
+- **Innehåll:** Padding 24px; sektioner 16px mellanrum. Tabeller: radius 0, radhöjd 24px, cell 4px 12px. Inline-fält i tabell: kantiga (borderRadius 0).
+- **Checkbox (t.ex. Lägg till snabbt):** Av = tom ruta (square-outline, #94a3b8). På = checkbox, #0ea5e9.
+- **Tangentbord:** Esc = stäng (vid dirty, fråga först). Enter = spara i formulärmodaler när möjligt.
+- **Drag/resize (webb):** Header för flytt, hooken för resize-handtag.
 
-- **Bakgrund:** `ICON_RAIL.bg` (#0f1b2d)
-- **Padding:** `paddingVertical: 7`, `paddingHorizontal: 14`
-- **Titel:** `fontSize: 14`, `fontWeight: '600'`, `color: ICON_RAIL.iconColorActive` (vit)
-- **Undertitel:** `fontSize: 12`, `color: ICON_RAIL.iconColor`
-- **Titel + undertitel:** alltid på en rad (flexDirection: 'row', numberOfLines={1}, ev. punkt mellan)
-- **Ikonruta:** 28×28 px, `borderRadius: ICON_RAIL.activeBgRadius` (8), `backgroundColor: ICON_RAIL.activeBg`, ljus/vit ikon
-- **Stäng-ikon (X):** samma mörka bakgrund som banner (t.ex. `ICON_RAIL.activeBg`), vit ikon, `padding: 5`
-
-### Innehåll
-
-- Samma textstorlek och typografi som i Företagsinställningar (t.ex. sectionTitle 14px, infoLabel 13px).
-
-### Footer
-
-- **Stäng-knapp:** mörk som bannern – `backgroundColor: ICON_RAIL.bg`, `borderColor: ICON_RAIL.bg`, vit text (`color: '#fff'`), `fontWeight: '600'`
-- **Spara / primär knapp:** samma mörka stil som Stäng
-- **Avvikande primär:** om det behövs disabled-state, använd samma stil med `opacity: 0.5`
-
----
-
-## 2. Tangentbord
-
-- **Esc:** Stänger modalen. Använd `onRequestClose={onClose}` på `<Modal>` och ev. `window.addEventListener('keydown', ...)` för Escape som anropar `onClose`.
-- **Enter:** Utför primär action (t.ex. Spara) endast när fokus *inte* är i input/textarea/select – annars risk för oavsiktlig submit.
-- **Tab / piltangenter:** Fånga inte Tab eller piltangenter i onKeyDown om det inte behövs, så att fokusnavigering och formulär fungerar.
-
----
-
-## 3. Drag och storleksändring (webb)
-
-- **Flytta:** Användaren ska kunna dra modalen genom att klicka och hålla i **bannern** och flytta musen. Använd `useDraggableResizableModal`: koppla `headerProps.onMouseDown` till header-View och `boxStyle`/`overlayStyle` till overlay och box.
-- **Storlek:** Högerkant (bredd), nederkant (höjd), nedre högra hörnet (båda). Steglös ändring. Hooken returnerar `resizeHandles` som ska renderas inuti modal-boxen.
-- **Resize-cursor:** När musen är över kant eller hörn ska muspekaren bli:
-  - Höger kant: `cursor: 'ew-resize'` (↔)
-  - Nederkant: `cursor: 'ns-resize'` (↕)
-  - Nedre högra hörnet: `cursor: 'nwse-resize'` (↘↖)
-  Dessa sätts i `useDraggableResizableModal` på resize-handlarna. Stäng-knappen (X) ska ha `onMouseDown: (e) => e.stopPropagation()` så att klick på X inte startar drag.
-
-På **native** (ej webb) används inte drag/resize; hooken returnerar tomma värden.
-
----
-
-## 4. Implementationssteg för nya eller befintliga modaler
-
-1. Importera `ICON_RAIL` från `constants/iconRailTheme` och (på webb) `useDraggableResizableModal` från `hooks/useDraggableResizableModal`.
-2. Använd samma header-struktur och färger som i AdminCompanyModal (mörk banner, titel 14px, undertitel 12px, en rad, mörk stäng-ikon).
-3. Använd samma footer-stil för Stäng och Spara (mörk knapp, vit text).
-4. På webb: anropa `useDraggableResizableModal(visible, { defaultWidth, defaultHeight, minWidth, minHeight })` och applicera `boxStyle`, `overlayStyle`, `headerProps` och rendera `resizeHandles`.
-5. Säkerställ Esc (onRequestClose) och Enter (vid behov, med fokuskontroll) enligt avsnitt 2.
-
----
-
-## 5. Modaler som redan följer standarden
-
-- AdminCompanyModal (Företagsinställningar)
-- AdminByggdelModal
-- AdminKontoplanModal
-- AdminKategoriModal
-
-Övriga modaler ska uppdateras till denna standard vid nästa ändring enligt RULES.md punkt 8.
+Implementationssteg och alla detaljer står i **MODAL_GOLDEN_RULE.md**.

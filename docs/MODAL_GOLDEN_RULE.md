@@ -1,90 +1,157 @@
-# Golden rule: Modaler
+# Golden rule: Modaler (SaaS 2026 B2B)
 
-Alla modaler i systemet ska ha samma utseende och beteende som **Företagsinställningar**. Detta gäller befintliga modaler (vid underhåll) och **alla nya modaler**.
+**Från och med nu ska varje ny modal som skapas se ut och bete sig enligt denna standard.** Referens är **Kontaktregister** (AdminContactRegistryModal) och **Redigera kontakt** (underlagen i samma modal). Designen är stram, professionell och affärssystemlik – SaaS 2026 B2B.
 
-## 1. Utseende
+**Referensmodaler:**  
+- Huvudmodal med tabell: `components/common/AdminContactRegistryModal.js`  
+- Formulärmodal (redigera): samma fil, Redigera kontakt-modalen  
 
-- **Banner (header):** Mörk bakgrund (`#0f1b2d` / `ICON_RAIL.bg`), en rad med titel och ev. undertext.
-- **Text i banner:** Titel 14px, undertext 12px, vit/ljusgrå text. Punkt mellan titel och undertext.
-- **Stäng-knapp (X):** Mörk bakgrund, vit ikon. I footern: **Stäng**-knappen ska vara mörk med vit text (samma färg som bannern).
-- **Spara-knapp:** Mörk med vit text. Ingen ljus knapp för primära åtgärder.
-- **Innehåll:** Tydliga rubriker (14px), etiketter och värden enligt `constants/modalTheme.js`.
+**Komponent:** `components/common/ModalBase.js`  
+**Design-tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026)
 
-Använd **`constants/modalTheme.js`** (MODAL_THEME) och **`components/common/StandardModal.js`** för konsekvens.
+---
 
-## 2. Beteende
+## 1. Modal-container (MODAL_DESIGN_2026)
 
-- **Flytta:** Användaren kan klicka och dra i **bannern** för att flytta modalen (endast webb).
-- **Storleksändring:** Användaren kan dra i **höger kant**, **nedre kant** eller **nedre högra hörnet** för att ändra storlek steglöst (endast webb).
-- **Muspekare vid kant:** När musen är över kanten/hörnet ska muspekaren bli ett **streck med pilar** (ew-resize, ns-resize, nwse-resize) så att det syns att man kan dra för att ändra storlek.
-- **Tangentbord:**
-  - **Esc** stänger modalen.
-  - **Enter** sparar/utför primär åtgärd, *utom* när fokus ligger i input/textarea (då sker ingen submit).
-  - **Tab** och **piltangenter** ska fungera normalt inom modalen (naturlig fokusordning).
+- **Border-radius:** 8px (inga 12px eller större, inga pill-former).
+- **Skugga:** `box-shadow: 0 10px 30px rgba(0,0,0,0.08)` – subtil, ingen glow.
+- **Overlay:** `background: rgba(0,0,0,0.35)`, subtil `backdrop-blur` max 4px.
 
-## 3. Implementation
+---
 
-### Nya modaler
+## 2. Header
 
-Använd **`StandardModal`**:
+Nya modaler ska använda **neutral header** (samma som Kontaktregister) om inte särskild anledning finns.
 
-```jsx
-import StandardModal from '../common/StandardModal';
+### Neutral header (rekommenderad standard)
 
-<StandardModal
-  visible={visible}
-  onClose={onClose}
-  title="Min modal"
-  subtitle="Kort beskrivning"
-  iconName="document-text-outline"
-  saveLabel="Spara"
-  onSave={handleSave}
-  saving={saving}
-  saveDisabled={!isDirty}
-  defaultWidth={800}
-  defaultHeight={500}
->
-  <ScrollView style={{ flex: 1 }}>{/* innehåll */}</ScrollView>
-</StandardModal>
-```
+- **Bakgrund:** `#1E2A38` (rail-färg).
+- **Kant:** `border-bottom: 1px solid rgba(255,255,255,0.1)`.
+- **Padding:** 8px vertikalt, 14px horisontellt. Min-height 40px, max-height 44px.
+- **Titel:** vit text (#fff), font-size 15px, font-weight 600, line-height 18px. Ikon (t.ex. 17px) + titel på samma rad.
+- **Undertitel (valfritt):** separator "—" + undertitel i vit text, opacity 0.85, font-size 12px.
+- **Stäng-knapp (X):** Vit ikon, padding 6px, borderRadius 6px, transparent bakgrund, hover `rgba(255,255,255,0.12)`. Ikon 20px.
 
-StandardModal ger automatiskt: mörk banner, drag i bannern, resize (kant/hörn), Esc/Enter, Stäng + Spara mörka med vit text.
+I ModalBase: `headerVariant="neutral"`, `titleIcon={<Ionicons … />}`.
 
-### Befintliga modaler (vid refaktor)
+### Ljus header (alternativ)
 
-För modaler som inte kan bytas till StandardModal direkt:
+- Bakgrund `#fff`, border-bottom `#eee`, titel `#0f172a`, undertitel `#64748b`. Stäng-ikon `#64748b`.  
+- Använd `headerVariant="light"` (eller utelämna för default).
 
-1. Importera **`useDraggableResizableModal`** och **`useModalKeyboard`**.
-2. Använd **`MODAL_THEME`** från `constants/modalTheme.js` för banner, footer och textstorlekar.
-3. Sätt **Stäng**- och **Spara**-knappar till mörk bakgrund och vit text (tema).
-4. Lägg till keyboard: Esc → onClose, Enter → onSave (när fokus inte i input).
-5. Lägg till drag (banner) och resize-handles (höger, nederkant, nedre högra hörnet) med rätt cursor (ew-resize, ns-resize, nwse-resize).
+---
 
-### Resize-cursors
+## 3. Innehåll (body)
 
-Resize-handlarna ska ha tillräcklig hit-yta (minst 8px) och följande cursor på webb:
+- **Padding:** 24px (`contentPadding`). Sektioner: 16px mellanrum (`sectionGap`).
+- För full-bleed (t.ex. toolbar + tabell): `contentStyle={{ padding: 0 }}`.
 
-- Höger kant: `cursor: 'ew-resize'`
-- Nederkant: `cursor: 'ns-resize'`
-- Nedre högra hörnet: `cursor: 'nwse-resize'`
+---
 
-Implementeringen finns i **`hooks/useDraggableResizableModal.js`**.
+## 4. Footer och knappar
 
-## 4. Loading state (golden rule)
+### Stäng-knapp (huvudåtgärd att stänga modalen)
 
-När en modal eller vy visar laddning ska en **animerad spinner + text** användas, inte enbart statisk text.
+- **Utseende:** Dimmad blå/mörk – bakgrund `#475569`, vit text, ingen kant. Border-radius 6px, padding 10px 20px.
+- Samma stil som Spara i formulärmodaler (enhetlig “primär” avslutningskänsla).
 
-- **Komponent:** `components/common/LoadingState.js`
-- **Tema:** `constants/modalTheme.js` → `LOADING_THEME` (spinnerColor, textColor, containerMinHeight)
-- **Användning:**
-  - I modaler (t.ex. innan innehåll har laddats): `<LoadingState message="Laddar…" size="large" />`
-  - Inline / mindre ytor: `<LoadingState message="Laddar siter…" size="small" minHeight={80} />`
-- **Utseende:** ActivityIndicator (mörk #1e293b), centrerad, med valfri text under (standard "Laddar…", färg #64748b).
+### Formulärmodaler (t.ex. Redigera / Lägg till)
 
-## 5. Referens
+- **Avbryt:** Dimmad röd – bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c`. Border-radius 6px.
+- **Spara / Primär action:** Dimmad bannerfärg – bakgrund `#475569`, vit text, border-radius 8px, padding 10px 20px.
 
-- **Utseende:** Företagsinställningar (AdminCompanyModal) när den är öppen.
-- **Tema:** `constants/modalTheme.js`
-- **Komponent:** `components/common/StandardModal.js`
-- **Loading:** `components/common/LoadingState.js`, `LOADING_THEME` i modalTheme.js
-- **Hooks:** `hooks/useDraggableResizableModal.js`, `hooks/useModalKeyboard.js`
+### Övriga knappar
+
+- Border-radius 6px, inga pill. Primär: mörk bakgrund. Sekundär: outline eller ljus bakgrund.
+
+---
+
+## 5. Tabeller inuti modalen
+
+- **Border-radius:** 0 (tabellens yttre följer content, ingen rundning på tabellkanten).
+- **Radhöjd:** 24px (`tableRowHeight`). Cell-padding: 4px vertikalt, 12px horisontellt.
+- **Resizable kolumner (webb):** Dra i headern mellan kolumner. Synlig resize-line (2px, `#cbd5e1`) mellan kolumnerna.
+- **Inline-fält i tabell (t.ex. “Lägg till snabbt”):** Kantiga – `borderRadius: 0` på input, inte 6px.
+
+---
+
+## 6. Inputfält och checkboxar
+
+- **Vanliga inputfält (formulär):** Border-radius 6px, border 1px solid #ddd, subtil focus.
+- **Checkbox / toggle (t.ex. “Lägg till snabbt”):**  
+  - **Av:** Tom ruta – ikon `square-outline`, färg `#94a3b8`.  
+  - **På:** Ikon `checkbox`, färg `#0ea5e9`.
+
+---
+
+## 7. Formulärmodaler (typ Redigera / Lägg till)
+
+När modalen är en “enkel” formulärmodal (ett formulär + Avbryt/Spara):
+
+- **Storlek:** Tillräckligt stor så att all info syns utan scroll (t.ex. bredd 520px, minHeight 520px).
+- **Stängning med osparade ändringar:** Vid stäng (X, Avbryt, klick utanför, ESC) – om något fält har ändrats, visa dialog: “Osparade ändringar” / “Vill du spara ändringarna innan du stänger?” med Avbryt (stanna), Kasta ändringar, Spara.
+- **Tangentbord:**  
+  - **ESC:** Samma som stäng – om dirty, fråga först.  
+  - **Enter:** Sparar (samma som Spara) när Namn/obligatoriskt fält är ifyllt; använd `preventDefault` så att formuläret inte submit:ar på fel ställe.
+- **Efter spara:** Visa bekräftelse (t.ex. `showNotice('… uppdaterad')`), stäng modal, uppdatera data.
+
+---
+
+## 8. ModalBase – återanvändbar komponent
+
+Alla nya modaler ska använda **ModalBase** för:
+
+- Standard radius (8px), shadow, overlay
+- Header (neutral eller ljus) med titel, valfri undertitel, diskret stäng (X)
+- Standard content-padding (24px) – kan överstyras med `contentStyle` för full-bleed
+- Footer-plats för Stäng / Avbryt / Spara
+
+**Drag och resize (webb):** Använd `useDraggableResizableModal` och skicka `boxStyle`, `overlayStyle`, `headerProps` och `resizeHandles` till ModalBase. Kontaktregister-modalen är referensimplementation.
+
+---
+
+## 9. Beteende
+
+- **Tangentbord:** Esc stänger modalen (eller vid formulärmodal med dirty: fråga först). Enter sparar/utför primär åtgärd i formulärmodaler; i övriga modaler endast när fokus inte är i input/textarea.
+- **Flytta (webb):** Dra i headern; använd `useDraggableResizableModal` och `headerProps.onMouseDown`. Stäng-knappen ska ha `onMouseDown: (e) => e.stopPropagation()`.
+- **Storleksändring (webb):** Dra i höger kant, nederkant eller nedre hörn. Hooken ger synliga grip-markeringar.
+
+---
+
+## 10. Snabbreferens – färger och värden
+
+| Element | Värde |
+|--------|--------|
+| Header neutral (banner) | `#1E2A38` |
+| Stäng / Spara (dimmad) | Bakgrund `#475569`, text vit |
+| Avbryt (formulärmodal) | Bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c` |
+| Inline-fält i tabell | `borderRadius: 0` |
+| Checkbox av | Ikon `square-outline`, färg `#94a3b8` |
+| Checkbox på | Ikon `checkbox`, färg `#0ea5e9` |
+| Tabell radhöjd | 24px |
+| Tabell cell-padding | 4px vertikalt, 12px horisontellt |
+| Modal radius | 8px |
+| Overlay | `rgba(0,0,0,0.35)` |
+
+---
+
+## 11. Modaler som ska uppdateras till denna standard
+
+- AdminContactRegistryModal ✅ (referens)
+- AdminCustomersModal
+- AdminSuppliersModal
+- AdminKontoplanModal
+- AdminByggdelModal
+- AdminKategoriModal
+- AdminCompanyModal
+- Skapa projekt, Skapa inköpsplan, Förfrågningsmall
+- Övriga systemmodaler
+
+---
+
+## 12. Referenser
+
+- **Komponent:** `components/common/ModalBase.js`
+- **Tokens:** `constants/modalDesign2026.js`
+- **Referensmodal:** `components/common/AdminContactRegistryModal.js` (huvudmodal + Redigera kontakt)
+- **Hook:** `hooks/useDraggableResizableModal.js`

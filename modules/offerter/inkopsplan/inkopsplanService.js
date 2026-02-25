@@ -592,7 +592,9 @@ export function listenInkopsplanDoc(companyId, projectId, onDoc, onError) {
 
 export function listenInkopsplanRows(companyId, projectId, onItems, onError) {
   const colRef = getInkopsplanRowsCollectionRef(companyId, projectId);
-  const q = query(colRef, orderBy('nrNumeric', 'asc'), orderBy('name', 'asc'));
+  // NOTE: Avoid compound orderBy that may require a composite index.
+  // We only need a stable ordering; createdAt exists on all rows we create.
+  const q = query(colRef, orderBy('createdAt', 'asc'));
 
   return onSnapshot(
     q,
@@ -602,6 +604,9 @@ export function listenInkopsplanRows(companyId, projectId, onItems, onError) {
       if (typeof onItems === 'function') onItems(items);
     },
     (err) => {
+      try {
+        console.error('[inkopsplan] listenInkopsplanRows error:', err);
+      } catch (_e) {}
       if (typeof onError === 'function') onError(err);
     },
   );

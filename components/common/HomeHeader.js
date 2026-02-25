@@ -184,7 +184,6 @@ export function HomeHeader({
           const avatarBg = colors[Math.abs(hash) % colors.length];
 
           const menuItems = [
-            { key: 'switch_company', label: 'Byta företag', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> },
             { key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> },
             { key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> },
           ];
@@ -218,10 +217,6 @@ export function HomeHeader({
                   try {
                     setUserMenuVisible(false);
                     if (!it) return;
-                    if (it.key === 'switch_company') {
-                      try { navigation.navigate('Home'); } catch(_e) {}
-                      return;
-                    }
                     if (it.key === 'my_profile') {
                       try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) {}
                       return;

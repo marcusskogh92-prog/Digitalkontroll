@@ -262,6 +262,8 @@ export default function HomeScreen({ navigation, route }) {
   const [appMode, setAppMode] = useState('dashboard');
   const [sidePanelCollapsed, setSidePanelCollapsed] = useState(true); // stängd vid inloggning (hemskärm visar inget i panelen)
   const [dashboardRightPanelCollapsed, setDashboardRightPanelCollapsed] = useState(false);
+  /** Högerpanel: 'calendar' | 'activities' – kalender eller Aktiviteter (notiser). */
+  const [dashboardRightPanelTab, setDashboardRightPanelTab] = useState('calendar');
   const dashboardRightPanelWidthAnim = useRef(new Animated.Value(0)).current;
   const [activeSidePanelItemKey, setActiveSidePanelItemKey] = useState(null);
   const [isSuperAdminResolved, setIsSuperAdminResolved] = useState(false);
@@ -1333,7 +1335,7 @@ export default function HomeScreen({ navigation, route }) {
     if (
       railActiveId === 'sharepoint' ||
       PHASE_SHORTCUT_IDS.includes(String(railActiveId || '')) ||
-      ['register', 'administration', 'superadmin', 'notiser'].includes(String(railActiveId || ''))
+      ['register', 'administration', 'superadmin'].includes(String(railActiveId || ''))
     ) {
       return;
     }
@@ -2110,30 +2112,12 @@ export default function HomeScreen({ navigation, route }) {
                     panResponder={sidePanelCollapsed ? null : panResponder}
                     resizeHandlers={sidePanelCollapsed ? null : leftResizeHandlers}
                   >
-                    {railActiveId === 'dashboard' && appMode !== 'project' ? (
+                    {(railActiveId === 'dashboard' || railActiveId === 'notiser') && appMode !== 'project' ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
                         <LeftPanelRailHeader title="Startsida" />
                         <View style={{ padding: 16, paddingTop: 12 }}>
                           <Text style={{ fontSize: 12, color: '#94a3b8' }}>Översikt och senaste aktiviteter visas i innehållsområdet.</Text>
                         </View>
-                      </View>
-                    ) : railActiveId === 'notiser' ? (
-                      <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title="Aktiviteter" />
-                        <RailActivityPanel
-                          userNotifications={userNotifications}
-                          companyActivity={companyActivity}
-                          formatRelativeTime={formatRelativeTime}
-                          findProjectById={findProjectById}
-                          requestProjectSwitch={requestProjectSwitch}
-                          setPhaseActiveSection={setPhaseActiveSection}
-                          setPhaseActiveItem={setPhaseActiveItem}
-                          setProjectModuleRoute={setProjectModuleRoute}
-                          setSidePanelCollapsed={setSidePanelCollapsed}
-                          notificationsError={notificationsError}
-                          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
-                          markAllAsReadLoading={markAllAsReadLoading}
-                        />
                       </View>
                     ) : (railActiveId === 'register' || railActiveId === 'administration' || railActiveId === 'superadmin') ? (
                       <GlobalSidePanelContent
@@ -2304,27 +2288,10 @@ export default function HomeScreen({ navigation, route }) {
                       </View>
                     ) : (
                       <View style={{ flex: 1, minHeight: 0 }}>
-                        <LeftPanelRailHeader title={railActiveId === 'notiser' ? 'Aktiviteter' : 'Inställningar'} />
-                        {railActiveId === 'notiser' ? (
-                          <RailActivityPanel
-                            userNotifications={userNotifications}
-                            companyActivity={companyActivity}
-                            formatRelativeTime={formatRelativeTime}
-                            findProjectById={findProjectById}
-                            requestProjectSwitch={requestProjectSwitch}
-                            setPhaseActiveSection={setPhaseActiveSection}
-                            setPhaseActiveItem={setPhaseActiveItem}
-                            setProjectModuleRoute={setProjectModuleRoute}
-                            setSidePanelCollapsed={setSidePanelCollapsed}
-                            notificationsError={notificationsError}
-                            onMarkAllAsRead={handleMarkAllNotificationsAsRead}
-                            markAllAsReadLoading={markAllAsReadLoading}
-                          />
-                        ) : (
-                          <View style={{ padding: 16 }}>
-                            <Text style={{ fontSize: 13, color: '#64748b' }}>Inställningar visas här.</Text>
-                          </View>
-                        )}
+                        <LeftPanelRailHeader title="Inställningar" />
+                        <View style={{ padding: 16 }}>
+                          <Text style={{ fontSize: 13, color: '#64748b' }}>Inställningar visas här.</Text>
+                        </View>
                       </View>
                     )}
                   </GlobalSidePanel>
@@ -2370,6 +2337,19 @@ export default function HomeScreen({ navigation, route }) {
                       showRightPanelToggle
                       rightPanelOpen={!dashboardRightPanelCollapsed}
                       onRightPanelToggle={() => setDashboardRightPanelCollapsed((c) => !c)}
+                      showActivitiesToggle
+                      activitiesActive={!dashboardRightPanelCollapsed && dashboardRightPanelTab === 'activities'}
+                      onActivitiesToggle={() => {
+                        if (dashboardRightPanelCollapsed) {
+                          setDashboardRightPanelCollapsed(false);
+                          setDashboardRightPanelTab('activities');
+                        } else if (dashboardRightPanelTab === 'activities') {
+                          setDashboardRightPanelCollapsed(true);
+                        } else {
+                          setDashboardRightPanelTab('activities');
+                        }
+                      }}
+                      notificationsBadgeCount={notificationsUnreadCount}
                     />
                     <HomeMainPaneContainer
                     webPaneHeight={webPaneHeight}
@@ -2493,6 +2473,7 @@ export default function HomeScreen({ navigation, route }) {
                         ]}
                       >
                       <DashboardRightPanel
+                        tab={dashboardRightPanelTab}
                         upcomingItems={dashboardUpcomingSkyddsrondItems}
                         upcomingTimelineItems={dashboardUpcomingTimelineItems}
                         onProjectSelect={(project) => {
@@ -2501,6 +2482,18 @@ export default function HomeScreen({ navigation, route }) {
                             openProject(project, { selectedAction: null });
                           }
                         }}
+                        userNotifications={userNotifications}
+                        companyActivity={companyActivity}
+                        formatRelativeTime={formatRelativeTime}
+                        findProjectById={findProjectById}
+                        requestProjectSwitch={requestProjectSwitch}
+                        setPhaseActiveSection={setPhaseActiveSection}
+                        setPhaseActiveItem={setPhaseActiveItem}
+                        setProjectModuleRoute={setProjectModuleRoute}
+                        setSidePanelCollapsed={setSidePanelCollapsed}
+                        notificationsError={notificationsError}
+                        onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+                        markAllAsReadLoading={markAllAsReadLoading}
                       />
                       </View>
                     </Animated.View>
@@ -2509,7 +2502,6 @@ export default function HomeScreen({ navigation, route }) {
                 {/* Användarmeny från rail (portal) */}
                 {createPortal && typeof document !== 'undefined' && (() => {
                   const menuItems = [
-                    { key: 'switch_company', label: 'Byta företag', icon: <Ionicons name="business-outline" size={16} color="#1976D2" /> },
                     { key: 'my_profile', label: 'Min profil', icon: <Ionicons name="person-outline" size={16} color="#1976D2" /> },
                     { key: 'menu_separator', label: '', isSeparator: true },
                     { key: 'logout', label: 'Logga ut', icon: <Ionicons name="log-out-outline" size={16} color="#D32F2F" /> },
@@ -2532,10 +2524,6 @@ export default function HomeScreen({ navigation, route }) {
                         try {
                           setUserMenuVisible(false);
                           if (!it) return;
-                          if (it.key === 'switch_company') {
-                            try { navigation.navigate('Home'); } catch (_e) {}
-                            return;
-                          }
                           if (it.key === 'my_profile') {
                             try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '').trim() }); } catch (_e) {}
                             return;

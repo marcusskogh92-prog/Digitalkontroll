@@ -19,7 +19,9 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import {
     addContactToSupplier,
     createSupplier,
@@ -42,7 +44,11 @@ import {
 import ContextMenu from '../ContextMenu';
 import { createCategory, fetchByggdelar, fetchCategories, fetchCompanyProfile, fetchKontoplan } from '../firebase';
 import { AdminModalContext } from './AdminModalContext';
+import ModalBase from './ModalBase';
 import ConfirmModal from './Modals/ConfirmModal';
+import SimpleByggdelSelectModal from './Modals/SimpleByggdelSelectModal';
+import SimpleKategoriSelectModal from './Modals/SimpleKategoriSelectModal';
+import SimpleKontonSelectModal from './Modals/SimpleKontonSelectModal';
 
 const styles = StyleSheet.create({
   overlay: {
@@ -142,8 +148,8 @@ const styles = StyleSheet.create({
   statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   toolbarSection: {
     flexShrink: 0,
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
     paddingBottom: 12,
     backgroundColor: '#fff',
   },
@@ -155,9 +161,9 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#eee',
     marginTop: 12,
-    marginHorizontal: -20,
+    marginHorizontal: -D.contentPadding,
   },
   tableScroll: {
     flex: 1,
@@ -165,9 +171,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   tableScrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 24,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
+    paddingBottom: D.contentPadding,
+  },
+  tableScrollHorizontal: {
+    flex: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
   },
   searchWrap: {
     flex: 1,
@@ -175,31 +186,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
+    borderColor: '#ddd',
+    borderRadius: D.inputRadius,
     backgroundColor: '#fff',
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1f5f9',
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#ddd',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#a7f3d0',
@@ -209,9 +222,9 @@ const styles = StyleSheet.create({
     padding: 32,
     alignItems: 'center',
     backgroundColor: '#f8fafc',
-    borderRadius: 12,
+    borderRadius: D.radius,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#eee',
   },
   emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
@@ -234,6 +247,7 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
+  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminSuppliersModal({ visible, companyId, onClose }) {
@@ -265,6 +279,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const [inlineCategoryIds, setInlineCategoryIds] = useState([]);
   const [keepExpandedSupplierId, setKeepExpandedSupplierId] = useState(null);
   const [inlineSaving, setInlineSaving] = useState(false);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuSupplier, setRowMenuSupplier] = useState(null);
@@ -276,9 +291,17 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const [importConfirmVisible, setImportConfirmVisible] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [addModalVisible, setAddModalVisible] = useState(false);
+  /** När satt: modalen är i redigeringsläge med förifylld data. Null = lägg till ny. */
+  const [addModalEditSupplier, setAddModalEditSupplier] = useState(null);
   const [addModalSaving, setAddModalSaving] = useState(false);
   const [addModalCategoryIds, setAddModalCategoryIds] = useState([]);
   const [addModalByggdelIds, setAddModalByggdelIds] = useState([]);
+  const [addModalKontonIds, setAddModalKontonIds] = useState([]);
+  const [simpleKategoriModalVisible, setSimpleKategoriModalVisible] = useState(false);
+  const [simpleByggdelModalVisible, setSimpleByggdelModalVisible] = useState(false);
+  const [simpleKontonModalVisible, setSimpleKontonModalVisible] = useState(false);
+  const [addModalDirty, setAddModalDirty] = useState(false);
+  const [addModalUnsavedVisible, setAddModalUnsavedVisible] = useState(false);
   const tableScrollRef = useRef(null);
   const excelInputRef = useRef(null);
   const categoryModalSourceRef = useRef(null);
@@ -507,13 +530,52 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
       const addr = String(sup.address ?? '').toLowerCase();
       const post = String(sup.postalCode ?? '').toLowerCase();
       const city = String(sup.city ?? '').toLowerCase();
-      const cat = String(sup.category ?? (Array.isArray(sup.categories) ? sup.categories.join(' ') : '')).toLowerCase();
-      return name.includes(s) || orgnr.includes(s) || addr.includes(s) || post.includes(s) || city.includes(s) || cat.includes(s);
+      const categoryIds = Array.isArray(sup.categories) ? sup.categories : (sup.category ? [sup.category] : []);
+      const cat = categoryIds
+        .map((id) => {
+          const c = (companyCategories || []).find((x) => x.id === id);
+          return c ? (c.name ?? c.id ?? '') : id;
+        })
+        .join(' ')
+        .toLowerCase();
+      const byggdelStr = (Array.isArray(sup.byggdelTags) ? sup.byggdelTags : [])
+        .map((code) => {
+          const b = (companyByggdelar || []).find((x) => (x.code ?? x.id) === code);
+          return b ? `${b.code ?? b.id ?? ''} ${b.name ?? ''}`.trim() : code;
+        })
+        .join(' ')
+        .toLowerCase();
+      const kontonStr = (Array.isArray(sup.konton) ? sup.konton : [])
+        .map((k) => {
+          const acc = (companyKontoplan || []).find((x) => (x.konto ?? x.id) === k);
+          return acc ? `${acc.konto ?? acc.id ?? ''} ${acc.benamning ?? ''}`.trim() : k;
+        })
+        .join(' ')
+        .toLowerCase();
+      return (
+        name.includes(s) ||
+        orgnr.includes(s) ||
+        addr.includes(s) ||
+        post.includes(s) ||
+        city.includes(s) ||
+        cat.includes(s) ||
+        byggdelStr.includes(s) ||
+        kontonStr.includes(s)
+      );
     });
-  }, [suppliers, search]);
+  }, [suppliers, search, companyCategories, companyByggdelar, companyKontoplan]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
+    const byggdelSortKey = (s) => {
+      const codes = Array.isArray(s.byggdelTags) ? s.byggdelTags : [];
+      return codes
+        .map((code) => {
+          const b = (companyByggdelar || []).find((x) => (x.code ?? x.id) === code);
+          return b ? (b.name ?? b.code ?? code) : code;
+        })
+        .join(', ');
+    };
     list.sort((a, b) => {
       let aVal = '';
       let bVal = '';
@@ -529,12 +591,15 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
       } else if (sortColumn === 'category') {
         aVal = String(a.category ?? (Array.isArray(a.categories) ? a.categories[0] : '')).trim();
         bVal = String(b.category ?? (Array.isArray(b.categories) ? b.categories[0] : '')).trim();
+      } else if (sortColumn === 'byggdelar') {
+        aVal = byggdelSortKey(a);
+        bVal = byggdelSortKey(b);
       }
       const cmp = (aVal || '').localeCompare(bVal || '', 'sv');
       return sortDirection === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [filtered, sortColumn, sortDirection]);
+  }, [filtered, sortColumn, sortDirection, companyByggdelar]);
 
   const handleSort = (col) => {
     if (sortColumn === col) {
@@ -828,7 +893,13 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     if (Platform.OS !== 'web') {
       Alert.alert('Leverantör', String(supplier.companyName ?? 'Leverantör'), [
         { text: 'Avbryt', style: 'cancel' },
-        { text: 'Redigera', onPress: () => setEditingId(supplier.id) },
+        { text: 'Redigera', onPress: () => {
+          setAddModalEditSupplier(supplier);
+          setAddModalCategoryIds(Array.isArray(supplier.categories) ? supplier.categories : (supplier.category ? [supplier.category] : []));
+          setAddModalByggdelIds(supplier.byggdelTags || []);
+          setAddModalDirty(false);
+          setAddModalVisible(true);
+        } },
         { text: 'Radera', style: 'destructive', onPress: () => requestDelete(supplier) },
       ]);
       return;
@@ -858,32 +929,101 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     return out;
   }, [suppliers, contacts]);
 
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: Platform.OS === 'web' ? 1000 : undefined,
+    defaultHeight: Platform.OS === 'web' ? 640 : undefined,
+    minWidth: 500,
+    minHeight: 400,
+  });
+
+  const addModalDrag = useDraggableResizableModal(addModalVisible, {
+    defaultWidth: 520,
+    defaultHeight: 660,
+    minWidth: 400,
+    minHeight: 520,
+  });
+
+  const closeAddModal = useCallback(() => {
+    setAddModalVisible(false);
+    setAddModalEditSupplier(null);
+    setAddModalCategoryIds([]);
+    setAddModalByggdelIds([]);
+    setAddModalKontonIds([]);
+    setSimpleKategoriModalVisible(false);
+    setSimpleByggdelModalVisible(false);
+    setSimpleKontonModalVisible(false);
+    setAddModalDirty(false);
+    setAddModalUnsavedVisible(false);
+  }, []);
+
+  const requestAddModalClose = useCallback(() => {
+    if (addModalSaving) return;
+    if (addModalDirty) setAddModalUnsavedVisible(true);
+    else closeAddModal();
+  }, [addModalDirty, addModalSaving, closeAddModal]);
+
+  useEffect(() => {
+    if (!addModalVisible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (simpleKategoriModalVisible) {
+          setSimpleKategoriModalVisible(false);
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (simpleByggdelModalVisible) {
+          setSimpleByggdelModalVisible(false);
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (simpleKontonModalVisible) {
+          setSimpleKontonModalVisible(false);
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (addModalUnsavedVisible) setAddModalUnsavedVisible(false);
+        else requestAddModalClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [addModalVisible, addModalUnsavedVisible, simpleKategoriModalVisible, simpleByggdelModalVisible, simpleKontonModalVisible, requestAddModalClose]);
+
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition
+    ? {}
+    : {
+        width: Platform.OS === 'web' ? '90vw' : '90%',
+        maxWidth: 1200,
+        height: Platform.OS === 'web' ? '85vh' : '85%',
+      };
+
   if (!visible) return null;
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.titleIcon}>
-                <Ionicons name="business-outline" size={18} color={ICON_RAIL.iconColorActive} />
-              </View>
-              <View style={styles.titleLine}>
-                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-                  Leverantörer
-                </Text>
-                <Text style={styles.titleDot}>•</Text>
-                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
-                  Register över leverantörer
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-            </TouchableOpacity>
-          </View>
+  const footer = (
+    <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+      <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+    </TouchableOpacity>
+  );
 
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Leverantörer"
+      subtitle="Register över leverantörer"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="business-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
           <View style={styles.toolbarSection}>
             {!hasCompany ? (
               <View style={styles.selectCompany}>
@@ -898,48 +1038,74 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                       style={styles.searchInput}
                       value={search}
                       onChangeText={setSearch}
-                      placeholder="Sök namn, orgnr, adress, kategori…"
+                      placeholder="Sök namn, org-nr, ort, kategori, byggdel, konto…"
                       placeholderTextColor="#94a3b8"
                       {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                      onPress={() => setShowInlineAddRow((v) => !v)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: showInlineAddRow }}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer', title: showInlineAddRow ? 'Avmarkera för att bara se befintliga leverantörer' : 'Markera för att visa rad för snabbläggning' } : {})}
+                    >
+                      <Ionicons
+                        name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                        size={18}
+                        color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                      />
+                      <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                        Lägg till snabbt
+                      </Text>
+                    </TouchableOpacity>
                     {Platform.OS === 'web' && (
-                      <TouchableOpacity
-                        style={styles.excelBtn}
-                        onPress={(ev) => {
-                          const ne = ev?.nativeEvent || ev;
-                          const target = ne?.target;
-                          if (target && typeof target.getBoundingClientRect === 'function') {
-                            const r = target.getBoundingClientRect();
-                            setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
-                          } else {
-                            setExcelMenuPos({ x: 20, y: 200 });
-                          }
-                          setExcelMenuVisible(true);
-                        }}
-                        accessibilityLabel="Importera / exportera Excel"
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
-                      >
-                        <Ionicons name="grid-outline" size={18} color="#167534" />
-                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
-                      </TouchableOpacity>
+                      <>
+                        <TouchableOpacity
+                          style={styles.excelBtn}
+                          onPress={(ev) => {
+                            const ne = ev?.nativeEvent || ev;
+                            const target = ne?.target;
+                            if (target && typeof target.getBoundingClientRect === 'function') {
+                              const r = target.getBoundingClientRect();
+                              setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
+                            } else {
+                              setExcelMenuPos({ x: 20, y: 200 });
+                            }
+                            setExcelMenuVisible(true);
+                          }}
+                          accessibilityLabel="Importera / exportera Excel"
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
+                        >
+                          <Ionicons name="document-outline" size={14} color="#167534" />
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                        </TouchableOpacity>
+                      </>
                     )}
-                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => setAddModalVisible(true)}
+                      onPress={() => {
+                        setAddModalEditSupplier(null);
+                        setAddModalCategoryIds([]);
+                        setAddModalByggdelIds([]);
+                        setAddModalKontonIds([]);
+                        setAddModalDirty(false);
+                        setAddModalVisible(true);
+                      }}
                       accessibilityLabel="Lägg till leverantör"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="add" size={18} color="#fff" />
+                      <Ionicons name="add" size={16} color="#fff" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.iconBtn}
                       onPress={loadSuppliers}
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="refresh" size={16} color="#475569" />
+                      <Ionicons name="refresh" size={14} color="#475569" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -953,14 +1119,23 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
             style={styles.tableScroll}
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
           >
-            {!hasCompany ? null : (
+            {!hasCompany ? null : loading ? (
               <View style={styles.tableWrap}>
-                {loading ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyTitle}>Laddar leverantörer…</Text>
-                  </View>
-                ) : (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyTitle}>Laddar leverantörer…</Text>
+                </View>
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                contentContainerStyle={{ flexGrow: 1, minHeight: '100%', alignSelf: 'stretch' }}
+                keyboardShouldPersistTaps="handled"
+                style={styles.tableScrollHorizontal}
+              >
+                <View style={[styles.tableWrap, { alignSelf: 'stretch', flex: 1 }]}>
                   <LeverantorerTable
                     suppliers={sorted}
                     sortColumn={sortColumn}
@@ -969,6 +1144,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     onRowPress={() => {}}
                     onRowContextMenu={openRowMenu}
                     onRowMenu={openRowMenu}
+                    onRowDoubleClick={(supplier) => setEditingId(supplier.id)}
                     editingId={editingId}
                     inlineSavingCustomer={saving}
                     onSaveEdit={handleSaveInlineEdit}
@@ -1017,7 +1193,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                         entityName: 'formulär',
                       });
                     }}
-                    inlineEnabled={hasCompany}
+                    inlineEnabled={hasCompany && showInlineAddRow}
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       companyName: inlineCompanyName,
@@ -1039,19 +1215,10 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     }}
                     onInlineSave={handleInlineSave}
                   />
-                )}
-              </View>
+                </View>
+              </ScrollView>
             )}
           </ScrollView>
-
-          <View style={styles.footer}>
-            <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
-            </View>
-          </View>
 
           {(notice || error) ? (
             <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">
@@ -1070,8 +1237,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
               </View>
             </Animated.View>
           ) : null}
-        </Pressable>
-      </Pressable>
+    </ModalBase>
 
       <ContextMenu
         visible={rowMenuVisible}
@@ -1083,8 +1249,14 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
           setRowMenuVisible(false);
           const s = rowMenuSupplier;
           if (!s || !it) return;
-          if (it.key === 'edit') setEditingId(s.id);
-          else if (it.key === 'delete') requestDelete(s);
+          if (it.key === 'edit') {
+            setAddModalEditSupplier(s);
+            setAddModalCategoryIds(Array.isArray(s.categories) ? s.categories : (s.category ? [s.category] : []));
+            setAddModalByggdelIds(s.byggdelTags || []);
+            setAddModalKontonIds(Array.isArray(s.konton) ? s.konton : []);
+            setAddModalDirty(false);
+            setAddModalVisible(true);
+          } else if (it.key === 'delete') requestDelete(s);
         }}
       />
 
@@ -1104,114 +1276,143 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
         onConfirm={confirmDelete}
       />
 
-      <Modal
+      <ModalBase
         visible={addModalVisible}
+        onClose={requestAddModalClose}
+        title={addModalEditSupplier ? 'Redigera leverantör' : 'Lägg till leverantör'}
+        titleIcon={<Ionicons name={addModalEditSupplier ? 'create-outline' : 'add'} size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+        headerVariant="neutral"
+        boxStyle={addModalDrag.boxStyle}
+        overlayStyle={addModalDrag.overlayStyle}
+        headerProps={addModalDrag.headerProps}
+        resizeHandles={addModalDrag.resizeHandles}
+        contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+      >
+        <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingBottom: 12, flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+          <LeverantorForm
+            ref={addFormSubmitRef}
+            initial={addModalEditSupplier}
+            byggdelar={companyByggdelar || []}
+            saving={addModalSaving}
+            onDirtyChange={setAddModalDirty}
+            onSave={async (values) => {
+              setAddModalSaving(true);
+              setError('');
+              const isEdit = !!addModalEditSupplier;
+              const supplierId = addModalEditSupplier?.id;
+              try {
+                if (isEdit && supplierId) {
+                  await updateSupplier(cid, supplierId, {
+                    companyName: values.companyName,
+                    organizationNumber: values.organizationNumber || '',
+                    address: values.address || '',
+                    postalCode: values.postalCode || '',
+                    city: values.city || '',
+                    category: (values.categories && values.categories[0]) || values.category || '',
+                    categories: values.categories || [],
+                    byggdelTags: values.byggdelTags || [],
+                    konton: values.konton || [],
+                  });
+                  showNotice('Leverantör uppdaterad');
+                } else {
+                  await createSupplier(cid, {
+                    companyName: values.companyName,
+                    organizationNumber: values.organizationNumber || '',
+                    address: values.address || '',
+                    postalCode: values.postalCode || '',
+                    city: values.city || '',
+                    category: (values.categories && values.categories[0]) || values.category || '',
+                    categories: values.categories || [],
+                    byggdelTags: values.byggdelTags || [],
+                    konton: values.konton || [],
+                  });
+                  showNotice('Leverantör tillagd');
+                }
+                closeAddModal();
+                await loadSuppliers();
+              } catch (e) {
+                setError(formatWriteError(e));
+              } finally {
+                setAddModalSaving(false);
+              }
+            }}
+            onCancel={requestAddModalClose}
+            onOpenKategoriRequest={() => setSimpleKategoriModalVisible(true)}
+            categoryIdsForForm={addModalCategoryIds}
+            onCategoryIdsChange={setAddModalCategoryIds}
+            categoryOptions={companyCategories}
+            onOpenByggdelRequest={() => setSimpleByggdelModalVisible(true)}
+            formByggdelIds={addModalByggdelIds}
+            onByggdelIdsChange={setAddModalByggdelIds}
+            onOpenKontonRequest={() => setSimpleKontonModalVisible(true)}
+            formKontonIds={addModalKontonIds}
+            onKontonIdsChange={setAddModalKontonIds}
+            kontonOptions={companyKontoplan}
+          />
+        </ScrollView>
+      </ModalBase>
+
+      <SimpleKategoriSelectModal
+        visible={simpleKategoriModalVisible}
+        onClose={() => setSimpleKategoriModalVisible(false)}
+        categories={companyCategories}
+        selectedIds={addModalCategoryIds}
+        onSave={(ids) => {
+          setAddModalCategoryIds(ids);
+          setSimpleKategoriModalVisible(false);
+        }}
+      />
+
+      <SimpleByggdelSelectModal
+        visible={simpleByggdelModalVisible}
+        onClose={() => setSimpleByggdelModalVisible(false)}
+        byggdelar={companyByggdelar}
+        selectedIds={addModalByggdelIds}
+        onSave={(ids) => {
+          setAddModalByggdelIds(ids);
+          setSimpleByggdelModalVisible(false);
+        }}
+      />
+
+      <SimpleKontonSelectModal
+        visible={simpleKontonModalVisible}
+        onClose={() => setSimpleKontonModalVisible(false)}
+        accounts={companyKontoplan}
+        selectedIds={addModalKontonIds}
+        onSave={(ids) => {
+          setAddModalKontonIds(ids);
+          setSimpleKontonModalVisible(false);
+        }}
+      />
+
+      <Modal
+        visible={addModalUnsavedVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => !addModalSaving && setAddModalVisible(false)}
+        onRequestClose={() => setAddModalUnsavedVisible(false)}
       >
-        <Pressable
-          style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}
-          onPress={() => !addModalSaving && setAddModalVisible(false)}
-        >
-          <Pressable
-            style={{
-              backgroundColor: '#fff',
-              borderRadius: 12,
-              width: Platform.OS === 'web' ? 480 : '90%',
-              maxWidth: 480,
-              maxHeight: '85vh',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.15,
-              shadowRadius: 12,
-              elevation: 8,
-            }}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingVertical: 8,
-                paddingHorizontal: 14,
-                borderBottomWidth: 1,
-                borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-                backgroundColor: ICON_RAIL.bg,
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                <View style={styles.titleIcon}>
-                  <Ionicons name="add" size={18} color={ICON_RAIL.iconColorActive} />
-                </View>
-                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-                  Lägg till leverantör
-                </Text>
-              </View>
+        <Pressable style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }} onPress={() => setAddModalUnsavedVisible(false)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: D.radius, padding: 24, width: '100%', maxWidth: 400 }} onPress={(e) => e.stopPropagation()}>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: '#0f172a', marginBottom: 8 }}>Osparade ändringar</Text>
+            <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>Vill du spara ändringarna innan du stänger?</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+              <TouchableOpacity onPress={() => setAddModalUnsavedVisible(false)} style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, backgroundColor: '#f1f5f9' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a' }}>Fortsätt redigera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setAddModalUnsavedVisible(false); closeAddModal(); }} style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Kasta ändringar</Text>
+              </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => !addModalSaving && setAddModalVisible(false)}
-                style={styles.closeBtn}
-                accessibilityLabel="Stäng"
-                hitSlop={10}
+                onPress={() => {
+                  setAddModalUnsavedVisible(false);
+                  addFormSubmitRef.current?.submit?.();
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 6, backgroundColor: '#475569' }}
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
-                <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={{ maxHeight: '75vh' }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
-              <LeverantorForm
-                ref={addFormSubmitRef}
-                initial={null}
-                byggdelar={companyByggdelar || []}
-                saving={addModalSaving}
-                onSave={async (values) => {
-                  setAddModalSaving(true);
-                  setError('');
-                  try {
-                    await createSupplier(cid, {
-                      companyName: values.companyName,
-                      organizationNumber: values.organizationNumber || '',
-                      address: values.address || '',
-                      postalCode: values.postalCode || '',
-                      city: values.city || '',
-                      category: (values.categories && values.categories[0]) || values.category || '',
-                      categories: values.categories || [],
-                      byggdelTags: values.byggdelTags || [],
-                    });
-                    setAddModalVisible(false);
-                    setAddModalCategoryIds([]);
-                    setAddModalByggdelIds([]);
-                    await loadSuppliers();
-                    showNotice('Leverantör tillagd');
-                  } catch (e) {
-                    setError(formatWriteError(e));
-                  } finally {
-                    setAddModalSaving(false);
-                  }
-                }}
-                onCancel={() => !addModalSaving && setAddModalVisible(false)}
-                onOpenKategoriRequest={() => {
-                  categoryModalSourceRef.current = 'addModal';
-                  openKategoriModal(cid, {
-                    forForm: true,
-                    selectedCategoryIds: addModalCategoryIds || [],
-                    entityName: 'formulär',
-                  });
-                }}
-                categoryIdsForForm={addModalCategoryIds}
-                onCategoryIdsChange={setAddModalCategoryIds}
-                onOpenByggdelRequest={() => {
-                  openByggdelModal(cid, {
-                    forForm: true,
-                    selectedCodes: addModalByggdelIds || [],
-                    entityName: 'formulär',
-                  });
-                }}
-                formByggdelIds={addModalByggdelIds}
-                onByggdelIdsChange={setAddModalByggdelIds}
-              />
-            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1259,6 +1460,6 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
         onCancel={() => { setImportConfirmVisible(false); setImportPlan(null); }}
         onConfirm={runImport}
       />
-    </Modal>
+    </>
   );
 }

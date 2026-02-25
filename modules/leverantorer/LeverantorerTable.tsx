@@ -1,35 +1,36 @@
 /**
  * Tabell för leverantörer – samma DataGrid-pattern som Kunder/Kontaktregister.
  *
- * KOLUMNORDNING (LÅST – FÅR INTE ÄNDRAS):
+ * KOLUMNORDNING:
  * 1. Leverantör (vänster)
  * 2. Org-nr
  * 3. Ort
  * 4. Kategori
- * 5. Kebab (alltid längst till höger, fast)
+ * 5. Byggdelar
  *
  * Inline-redigering med Enter/Esc och diskreta ✔ ✕.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type ViewStyle, Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import SelectDropdownOrig, { SelectDropdownChip } from '../../components/common/SelectDropdown';
+import SelectDropdownOrig from '../../components/common/SelectDropdown';
 /** Cast så att SelectDropdown accepterar våra props (keepOpenOnSelect/visible/onToggleVisible är inte krävda i körning – .js-komponenten). */
 const SelectDropdown = SelectDropdownOrig as unknown as React.ComponentType<Record<string, unknown>>;
+import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 import { formatOrganizationNumber } from '../../utils/formatOrganizationNumber';
 import type { Supplier } from './leverantorerService';
 
-/** Kolumnordning: Leverantör, Org-nr, Ort, Kategori, Kebab. Bredder: Leverantör 0.9, Org-nr 170px, Ort 160px, Kategori 1 (huvudyta), Kebab 30px + divider. */
-const FLEX = { companyName: 0.9, category: 1 } as const;
+/** Kolumnordning: Leverantör, Org-nr, Ort, Kategori, Byggdelar. På webb justerbara via resize-handtag. */
+const DEFAULT_COLUMN_WIDTHS = { companyName: 220, organizationNumber: 170, city: 160, category: 200, byggdelar: 200 } as const;
+const MIN_COLUMN_WIDTH = 60;
+const RESIZE_HANDLE_WIDTH = 6;
+const FLEX = { companyName: 0.9, category: 1, byggdelar: 1 } as const;
 const FIXED = { organizationNumber: 170, city: 160, actions: 30 } as const;
 /** Edit-rad (öppet läge) använder även adress och postnr. */
-const FLEX_FULL = { companyName: 0.9, category: 1, address: 1.6, city: 0.75 } as const;
+const FLEX_FULL = { companyName: 0.9, category: 1, byggdelar: 1, address: 1.6, city: 0.75 } as const;
 const FIXED_FULL = { organizationNumber: 170, postalCode: 110, actions: 30 } as const;
-/** Max antal kategori-chips i stängt läge innan "+X"; ingen horisontell scroll. */
-const MAX_VISIBLE_CATEGORY_CHIPS = 5;
-
 /** Kontakt-tabell i öppet läge: samma kolumnbredder som Kontaktregister (utan Företag). */
 const FLEX_CONTACT = { name: 1.2, role: 1.1, email: 2 } as const;
 const FIXED_CONTACT = { mobile: 130, workPhone: 150, actions: 30 } as const;
@@ -49,14 +50,15 @@ export type SortColumn =
   | 'companyName'
   | 'organizationNumber'
   | 'city'
-  | 'category';
+  | 'category'
+  | 'byggdelar';
 export type SortDirection = 'asc' | 'desc';
 
 const styles = StyleSheet.create({
   tableWrap: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 12,
+    borderRadius: MODAL_DESIGN_2026.tableRadius,
     overflow: 'hidden',
     backgroundColor: '#fff',
     minWidth: '100%',
@@ -66,8 +68,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 14,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
@@ -103,6 +105,7 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'left',
   },
+  headerGapWeb: { gap: 0 },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
   actionsCol: {
@@ -115,22 +118,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 2,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
     paddingLeft: 0,
     paddingRight: 0,
   },
   actionsColHeader: {
     backgroundColor: '#f1f5f9',
-    paddingVertical: 4,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
   },
-  actionsColInline: { backgroundColor: '#eff6ff' },
+  actionsColInline: { backgroundColor: 'transparent' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 8,
-    paddingVertical: 2,
-    paddingHorizontal: 14,
+    minHeight: MODAL_DESIGN_2026.tableRowHeight,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#fff',
@@ -138,6 +142,7 @@ const styles = StyleSheet.create({
   rowAlt: {
     backgroundColor: '#f8fafc',
   },
+  rowGapWeb: { gap: RESIZE_HANDLE_WIDTH },
   rowHover: {
     backgroundColor: '#eef6ff',
   },
@@ -266,8 +271,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 14,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
@@ -281,8 +286,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 3,
-    paddingHorizontal: 14,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#fff',
@@ -530,24 +535,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: 8,
-    paddingVertical: 2,
-    paddingHorizontal: 14,
+    minHeight: MODAL_DESIGN_2026.tableRowHeight,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
-    borderBottomColor: '#eef0f3',
-    backgroundColor: '#eff6ff',
-  },
-  categoryChipsWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    flexWrap: 'nowrap',
-    gap: 4,
-    minWidth: 0,
-    flex: 1,
-  },
-  categoryChip: {
-    flexShrink: 0,
-    maxWidth: 120,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#f0f9ff',
   },
   inlineInput: {
     fontSize: 13,
@@ -556,7 +549,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 6,
+    borderRadius: 0,
     backgroundColor: '#fff',
     flexShrink: 0,
     minWidth: 0,
@@ -574,11 +567,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 3,
-    paddingHorizontal: 14,
+    minHeight: MODAL_DESIGN_2026.tableRowHeight,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#f0f9ff',
   },
   editRowBtn: {
     width: 24,
@@ -646,6 +640,23 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontWeight: '500',
   },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
 });
 
 function safeText(value?: string): string {
@@ -664,6 +675,7 @@ interface LeverantorerTableProps {
   onRowPress: (supplier: Supplier) => void;
   onRowContextMenu?: (e: unknown, supplier: Supplier) => void;
   onRowMenu?: (e: unknown, supplier: Supplier) => void;
+  onRowDoubleClick?: (supplier: Supplier) => void;
   categoryFilters?: string[];
   onCategoryFiltersChange?: (next: string[]) => void;
   contactRegistry?: { id: string; name: string; email?: string; phone?: string; role?: string }[];
@@ -731,6 +743,7 @@ export default function LeverantorerTable({
   onRowPress,
   onRowContextMenu,
   onRowMenu,
+  onRowDoubleClick,
   categoryFilters = [],
   onCategoryFiltersChange,
   contactRegistry = [],
@@ -781,7 +794,49 @@ export default function LeverantorerTable({
     category: string;
   } | null>(null);
 
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef<{ column: keyof typeof DEFAULT_COLUMN_WIDTHS | null; startX: number; startWidth: number }>({ column: null, startX: 0, startWidth: 0 });
+
+  const w = columnWidths;
+  const col = (key: keyof typeof DEFAULT_COLUMN_WIDTHS) => ({ width: w[key], minWidth: w[key], flexShrink: 0 });
+  /** Kategori-kolumnen får flex: 1 så att den fyller resterande bredd i modalen. */
+  const colCategory = () => ({ flex: 1, minWidth: w.category, flexShrink: 0 });
+  /** Byggdelar-kolumnen får flex: 1 så att den fyller resterande bredd. */
+  const colByggdelar = () => ({ flex: 1, minWidth: w.byggdelar, flexShrink: 0 });
+
+  const startResize = useCallback((column: keyof typeof DEFAULT_COLUMN_WIDTHS, e: React.MouseEvent) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = (e as unknown as { clientX?: number }).clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e: MouseEvent) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
   const kebabRefs = useRef<Record<string, { focus?: () => void } | null>>({});
+  const lastTapRef = useRef<{ supplierId: string; time: number }>({ supplierId: '', time: 0 });
+  const DOUBLE_TAP_MS = 350;
   const inlineCategoryTriggerRef = useRef<React.ComponentRef<typeof TouchableOpacity> | null>(null);
   const editCategoryTriggerRef = useRef<React.ComponentRef<typeof TouchableOpacity> | null>(null);
   /** När användaren stänger Kategori-modalen återförs fokus till triggern och onFocus körs igen – ignorera det. */
@@ -859,16 +914,23 @@ export default function LeverantorerTable({
     return raw;
   };
 
-  /** I stängt läge: visa upp till MAX_VISIBLE_CATEGORY_CHIPS chips, sedan "+X" för resten. */
-  const getCategoryChipsForRow = (supplier: Supplier): { visible: string[]; overflow: number } => {
-    const list = getCategoryNames(supplier);
-    if (!list.length) return { visible: [], overflow: 0 };
-    const visible = list.slice(0, MAX_VISIBLE_CATEGORY_CHIPS);
-    const overflow = Math.max(0, list.length - MAX_VISIBLE_CATEGORY_CHIPS);
-    return { visible, overflow };
-  };
-
+  /** Kategorinamn som lista (visas som vanlig text i tabellen, t.ex. "Bygg, Snickeri"). */
   const getCategoryList = (supplier: Supplier): string[] => getCategoryNames(supplier);
+
+  /** Byggdelar som visningstext (code – name eller code), för tabellkolumnen. */
+  const getByggdelList = (supplier: Supplier): string[] => {
+    const codes = Array.isArray(supplier.byggdelTags) ? supplier.byggdelTags : [];
+    if (!codes.length) return [];
+    return codes.map((code) => {
+      const b = companyByggdelar.find((x) => (x.code ?? x.id) === code);
+      if (b) {
+        const name = (b.name ?? '').trim();
+        const c = (b as { code?: string }).code ?? b.id;
+        return name ? `${c} – ${name}` : String(c || code);
+      }
+      return String(code);
+    });
+  };
 
 
   const submitDraft = (supplier: Supplier) => {
@@ -947,12 +1009,18 @@ export default function LeverantorerTable({
   /** Web: sticky kebab-kolumn. RN ViewStyle saknar 'sticky' – cast så TS godtar det på web. */
   const stickyRight: ViewStyle = Platform.OS === 'web' ? ({ position: 'sticky', right: 0 } as unknown as ViewStyle) : {};
 
+  const gapBetweenCols = Platform.OS === 'web' ? RESIZE_HANDLE_WIDTH : 8;
+  const numCols = 5;
+  const totalTableWidth =
+    w.companyName + w.organizationNumber + w.city + w.category + w.byggdelar
+    + (Platform.OS === 'web' ? numCols * RESIZE_HANDLE_WIDTH : gapBetweenCols * numCols);
+
   return (
-    <View style={styles.tableWrap}>
-      {/* Kolumnordning LÅST: 1 Leverantör, 2 Org-nr, 3 Ort, 4 Kategori, 5 Kebab. columnContent = samma startpunkt för rubrik/input/cell. */}
-      <View style={styles.header}>
+    <View style={[styles.tableWrap, { minWidth: totalTableWidth, width: '100%' }]}>
+      {/* Kolumnordning: 1 Leverantör, 2 Org-nr, 3 Ort, 4 Kategori, 5 Byggdelar. På webb justerbara kolumner. */}
+      <View style={[styles.header, Platform.OS === 'web' && styles.headerGapWeb]}>
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.companyName }]}
+          style={[styles.headerCell, styles.cellFlex, col('companyName')]}
           onPress={() => onSort('companyName')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -962,8 +1030,9 @@ export default function LeverantorerTable({
             <SortIcon col="companyName" />
           </View>
         </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('companyName', e)}><View style={styles.resizeHandleLine} /></View>}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.organizationNumber }]}
+          style={[styles.headerCell, styles.cellFixed, col('organizationNumber')]}
           onPress={() => onSort('organizationNumber')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -973,8 +1042,9 @@ export default function LeverantorerTable({
             <SortIcon col="organizationNumber" />
           </View>
         </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('organizationNumber', e)}><View style={styles.resizeHandleLine} /></View>}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFixed, { width: FIXED.city }]}
+          style={[styles.headerCell, styles.cellFixed, col('city')]}
           onPress={() => onSort('city')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -984,8 +1054,9 @@ export default function LeverantorerTable({
             <SortIcon col="city" />
           </View>
         </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('city', e)}><View style={styles.resizeHandleLine} /></View>}
         <TouchableOpacity
-          style={[styles.headerCell, styles.cellFlex, { flex: FLEX.category }]}
+          style={[styles.headerCell, styles.cellFlex, colCategory()]}
           onPress={() => onSort('category')}
           activeOpacity={0.7}
           {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
@@ -995,11 +1066,23 @@ export default function LeverantorerTable({
             <SortIcon col="category" />
           </View>
         </TouchableOpacity>
-        <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('category', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity
+          style={[styles.headerCell, styles.cellFlex, colByggdelar()]}
+          onPress={() => onSort('byggdelar')}
+          activeOpacity={0.7}
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <View style={[styles.columnContent, styles.columnContentRow]}>
+            <Text style={styles.headerText}>Byggdelar</Text>
+            <SortIcon col="byggdelar" />
+          </View>
+        </TouchableOpacity>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('byggdelar', e)}><View style={styles.resizeHandleLine} /></View>}
       </View>
       {inlineEnabled ? (
-        <View style={styles.inlineRow}>
-          <View style={[styles.cellFlex, { flex: FLEX.companyName }]}>
+        <View style={[styles.inlineRow, Platform.OS === 'web' && styles.rowGapWeb]}>
+          <View style={[styles.cellFlex, col('companyName')]}>
             <View style={styles.columnContent}>
               <TextInput
                 value={inlineValues?.companyName ?? ''}
@@ -1014,7 +1097,7 @@ export default function LeverantorerTable({
               />
             </View>
           </View>
-          <View style={[styles.cellFixed, { width: FIXED.organizationNumber }]}>
+          <View style={[styles.cellFixed, col('organizationNumber')]}>
             <View style={styles.columnContent}>
               <TextInput
                 value={inlineValues?.organizationNumber ?? ''}
@@ -1029,7 +1112,7 @@ export default function LeverantorerTable({
               />
             </View>
           </View>
-          <View style={[styles.cellFixed, { width: FIXED.city }]}>
+          <View style={[styles.cellFixed, col('city')]}>
             <View style={styles.columnContent}>
               <TextInput
                 value={inlineValues?.city ?? ''}
@@ -1045,11 +1128,11 @@ export default function LeverantorerTable({
             </View>
           </View>
           {onOpenKategoriForInlineAdd ? (
-            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+            <View style={[styles.cellFlex, colCategory()]}>
               <View style={styles.columnContent}>
                 <TouchableOpacity
                   ref={inlineCategoryTriggerRef}
-                  style={[styles.inlineSelectField, { minHeight: 32, justifyContent: 'center' }]}
+                  style={[styles.inlineInput, styles.inlineInputCell, { flex: 1, justifyContent: 'center' }]}
                   onPress={() => {
                     onOpenKategoriForInlineAdd?.();
                     categoryModalJustOpenedRef.current = true;
@@ -1068,7 +1151,7 @@ export default function LeverantorerTable({
               </View>
             </View>
           ) : companyCategories.length > 0 ? (
-            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+            <View style={[styles.cellFlex, colCategory()]}>
               <View style={styles.columnContent}>
                 <SelectDropdown
                   value={Array.isArray(inlineValues?.categories) ? inlineValues.categories : []}
@@ -1078,14 +1161,14 @@ export default function LeverantorerTable({
                   placeholder="Kategorier"
                   onChange={(next: string[]) => onInlineChange?.('categories', next)}
                   usePortal={true}
-                  fieldStyle={[styles.inlineSelectField, { minHeight: 32 }]}
+                  fieldStyle={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                   listStyle={styles.inlineSelectList}
                   inputStyle={{ fontSize: 13, color: '#111' }}
                 />
               </View>
             </View>
           ) : (
-            <View style={[styles.cellFlex, { flex: FLEX.category }]}>
+            <View style={[styles.cellFlex, colCategory()]}>
               <View style={styles.columnContent}>
                 <TextInput
                   value=""
@@ -1097,7 +1180,11 @@ export default function LeverantorerTable({
               </View>
             </View>
           )}
-          <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
+          <View style={[styles.cellFlex, colByggdelar()]}>
+            <View style={styles.columnContent}>
+              <Text style={[styles.cellMuted, { fontSize: 13 }]}>—</Text>
+            </View>
+          </View>
         </View>
       ) : null}
       {suppliers.map((supplier, idx) => (
@@ -1217,7 +1304,33 @@ export default function LeverantorerTable({
                   </View>
                 </View>
               )}
-              <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
+              {onOpenByggdelar ? (
+                <View style={[styles.cellFlex, { flex: FLEX_FULL.byggdelar }]}>
+                  <View style={styles.columnContent}>
+                    <TouchableOpacity
+                      style={[styles.inlineSelectField, { minHeight: 32, justifyContent: 'center' }]}
+                      onPress={() => onOpenByggdelar(supplier)}
+                      activeOpacity={0.8}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer' as const, tabIndex: 0 } : {})}
+                    >
+                      <Text style={{ fontSize: 13, color: getByggdelList(supplier).length > 0 ? '#111' : '#94a3b8' }} numberOfLines={1}>
+                        {getByggdelList(supplier).length > 0
+                          ? getByggdelList(supplier).slice(0, 3).join(', ') + (getByggdelList(supplier).length > 3 ? '…' : '')
+                          : 'Klicka för att välja byggdelar'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={[styles.cellFlex, { flex: FLEX_FULL.byggdelar }]}>
+                  <View style={styles.columnContent}>
+                    <Text style={[styles.cellMuted, { fontSize: 13 }]} numberOfLines={1}>
+                      {getByggdelList(supplier).length > 0 ? getByggdelList(supplier).join(', ') : '—'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, paddingLeft: 12, minWidth: 80 }}>
                 <TouchableOpacity
                   style={[styles.editRowBtn, styles.editRowBtnPrimary]}
                   onPress={() => {
@@ -1249,18 +1362,41 @@ export default function LeverantorerTable({
               </View>
             </View>
           ) : (
+            <View
+              style={{ alignSelf: 'stretch' }}
+              {...(Platform.OS === 'web'
+                ? {
+                    onContextMenu: (e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onRowContextMenu?.(e, supplier);
+                    },
+                    ...(onRowDoubleClick ? { onDoubleClick: (e: React.MouseEvent) => { e.stopPropagation(); onRowDoubleClick(supplier); } } : {}),
+                  }
+                : {})}
+            >
             <TouchableOpacity
               style={[
                 styles.row,
+                Platform.OS === 'web' && styles.rowGapWeb,
                 idx % 2 === 1 ? styles.rowAlt : null,
                 hoveredId === supplier.id ? styles.rowHover : null,
                 expandedIds[supplier.id] ? styles.rowActive : null,
               ]}
               onPress={() => {
+                if (Platform.OS !== 'web' && onRowDoubleClick) {
+                  const now = Date.now();
+                  if (lastTapRef.current.supplierId === supplier.id && now - lastTapRef.current.time < DOUBLE_TAP_MS) {
+                    lastTapRef.current = { supplierId: '', time: 0 };
+                    onRowDoubleClick(supplier);
+                    return;
+                  }
+                  lastTapRef.current = { supplierId: supplier.id, time: now };
+                }
                 setExpandedIds((prev) => ({ ...prev, [supplier.id]: !prev[supplier.id] }));
                 onRowPress(supplier);
               }}
-              onLongPress={(e) => onRowContextMenu?.(e, supplier)}
+              onLongPress={Platform.OS === 'web' ? undefined : (e) => onRowContextMenu?.(e, supplier)}
               activeOpacity={0.7}
               {...(Platform.OS === 'web'
                 ? {
@@ -1270,7 +1406,7 @@ export default function LeverantorerTable({
                   }
                 : {})}
             >
-              <View style={[styles.cellFlex, { flex: FLEX.companyName }]}>
+              <View style={[styles.cellFlex, col('companyName')]}>
                 <View style={[styles.columnContent, styles.columnContentRow]}>
                   <Ionicons
                     name="chevron-forward"
@@ -1283,56 +1419,36 @@ export default function LeverantorerTable({
                   </Text>
                 </View>
               </View>
-              <View style={[styles.cellFixed, { width: FIXED.organizationNumber }]}>
+              <View style={[styles.cellFixed, col('organizationNumber')]}>
                 <View style={styles.columnContent}>
                   <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
                     {formatOrganizationNumber(supplier.organizationNumber ?? '') || '—'}
                   </Text>
                 </View>
               </View>
-              <View style={[styles.cellFixed, { width: FIXED.city }]}>
+              <View style={[styles.cellFixed, col('city')]}>
                 <View style={styles.columnContent}>
                   <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
                     {safeText(supplier.city)}
                   </Text>
                 </View>
               </View>
-              <View style={[styles.cellFlex, { flex: FLEX.category }]}>
-                <View style={[styles.columnContent, styles.categoryChipsWrap]}>
-                {(() => {
-                  const { visible, overflow } = getCategoryChipsForRow(supplier);
-                  if (!visible.length && !overflow) {
-                    return <SelectDropdownChip label="—" removable={false} onRemove={() => {}} title="—" />;
-                  }
-                  return (
-                    <>
-                      {visible.map((name) => (
-                        <View key={name} style={styles.categoryChip}>
-                          <SelectDropdownChip label={name} removable={false} onRemove={() => {}} title={name} />
-                        </View>
-                      ))}
-                      {overflow > 0 ? (
-                        <View style={styles.categoryChip}>
-                          <SelectDropdownChip label={`+${overflow}`} removable={false} onRemove={() => {}} title={`+${overflow}`} />
-                        </View>
-                      ) : null}
-                    </>
-                  );
-                })()}
+              <View style={[styles.cellFlex, colCategory()]}>
+                <View style={styles.columnContent}>
+                  <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
+                    {getCategoryList(supplier).length > 0 ? getCategoryList(supplier).join(', ') : '—'}
+                  </Text>
                 </View>
               </View>
-              <View style={[styles.actionsCol, stickyRight]}>
-                <TouchableOpacity
-                  ref={(r) => { kebabRefs.current[supplier.id] = r as { focus?: () => void } | null; }}
-                  style={styles.rowMenuBtn}
-                  onPress={(e) => onRowMenu?.(e, supplier)}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' ? { cursor: 'pointer', tabIndex: 0 } : {})}
-                >
-                  <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-                </TouchableOpacity>
+              <View style={[styles.cellFlex, colByggdelar()]}>
+                <View style={styles.columnContent}>
+                  <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>
+                    {getByggdelList(supplier).length > 0 ? getByggdelList(supplier).join(', ') : '—'}
+                  </Text>
+                </View>
               </View>
             </TouchableOpacity>
+            </View>
           )}
           {expandedIds[supplier.id] ? (
             <View style={styles.detailsRow}>

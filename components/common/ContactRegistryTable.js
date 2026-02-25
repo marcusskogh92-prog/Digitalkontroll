@@ -6,9 +6,10 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
 
 let createPortal = null;
@@ -18,9 +19,10 @@ try {
   createPortal = null;
 }
 
-// Flexandelar för flexibla kolumner (Namn, Företag, Roll, E-post). Fasta bredder för Mobil, Arbete, Åtgärder.
-const FLEX = { name: 1.2, company: 1.5, role: 1.1, email: 2 };
-const FIXED = { mobile: 130, workPhone: 150, actions: 30 };
+// Standardbredder (används som default och vid icke-webb). På webb kan användaren justera via resize-handtag.
+const DEFAULT_COLUMN_WIDTHS = { name: 130, company: 170, role: 100, mobile: 130, workPhone: 150, email: 200 };
+const MIN_COLUMN_WIDTH = 60;
+const RESIZE_HANDLE_WIDTH = 6;
 
 /** Formatera mobil (endast siffror) till xxx xxx xx xx t.ex. 072 595 75 25 */
 function formatMobileDisplay(value) {
@@ -39,11 +41,13 @@ function digitsOnly(value) {
   return String(value ?? '').replace(/\D/g, '');
 }
 
+const TABLE = MODAL_DESIGN_2026;
+
 const styles = StyleSheet.create({
   tableWrap: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 12,
+    borderRadius: TABLE.tableRadius,
     overflow: 'hidden',
     backgroundColor: '#fff',
     minWidth: '100%',
@@ -52,12 +56,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 14,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
+  headerGapWeb: { gap: 0 },
   headerCell: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -92,35 +97,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 3,
-    paddingHorizontal: 14,
+    minHeight: TABLE.tableRowHeight,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#fff',
   },
+  rowGapWeb: { gap: RESIZE_HANDLE_WIDTH },
   rowAlt: { backgroundColor: '#f8fafc' },
   rowHover: { backgroundColor: '#eef6ff' },
   cellFlex: { flexShrink: 0, minWidth: 0 },
   cellFixed: { flexShrink: 0 },
   actionsCol: {
-    width: FIXED.actions,
-    minWidth: FIXED.actions,
-    maxWidth: FIXED.actions,
     flexShrink: 0,
     borderLeftWidth: 1,
     borderLeftColor: '#e2e8f0',
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 3,
+    paddingVertical: TABLE.tableCellPaddingVertical,
     paddingLeft: 0,
     paddingRight: 0,
   },
   actionsColHeader: {
     backgroundColor: '#f1f5f9',
-    paddingVertical: 5,
+    paddingVertical: TABLE.tableCellPaddingVertical,
   },
-  actionsColInline: { backgroundColor: '#eff6ff' },
+  actionsColInline: { backgroundColor: 'transparent' },
   rowMenuBtn: {
     padding: 4,
     borderRadius: 6,
@@ -135,31 +139,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    borderRadius: 6,
+    borderRadius: 0,
     backgroundColor: '#fff',
     flexShrink: 0,
     minWidth: 0,
   },
+  inlineAddWrap: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#f0f9ff',
+  },
+  inlineAddLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingBottom: 4,
+  },
+  inlineAddLabelText: { fontSize: 12, fontWeight: '600', color: '#0369a1' },
+  inlineAddLabelHint: { fontSize: 11, color: '#64748b' },
   inlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 2,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eef0f3',
-    backgroundColor: '#eff6ff',
+    paddingVertical: 6,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
+    paddingTop: 4,
+    backgroundColor: '#f0f9ff',
   },
+  inlineRowGapWeb: { gap: RESIZE_HANDLE_WIDTH },
   editRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingVertical: 3,
-    paddingHorizontal: 14,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
     borderBottomColor: '#eef0f3',
     backgroundColor: '#eff6ff',
   },
+  editRowGapWeb: { gap: RESIZE_HANDLE_WIDTH },
   editRowBtn: {
     width: 24,
     height: 24,
@@ -177,6 +197,23 @@ const styles = StyleSheet.create({
   cellMuted: { fontSize: 13, color: '#64748b', fontWeight: '400' },
   emailLink: { color: '#2563eb', fontSize: 13, fontWeight: '400' },
   emailLinkHover: { textDecorationLine: 'underline' },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
 });
 
 const companyDropdownStyles = StyleSheet.create({
@@ -249,6 +286,7 @@ export default function ContactRegistryTable({
   onSaveEdit,
   onCancelEdit,
   onRowMenu,
+  onRowDoubleClick,
   inlineEnabled,
   inlineValues,
   inlineSaving,
@@ -265,12 +303,52 @@ export default function ContactRegistryTable({
   const [hoveredId, setHoveredId] = useState(null);
   const [emailHoveredId, setEmailHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
+  const lastTapRef = useRef({ contactId: null, time: 0 });
+  const DOUBLE_TAP_MS = 350;
   const [mobileDisplayFormatted, setMobileDisplayFormatted] = useState(false);
   const [companyHighlightedIndex, setCompanyHighlightedIndex] = useState(0);
   const [companyDropdownRect, setCompanyDropdownRect] = useState(null);
-  const kebabRefs = useRef({});
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
   const companyBlurTimerRef = useRef(null);
   const companyInlineWrapRef = useRef(null);
+
+  const w = columnWidths;
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  const triggerInlineSave = () => { if (!inlineSaving) onInlineSave?.(); };
+  const onInlineEnterKeyDown = Platform.OS === 'web'
+    ? (e) => { if (e?.key === 'Enter') { e.preventDefault(); triggerInlineSave(); } }
+    : undefined;
 
   const companyList = (companySearchResults || []).slice(0, 15);
   const companyListLen = companyList.length;
@@ -347,6 +425,10 @@ export default function ContactRegistryTable({
     }
     if (key === 'Enter' || key === 'Tab') {
       e.preventDefault();
+      if (key === 'Enter' && companyListLen === 0) {
+        if (!inlineSaving && context === 'inline') onInlineSave?.();
+        return true;
+      }
       selectHighlightedCompany(context);
       if (key === 'Tab' && context === 'inline') {
         setTimeout(() => {
@@ -403,12 +485,7 @@ export default function ContactRegistryTable({
       }
     } else if (key === 'Escape') {
       e.preventDefault();
-      const id = editingId;
       onCancelEdit?.();
-      setTimeout(() => {
-        const el = id ? kebabRefs.current[id] : null;
-        if (el && typeof el.focus === 'function') el.focus();
-      }, 0);
     }
   };
 
@@ -417,58 +494,76 @@ export default function ContactRegistryTable({
     return <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />;
   };
 
-  const stickyRight = Platform.OS === 'web' ? { position: 'sticky', right: 0 } : {};
+  const col = (key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 });
+
+  const gapBetweenCols = Platform.OS === 'web' ? RESIZE_HANDLE_WIDTH : 8;
+  const totalTableWidth =
+    w.name + w.company + w.role + w.mobile + w.workPhone + w.email
+    + gapBetweenCols * 5
+    + (Platform.OS === 'web' ? 5 * RESIZE_HANDLE_WIDTH : 0);
 
   return (
-    <View style={styles.tableWrap}>
-      <View style={styles.header}>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, { flex: FLEX.name }]} onPress={() => onSort('name')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+    <View style={[styles.tableWrap, { minWidth: totalTableWidth }]}>
+      <View style={[styles.header, Platform.OS === 'web' && styles.headerGapWeb]}>
+        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, col('name')]} onPress={() => onSort('name')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>Namn</Text>
             <SortIcon col="name" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, { flex: FLEX.company }]} onPress={() => onSort('contactCompanyName')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('name', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, col('company')]} onPress={() => onSort('contactCompanyName')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>Företag</Text>
             <SortIcon col="contactCompanyName" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, { flex: FLEX.role }]} onPress={() => onSort('role')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('company', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, col('role')]} onPress={() => onSort('role')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>Roll</Text>
             <SortIcon col="role" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFixed, { width: FIXED.mobile }]} onPress={() => onSort('phone')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('role', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity style={[styles.headerCell, styles.cellFixed, col('mobile')]} onPress={() => onSort('phone')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>Mobil</Text>
             <SortIcon col="phone" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFixed, { width: FIXED.workPhone }]} onPress={() => onSort('workPhone')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('mobile', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity style={[styles.headerCell, styles.cellFixed, col('workPhone')]} onPress={() => onSort('workPhone')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>Arbete</Text>
             <SortIcon col="workPhone" />
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, { flex: FLEX.email }]} onPress={() => onSort('email')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+        {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('workPhone', e)}><View style={styles.resizeHandleLine} /></View>}
+        <TouchableOpacity style={[styles.headerCell, styles.cellFlex, col('email')]} onPress={() => onSort('email')} activeOpacity={0.7} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
           <View style={[styles.columnContent, styles.columnContentRow]}>
             <Text style={styles.headerText} numberOfLines={1}>E-post</Text>
             <SortIcon col="email" />
           </View>
         </TouchableOpacity>
-        <View style={[styles.actionsCol, styles.actionsColHeader, stickyRight]} />
       </View>
 
       {inlineEnabled && (
-        <View style={[styles.inlineRow, Platform.OS === 'web' && companySearchOpen && companySearchActive === 'inline' && companyListLen > 0 ? { zIndex: 9999, position: 'relative' } : null]}>
-          <View style={[styles.cellFlex, { flex: FLEX.name }]}>
+        <View style={[styles.inlineAddWrap, Platform.OS === 'web' && companySearchOpen && companySearchActive === 'inline' && companyListLen > 0 ? { zIndex: 9999, position: 'relative' } : null]}>
+          <View style={styles.inlineAddLabel}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="add-circle-outline" size={16} color="#0369a1" />
+              <Text style={styles.inlineAddLabelText}>Lägg till snabbt</Text>
+            </View>
+            <Text style={styles.inlineAddLabelHint}>Fyll i och tryck Enter för att spara</Text>
+          </View>
+          <View style={[styles.inlineRow, Platform.OS === 'web' && styles.inlineRowGapWeb]}>
+          <View style={[styles.cellFlex, col('name')]}>
             <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.name ?? ''} onChangeText={(v) => onInlineChange?.('name', v)} placeholder="Namn (ny)" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+              <TextInput value={inlineValues?.name ?? ''} onChangeText={(v) => onInlineChange?.('name', v)} placeholder="Namn" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={triggerInlineSave} {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: onInlineEnterKeyDown } : {})} />
             </View>
           </View>
-          <View style={[styles.cellFlex, { flex: FLEX.company }]}>
+          <View style={[styles.cellFlex, col('company')]}>
             <View ref={companyInlineWrapRef} style={[styles.columnContent, companyDropdownStyles.wrap, Platform.OS === 'web' ? { overflow: 'visible' } : null]}>
               <TextInput
                 value={inlineValues?.contactCompanyName ?? ''}
@@ -478,7 +573,7 @@ export default function ContactRegistryTable({
                 }}
                 onFocus={() => setCompanySearchActive?.('inline')}
                 onBlur={handleCompanyBlur}
-                placeholder="Företag (minst 2 tecken)"
+                placeholder="Företag"
                 style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                 placeholderTextColor="#94a3b8"
                 {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleCompanyKeyDown(e, 'inline') } : {})}
@@ -509,39 +604,39 @@ export default function ContactRegistryTable({
               )}
             </View>
           </View>
-          <View style={[styles.cellFlex, { flex: FLEX.role }]}>
+          <View style={[styles.cellFlex, col('role')]}>
             <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.role ?? ''} onChangeText={(v) => onInlineChange?.('role', v)} placeholder="Roll" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+              <TextInput value={inlineValues?.role ?? ''} onChangeText={(v) => onInlineChange?.('role', v)} placeholder="Roll" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={triggerInlineSave} {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: onInlineEnterKeyDown } : {})} />
             </View>
           </View>
-          <View style={[styles.cellFixed, { width: FIXED.mobile }]}>
+          <View style={[styles.cellFixed, col('mobile')]}>
             <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.phone ?? ''} onChangeText={(v) => onInlineChange?.('phone', digitsOnly(v))} placeholder="Mobil (siffror)" keyboardType="number-pad" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+              <TextInput value={inlineValues?.phone ?? ''} onChangeText={(v) => onInlineChange?.('phone', digitsOnly(v))} placeholder="Mobil" keyboardType="number-pad" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={triggerInlineSave} {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: onInlineEnterKeyDown } : {})} />
             </View>
           </View>
-          <View style={[styles.cellFixed, { width: FIXED.workPhone }]}>
+          <View style={[styles.cellFixed, col('workPhone')]}>
             <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.workPhone ?? ''} onChangeText={(v) => onInlineChange?.('workPhone', v)} placeholder="Arbete" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+              <TextInput value={inlineValues?.workPhone ?? ''} onChangeText={(v) => onInlineChange?.('workPhone', v)} placeholder="Arbete" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={triggerInlineSave} {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: onInlineEnterKeyDown } : {})} />
             </View>
           </View>
-          <View style={[styles.cellFlex, { flex: FLEX.email }]}>
+          <View style={[styles.cellFlex, col('email')]}>
             <View style={styles.columnContent}>
-              <TextInput value={inlineValues?.email ?? ''} onChangeText={(v) => onInlineChange?.('email', v)} placeholder="E-post" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={() => !inlineSaving && onInlineSave?.()} {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+              <TextInput value={inlineValues?.email ?? ''} onChangeText={(v) => onInlineChange?.('email', v)} placeholder="E-post" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" onSubmitEditing={triggerInlineSave} {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: onInlineEnterKeyDown } : {})} />
             </View>
           </View>
-          <View style={[styles.actionsCol, styles.actionsColInline, stickyRight]} />
+        </View>
         </View>
       )}
 
       {contacts.map((contact, idx) =>
         editingId === contact.id && editDraft ? (
-          <View key={contact.id} style={styles.editRow}>
-            <View style={[styles.cellFlex, { flex: FLEX.name }]}>
+          <View key={contact.id} style={[styles.editRow, Platform.OS === 'web' && styles.editRowGapWeb]}>
+            <View style={[styles.cellFlex, col('name')]}>
               <View style={styles.columnContent}>
                 <TextInput value={editDraft.name} onChangeText={(v) => setEditDraft((d) => (d ? { ...d, name: v } : d))} placeholder="Namn" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, contact) } : {})} />
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.company }]}>
+            <View style={[styles.cellFlex, col('company')]}>
               <View style={[styles.columnContent, companyDropdownStyles.wrap]}>
                 <TextInput
                   value={editDraft.contactCompanyName}
@@ -551,7 +646,7 @@ export default function ContactRegistryTable({
                   }}
                   onFocus={() => setCompanySearchActive?.('edit')}
                   onBlur={handleCompanyBlur}
-                  placeholder="Företag (minst 2 tecken)"
+                  placeholder="Företag"
                   style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                   placeholderTextColor="#94a3b8"
                   {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => { if (!handleCompanyKeyDown(e, 'edit')) handleEditKeyDown(e, contact); } } : {})}
@@ -589,12 +684,12 @@ export default function ContactRegistryTable({
                 )}
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.role }]}>
+            <View style={[styles.cellFlex, col('role')]}>
               <View style={styles.columnContent}>
                 <TextInput value={editDraft.role} onChangeText={(v) => setEditDraft((d) => (d ? { ...d, role: v } : d))} placeholder="Roll" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, contact) } : {})} />
               </View>
             </View>
-            <View style={[styles.cellFixed, { width: FIXED.mobile }]}>
+            <View style={[styles.cellFixed, col('mobile')]}>
               <View style={styles.columnContent}>
                 <TextInput
                   value={mobileDisplayFormatted ? formatMobileDisplay(editDraft.phone) : editDraft.phone}
@@ -605,7 +700,7 @@ export default function ContactRegistryTable({
                   }}
                   onFocus={() => setMobileDisplayFormatted(false)}
                   onBlur={() => setMobileDisplayFormatted(true)}
-                  placeholder="Mobil (siffror)"
+                  placeholder="Mobil"
                   keyboardType="number-pad"
                   style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]}
                   placeholderTextColor="#94a3b8"
@@ -613,60 +708,73 @@ export default function ContactRegistryTable({
                 />
               </View>
             </View>
-            <View style={[styles.cellFixed, { width: FIXED.workPhone }]}>
+            <View style={[styles.cellFixed, col('workPhone')]}>
               <View style={styles.columnContent}>
                 <TextInput value={editDraft.workPhone} onChangeText={(v) => setEditDraft((d) => (d ? { ...d, workPhone: v } : d))} placeholder="Arbete" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, contact) } : {})} />
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.email }]}>
-              <View style={styles.columnContent}>
+            <View style={[styles.cellFlex, col('email')]}>
+              <View style={[styles.columnContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
                 <TextInput value={editDraft.email} onChangeText={(v) => setEditDraft((d) => (d ? { ...d, email: v } : d))} placeholder="E-post" style={[styles.inlineInput, styles.inlineInputCell, { flex: 1 }]} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none', onKeyDown: (e) => handleEditKeyDown(e, contact) } : {})} />
+                <TouchableOpacity style={[styles.editRowBtn, styles.editRowBtnPrimary]} onPress={() => { if (editDraft?.name?.trim() && onSaveEdit) onSaveEdit(contact.id, editDraft); }} disabled={inlineSavingContact} accessibilityLabel="Spara" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.editRowBtn, styles.editRowBtnCancel]} onPress={() => onCancelEdit?.()} disabled={inlineSavingContact} accessibilityLabel="Avbryt" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+                  <Ionicons name="close" size={14} color="#64748b" />
+                </TouchableOpacity>
               </View>
-            </View>
-            <View style={[styles.actionsCol, styles.actionsColInline, stickyRight, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }]}>
-              <TouchableOpacity style={[styles.editRowBtn, styles.editRowBtnPrimary]} onPress={() => { if (editDraft?.name?.trim() && onSaveEdit) onSaveEdit(contact.id, editDraft); }} disabled={inlineSavingContact} accessibilityLabel="Spara" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Ionicons name="checkmark" size={14} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.editRowBtn, styles.editRowBtnCancel]} onPress={() => onCancelEdit?.()} disabled={inlineSavingContact} accessibilityLabel="Avbryt" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Ionicons name="close" size={14} color="#64748b" />
-              </TouchableOpacity>
             </View>
           </View>
         ) : (
-          <TouchableOpacity
+          <View
             key={contact.id}
-            style={[styles.row, idx % 2 === 1 ? styles.rowAlt : null, hoveredId === contact.id ? styles.rowHover : null]}
-            onPress={() => {}}
-            onLongPress={(e) => onRowMenu?.(e, contact)}
-            activeOpacity={0.7}
-            {...(Platform.OS === 'web' ? { cursor: 'pointer', onMouseEnter: () => setHoveredId(contact.id), onMouseLeave: () => setHoveredId(null) } : {})}
+            onContextMenu={Platform.OS === 'web' ? (e) => { e.preventDefault(); e.stopPropagation(); onRowMenu?.(e, contact); } : undefined}
+            onDoubleClick={Platform.OS === 'web' && onRowDoubleClick ? (e) => { e.stopPropagation(); onRowDoubleClick(contact); } : undefined}
+            style={{ alignSelf: 'stretch' }}
           >
-            <View style={[styles.cellFlex, { flex: FLEX.name }]}>
+            <TouchableOpacity
+              style={[styles.row, Platform.OS === 'web' && styles.rowGapWeb, idx % 2 === 1 ? styles.rowAlt : null, hoveredId === contact.id ? styles.rowHover : null]}
+              onPress={() => {
+                if (Platform.OS !== 'web' && onRowDoubleClick) {
+                  const now = Date.now();
+                  if (lastTapRef.current.contactId === contact.id && now - lastTapRef.current.time < DOUBLE_TAP_MS) {
+                    lastTapRef.current = { contactId: null, time: 0 };
+                    onRowDoubleClick(contact);
+                  } else {
+                    lastTapRef.current = { contactId: contact.id, time: now };
+                  }
+                }
+              }}
+              onLongPress={(e) => onRowMenu?.(e, contact)}
+              activeOpacity={0.7}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer', onMouseEnter: () => setHoveredId(contact.id), onMouseLeave: () => setHoveredId(null) } : {})}
+            >
+            <View style={[styles.cellFlex, col('name')]}>
               <View style={styles.columnContent}>
                 <Text style={[styles.cellText, { flex: 1 }]} numberOfLines={1}>{contact.name || '—'}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.company }]}>
+            <View style={[styles.cellFlex, col('company')]}>
               <View style={styles.columnContent}>
                 <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.contactCompanyName || contact.companyName)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.role }]}>
+            <View style={[styles.cellFlex, col('role')]}>
               <View style={styles.columnContent}>
                 <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.role)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFixed, { width: FIXED.mobile }]}>
+            <View style={[styles.cellFixed, col('mobile')]}>
               <View style={styles.columnContent}>
                 <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{formatMobileDisplay(contact.phone) || '—'}</Text>
               </View>
             </View>
-            <View style={[styles.cellFixed, { width: FIXED.workPhone }]}>
+            <View style={[styles.cellFixed, col('workPhone')]}>
               <View style={styles.columnContent}>
                 <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.workPhone)}</Text>
               </View>
             </View>
-            <View style={[styles.cellFlex, { flex: FLEX.email }]}>
+            <View style={[styles.cellFlex, col('email')]}>
               <View style={styles.columnContent}>
                 {contact.email?.trim() ? (
                   <TouchableOpacity
@@ -691,12 +799,8 @@ export default function ContactRegistryTable({
                 )}
               </View>
             </View>
-            <View style={[styles.actionsCol, stickyRight]}>
-              <TouchableOpacity ref={(r) => { kebabRefs.current[contact.id] = r; }} style={styles.rowMenuBtn} onPress={(e) => onRowMenu?.(e, contact)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer', tabIndex: 0 } : {})}>
-                <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
         )
       )}
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && companyDropdownRect && companySearchOpen && companySearchActive === 'inline' && companyListLen > 0 &&

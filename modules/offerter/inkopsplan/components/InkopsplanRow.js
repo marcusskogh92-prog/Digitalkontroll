@@ -79,7 +79,7 @@ function overallStatusLabel(summary) {
   return 'pågår';
 }
 
-export default function InkopsplanRow({ row, isExpanded, onToggleExpand }) {
+export default function InkopsplanRow({ row, isExpanded, onToggleExpand, visibleColumns }) {
   const bd = safeText(row?.nr) || '—';
   const name = safeText(row?.name) || '—';
   const typ = typeLabel(row?.type, row?.manualTypeLabel);
@@ -88,6 +88,8 @@ export default function InkopsplanRow({ row, isExpanded, onToggleExpand }) {
   const request = requestSummaryText(summary);
   const overallStatus = overallStatusLabel(summary);
   const ind = indicatorColor(summary);
+  const vc = visibleColumns && typeof visibleColumns === 'object' ? visibleColumns : {};
+  const show = (key) => vc[key] !== false;
 
   return (
     <Pressable
@@ -109,38 +111,50 @@ export default function InkopsplanRow({ row, isExpanded, onToggleExpand }) {
           <Ionicons name="chevron-forward" size={16} color="#0F172A" />
         </View>
       </View>
-      <View style={[styles.cell, styles.bd]}>
-        <Text style={styles.cellText} numberOfLines={1}>{bd}</Text>
-      </View>
-      <View style={[styles.cell, styles.name]}>
-        <Text style={styles.cellText} numberOfLines={1}>{name}</Text>
-      </View>
-      <View style={[styles.cell, styles.type]}>
-        <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{typ}</Text>
-      </View>
-      <View style={[styles.cell, styles.suppliers]}>
-        <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{suppliers}</Text>
-      </View>
-      <View style={[styles.cell, styles.request]}>
-        <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{request}</Text>
-      </View>
-      <View style={[styles.cell, styles.status]}>
-        <InkopsplanStatusBadge status={overallStatus} />
-      </View>
+      {show('bd') ? (
+        <View style={[styles.cell, styles.bd]}>
+          <Text style={styles.cellText} numberOfLines={1}>{bd}</Text>
+        </View>
+      ) : null}
+      {show('name') ? (
+        <View style={[styles.cell, styles.name]}>
+          <Text style={styles.cellText} numberOfLines={1}>{name}</Text>
+        </View>
+      ) : null}
+      {show('type') ? (
+        <View style={[styles.cell, styles.type]}>
+          <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{typ}</Text>
+        </View>
+      ) : null}
+      {show('suppliers') ? (
+        <View style={[styles.cell, styles.suppliers]}>
+          <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{suppliers}</Text>
+        </View>
+      ) : null}
+      {show('request') ? (
+        <View style={[styles.cell, styles.request]}>
+          <Text style={[styles.cellText, styles.muted]} numberOfLines={1}>{request}</Text>
+        </View>
+      ) : null}
+      {show('status') ? (
+        <View style={[styles.cell, styles.status]}>
+          <InkopsplanStatusBadge status={overallStatus} />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   row: {
-    height: 44,
+    height: 32,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
     borderLeftWidth: 3,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   rowHover: {
@@ -150,8 +164,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   cell: {
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
     justifyContent: 'center',
     minWidth: 0,
   },
@@ -170,7 +184,7 @@ const styles = StyleSheet.create({
   request: { width: 120 },
   status: { width: 90 },
   cellText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#0F172A',
   },

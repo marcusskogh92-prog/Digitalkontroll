@@ -132,6 +132,10 @@ const styles = StyleSheet.create({
  * @param {boolean} [showRightPanelToggle] - Visa chevron + kalender
  * @param {boolean} [rightPanelOpen] - Är högerpanelen öppen
  * @param {Function} [onRightPanelToggle] - Klick på panel-toggle
+ * @param {boolean} [showActivitiesToggle] - Visa notiser/aktiviteter-knapp (öppnar högerpanel med Aktiviteter)
+ * @param {boolean} [activitiesActive] - Högerpanelen visar Aktiviteter (för aktiv styling)
+ * @param {Function} [onActivitiesToggle] - Klick på aktiviteter-knappen
+ * @param {number} [notificationsBadgeCount] - Antal olästa för badge på klockan
  * @param {boolean} [showCreateProject] - Visa "+ Skapa projekt"-knappen
  */
 export function MinimalTopbar({
@@ -143,6 +147,10 @@ export function MinimalTopbar({
   showRightPanelToggle = false,
   rightPanelOpen = false,
   onRightPanelToggle,
+  showActivitiesToggle = false,
+  activitiesActive = false,
+  onActivitiesToggle,
+  notificationsBadgeCount = 0,
   showCreateProject = true,
 }) {
   const showProjectHeader = !!project;
@@ -188,7 +196,7 @@ export function MinimalTopbar({
             <TouchableOpacity
               onPress={onRightPanelToggle}
               style={[styles.iconButton, styles.chevronButton]}
-              accessibilityLabel={rightPanelOpen ? 'Stäng kalender' : 'Öppna kalender'}
+              accessibilityLabel={rightPanelOpen ? 'Stäng panel' : 'Öppna panel'}
               accessibilityRole="button"
               activeOpacity={0.8}
             >
@@ -198,20 +206,59 @@ export function MinimalTopbar({
                 color={rightPanelOpen ? LEFT_NAV.accent : '#64748b'}
               />
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onRightPanelToggle}
-              style={[styles.iconButton, rightPanelOpen && styles.iconButtonActive]}
-              accessibilityLabel={rightPanelOpen ? 'Stäng kalender' : 'Öppna kalender'}
-              accessibilityRole="button"
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={22}
-                color={rightPanelOpen ? LEFT_NAV.accent : '#64748b'}
-              />
-            </TouchableOpacity>
           </View>
+        )}
+        {showActivitiesToggle && typeof onActivitiesToggle === 'function' && (
+          <TouchableOpacity
+            onPress={onActivitiesToggle}
+            style={[styles.iconButton, activitiesActive && styles.iconButtonActive]}
+            accessibilityLabel={activitiesActive ? 'Stäng aktiviteter' : 'Öppna aktiviteter'}
+            accessibilityRole="button"
+            activeOpacity={0.8}
+          >
+            <View style={{ position: 'relative' }}>
+              <Ionicons
+                name="notifications-outline"
+                size={22}
+                color={activitiesActive ? LEFT_NAV.accent : '#64748b'}
+              />
+              {notificationsBadgeCount > 0 ? (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    backgroundColor: '#ef4444',
+                    borderRadius: 10,
+                    minWidth: 14,
+                    height: 14,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    paddingHorizontal: 4,
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+                    {notificationsBadgeCount > 9 ? '9+' : notificationsBadgeCount}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+        )}
+        {showRightPanelToggle && typeof onRightPanelToggle === 'function' && (
+          <TouchableOpacity
+            onPress={onRightPanelToggle}
+            style={[styles.iconButton, rightPanelOpen && !activitiesActive && styles.iconButtonActive]}
+            accessibilityLabel={rightPanelOpen ? 'Stäng kalender' : 'Öppna kalender'}
+            accessibilityRole="button"
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={22}
+              color={rightPanelOpen && !activitiesActive ? LEFT_NAV.accent : '#64748b'}
+            />
+          </TouchableOpacity>
         )}
         {showCreateProject && typeof onCreateProject === 'function' && (
           <TouchableOpacity

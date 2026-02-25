@@ -1,6 +1,6 @@
 /**
  * Dashboard right panel (Premium SaaS 2026). Only shown when appMode === 'dashboard'.
- * Contains: Kalender (compact month), Kommande datum (upcoming deadlines).
+ * Contains: Kalender (compact month), Kommande datum (upcoming deadlines), eller Aktiviteter (notiser + aktivitet).
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { getPhaseConfig, getProjectPhase } from '../../features/projects/constants';
+import RailActivityPanel from './RailActivityPanel';
 
 const PANEL_WIDTH = 340;
 const CARD_RADIUS = 14;
@@ -385,9 +386,23 @@ const styles = StyleSheet.create({
 });
 
 export function DashboardRightPanel({
+  tab = 'calendar',
   upcomingItems = [],
   upcomingTimelineItems = [],
   onProjectSelect,
+  // Aktiviteter-fliken (RailActivityPanel)
+  userNotifications = [],
+  companyActivity = [],
+  formatRelativeTime,
+  findProjectById,
+  requestProjectSwitch,
+  setPhaseActiveSection,
+  setPhaseActiveItem,
+  setProjectModuleRoute,
+  setSidePanelCollapsed,
+  notificationsError = null,
+  onMarkAllAsRead = null,
+  markAllAsReadLoading = false,
 }) {
   const activityDates = useMemo(() => {
     const set = new Set();
@@ -402,6 +417,27 @@ export function DashboardRightPanel({
     });
     return Array.from(set);
   }, [upcomingTimelineItems, upcomingItems]);
+
+  if (tab === 'activities') {
+    return (
+      <View style={[styles.panel, { flex: 1, minHeight: 0 }]}>
+        <RailActivityPanel
+          userNotifications={userNotifications}
+          companyActivity={companyActivity}
+          formatRelativeTime={formatRelativeTime}
+          findProjectById={findProjectById}
+          requestProjectSwitch={requestProjectSwitch}
+          setPhaseActiveSection={setPhaseActiveSection}
+          setPhaseActiveItem={setPhaseActiveItem}
+          setProjectModuleRoute={setProjectModuleRoute}
+          setSidePanelCollapsed={setSidePanelCollapsed}
+          notificationsError={notificationsError}
+          onMarkAllAsRead={onMarkAllAsRead}
+          markAllAsReadLoading={markAllAsReadLoading}
+        />
+      </View>
+    );
+  }
 
   return (
     <ScrollView

@@ -21,9 +21,15 @@ export const LAYOUT_2026 = {
   sidePanelBgNative: '#f6f8fb',
 };
 
+const RAIL_STORAGE_KEY = 'dk_rail_expanded';
+
 export const ICON_RAIL = {
-  /** Bredd i px (64–72 för 2026 SaaS) */
+  /** Bredd i px (64–72 för 2026 SaaS) när rail är minimerad */
   width: 68,
+  /** Bredd i px när rail är expanderad (ikon + etikett) */
+  widthExpanded: 200,
+  /** localStorage-nyckel för expanderad/minimerad (web) */
+  storageKey: RAIL_STORAGE_KEY,
   /** Bakgrund – solid mörk navy (Global Background System 2026) */
   bg: '#0f1b2d',
   /** Ikonstorlek 20–22px */

@@ -31,6 +31,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: LEFT_NAV.textDefault,
   },
+  groupHeader: {
+    paddingVertical: 8,
+    paddingHorizontal: SECTION_HEADER_PADDING_HORIZONTAL,
+    paddingTop: 14,
+    marginTop: 4,
+  },
+  groupTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#64748b',
+  },
   list: {
     paddingVertical: GRID,
   },
@@ -48,15 +59,82 @@ export function LeftPanelRailHeader({ title }) {
   );
 }
 
-/** Register: Kontakter, Leverantörer, Kunder, Byggdelar, Konton, Kategorier */
-const REGISTER_ITEMS = [
+/** Register – Relationer: Kontakter, Leverantörer, Kunder */
+const REGISTER_RELATIONER_ITEMS = [
   { key: 'kontakter', label: 'Kontakter', route: 'ContactRegistry' },
   { key: 'leverantorer', label: 'Leverantörer', route: 'Suppliers' },
   { key: 'kunder', label: 'Kunder', route: 'Customers' },
+];
+
+/** Register – Struktur: Byggdelar, Kontoplan, Kategorier */
+const REGISTER_STRUKTUR_ITEMS = [
   { key: 'byggdelar', label: 'Byggdelar', route: 'ManageCompany', focus: 'byggdel' },
   { key: 'konton', label: 'Kontoplan', route: 'ManageCompany', focus: 'kontoplan' },
   { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier' },
 ];
+
+/** Register-panel med grupper: Relationer (Kontakter, Leverantörer, Kunder) och Struktur (Byggdelar, Kontoplan, Kategorier). */
+function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
+  const [hoveredKey, setHoveredKey] = useState(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (activeItemKey) return;
+    setHoveredKey(null);
+  }, [activeItemKey]);
+
+  const renderItems = (items) =>
+    items.map((item) => {
+      const routeMatch = item.route && activeRouteName === item.route && !item.focus;
+      const focusMatch = item.focus && activeRouteName === 'ManageCompany';
+      const active = activeItemKey === item.key || routeMatch || (item.route === 'ManageCompany' && focusMatch);
+      const isHovered = Platform.OS === 'web' && hoveredKey === item.key;
+      const getIconColor = (state) => (state.active ? ICON_COLOR_ACTIVE : state.hovered ? ICON_COLOR_HOVER : ICON_COLOR_DEFAULT);
+
+      return (
+        <View key={item.key} style={styles.itemWrapper}>
+          <SidebarItem
+            label={item.label}
+            active={active}
+            hovered={isHovered}
+            onPress={() => onPress?.(item)}
+            onHoverIn={Platform.OS === 'web' ? () => setHoveredKey(item.key) : undefined}
+            onHoverOut={Platform.OS === 'web' ? () => setHoveredKey(null) : undefined}
+            indentMode="padding"
+            indent={LEFT_NAV.indentPerLevel * 2}
+            fullWidth
+            style={{
+              minHeight: LEFT_NAV.rowMinHeight,
+              paddingVertical: LEFT_NAV.rowPaddingVertical,
+              paddingHorizontal: LEFT_NAV.rowPaddingHorizontal,
+            }}
+            labelStyle={{ fontSize: LEFT_NAV.rowFontSize }}
+          />
+        </View>
+      );
+    });
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.sectionHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="grid-outline" size={18} color={LEFT_NAV.textDefault} style={{ marginTop: 1 }} accessibilityLabel="Register ikon" />
+          <Text style={styles.sectionTitle}>Register</Text>
+        </View>
+      </View>
+      <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: GRID * 2 }} keyboardShouldPersistTaps="handled">
+        <View style={styles.groupHeader}>
+          <Text style={styles.groupTitle}>👥 Relationer</Text>
+        </View>
+        {renderItems(REGISTER_RELATIONER_ITEMS)}
+        <View style={styles.groupHeader}>
+          <Text style={styles.groupTitle}>🏗 Struktur</Text>
+        </View>
+        {renderItems(REGISTER_STRUKTUR_ITEMS)}
+      </ScrollView>
+    </View>
+  );
+}
 
 /** Administration: Användare, Roller, Företagsinställningar, SharePoint-kopplingar */
 const ADMIN_ITEMS = [
@@ -233,10 +311,7 @@ export function GlobalSidePanelContent({
 }) {
   if (activeModule === 'register') {
     return (
-      <SectionList
-        title="Register"
-        headerIcon="grid-outline"
-        items={REGISTER_ITEMS}
+      <RegisterSection
         activeRouteName={activeRouteName}
         activeItemKey={activeItemKey}
         onPress={(item) => onNavigateRegister?.(item)}

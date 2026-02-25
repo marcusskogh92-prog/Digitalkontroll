@@ -5,15 +5,33 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
+
+const STORAGE_KEY = ICON_RAIL.storageKey || 'dk_rail_expanded';
+
+function readRailExpandedFromStorage() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return true;
+  try {
+    const v = window.localStorage.getItem(STORAGE_KEY);
+    if (v === 'false') return false;
+    if (v === 'true') return true;
+  } catch (_e) {}
+  return true;
+}
+
+function writeRailExpandedToStorage(expanded) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, expanded ? 'true' : 'false');
+  } catch (_e) {}
+}
 
 const RAIL_DIVIDER = { type: 'divider' };
 
 const RAIL_NAV_ITEMS = [
   { id: 'dashboard', icon: 'home-outline', label: 'Dashboard' },
-  { id: 'notiser', icon: 'notifications-outline', label: 'Aktiviteter' },
   RAIL_DIVIDER,
   { id: 'kalkylskede', icon: 'calculator-outline', label: 'Kalkylskede' },
   { id: 'produktion', icon: 'hammer-outline', label: 'Produktion' },
@@ -114,10 +132,17 @@ const styles = StyleSheet.create({
     minWidth: ICON_RAIL.width - ICON_RAIL.itemPaddingHorizontal * 2,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
+  /** Fast bredd för ikonkolumn så att all text startar på samma linje. Avatar är 36px. */
+  iconColumn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   superadminIconWrap: {
     position: 'relative',
-    width: ICON_RAIL.iconSize + 10,
-    height: ICON_RAIL.iconSize,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -133,6 +158,26 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
     marginVertical: ICON_RAIL.itemPaddingVertical,
   },
+  itemLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginLeft: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  toggleWrap: {
+    width: '100%',
+    alignItems: 'flex-end',
+  },
+  toggleTouch: {
+    paddingVertical: ICON_RAIL.itemPaddingVertical,
+    paddingHorizontal: ICON_RAIL.itemPaddingHorizontal,
+    borderRadius: ICON_RAIL.activeBgRadius,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
 });
 
 export function IconRail({
@@ -147,9 +192,22 @@ export function IconRail({
   inactivePhaseIds = [],
 }) {
   const [hoveredId, setHoveredId] = useState(null);
+  const [railExpanded, setRailExpanded] = useState(true);
   const userAvatarRef = useRef(null);
   const scaleAnims = useRef({}).current;
   const isInactive = (id) => Array.isArray(inactivePhaseIds) && inactivePhaseIds.includes(id);
+
+  useEffect(() => {
+    setRailExpanded(readRailExpandedFromStorage());
+  }, []);
+
+  const toggleRail = () => {
+    const next = !railExpanded;
+    setRailExpanded(next);
+    writeRailExpandedToStorage(next);
+  };
+
+  const expandedWidth = ICON_RAIL.widthExpanded ?? 200;
 
   const railNavItems = React.useMemo(
     () => (showSuperadmin ? [...RAIL_NAV_ITEMS, SUPERADMIN_RAIL_ITEM] : RAIL_NAV_ITEMS),
@@ -184,18 +242,31 @@ export function IconRail({
   };
 
   return (
-    <View style={styles.rail}>
-      <View style={styles.itemList}>
+    <View
+      style={[
+        styles.rail,
+        {
+          width: railExpanded ? expandedWidth : ICON_RAIL.width,
+          alignItems: railExpanded ? 'stretch' : 'center',
+        },
+      ]}
+    >
+      <View style={[styles.itemList, railExpanded && { alignItems: 'stretch' }]}>
         {railNavItems.map((item, index) => {
           if (item.type === 'divider') {
-            return <View key={`div-${index}`} style={styles.railDivider} />;
+            return (
+              <View
+                key={`div-${index}`}
+                style={[styles.railDivider, railExpanded && { width: undefined, alignSelf: 'stretch', marginHorizontal: ICON_RAIL.itemPaddingHorizontal }]}
+              />
+            );
           }
           const isActive = activeId === item.id;
           const isHovered = Platform.OS === 'web' && hoveredId === item.id;
-          const isNotiser = item.id === 'notiser';
           const inactive = isInactive(item.id);
           const iconColor = inactive ? 'rgba(255,255,255,0.45)' : (isActive ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor);
 
+          const labelColor = inactive ? 'rgba(255,255,255,0.45)' : (isActive ? ICON_RAIL.iconColorActive : 'rgba(255, 255, 255, 0.9)');
           return (
             <TouchableOpacity
               key={item.id}
@@ -207,6 +278,7 @@ export function IconRail({
               onMouseLeave={Platform.OS === 'web' ? () => setHoveredId(null) : undefined}
               style={[
                 styles.itemTouch,
+                railExpanded && { minWidth: undefined, width: '100%', justifyContent: 'flex-start', paddingLeft: 12 },
                 isHovered && !inactive && styles.itemTouchHover,
                 isActive && !inactive && styles.itemTouchActive,
                 inactive && { opacity: 0.7 },
@@ -217,11 +289,12 @@ export function IconRail({
               {isActive && !inactive ? <View style={styles.activeBar} /> : null}
               <Animated.View
                 style={[
+                  { flexDirection: 'row', alignItems: 'center', flex: railExpanded ? 1 : undefined, minWidth: 0 },
                   Platform.OS === 'web' ? undefined : { transform: [{ scale: getScaleAnim(item.id) }] },
                   inactive && { opacity: 0.65 },
                 ]}
               >
-                <View style={{ position: 'relative' }}>
+                <View style={[railExpanded ? styles.iconColumn : { position: 'relative' }]}>
                   {item.id === 'superadmin' ? (
                     <View style={styles.superadminIconWrap}>
                       <View style={{ position: 'relative', width: ICON_RAIL.iconSize, height: ICON_RAIL.iconSize, alignItems: 'center', justifyContent: 'center' }}>
@@ -247,39 +320,24 @@ export function IconRail({
                       <Ionicons name="close" size={10} color="#fff" />
                     </View>
                   ) : null}
-                  {isNotiser && notificationsBadgeCount > 0 ? (
-                    <View
-                      style={{
-                        position: 'absolute',
-                        top: -4,
-                        right: -6,
-                        backgroundColor: '#ef4444',
-                        borderRadius: 10,
-                        minWidth: 16,
-                        height: 16,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        paddingHorizontal: 4,
-                      }}
-                    >
-                      <Animated.Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
-                        {notificationsBadgeCount > 9 ? '9+' : notificationsBadgeCount}
-                      </Animated.Text>
-                    </View>
-                  ) : null}
                 </View>
+                {railExpanded ? (
+                  <Text numberOfLines={1} style={[styles.itemLabel, { color: labelColor }]}>
+                    {item.label}
+                  </Text>
+                ) : null}
               </Animated.View>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      <View style={styles.bottom}>
+      <View style={[styles.bottom, railExpanded && { alignItems: 'stretch' }]}>
         {typeof onUserPress === 'function' ? (
           <TouchableOpacity
             ref={userAvatarRef}
             onPress={handleUserPress}
-            style={styles.userTouch}
+            style={[styles.userTouch, railExpanded && { flexDirection: 'row', width: '100%', justifyContent: 'flex-start', paddingLeft: 12 }]}
             accessibilityLabel={userDisplayName || 'Användarmeny'}
             accessibilityRole="button"
             {...(Platform.OS === 'web' && userDisplayName
@@ -290,25 +348,80 @@ export function IconRail({
               {userPhotoURL ? (
                 <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#334155' }} />
               ) : (
-                <Ionicons name="person" size={20} color={ICON_RAIL.iconColor} />
+                <Ionicons name="person" size={ICON_RAIL.iconSize} color={ICON_RAIL.iconColor} />
               )}
             </View>
+            {railExpanded ? (
+              <Text numberOfLines={1} style={[styles.itemLabel, { marginLeft: 10 }]}>
+                {userDisplayName || 'Profil'}
+              </Text>
+            ) : null}
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity
           activeOpacity={1}
           onPress={() => onSelect?.('inställningar')}
-          style={[styles.settingsTouch, activeId === 'inställningar' && styles.itemTouchActive]}
+          style={[
+            styles.settingsTouch,
+            railExpanded && { flexDirection: 'row', width: '100%', justifyContent: 'flex-start', paddingLeft: 12, minWidth: undefined },
+            activeId === 'inställningar' && styles.itemTouchActive,
+          ]}
           accessibilityLabel="Inställningar"
           accessibilityRole="button"
         >
           {activeId === 'inställningar' ? <View style={styles.activeBar} /> : null}
-          <Ionicons
-            name="settings-outline"
-            size={ICON_RAIL.iconSize}
-            color={activeId === 'inställningar' ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
-          />
+          {railExpanded ? (
+            <View style={styles.iconColumn}>
+              <Ionicons
+                name="settings-outline"
+                size={ICON_RAIL.iconSize}
+                color={activeId === 'inställningar' ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
+              />
+            </View>
+          ) : (
+            <Ionicons
+              name="settings-outline"
+              size={ICON_RAIL.iconSize}
+              color={activeId === 'inställningar' ? ICON_RAIL.iconColorActive : ICON_RAIL.iconColor}
+            />
+          )}
+          {railExpanded ? (
+            <Text numberOfLines={1} style={[styles.itemLabel, { color: activeId === 'inställningar' ? ICON_RAIL.iconColorActive : 'rgba(255, 255, 255, 0.9)' }]}>
+              Inställningar
+            </Text>
+          ) : null}
         </TouchableOpacity>
+        {railExpanded ? (
+          <View style={styles.toggleWrap}>
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={toggleRail}
+              style={styles.toggleTouch}
+              accessibilityLabel="Minimera menyn"
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name="chevron-back"
+                size={ICON_RAIL.iconSize}
+                color={ICON_RAIL.iconColor}
+              />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={toggleRail}
+            style={styles.toggleTouch}
+            accessibilityLabel="Expandera menyn"
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name="chevron-forward"
+              size={ICON_RAIL.iconSize}
+              color={ICON_RAIL.iconColor}
+            />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );

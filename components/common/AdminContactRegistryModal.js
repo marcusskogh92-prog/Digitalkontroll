@@ -18,7 +18,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { ICON_RAIL } from '../../constants/iconRailTheme';
+import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
+import ModalBase from './ModalBase';
 import {
     buildAndDownloadExcel,
     computeSyncPlan,
@@ -37,130 +38,79 @@ import {
     fetchCompanySuppliers,
     updateCompanyContact,
 } from '../firebase';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import ContactRegistryTable from './ContactRegistryTable';
 import ConfirmModal from './Modals/ConfirmModal';
 
+const D = MODAL_DESIGN_2026;
+
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  box: {
-    width: Platform.OS === 'web' ? '90vw' : '90%',
-    maxWidth: 1400,
-    height: Platform.OS === 'web' ? '85vh' : '85%',
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 16,
-    flexDirection: 'column',
-  },
-  header: {
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-    backgroundColor: ICON_RAIL.bg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
-  titleIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: ICON_RAIL.activeBgRadius,
-    backgroundColor: ICON_RAIL.activeBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
-  titleLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
-    gap: 6,
-    flexWrap: 'nowrap',
-  },
-  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
-  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95, flexShrink: 1, minWidth: 0 },
-  closeBtn: {
-    padding: 5,
-    borderRadius: ICON_RAIL.activeBgRadius,
-    backgroundColor: ICON_RAIL.activeBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web'
-      ? {
-          cursor: 'pointer',
-          transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease`,
-        }
-      : {}),
-  },
-  statusOverlay: { position: 'absolute', left: 20, right: 20, top: 100, zIndex: 100, alignItems: 'center', pointerEvents: 'none' },
-  statusBox: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, maxWidth: 400, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 8 },
+  statusOverlay: { position: 'absolute', left: 24, right: 24, top: 100, zIndex: 100, alignItems: 'center', pointerEvents: 'none' },
+  statusBox: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, maxWidth: 400, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 6 },
   statusBoxSuccess: { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
   statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
-  toolbarSection: { flexShrink: 0, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: '#fff' },
+  toolbarSection: { flexShrink: 0, paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: 12, backgroundColor: '#fff' },
   toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  toolbarDivider: { height: 1, backgroundColor: '#e2e8f0', marginTop: 12, marginHorizontal: -20 },
+  toolbarDivider: { height: 1, backgroundColor: '#eee', marginTop: 12, marginHorizontal: -D.contentPadding },
   tableScroll: { flex: 1, minHeight: 0, overflow: 'hidden' },
-  tableScrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
-  searchWrap: { flex: 1, maxWidth: 400, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10 },
+  tableScrollContent: { paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: D.contentPadding },
+  tableScrollHorizontal: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
+  searchWrap: { flex: 1, maxWidth: 400, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10 },
   searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
-  iconBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  iconBtn: { minWidth: 28, height: 28, paddingHorizontal: 8, borderRadius: D.buttonRadius, backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#a7f3d0',
   },
   tableWrap: {},
-  emptyState: { padding: 32, alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  emptyState: { padding: 32, alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: D.radius, borderWidth: 1, borderColor: '#eee' },
   emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
   selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
-  footer: { flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 12, paddingHorizontal: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', backgroundColor: '#f8fafc' },
-  footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
-  addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  addModalBox: { backgroundColor: '#fff', borderRadius: 12, width: Platform.OS === 'web' ? 440 : '90%', maxWidth: 440, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 },
+  footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
+  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: D.overlayBg },
+  addModalBox: { backgroundColor: '#fff', borderRadius: D.radius, width: Platform.OS === 'web' ? 440 : '90%', maxWidth: 440, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 30, elevation: 8 },
   addModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-    backgroundColor: ICON_RAIL.bg,
+    paddingVertical: D.header.paddingVertical,
+    paddingHorizontal: D.header.paddingHorizontal,
+    borderBottomWidth: D.header.borderBottomWidth,
+    borderBottomColor: D.header.borderBottomColor,
+    backgroundColor: D.header.backgroundColor,
   },
   addModalHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
-  addModalTitle: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive, flexShrink: 1, minWidth: 0 },
-  addModalCloseBtn: { padding: 5, borderRadius: ICON_RAIL.activeBgRadius, backgroundColor: ICON_RAIL.activeBg },
-  addModalBody: { padding: 18 },
+  addModalTitleIcon: { width: 28, height: 28, borderRadius: D.buttonRadius, backgroundColor: 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' },
+  addModalTitle: { fontSize: D.titleFontSize, fontWeight: D.titleFontWeight, color: D.titleColor, flexShrink: 1, minWidth: 0 },
+  addModalCloseBtn: { padding: D.closeBtn.padding, borderRadius: D.closeBtn.borderRadius, backgroundColor: D.closeBtn.backgroundColor },
+  addModalBody: { padding: D.contentPadding },
   addModalField: { marginBottom: 14 },
   addModalLabel: { fontSize: 12, fontWeight: '500', color: '#475569', marginBottom: 4 },
-  addModalInput: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: '#111', backgroundColor: '#fff' },
+  addModalInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: '#111', backgroundColor: '#fff' },
   addModalDropdown: { position: 'relative', zIndex: 1000 },
-  addModalDropdownList: { position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 2, maxHeight: 220, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6 },
+  addModalDropdownList: { position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 2, maxHeight: 220, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: D.inputRadius, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6 },
   addModalDropdownItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   addModalDropdownItemHighlight: { backgroundColor: '#eef6ff' },
   addModalDropdownItemName: { fontSize: 13, color: '#1e293b', fontWeight: '500', flex: 1 },
-  addModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0', marginTop: 8 },
+  addModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingTop: D.sectionGap, borderTopWidth: 1, borderTopColor: '#eee', marginTop: 8 },
+  editModalBox: {
+    width: Platform.OS === 'web' ? 520 : '92%',
+    maxWidth: 520,
+    minHeight: Platform.OS === 'web' ? 520 : undefined,
+  },
+  editModalContent: { padding: D.contentPadding, paddingBottom: 24 },
+  editModalAvbrytBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  editModalSparaBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminContactRegistryModal({ visible, companyId, onClose }) {
@@ -207,12 +157,25 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
   const [addModalEmail, setAddModalEmail] = useState('');
   const [addModalSaving, setAddModalSaving] = useState(false);
   const [addModalCompanyHoverIndex, setAddModalCompanyHoverIndex] = useState(-1);
+  const [editModalContact, setEditModalContact] = useState(null);
+  const [editModalName, setEditModalName] = useState('');
+  const [editModalCompanyName, setEditModalCompanyName] = useState('');
+  const [editModalLinkedSupplierId, setEditModalLinkedSupplierId] = useState('');
+  const [editModalCustomerId, setEditModalCustomerId] = useState('');
+  const [editModalRole, setEditModalRole] = useState('');
+  const [editModalPhone, setEditModalPhone] = useState('');
+  const [editModalWorkPhone, setEditModalWorkPhone] = useState('');
+  const [editModalEmail, setEditModalEmail] = useState('');
+  const [editModalSaving, setEditModalSaving] = useState(false);
+  const [editModalCompanyHoverIndex, setEditModalCompanyHoverIndex] = useState(-1);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
   const [excelMenuVisible, setExcelMenuVisible] = useState(false);
   const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
   const [importPlan, setImportPlan] = useState(null);
   const [importConfirmVisible, setImportConfirmVisible] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const excelInputRef = useRef(null);
+  const editModalInitialRef = useRef(null);
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -377,6 +340,138 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
   }, [cid, companyName, addModalName, addModalCompanyName, addModalLinkedSupplierId, addModalCustomerId, addModalRole, addModalPhone, addModalWorkPhone, addModalEmail, loadContacts]);
 
   useEffect(() => {
+    if (!editModalContact) {
+      editModalInitialRef.current = null;
+      setEditModalName('');
+      setEditModalCompanyName('');
+      setEditModalLinkedSupplierId('');
+      setEditModalCustomerId('');
+      setEditModalRole('');
+      setEditModalPhone('');
+      setEditModalWorkPhone('');
+      setEditModalEmail('');
+      return;
+    }
+    const c = editModalContact;
+    const digitsOnly = (s) => String(s ?? '').replace(/\D/g, '');
+    const name = String(c.name ?? '').trim();
+    const contactCompanyName = String(c.contactCompanyName ?? c.companyName ?? '').trim();
+    const linkedSupplierId = String(c.linkedSupplierId ?? '').trim();
+    const customerId = String(c.customerId ?? '').trim();
+    const role = String(c.role ?? '').trim();
+    const phone = digitsOnly(c.phone ?? '');
+    const workPhone = String(c.workPhone ?? '').trim();
+    const email = String(c.email ?? '').trim();
+    setEditModalName(name);
+    setEditModalCompanyName(contactCompanyName);
+    setEditModalLinkedSupplierId(linkedSupplierId);
+    setEditModalCustomerId(customerId);
+    setEditModalRole(role);
+    setEditModalPhone(phone);
+    setEditModalWorkPhone(workPhone);
+    setEditModalEmail(email);
+    editModalInitialRef.current = { name, contactCompanyName, linkedSupplierId, customerId, role, phone, workPhone, email };
+  }, [editModalContact]);
+
+  const handleEditModalSelectCompany = useCallback((company) => {
+    if (!company) return;
+    const name = String(company.name ?? '').trim();
+    if (company.type === 'supplier') {
+      setEditModalLinkedSupplierId(company.id || '');
+      setEditModalCustomerId('');
+      setEditModalCompanyName(name);
+    } else if (company.type === 'customer') {
+      setEditModalCustomerId(company.id || '');
+      setEditModalLinkedSupplierId('');
+      setEditModalCompanyName(name);
+    } else {
+      setEditModalCompanyName(name);
+      setEditModalLinkedSupplierId('');
+      setEditModalCustomerId('');
+    }
+    setCompanySearchResults([]);
+    setCompanySearchOpen(false);
+    setCompanySearchActive(null);
+  }, []);
+
+  const handleEditModalSave = useCallback(async () => {
+    if (!cid || !editModalContact?.id) return;
+    const n = String(editModalName || '').trim();
+    if (!n) return;
+    setEditModalSaving(true);
+    setError('');
+    try {
+      const patch = {
+        name: n,
+        contactCompanyName: editModalCompanyName.trim(),
+        role: editModalRole.trim(),
+        phone: String(editModalPhone ?? '').replace(/\D/g, ''),
+        workPhone: editModalWorkPhone.trim(),
+        email: editModalEmail.trim(),
+      };
+      if (editModalLinkedSupplierId !== undefined) patch.linkedSupplierId = editModalLinkedSupplierId.trim() || null;
+      if (editModalCustomerId !== undefined) patch.customerId = editModalCustomerId.trim() || null;
+      await updateCompanyContact({ id: editModalContact.id, patch }, cid);
+      showNotice('Kontakten uppdaterad');
+      setEditModalContact(null);
+      await loadContacts();
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setEditModalSaving(false);
+    }
+  }, [cid, editModalContact, editModalName, editModalCompanyName, editModalLinkedSupplierId, editModalCustomerId, editModalRole, editModalPhone, editModalWorkPhone, editModalEmail, loadContacts]);
+
+  const isEditModalDirty = useMemo(() => {
+    if (!editModalContact || !editModalInitialRef.current) return false;
+    const i = editModalInitialRef.current;
+    return (
+      String(editModalName ?? '').trim() !== i.name ||
+      String(editModalCompanyName ?? '').trim() !== i.contactCompanyName ||
+      String(editModalLinkedSupplierId ?? '').trim() !== i.linkedSupplierId ||
+      String(editModalCustomerId ?? '').trim() !== i.customerId ||
+      String(editModalRole ?? '').trim() !== i.role ||
+      String(editModalPhone ?? '').replace(/\D/g, '') !== i.phone ||
+      String(editModalWorkPhone ?? '').trim() !== i.workPhone ||
+      String(editModalEmail ?? '').trim() !== i.email
+    );
+  }, [editModalContact, editModalName, editModalCompanyName, editModalLinkedSupplierId, editModalCustomerId, editModalRole, editModalPhone, editModalWorkPhone, editModalEmail]);
+
+  const requestCloseEditModal = useCallback(() => {
+    if (editModalSaving) return;
+    if (isEditModalDirty) {
+      Alert.alert(
+        'Osparade ändringar',
+        'Vill du spara ändringarna innan du stänger?',
+        [
+          { text: 'Avbryt', style: 'cancel' },
+          { text: 'Kasta ändringar', style: 'destructive', onPress: () => setEditModalContact(null) },
+          { text: 'Spara', onPress: () => handleEditModalSave() },
+        ]
+      );
+    } else {
+      setEditModalContact(null);
+    }
+  }, [editModalSaving, isEditModalDirty, handleEditModalSave]);
+
+  useEffect(() => {
+    if (!editModalContact || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onEditModalKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        requestCloseEditModal();
+      } else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!editModalSaving && editModalName.trim()) handleEditModalSave();
+      }
+    };
+    window.addEventListener('keydown', onEditModalKey, true);
+    return () => window.removeEventListener('keydown', onEditModalKey, true);
+  }, [editModalContact, editModalSaving, editModalName, requestCloseEditModal, handleEditModalSave]);
+
+  useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     if (visible) {
       const prev = document.body.style.overflow;
@@ -440,17 +535,27 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     return e?.message || 'Kunde inte spara.';
   };
 
+  // Normalisera för sökning: trim, lowercase, kollapsa mellanslag så att alla kolumner matchar konsekvent
+  const normalizeSearchText = (s) => String(s ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const digitsOnly = (s) => String(s ?? '').replace(/\D/g, '');
+
   const filtered = useMemo(() => {
     if (!search.trim()) return contacts;
     const q = search.toLowerCase().trim();
+    const qNorm = normalizeSearchText(search);
+    const qDigits = digitsOnly(search);
     return contacts.filter((c) => {
-      const n = String(c.name ?? '').toLowerCase();
-      const co = String(c.contactCompanyName ?? c.companyName ?? '').toLowerCase();
-      const r = String(c.role ?? '').toLowerCase();
-      const p = String(c.phone ?? '').toLowerCase();
-      const wp = String(c.workPhone ?? '').toLowerCase();
-      const e = String(c.email ?? '').toLowerCase();
-      return n.includes(q) || co.includes(q) || r.includes(q) || p.includes(q) || wp.includes(q) || e.includes(q);
+      const n = normalizeSearchText(c.name);
+      const co = normalizeSearchText(c.contactCompanyName ?? c.companyName ?? c.company ?? '');
+      const r = normalizeSearchText(c.role);
+      const e = normalizeSearchText(c.email);
+      const p = String(c.phone ?? '').trim();
+      const wp = String(c.workPhone ?? '').trim();
+      const pDigits = digitsOnly(p);
+      const wpDigits = digitsOnly(wp);
+      const textMatch = n.includes(qNorm) || co.includes(qNorm) || r.includes(qNorm) || e.includes(qNorm);
+      const phoneMatch = (qNorm && (p.includes(q) || (qDigits.length >= 2 && pDigits.includes(qDigits)))) || (qNorm && (wp.includes(q) || (qDigits.length >= 2 && wpDigits.includes(qDigits))));
+      return textMatch || phoneMatch;
     });
   }, [contacts, search]);
 
@@ -688,14 +793,14 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     if (Platform.OS !== 'web') {
       Alert.alert('Kontakt', String(contact?.name ?? 'Kontakt'), [
         { text: 'Avbryt', style: 'cancel' },
-        { text: 'Redigera', onPress: () => setEditingId(contact.id) },
+        { text: 'Redigera', onPress: () => setEditModalContact(contact) },
         { text: 'Radera', style: 'destructive', onPress: () => requestDeleteContact(contact) },
       ]);
       return;
     }
     const ne = e?.nativeEvent || e;
-    const x = Number(ne?.pageX ?? 20);
-    const y = Number(ne?.pageY ?? 64);
+    const x = Number(ne?.pageX ?? ne?.clientX ?? 20);
+    const y = Number(ne?.pageY ?? ne?.clientY ?? 64);
     setRowMenuPos({ x: Number.isFinite(x) ? x : 20, y: Number.isFinite(y) ? y : 64 });
     setRowMenuContact(contact);
     setRowMenuVisible(true);
@@ -706,32 +811,46 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     { key: 'delete', label: 'Radera', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
   ];
 
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: Platform.OS === 'web' ? 1000 : undefined,
+    defaultHeight: Platform.OS === 'web' ? 640 : undefined,
+    minWidth: 500,
+    minHeight: 400,
+  });
+
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition
+    ? {}
+    : {
+        width: Platform.OS === 'web' ? '90vw' : '90%',
+        maxWidth: 1400,
+        height: Platform.OS === 'web' ? '85vh' : '85%',
+      };
+
   if (!visible) return null;
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.titleIcon}>
-                <Ionicons name="book-outline" size={18} color={ICON_RAIL.iconColorActive} />
-              </View>
-              <View style={styles.titleLine}>
-                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-                  Kontaktregister
-                </Text>
-                <Text style={styles.titleDot}>•</Text>
-                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
-                  Administrera kontakter
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-            </TouchableOpacity>
-          </View>
+  const footer = (
+    <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+      <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+    </TouchableOpacity>
+  );
 
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Kontaktregister"
+      subtitle="Administrera kontakter"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="book-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
           <View style={styles.toolbarSection}>
             {!hasCompany ? (
               <View style={styles.selectCompany}>
@@ -751,7 +870,27 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                   />
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                    onPress={() => setShowInlineAddRow((v) => !v)}
+                    activeOpacity={0.7}
+                    accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: showInlineAddRow }}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer', title: showInlineAddRow ? 'Avmarkera för att bara se ifyllda kontakter' : 'Markera för att visa rad för snabbläggning' } : {})}
+                  >
+                    <Ionicons
+                      name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                      size={18}
+                      color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                    />
+                    <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                      Lägg till snabbt
+                    </Text>
+                  </TouchableOpacity>
                   {Platform.OS === 'web' && (
+                    <>
+                      <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                     <TouchableOpacity
                       style={styles.excelBtn}
                       onPress={(ev) => {
@@ -768,16 +907,17 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                       accessibilityLabel="Importera / exportera Excel"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                     >
-                      <Ionicons name="grid-outline" size={18} color="#167534" />
-                      <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                      <Ionicons name="document-outline" size={14} color="#167534" />
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
                     </TouchableOpacity>
+                    </>
                   )}
-                  <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
+                  <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                   <TouchableOpacity style={[styles.iconBtn, styles.iconBtnPrimary]} onPress={() => setAddModalVisible(true)} accessibilityLabel="Lägg till kontakt" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                    <Ionicons name="add" size={18} color="#fff" />
+                    <Ionicons name="add" size={16} color="#fff" />
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.iconBtn} onPress={loadContacts} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                    <Ionicons name="refresh" size={16} color="#475569" />
+                    <Ionicons name="refresh" size={14} color="#475569" />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -785,7 +925,13 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
             <View style={styles.toolbarDivider} />
           </View>
 
-          <ScrollView ref={scrollRef} style={styles.tableScroll} contentContainerStyle={styles.tableScrollContent} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={scrollRef}
+            style={styles.tableScroll}
+            contentContainerStyle={styles.tableScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
+          >
             {!hasCompany ? null : loading ? (
               <View style={styles.tableWrap}>
                 <View style={styles.emptyState}>
@@ -793,18 +939,26 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                 </View>
               </View>
             ) : (
-              <View style={styles.tableWrap}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator
+                contentContainerStyle={{ flexGrow: 1, minHeight: '100%' }}
+                keyboardShouldPersistTaps="handled"
+                style={styles.tableScrollHorizontal}
+              >
+                <View style={styles.tableWrap}>
                 <ContactRegistryTable
                   contacts={sorted}
                   sortColumn={sortColumn}
                   sortDirection={sortDirection}
                   onSort={handleSort}
-                  editingId={editingId}
+                  editingId={null}
                   inlineSavingContact={saving}
                   onSaveEdit={handleSaveInlineEdit}
-                  onCancelEdit={() => setEditingId(null)}
+                  onCancelEdit={() => {}}
                   onRowMenu={openRowMenu}
-                  inlineEnabled={hasCompany}
+                  onRowDoubleClick={(contact) => setEditModalContact(contact)}
+                  inlineEnabled={hasCompany && showInlineAddRow}
                   inlineSaving={inlineSaving}
                   inlineValues={{
                     name: inlineName,
@@ -839,17 +993,9 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                   </View>
                 ) : null}
               </View>
+              </ScrollView>
             )}
           </ScrollView>
-
-          <View style={styles.footer}>
-            <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
-            </View>
-          </View>
 
           {(notice || error) ? (
             <Animated.View style={[styles.statusOverlay, { opacity: statusOpacity }]} pointerEvents="none">
@@ -868,16 +1014,15 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
               </View>
             </Animated.View>
           ) : null}
-        </Pressable>
-      </Pressable>
+    </ModalBase>
 
-      <Modal visible={addModalVisible} transparent animationType="fade" onRequestClose={() => !addModalSaving && setAddModalVisible(false)}>
+    <Modal visible={addModalVisible} transparent animationType="fade" onRequestClose={() => !addModalSaving && setAddModalVisible(false)}>
         <Pressable style={styles.addModalBack} onPress={() => !addModalSaving && setAddModalVisible(false)}>
           <Pressable style={styles.addModalBox} onPress={(e) => e.stopPropagation()}>
             <View style={styles.addModalHeader}>
               <View style={styles.addModalHeaderLeft}>
-                <View style={styles.titleIcon}>
-                  <Ionicons name="person-add-outline" size={18} color={ICON_RAIL.iconColorActive} />
+                <View style={styles.addModalTitleIcon}>
+                  <Ionicons name="person-add-outline" size={18} color={D.titleColor} />
                 </View>
                 <Text style={styles.addModalTitle} numberOfLines={1} ellipsizeMode="tail">
                   Lägg till kontakt
@@ -890,7 +1035,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                 hitSlop={10}
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
-                <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
+                <Ionicons name="close" size={D.closeIconSize} color={D.closeIconColor} />
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 400 }} contentContainerStyle={styles.addModalBody} keyboardShouldPersistTaps="handled">
@@ -952,7 +1097,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                 <TouchableOpacity style={styles.footerBtn} onPress={() => !addModalSaving && setAddModalVisible(false)} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
                   <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.iconBtnPrimary, { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 }]} onPress={handleAddModalSave} disabled={addModalSaving || !addModalName.trim()} {...(Platform.OS === 'web' ? { cursor: addModalSaving || !addModalName.trim() ? 'not-allowed' : 'pointer' } : {})}>
+                <TouchableOpacity style={[styles.iconBtnPrimary, { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }]} onPress={handleAddModalSave} disabled={addModalSaving || !addModalName.trim()} {...(Platform.OS === 'web' ? { cursor: addModalSaving || !addModalName.trim() ? 'not-allowed' : 'pointer' } : {})}>
                   <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
                 </TouchableOpacity>
               </View>
@@ -960,6 +1105,81 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ModalBase
+        visible={!!editModalContact}
+        onClose={requestCloseEditModal}
+        title="Redigera kontakt"
+        headerVariant="neutral"
+        titleIcon={<Ionicons name="create-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+        boxStyle={styles.editModalBox}
+        contentStyle={styles.editModalContent}
+        footer={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity style={styles.editModalAvbrytBtn} onPress={requestCloseEditModal} disabled={editModalSaving} {...(Platform.OS === 'web' ? { cursor: editModalSaving ? 'not-allowed' : 'pointer' } : {})}>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.editModalSparaBtn} onPress={handleEditModalSave} disabled={editModalSaving || !editModalName.trim()} {...(Platform.OS === 'web' ? { cursor: editModalSaving || !editModalName.trim() ? 'not-allowed' : 'pointer' } : {})}>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
+            </TouchableOpacity>
+          </View>
+        }
+      >
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Namn *</Text>
+          <TextInput value={editModalName} onChangeText={setEditModalName} placeholder="Förnamn Efternamn" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+        </View>
+        <View style={[styles.addModalField, styles.addModalDropdown]}>
+          <Text style={styles.addModalLabel}>Företag</Text>
+          <TextInput
+            value={editModalCompanyName}
+            onChangeText={(v) => { setEditModalCompanyName(v); handleCompanySearch(v, 'editModal'); }}
+            onFocus={() => setCompanySearchActive('editModal')}
+            onBlur={() => setTimeout(() => setCompanySearchOpen(false), 200)}
+            placeholder="Min. 2 tecken – välj kund/leverantör"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+          {companySearchOpen && companySearchActive === 'editModal' && (companySearchResults || []).length > 0 && (
+            <View style={styles.addModalDropdownList}>
+              {(companySearchResults || []).slice(0, 15).map((company, i) => (
+                <TouchableOpacity
+                  key={company.id || i}
+                  style={[styles.addModalDropdownItem, editModalCompanyHoverIndex === i ? styles.addModalDropdownItemHighlight : null]}
+                  onPress={() => handleEditModalSelectCompany(company)}
+                  onMouseEnter={() => setEditModalCompanyHoverIndex(i)}
+                  onMouseLeave={() => setEditModalCompanyHoverIndex(-1)}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Text style={styles.addModalDropdownItemName} numberOfLines={1}>{company.name || '—'}</Text>
+                  <View style={{ flexDirection: 'row', gap: 4 }}>
+                    {company.roles?.supplier ? <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}><Text style={{ fontSize: 11, color: '#0369a1', fontWeight: '500' }}>Leverantör</Text></View> : null}
+                    {company.roles?.customer ? <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}><Text style={{ fontSize: 11, color: '#0369a1', fontWeight: '500' }}>Kund</Text></View> : null}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Roll</Text>
+          <TextInput value={editModalRole} onChangeText={setEditModalRole} placeholder="t.ex. Platschef" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Mobil</Text>
+          <TextInput value={editModalPhone} onChangeText={(v) => setEditModalPhone(String(v).replace(/\D/g, '').slice(0, 15))} placeholder="Siffror" keyboardType="number-pad" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Arbete</Text>
+          <TextInput value={editModalWorkPhone} onChangeText={setEditModalWorkPhone} placeholder="Jobbtelefon" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>E-post</Text>
+          <TextInput value={editModalEmail} onChangeText={setEditModalEmail} placeholder="namn@foretag.se" keyboardType="email-address" autoCapitalize="none" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+        </View>
+      </ModalBase>
 
       <ContextMenu
         visible={rowMenuVisible}
@@ -971,7 +1191,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
           setRowMenuVisible(false);
           const c = rowMenuContact;
           if (!c || !it) return;
-          if (it.key === 'edit') setEditingId(c.id);
+          if (it.key === 'edit') setEditModalContact(c);
           else if (it.key === 'delete') requestDeleteContact(c);
         }}
       />
@@ -1038,6 +1258,6 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         }}
         onConfirm={runKontakterImport}
       />
-    </Modal>
+    </>
   );
 }

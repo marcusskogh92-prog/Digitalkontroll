@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import CreateInkopsplanModal from './components/CreateInkopsplanModal';
 import InkopsplanTable from './components/InkopsplanTable';
@@ -34,6 +34,7 @@ export default function InkopsplanView({ companyId, projectId }) {
   const [planDoc, setPlanDoc] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,12 +45,13 @@ export default function InkopsplanView({ companyId, projectId }) {
     if (!cid || !pid) return () => {};
 
     setLoading(true);
+    setError('');
 
     const unsubDoc = listenInkopsplanDoc(
       cid,
       pid,
       (d) => setPlanDoc(d),
-      () => {},
+      (e) => setError(String(e?.message || e || 'Kunde inte läsa inköpsplan.')),
     );
 
     const unsubRows = listenInkopsplanRows(
@@ -59,7 +61,10 @@ export default function InkopsplanView({ companyId, projectId }) {
         setRows(Array.isArray(items) ? items : []);
         setLoading(false);
       },
-      () => setLoading(false),
+      (e) => {
+        setError(String(e?.message || e || 'Kunde inte läsa inköpsplanrader.'));
+        setLoading(false);
+      },
     );
 
     return () => {
@@ -106,7 +111,15 @@ export default function InkopsplanView({ companyId, projectId }) {
           <ActivityIndicator />
         </View>
       ) : (
-        <InkopsplanTable companyId={companyId} projectId={projectId} rows={rows} onRowsChanged={triggerRefresh} />
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+          {error ? (
+            <View style={{ padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', borderRadius: 10 }}>
+              <Text style={{ color: '#b91c1c', fontSize: 12, fontWeight: '700' }}>Inköpsplan kunde inte laddas</Text>
+              <Text style={{ color: '#7f1d1d', fontSize: 12, marginTop: 4 }}>{error}</Text>
+            </View>
+          ) : null}
+          <InkopsplanTable companyId={companyId} projectId={projectId} rows={rows} onRowsChanged={triggerRefresh} />
+        </ScrollView>
       )}
 
       <CreateInkopsplanModal
@@ -136,19 +149,19 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   title: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
   },
   subtitle: {
     marginTop: 4,
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748B',
     fontWeight: '400',
   },
   primaryBtn: {
-    height: 40,
-    paddingHorizontal: 14,
+    height: 32,
+    paddingHorizontal: 12,
     borderRadius: 12,
     backgroundColor: '#0F172A',
     borderWidth: 1,
@@ -161,7 +174,7 @@ const styles = StyleSheet.create({
     transform: [{ translateY: -1 }],
   },
   primaryBtnText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#FFFFFF',
   },
@@ -170,5 +183,12 @@ const styles = StyleSheet.create({
     minHeight: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  scroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  scrollContent: {
+    paddingBottom: 16,
   },
 });

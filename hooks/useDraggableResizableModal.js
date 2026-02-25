@@ -99,10 +99,17 @@ export function useDraggableResizableModal(visible, options = {}) {
         const start = resizeStart.current;
         let newW = start.w;
         let newH = start.h;
+        let newLeft = start.left;
         if (start.direction.includes('e')) newW = Math.max(minWidth, start.w + (clientX - start.x));
+        if (start.direction.includes('w')) {
+          const dw = start.x - clientX;
+          newW = Math.max(minWidth, start.w + dw);
+          newLeft = start.left + (start.w - newW);
+        }
         if (start.direction.includes('s')) newH = Math.max(minHeight, start.h + (clientY - start.y));
         setSize({ w: newW, h: newH });
-        resizeStart.current = { ...start, w: newW, h: newH, x: clientX, y: clientY };
+        if (start.direction.includes('w')) setPosition((prev) => ({ ...prev, x: newLeft }));
+        resizeStart.current = { ...start, w: newW, h: newH, left: newLeft, x: clientX, y: clientY };
       }
     };
 
@@ -162,7 +169,17 @@ export function useDraggableResizableModal(visible, options = {}) {
     ...(isWeb ? { style: [{ cursor: isDragging ? 'grabbing' : 'move' }] } : {}),
   };
 
-  /* Resize-handles: vid kant/hörn visas muspekaren som streck med pilar (Windows-liknande) för att markera storleksändring */
+  /* Synlig "grip" i nedre hörnen: liten markering så användaren ser att man kan dra för att ändra storlek */
+  const cornerGripSize = 14;
+  const cornerGripBase = {
+    position: 'absolute',
+    width: cornerGripSize,
+    height: cornerGripSize,
+    backgroundColor: 'rgba(100, 116, 139, 0.2)',
+    borderTopLeftRadius: 4,
+  };
+
+  /* Resize-handles: högerkant, nederkant, nedre vänster hörn, nedre höger hörn. Synlig grip i båda nedre hörnen. */
   const resizeHandles = hasPosition ? (
     <>
       <View
@@ -184,11 +201,23 @@ export function useDraggableResizableModal(visible, options = {}) {
       <View
         role="presentation"
         style={[
+          { position: 'absolute', left: 0, bottom: 0, width: 20, height: 20, zIndex: 11 },
+          isWeb && { cursor: 'nesw-resize' },
+        ]}
+        {...(isWeb ? { onMouseDown: (e) => startResize(e, 'sw') } : {})}
+      >
+        <View style={[cornerGripBase, { left: 0, bottom: 0, borderTopLeftRadius: 0, borderTopRightRadius: 4 }]} />
+      </View>
+      <View
+        role="presentation"
+        style={[
           { position: 'absolute', right: 0, bottom: 0, width: 20, height: 20, zIndex: 11 },
           isWeb && { cursor: 'nwse-resize' },
         ]}
         {...(isWeb ? { onMouseDown: (e) => startResize(e, 'se') } : {})}
-      />
+      >
+        <View style={[cornerGripBase, { right: 0, bottom: 0, left: undefined }]} />
+      </View>
     </>
   ) : null;
 

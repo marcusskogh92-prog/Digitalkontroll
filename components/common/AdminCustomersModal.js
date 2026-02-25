@@ -18,6 +18,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import KundForm from '../../modules/kunder/KundForm';
 import KunderTable from '../../modules/kunder/KunderTable';
@@ -41,6 +43,7 @@ import {
 } from '../../utils/registerExcel';
 import ContextMenu from '../ContextMenu';
 import { deleteCompanyContact, fetchCompanyProfile, updateCompanyContact } from '../firebase';
+import ModalBase from './ModalBase';
 import ConfirmModal from './Modals/ConfirmModal';
 
 const styles = StyleSheet.create({
@@ -122,8 +125,8 @@ const styles = StyleSheet.create({
   },
   statusOverlay: {
     position: 'absolute',
-    left: 20,
-    right: 20,
+    left: D.contentPadding,
+    right: D.contentPadding,
     top: 100,
     zIndex: 100,
     alignItems: 'center',
@@ -135,14 +138,14 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     maxWidth: 400,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 8,
+    elevation: 6,
   },
   statusBoxSuccess: {
     backgroundColor: '#f0fdf4',
@@ -154,8 +157,8 @@ const styles = StyleSheet.create({
   },
   toolbarSection: {
     flexShrink: 0,
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
     paddingBottom: 12,
     backgroundColor: '#fff',
   },
@@ -167,9 +170,9 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#eee',
     marginTop: 12,
-    marginHorizontal: -20,
+    marginHorizontal: -D.contentPadding,
   },
   tableScroll: {
     flex: 1,
@@ -177,9 +180,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   tableScrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 24,
+    paddingHorizontal: D.contentPadding,
+    paddingTop: D.sectionGap,
+    paddingBottom: D.contentPadding,
+  },
+  tableScrollHorizontal: {
+    flex: 1,
+    minHeight: 0,
+    alignSelf: 'stretch',
   },
   searchWrap: {
     flex: 1,
@@ -187,31 +195,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
+    borderColor: '#ddd',
+    borderRadius: D.inputRadius,
     backgroundColor: '#fff',
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1f5f9',
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#ddd',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconBtnPrimary: { backgroundColor: '#1976D2', borderColor: '#1976D2' },
+  iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#a7f3d0',
@@ -221,9 +231,9 @@ const styles = StyleSheet.create({
     padding: 32,
     alignItems: 'center',
     backgroundColor: '#f8fafc',
-    borderRadius: 12,
+    borderRadius: D.radius,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#eee',
   },
   emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
@@ -280,6 +290,7 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
+  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminCustomersModal({ visible, companyId, onClose }) {
@@ -313,6 +324,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirmContact, setDeleteConfirmContact] = useState(null); // { customer, contact }
   const [deletingContact, setDeletingContact] = useState(false);
+  const [showInlineAddRow, setShowInlineAddRow] = useState(false);
   const [excelMenuVisible, setExcelMenuVisible] = useState(false);
   const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
   const [importPlan, setImportPlan] = useState(null);
@@ -750,38 +762,46 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     return out;
   }, [customers, contacts]);
 
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: Platform.OS === 'web' ? 1000 : undefined,
+    defaultHeight: Platform.OS === 'web' ? 640 : undefined,
+    minWidth: 500,
+    minHeight: 400,
+  });
+
+  const hasDragPosition = Platform.OS === 'web' && boxStyle && Object.keys(boxStyle).length > 0;
+  const defaultBoxStyle = hasDragPosition
+    ? {}
+    : {
+        width: Platform.OS === 'web' ? '90vw' : '90%',
+        maxWidth: 1400,
+        height: Platform.OS === 'web' ? '85vh' : '85%',
+      };
+
   if (!visible) return null;
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.titleIcon}>
-                <Ionicons name="people-outline" size={18} color={ICON_RAIL.iconColorActive} />
-              </View>
-              <View style={styles.titleLine}>
-                <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-                  Kunder
-                </Text>
-                <Text style={styles.titleDot}>•</Text>
-                <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
-                  Administrera kunder
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Stäng">
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-            </TouchableOpacity>
-          </View>
+  const footer = (
+    <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+      <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+    </TouchableOpacity>
+  );
 
+  return (
+    <>
+    <ModalBase
+      visible={visible}
+      onClose={onClose}
+      title="Kunder"
+      subtitle="Administrera kunder"
+      headerVariant="neutral"
+      titleIcon={<Ionicons name="people-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      boxStyle={[defaultBoxStyle, boxStyle]}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
+    >
           {/* Toolbar section: fixed, always visible */}
           <View style={styles.toolbarSection}>
             {!hasCompany ? (
@@ -797,47 +817,69 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                       style={styles.searchInput}
                       value={search}
                       onChangeText={setSearch}
-                      placeholder="Sök namn, person-/orgnr, adress…"
+                      placeholder="Sök namn, person-/orgnr, adress, ort, kundtyp…"
                       placeholderTextColor="#94a3b8"
                       {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
                     />
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                      onPress={() => setShowInlineAddRow((v) => !v)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: showInlineAddRow }}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer', title: showInlineAddRow ? 'Avmarkera för att bara se befintliga kunder' : 'Markera för att visa rad för snabbläggning' } : {})}
+                    >
+                      <Ionicons
+                        name={showInlineAddRow ? 'checkbox' : 'square-outline'}
+                        size={18}
+                        color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                      />
+                      <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
+                        Lägg till snabbt
+                      </Text>
+                    </TouchableOpacity>
                     {Platform.OS === 'web' && (
-                      <TouchableOpacity
-                        style={styles.excelBtn}
-                        onPress={(ev) => {
-                          const ne = ev?.nativeEvent || ev;
-                          const target = ne?.target;
-                          if (target && typeof target.getBoundingClientRect === 'function') {
-                            const r = target.getBoundingClientRect();
-                            setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
-                          } else {
-                            setExcelMenuPos({ x: 20, y: 200 });
-                          }
-                          setExcelMenuVisible(true);
-                        }}
-                        accessibilityLabel="Importera / exportera Excel"
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
-                      >
-                        <Ionicons name="grid-outline" size={18} color="#167534" />
-                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#167534' }}>Excel</Text>
-                      </TouchableOpacity>
+                      <>
+                        <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
+                        <TouchableOpacity
+                          style={styles.excelBtn}
+                          onPress={(ev) => {
+                            const ne = ev?.nativeEvent || ev;
+                            const target = ne?.target;
+                            if (target && typeof target.getBoundingClientRect === 'function') {
+                              const r = target.getBoundingClientRect();
+                              setExcelMenuPos({ x: r.left, y: r.bottom + 4 });
+                            } else {
+                              setExcelMenuPos({ x: 20, y: 200 });
+                            }
+                            setExcelMenuVisible(true);
+                          }}
+                          accessibilityLabel="Importera / exportera Excel"
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
+                        >
+                          <Ionicons name="document-outline" size={14} color="#167534" />
+                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                        </TouchableOpacity>
+                      </>
                     )}
-                    <View style={{ width: 1, height: 24, backgroundColor: '#e2e8f0' }} />
+                    <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => { setFormModalVisible(true); }}
+                      accessibilityLabel="Lägg till kund"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="add" size={18} color="#fff" />
+                      <Ionicons name="add" size={16} color="#fff" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.iconBtn}
                       onPress={loadCustomers}
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
-                      <Ionicons name="refresh" size={16} color="#475569" />
+                      <Ionicons name="refresh" size={14} color="#475569" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -851,6 +893,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
             style={styles.tableScroll}
             contentContainerStyle={styles.tableScrollContent}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
           >
             {!hasCompany ? null : (
               <View style={styles.tableWrap}>
@@ -865,6 +908,14 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     </Text>
                   </View>
                 ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator
+                    contentContainerStyle={{ flexGrow: 1, minHeight: '100%', minWidth: '100%' }}
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.tableScrollHorizontal}
+                  >
+                    <View style={[styles.tableWrap, { minWidth: '100%', flex: 1 }]}>
                   <KunderTable
                     customers={sorted}
                     sortColumn={sortColumn}
@@ -873,6 +924,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     onRowPress={() => {}}
                     onRowContextMenu={openRowMenu}
                     onRowMenu={openRowMenu}
+                    onRowDoubleClick={(customer) => setEditingId(customer.id)}
                     editingId={editingId}
                     inlineSavingCustomer={saving}
                     onSaveEdit={handleSaveInlineEdit}
@@ -919,7 +971,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                         )
                       );
                     }}
-                    inlineEnabled={hasCompany}
+                    inlineEnabled={hasCompany && showInlineAddRow}
                     inlineSaving={inlineSaving}
                     inlineValues={{
                       name: inlineName,
@@ -939,19 +991,12 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     }}
                     onInlineSave={handleInlineSave}
                   />
+                    </View>
+                  </ScrollView>
                 )}
               </View>
             )}
           </ScrollView>
-
-          <View style={styles.footer}>
-            <View style={{ alignItems: 'center' }}>
-              <TouchableOpacity style={styles.footerBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Stäng</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 10, opacity: 0.35, marginTop: 4, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>ESC</Text>
-            </View>
-          </View>
 
           {/* Status overlay: success/error, no layout shift, fade out */}
           {(notice || error) ? (
@@ -971,8 +1016,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
               </View>
             </Animated.View>
           ) : null}
-        </Pressable>
-      </Pressable>
+    </ModalBase>
 
       {/* Add customer form modal (edit is inline in table) */}
       <Modal visible={formModalVisible} transparent animationType="fade" onRequestClose={() => !saving && setFormModalVisible(false)}>
@@ -1209,6 +1253,6 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           </Pressable>
         </Modal>
       )}
-    </Modal>
+    </>
   );
 }
