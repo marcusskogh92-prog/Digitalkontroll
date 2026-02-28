@@ -13,9 +13,11 @@ import GlobalPhaseToolbar from './components/GlobalPhaseToolbar';
 import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from './components/HeaderComponents';
 import { GLOBAL_HEADER_HEIGHT } from './components/common/layoutConstants';
 import { ICON_RAIL } from './constants/iconRailTheme';
+import { BackgroundTasksIndicator } from './components/common/BackgroundTasksIndicator';
 import { AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
+import { BackgroundTasksProvider } from './contexts/BackgroundTasksContext';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
@@ -319,6 +321,7 @@ export default function App() {
         <AdminModalProvider navigationRef={navigationRef}>
           <SystemModalProvider>
           <UploadManagerProvider>
+            <BackgroundTasksProvider>
             <View style={{ flex: 1, paddingTop: showToolbar && Platform.OS === 'web' ? 48 : 0 }}>
               <NavigationContainer
                 ref={navigationRef}
@@ -735,7 +738,9 @@ export default function App() {
             <Stack.Screen name="CameraCapture" component={CameraCapture} options={{ headerShown: false }} />
               </Stack.Navigator>
               </NavigationContainer>
+              <BackgroundTasksIndicator />
             </View>
+            </BackgroundTasksProvider>
           </UploadManagerProvider>
         </SystemModalProvider>
         </AdminModalProvider>

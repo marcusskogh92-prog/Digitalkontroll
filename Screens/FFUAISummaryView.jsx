@@ -5,6 +5,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, V
 
 import { ConfirmModal } from '../components/common/Modals';
 import { functionsClient, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
+import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -54,9 +55,12 @@ function SectionLabel({ children }) {
   );
 }
 
+const TASK_ID_AI_FFU = 'ai-analysis-ffu';
+
 export default function FFUAISummaryView({ projectId, companyId, project }) {
   const pid = safeText(projectId);
   const cid = safeText(companyId);
+  const { addTask, removeTask } = useBackgroundTasks();
 
   void project;
 
@@ -70,6 +74,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
 
   const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
   const subKeyRef = useRef('');
+  const aiAnalysisTaskTimeoutRef = useRef(null);
 
   const hasSavedAnalysis = snapshotExists;
 
@@ -126,6 +131,14 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
     const unsubscribe = subscribeLatestProjectFFUAnalysis(cid, pid, {
       onNext: (data, snap) => {
         if (subKeyRef.current !== subKey) return;
+        const status = data?.status;
+        if (status && status !== 'analyzing') {
+          if (aiAnalysisTaskTimeoutRef.current) {
+            clearTimeout(aiAnalysisTaskTimeoutRef.current);
+            aiAnalysisTaskTimeoutRef.current = null;
+          }
+          removeTask(TASK_ID_AI_FFU);
+        }
         console.log('[FFU] Snapshot loaded', snap?.exists?.() === true, snap?.data?.());
         const exists = !!(snap && typeof snap.exists === 'function' && snap.exists());
         setSnapshotExists(exists);
@@ -150,7 +163,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         unsubscribe?.();
       } catch (_e) {}
     };
-  }, [cid, pid]);
+  }, [cid, pid, removeTask]);
 
   const runAnalysisAndPersist = useCallback(() => {
     if (!canRun) return;
@@ -158,10 +171,20 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
 
     setRunError('');
     setAnalysisTriggered(true);
+    addTask(TASK_ID_AI_FFU, 'Kör AI-analys', 'Förfrågningsunderlag');
+    aiAnalysisTaskTimeoutRef.current = setTimeout(() => {
+      aiAnalysisTaskTimeoutRef.current = null;
+      removeTask(TASK_ID_AI_FFU);
+    }, 120000);
 
     console.log('[FFU] Analysis started in background', { companyId: cid, projectId: pid });
     const analyzeFFU = httpsCallable(functionsClient, 'analyzeFFUFromFiles');
     analyzeFFU({ companyId: cid, projectId: pid }).catch((e) => {
+      if (aiAnalysisTaskTimeoutRef.current) {
+        clearTimeout(aiAnalysisTaskTimeoutRef.current);
+        aiAnalysisTaskTimeoutRef.current = null;
+      }
+      removeTask(TASK_ID_AI_FFU);
       const code = String(e?.code || '').trim();
       const msg = String(e?.details || e?.message || e?.code || '').trim();
       const isTimeout = code.includes('deadline') || code.includes('timeout') || msg.toLowerCase().includes('timeout');
@@ -173,7 +196,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         setRunError(msg || 'Kunde inte starta AI-analys. Försök igen.');
       }
     });
-  }, [canRun, cid, pid]);
+  }, [canRun, cid, pid, addTask, removeTask]);
 
   const onRunAnalysis = useCallback(() => {
     if (!canRun) return;

@@ -77,6 +77,7 @@ export function HomeMainPaneContainer(props) {
     companyProfile,
     companyId,
     routeCompanyId,
+    enabledPhaseKeys,
     setNewProjectModal,
     scrollToEndSafe,
     rightWidth,
@@ -174,6 +175,7 @@ export function HomeMainPaneContainer(props) {
           companyProfile={companyProfile}
           companyId={companyId}
           routeCompanyId={routeCompanyId}
+          enabledPhaseKeys={enabledPhaseKeys}
           scrollToEndSafe={scrollToEndSafe}
           rightWidth={rightWidth}
           panResponderRight={panResponderRight}
@@ -201,6 +203,7 @@ export function HomeMainPaneContainer(props) {
           rightPaneScrollRef={rightPaneScrollRef}
           selectedProject={selectedProjectSafe}
           companyId={companyId}
+          enabledPhaseKeys={enabledPhaseKeys}
           projectSelectedAction={projectSelectedAction}
           handleInlineLockChange={handleInlineLockChange}
           phaseActiveSection={phaseActiveSection}

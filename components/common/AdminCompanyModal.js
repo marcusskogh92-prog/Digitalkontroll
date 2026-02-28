@@ -5,7 +5,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Image,
@@ -20,6 +20,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 import { ICON_RAIL, PROGRESS_THEME } from '../../constants/iconRailTheme';
 import { PROJECT_PHASES } from '../../features/projects/constants';
 import { useDraggableResizableModal } from '../../hooks/useDraggableResizableModal';
@@ -65,7 +66,7 @@ const REGISTER_LINKS = [
   { key: 'kontoplan', label: 'Kontoplan', description: 'Kontoplan och konton', icon: 'list-outline', openModal: 'openKontoplanModal', comingSoon: false },
   { key: 'byggdelar', label: 'Byggdelar', description: 'Byggdelstabell och koder', icon: 'layers-outline', openModal: 'openByggdelModal', comingSoon: false },
   { key: 'kategorier', label: 'Kategorier', description: 'Kategorier och taggar', icon: 'pricetag-outline', openModal: 'openKategoriModal', comingSoon: false },
-  { key: 'mallar', label: 'Mallar', description: 'Mallar för kontroller', icon: 'document-text-outline', openModal: 'openMallarModal', comingSoon: true },
+  { key: 'mallar', label: 'Mallar', description: 'Mallar för kontroller', icon: 'document-text-outline', openModal: 'openMallarModal', comingSoon: false },
 ];
 
 const styles = StyleSheet.create({
@@ -195,9 +196,9 @@ const styles = StyleSheet.create({
   },
   bytBildBtn: {
     marginTop: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     backgroundColor: ICON_RAIL.bg,
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
@@ -326,9 +327,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   footerBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
@@ -410,6 +411,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     openKontoplanModal,
     openByggdelModal,
     openKategoriModal,
+    openMallarModal,
   isSubModalOpen = false,
   } = useContext(AdminModalContext) || {};
 
@@ -426,13 +428,25 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
   const [error, setError] = useState('');
   const initialActiveTab = initialTab && TABS.some((t) => t.key === initialTab) ? initialTab : 'oversikt';
   const [activeTab, setActiveTab] = useState(initialActiveTab);
-  useEffect(() => {
+  const userHasChosenTabRef = useRef(false);
+
+  useLayoutEffect(() => {
     if (visible && initialTab && TABS.some((t) => t.key === initialTab)) {
       setActiveTab(initialTab);
     } else if (visible && !initialTab) {
       setActiveTab('oversikt');
     }
   }, [visible, initialTab]);
+
+  useEffect(() => {
+    if (!visible) userHasChosenTabRef.current = false;
+  }, [visible]);
+
+  // Vid öppning med initialTab (t.ex. SharePoint-kopplingar) visa den fliken tills användaren byter
+  const effectiveTab =
+    visible && initialTab && TABS.some((t) => t.key === initialTab) && !userHasChosenTabRef.current
+      ? initialTab
+      : activeTab;
   const [enabledPhases, setEnabledPhases] = useState([]);
   const [companyNameDraft, setCompanyNameDraft] = useState('');
   const [companyEnabled, setCompanyEnabled] = useState(true);
@@ -662,16 +676,17 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     }
   }, [cid]);
 
-  /** Öppna register-modal (Kontoplan, Byggdelar, Kategorier) ovanpå företagsinställningar – stäng inte company-modalen. Mallar visar "Kommer snart". */
+  /** Öppna register-modal (Kontoplan, Byggdelar, Kategorier, Mallar) ovanpå företagsinställningar – samma modal som från railen. */
   const openRegisterLink = useCallback((item) => {
     if (item.comingSoon) {
-      Alert.alert('Kommer snart', 'Mallar kommer snart.');
+      Alert.alert('Kommer snart', 'Denna funktion kommer snart.');
       return;
     }
     if (item.openModal === 'openKontoplanModal') openKontoplanModal?.(cid);
     if (item.openModal === 'openByggdelModal') openByggdelModal?.(cid);
     if (item.openModal === 'openKategoriModal') openKategoriModal?.(cid);
-  }, [cid, openKontoplanModal, openByggdelModal, openKategoriModal]);
+    if (item.openModal === 'openMallarModal') openMallarModal?.(cid);
+  }, [cid, openKontoplanModal, openByggdelModal, openKategoriModal, openMallarModal]);
 
   const companyName = (profile && (profile.companyName || profile.name)) || cid || 'Företag';
   const statusText = profile?.deleted ? 'Dolt' : companyEnabled ? 'Aktivt' : 'Inaktivt';
@@ -753,16 +768,19 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                 {TABS.map((tab) => (
                   <TouchableOpacity
                     key={tab.key}
-                    style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-                    onPress={() => setActiveTab(tab.key)}
+                    style={[styles.tab, effectiveTab === tab.key && styles.tabActive]}
+                    onPress={() => {
+                      userHasChosenTabRef.current = true;
+                      setActiveTab(tab.key);
+                    }}
                   >
-                    <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>{tab.label}</Text>
+                    <Text style={[styles.tabLabel, effectiveTab === tab.key && styles.tabLabelActive]}>{tab.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
               <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-                {activeTab === 'oversikt' && (
+                {effectiveTab === 'oversikt' && (
                   <View style={styles.section}>
                     <View style={[styles.card, { flexDirection: 'row', flexWrap: 'wrap', gap: 24 }]}>
                       <View style={styles.logoWrap}>
@@ -825,7 +843,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
-                {activeTab === 'moduler' && (
+                {effectiveTab === 'moduler' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Aktiverade moduler</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
@@ -876,7 +894,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
-                {activeTab === 'licenser' && (() => {
+                {effectiveTab === 'licenser' && (() => {
                   const totalLicenses = userLimitNumber;
                   const used = typeof memberCount === 'number' ? memberCount : 0;
                   const percent = totalLicenses > 0 ? Math.round((used / totalLicenses) * 100) : 0;
@@ -956,7 +974,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   );
                 })()}
 
-                {activeTab === 'anvandare' && (
+                {effectiveTab === 'anvandare' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Användare</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
@@ -971,7 +989,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
-                {activeTab === 'sharepoint' && (
+                {effectiveTab === 'sharepoint' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>SharePoint</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
@@ -981,7 +999,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
-                {activeTab === 'ai-installningar' && (
+                {effectiveTab === 'ai-installningar' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>AI-analys</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
@@ -991,7 +1009,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
-                {activeTab === 'register' && (
+                {effectiveTab === 'register' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Register</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>

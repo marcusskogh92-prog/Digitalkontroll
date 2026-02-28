@@ -36,10 +36,20 @@ export default function StageOverviewCards({
   projects = [],
   activeStageFilter = null,
   onStageFilter,
+  /** Aktiva moduler för företaget – endast dessa skede-kort visas. Om ej angiven visas alla. */
+  enabledPhaseKeys,
 }) {
   const counts = useMemo(() => countByStage(projects), [projects]);
   const [hoveredKey, setHoveredKey] = useState(null);
   const { width } = useWindowDimensions();
+
+  const visibleStages = useMemo(() => {
+    if (!enabledPhaseKeys || !Array.isArray(enabledPhaseKeys) || enabledPhaseKeys.length === 0) {
+      return STAGES;
+    }
+    const set = new Set(enabledPhaseKeys.map((k) => String(k).trim()).filter(Boolean));
+    return STAGES.filter((s) => set.has(s.key));
+  }, [enabledPhaseKeys]);
 
   const gridCols = Platform.OS === 'web'
     ? (width >= 900 ? 4 : width >= 600 ? 2 : 1)
@@ -52,7 +62,7 @@ export default function StageOverviewCards({
 
   return (
     <View style={[styles.wrapper, Platform.OS === 'web' && { gridTemplateColumns: `repeat(${gridCols}, 1fr)` }]}>
-      {STAGES.map((stage) => {
+      {visibleStages.map((stage) => {
         const count = counts[stage.key] ?? 0;
         const isActive = activeStageFilter === stage.key;
         const isHovered = hoveredKey === stage.key;

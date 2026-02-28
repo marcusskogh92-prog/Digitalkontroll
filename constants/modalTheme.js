@@ -30,12 +30,12 @@ export const MODAL_THEME = {
     closeBtnPadding: 5,
     closeIconSize: 20,
   },
-  /** Footer-knappar – både Stäng och Spara ska vara mörka med vit text */
+  /** Footer-knappar – både Stäng och Spara ska vara mörka med vit text. Standard: 6/18 px (RULES.md §8). */
   footer: {
     backgroundColor: '#f8fafc',
     borderTopColor: '#e2e8f0',
-    btnPaddingVertical: 10,
-    btnPaddingHorizontal: 20,
+    btnPaddingVertical: 6,
+    btnPaddingHorizontal: 18,
     btnBorderRadius: ICON_RAIL.activeBgRadius,
     btnBackground: ICON_RAIL.bg,
     btnBorderColor: ICON_RAIL.bg,

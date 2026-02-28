@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Easing, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { AdminModalContext } from '../components/common/AdminModalContext';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
@@ -19,11 +19,12 @@ import { MinimalTopbar } from '../components/common/MinimalTopbar';
 import { NewProjectModal, SimpleProjectLoadingModal, SimpleProjectModal, SimpleProjectSuccessModal } from '../components/common/Modals';
 import ComingSoonPhaseModal from '../components/common/Modals/ComingSoonPhaseModal';
 import CreateProjectModal from '../components/common/Modals/CreateProjectModal';
+import MyProfileModal from '../components/common/Modals/MyProfileModal';
 import RailActivityPanel from '../components/common/RailActivityPanel';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import ContextMenu from '../components/ContextMenu';
-import { auth, fetchCompanies, markAllNotificationsAsRead, saveControlToFirestore, saveDraftToFirestore, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
+import { auth, clearProjectPresence, fetchCompanies, formatSharePointProjectFolderName, markAllNotificationsAsRead, patchCompanyProject, saveControlToFirestore, saveDraftToFirestore, setProjectPresence, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
@@ -50,6 +51,7 @@ import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
+import { renameDriveItemByPath } from '../services/azure/hierarchyService';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ManageSharePointNavigation from './ManageSharePointNavigation';
 
@@ -89,6 +91,8 @@ export default function HomeScreen({ navigation, route }) {
   const [projectScrollY, setProjectScrollY] = useState(0);
   const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [userMenuPos, setUserMenuPos] = useState({ x: 20, y: 64 });
+  const [myProfileModalVisible, setMyProfileModalVisible] = useState(false);
+  const [myProfileCompanyId, setMyProfileCompanyId] = useState('');
   const leftTreeScrollRef = useRef(null);
   const rightPaneScrollRef = useRef(null);
   const activityScrollRef = useRef(null);
@@ -374,6 +378,8 @@ export default function HomeScreen({ navigation, route }) {
       } else if (item.route === 'Customers') {
         if (openCustomersModal) openCustomersModal(cid);
         else navigation.navigate('Customers', { companyId: cid });
+      } else if (item.openModal === 'openMallarModal') {
+        if (openMallarModal) openMallarModal(cid);
       } else if (item.route === 'ManageCompany' && item.focus) {
         if (item.focus === 'byggdel') {
           if (openByggdelModal) openByggdelModal(cid);
@@ -389,7 +395,7 @@ export default function HomeScreen({ navigation, route }) {
         }
       }
     } catch (_e) {}
-  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openMallarModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
 
   const handleAdminItemPress = useCallback(async (item) => {
     if (item.route !== 'ManageSharePointNavigation') {
@@ -398,13 +404,20 @@ export default function HomeScreen({ navigation, route }) {
     try {
       const cid = await getEffectiveCompanyIdForRegister();
       if (item.route === 'ManageUsers') {
-        navigation.navigate('ManageUsers', { companyId: cid });
+        if (openCompanyModal && cid) openCompanyModal(cid, 'anvandare');
+        else navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.route === 'ManageControlTypes') {
-        navigation.navigate('ManageControlTypes', { companyId: cid });
-      } else if (item.route === 'ManageCompany' && item.focus === 'sharepoint') {
-        // Integrationer → Företagsinställningar med SharePoint-flik direkt öppen
+        if (openMallarModal) openMallarModal(cid);
+        else navigation.navigate('ManageControlTypes', { companyId: cid });
+      } else if (item.key === 'integrationer' || (item.route === 'ManageCompany' && item.focus === 'sharepoint')) {
+        // SharePoint-kopplingar → Företagsinställningar med SharePoint-fliken direkt öppen
         if (openCompanyModal && cid) openCompanyModal(cid, 'sharepoint');
         else navigation.navigate('ManageCompany', { companyId: cid, focus: 'sharepoint' });
+      } else if (item.key === 'foretagsinstallningar' || (item.route === 'ManageCompany' && !item.focus)) {
+        // Företagsinställningar i railen → öppna Företagsinställningar-modalen (inte gamla adminpanelen)
+        if (openCompanyModal && cid) openCompanyModal(cid);
+        else if (isSuperAdminResolved) navigation.navigate('ManageCompany', { showCompanyList: true });
+        else navigation.navigate('ManageCompany', { companyId: cid });
       } else if (item.route === 'ManageCompany') {
         if (isSuperAdminResolved) {
           navigation.navigate('ManageCompany', { showCompanyList: true });
@@ -417,7 +430,7 @@ export default function HomeScreen({ navigation, route }) {
         return;
       }
     } catch (_e) {}
-  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openCompanyModal]);
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openCompanyModal, openMallarModal]);
 
   const handleSharePointItemPress = useCallback(async (item) => {
     setActiveSidePanelItemKey(item.key);
@@ -1325,6 +1338,28 @@ export default function HomeScreen({ navigation, route }) {
     selectedProjectRef.current = selectedProject;
   }, [selectedProject]);
 
+  // Projekt-närvaro: sätt när användaren har ett projekt öppet, rensa när de lämnar (för varning vid radering).
+  const projectPresenceRef = React.useRef({ companyId: null, projectId: null });
+  React.useEffect(() => {
+    const cid = String(companyId || '').trim();
+    const uid = auth?.currentUser?.uid ?? null;
+    const prev = projectPresenceRef.current;
+    if (selectedProject?.id && cid && uid) {
+      const pid = String(selectedProject.id).trim();
+      const displayName = auth?.currentUser?.displayName || auth?.currentUser?.email || null;
+      if (prev.companyId && prev.projectId && (prev.companyId !== cid || prev.projectId !== pid)) {
+        clearProjectPresence(prev.companyId, prev.projectId, uid).catch(() => {});
+      }
+      projectPresenceRef.current = { companyId: cid, projectId: pid };
+      setProjectPresence(cid, pid, uid, displayName).catch(() => {});
+    } else {
+      if (prev.companyId && prev.projectId && uid) {
+        clearProjectPresence(prev.companyId, prev.projectId, uid).catch(() => {});
+      }
+      projectPresenceRef.current = { companyId: null, projectId: null };
+    }
+  }, [companyId, selectedProject?.id, auth?.currentUser?.uid, auth?.currentUser?.displayName, auth?.currentUser?.email]);
+
   // Web 2026: när ett projekt öppnas (dashboard eller tree) → projektläge
   React.useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -1484,6 +1519,26 @@ export default function HomeScreen({ navigation, route }) {
     controlTypeOptions,
   } = useCompanyControlTypes({ companyId });
 
+  // Aktiva moduler för företaget – styr synlighet i rail och dashboard-kort (Företagsinställningar → Moduler)
+  const PHASE_RAIL_AND_CARD_KEYS = useMemo(() => ['kalkylskede', 'produktion', 'avslut', 'eftermarknad'], []);
+  const enabledPhaseKeys = useMemo(() => {
+    const raw = companyProfile?.enabledPhases;
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw.filter((k) => PHASE_RAIL_AND_CARD_KEYS.includes(String(k).trim()));
+    }
+    return PHASE_RAIL_AND_CARD_KEYS;
+  }, [companyProfile?.enabledPhases, PHASE_RAIL_AND_CARD_KEYS]);
+
+  // När företagets aktiva moduler ändras: om valt rail-fas inte längre är aktiv, gå till dashboard
+  React.useEffect(() => {
+    const id = String(railActiveId || '').trim();
+    if (!id || !PHASE_RAIL_AND_CARD_KEYS.includes(id)) return;
+    if (Array.isArray(enabledPhaseKeys) && enabledPhaseKeys.length > 0 && !enabledPhaseKeys.includes(id)) {
+      setRailActiveId('dashboard');
+      setAppMode('dashboard');
+    }
+  }, [enabledPhaseKeys, railActiveId]);
+
   // Ny SharePoint-baserad projektmodal (CreateProjectModal)
   const {
     visible: createProjectVisible,
@@ -1493,6 +1548,65 @@ export default function HomeScreen({ navigation, route }) {
     closeModal: closeCreateProjectModal,
     handleCreateProject,
   } = useCreateSharePointProjectModal({ companyId });
+
+  // Redigera projekt (samma modal som skapa, men pre-fylld)
+  const [editProject, setEditProject] = useState(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const openEditProjectModal = useCallback((project) => {
+    if (project && (project.projectId || project.projectNumber)) {
+      setEditProject({
+        projectId: project.projectId || project.projectNumber,
+        projectNumber: project.projectNumber || project.projectId,
+        projectName: project.projectName || project.name || '',
+        sharePointSiteId: project.sharePointSiteId || project.siteId,
+        rootFolderPath: project.rootFolderPath || project.path || '',
+        phase: project.phase || DEFAULT_PHASE,
+      });
+    }
+  }, []);
+  const closeEditProjectModal = useCallback(() => {
+    setEditProject(null);
+    setIsSavingEdit(false);
+  }, []);
+  const handleEditProjectSave = useCallback(async (payload) => {
+    if (!companyId || !payload?.projectId) return;
+    setIsSavingEdit(true);
+    try {
+      const projectId = String(payload.projectId).trim();
+      const newNumber = String(payload.projectNumber || '').trim();
+      const newName = String(payload.projectName || '').trim();
+      const newRootPath = String(payload.rootFolderPath || payload.parentFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const siteId = String(payload.siteId || '').trim();
+      const oldRootPath = String(payload.initialRootFolderPath || payload.rootFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const newFolderName = formatSharePointProjectFolderName(newNumber, newName);
+      const oldFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
+      let finalRootPath = newRootPath;
+      if (siteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
+        try {
+          await renameDriveItemByPath(siteId, oldRootPath, newFolderName);
+          const parentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
+          finalRootPath = parentPath ? `${parentPath}/${newFolderName}` : newFolderName;
+        } catch (e) {
+          console.warn('[HomeScreen] Rename project folder after edit:', e?.message || e);
+        }
+      }
+      await patchCompanyProject(companyId, projectId, {
+        projectNumber: newNumber,
+        projectName: newName,
+        rootFolderPath: finalRootPath,
+      });
+      setHierarchyReloadKey((k) => k + 1);
+      setEditProject(null);
+    } catch (e) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(e?.message || 'Kunde inte spara projektet.');
+      } else {
+        Alert.alert('Fel', e?.message || 'Kunde inte spara projektet.');
+      }
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [companyId]);
 
   // Dashboard: centralised state and logic
   const {
@@ -1918,14 +2032,20 @@ export default function HomeScreen({ navigation, route }) {
         onClose={handleSimpleProjectSuccessClose}
       />
 
-      {/* Ny SharePoint-baserad "Skapa projekt"-modal för dashboard-knappen */}
+      {/* Ny SharePoint-baserad "Skapa projekt"-modal + redigera projekt (samma modal) */}
       <CreateProjectModal
-        visible={createProjectVisible}
-        onClose={closeCreateProjectModal}
+        visible={createProjectVisible || !!editProject}
+        onClose={() => {
+          if (editProject) closeEditProjectModal();
+          else closeCreateProjectModal();
+        }}
         availableSites={createProjectSites}
         onCreateProject={handleCreateProject}
+        onSave={editProject ? handleEditProjectSave : undefined}
         isCreating={isCreatingProject}
+        isSaving={isSavingEdit}
         companyId={companyId}
+        initialProject={editProject}
       />
       
       {(() => {
@@ -2012,6 +2132,7 @@ export default function HomeScreen({ navigation, route }) {
                         setAppMode('sharepoint');
                       }
                     }}
+                    enabledPhaseKeys={enabledPhaseKeys}
                     inactivePhaseIds={['produktion', 'avslut', 'eftermarknad']}
                     showSuperadmin={isSuperAdminResolved}
                     notificationsBadgeCount={notificationsUnreadCount || 0}
@@ -2204,6 +2325,7 @@ export default function HomeScreen({ navigation, route }) {
                     scrollToEndSafe={scrollToEndSafe}
                     createPortal={createPortal}
                     onOpenCreateProjectModal={openCreateProjectModal}
+                    onOpenEditProjectModal={openEditProjectModal}
                     onSelectProject={(projectData) => {
                       try {
                         if (!projectData || !projectData.id) {
@@ -2418,6 +2540,7 @@ export default function HomeScreen({ navigation, route }) {
                     companyProfile={companyProfile}
                     companyId={companyId}
                     routeCompanyId={routeCompanyId}
+                    enabledPhaseKeys={enabledPhaseKeys}
                     setNewProjectModal={setNewProjectModal}
                     scrollToEndSafe={scrollToEndSafe}
                     rightWidth={rightWidth}
@@ -2432,6 +2555,7 @@ export default function HomeScreen({ navigation, route }) {
                     setPhaseActiveNode={setPhaseActiveNode}
                     onPhaseHeaderLabels={onPhaseHeaderLabels}
                     onOpenCreateProjectModal={openCreateProjectModal}
+                    onOpenEditProjectModal={openEditProjectModal}
 
                     // AF-only explorer state shared with left panel
                     afRelativePath={afRelativePath}
@@ -2525,7 +2649,10 @@ export default function HomeScreen({ navigation, route }) {
                           setUserMenuVisible(false);
                           if (!it) return;
                           if (it.key === 'my_profile') {
-                            try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '').trim() }); } catch (_e) {}
+                            try {
+                              setMyProfileCompanyId(String(companyId || routeCompanyId || '').trim());
+                              setMyProfileModalVisible(true);
+                            } catch (_e) {}
                             return;
                           }
                           if (it.key === 'logout') {
@@ -2538,6 +2665,12 @@ export default function HomeScreen({ navigation, route }) {
                     portalRoot
                   );
                 })()}
+              <MyProfileModal
+                visible={myProfileModalVisible}
+                companyId={myProfileCompanyId}
+                onClose={() => setMyProfileModalVisible(false)}
+                onSaved={() => {}}
+              />
               </View>
             ) : (
               <View style={{ flex: 1, backgroundColor: 'transparent', minHeight: 0 }}>
@@ -2641,6 +2774,7 @@ export default function HomeScreen({ navigation, route }) {
               scrollToEndSafe={scrollToEndSafe}
               createPortal={createPortal}
               onOpenCreateProjectModal={openCreateProjectModal}
+              onOpenEditProjectModal={openEditProjectModal}
               onSelectProject={(projectData) => {
                 try {
                   if (!projectData || !projectData.id) {
@@ -2752,6 +2886,7 @@ export default function HomeScreen({ navigation, route }) {
               companyProfile={companyProfile}
               companyId={companyId}
               routeCompanyId={routeCompanyId}
+              enabledPhaseKeys={enabledPhaseKeys}
               setNewProjectModal={setNewProjectModal}
               scrollToEndSafe={scrollToEndSafe}
               rightWidth={rightWidth}
@@ -2764,6 +2899,7 @@ export default function HomeScreen({ navigation, route }) {
               setPhaseActiveItem={setPhaseActiveItem}
               setPhaseActiveNode={setPhaseActiveNode}
               onOpenCreateProjectModal={openCreateProjectModal}
+              onOpenEditProjectModal={openEditProjectModal}
 
               // AF-only explorer state shared with left panel
               afRelativePath={afRelativePath}

@@ -347,6 +347,15 @@ export function useCreateSharePointProjectModal({ companyId }) {
           if (phaseKey === 'kalkylskede') {
             await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
             try {
+              const { copyChecklistMallToProject } = await import('../lib/mallarDkBasService');
+              await copyChecklistMallToProject(companyId, siteId, projectPath);
+              // eslint-disable-next-line no-console
+              console.log('[useCreateSharePointProjectModal] Background: checklista Excel-mall kopierad till projekt');
+            } catch (excelErr) {
+              // eslint-disable-next-line no-console
+              console.warn('[useCreateSharePointProjectModal] Background: kopiera checklista-mall (Excel) till projekt:', excelErr?.message || excelErr);
+            }
+            try {
               await seedProjectChecklistFromTemplate(companyId, String(projectNumber), 'kalkylskede');
             } catch (checklistErr) {
               // eslint-disable-next-line no-console

@@ -7,6 +7,7 @@ import { showAlert } from '../../utils/alerts';
 import ContextMenu from '../ContextMenu';
 import HeaderDisplayName from '../HeaderDisplayName';
 import HeaderUserMenu from '../HeaderUserMenu';
+import MyProfileModal from './Modals/MyProfileModal';
 import { fetchCompanySharePointSiteMetas } from '../firebase';
 import { formatPersonName } from '../formatPersonName';
 import { AdminModalContext } from './AdminModalContext';
@@ -56,6 +57,8 @@ export function HomeHeader({
   const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [, setLoggingOut] = useState(false);
+  const [myProfileModalVisible, setMyProfileModalVisible] = useState(false);
+  const [myProfileCompanyId, setMyProfileCompanyId] = useState('');
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [leftHeaderWidth, setLeftHeaderWidth] = useState(0);
   const [rightHeaderWidth, setRightHeaderWidth] = useState(0);
@@ -218,7 +221,10 @@ export function HomeHeader({
                     setUserMenuVisible(false);
                     if (!it) return;
                     if (it.key === 'my_profile') {
-                      try { navigation.navigate('ManageUsers', { companyId: String(companyId || routeCompanyId || '') }); } catch(_e) {}
+                      try {
+                        setMyProfileCompanyId(String(companyId || routeCompanyId || ''));
+                        setMyProfileModalVisible(true);
+                      } catch (_e) {}
                       return;
                     }
                     if (it.key === 'logout') {
@@ -235,6 +241,12 @@ export function HomeHeader({
                     }
                   } catch(_e) {}
                 }}
+              />
+              <MyProfileModal
+                visible={myProfileModalVisible}
+                companyId={myProfileCompanyId}
+                onClose={() => setMyProfileModalVisible(false)}
+                onSaved={() => {}}
               />
             </>
           );

@@ -55,6 +55,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
   const [kebabPosition, setKebabPosition] = useState({ x: 0, y: 0 });
   const [renameSiteId, setRenameSiteId] = useState('');
   const [renameDraft, setRenameDraft] = useState('');
+  const [ensuringStructure, setEnsuringStructure] = useState(false);
   const kebabRefs = useRef({});
 
   const reload = useCallback(async (silent = true) => {
@@ -107,6 +108,16 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     const bn = String(b?.siteName || b?.siteUrl || '').toLowerCase();
     return an.localeCompare(bn, undefined, { sensitivity: 'base' });
   });
+
+  // DK Bas för knappen: använd systemSiteId om satt, annars första site med role system ELLER namn som innehåller "DK Bas"
+  const dkBasSiteId = systemSiteId || (() => {
+    const m = metas.find(
+      (x) =>
+        normalizeRoleLabel(x?.role) === 'system' ||
+        /dk\s*bas/i.test(String(x?.siteName || x?.siteUrl || ''))
+    );
+    return m ? String(m.siteId || m.id || '').trim() || null : null;
+  })();
 
   const buildEntries = useCallback(() => {
     const byId = new Map();
@@ -251,6 +262,42 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     setKebabSiteId(null);
   }, [cid, reload]);
 
+  const handleEnsureDkBasStructure = useCallback(async () => {
+    if (!cid) return;
+    if (!dkBasSiteId) {
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert(
+          'Ingen DK Bas-site kopplad.\n\n' +
+          'Mappstrukturen ska endast skapas i DK Bas, inte i DK Site (projekt-site). ' +
+          'Lägg till en SharePoint-site med namn som innehåller "DK Bas" eller sätt roll till system under listan ovan.'
+        );
+      }
+      return;
+    }
+    setEnsuringStructure(true);
+    try {
+      const { ensureCompanySiteStructure } = await import('../services/azure/siteService');
+      await ensureCompanySiteStructure(dkBasSiteId, cid, { siteRole: 'system' });
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert(
+          'Mappstrukturen skapad i DK Bas.\n\n' +
+          'Skapade mappar:\n' +
+          '• Company/{företag}/Logos och Company/{företag}/Users\n' +
+          '• Projects/Kalkylskede, Produktion, Avslut, Eftermarknad\n' +
+          '• Företagsmallar/01 - Kalkylskede, 02 - Produktion, 03 - Avslutat, 04 - Eftermarknad (med Arkiv under varje)'
+        );
+      }
+      setRefreshSpin((n) => n + 1);
+    } catch (e) {
+      console.error('[CompanySharePointContent] ensureCompanySiteStructure failed:', e);
+      if (typeof window !== 'undefined' && window.alert) {
+        window.alert('Kunde inte skapa mappstruktur: ' + (e?.message || String(e)));
+      }
+    } finally {
+      setEnsuringStructure(false);
+    }
+  }, [cid, dkBasSiteId]);
+
   const handleRenameSave = useCallback(async () => {
     if (!cid || !renameSiteId || !renameDraft.trim()) {
       setRenameSiteId('');
@@ -352,6 +399,46 @@ export default function CompanySharePointContent({ companyId, companyName }) {
             <Ionicons name="refresh" size={18} color="#475569" style={Platform.OS === 'web' ? { transform: `rotate(${refreshSpin * 360}deg)`, transition: 'transform 0.3s ease' } : {}} />
           </TouchableOpacity>
         </View>
+      </View>
+
+      <View
+        style={{
+          marginBottom: 16,
+          padding: 12,
+          backgroundColor: '#f8fafc',
+          borderWidth: 1,
+          borderColor: '#e2e8f0',
+          borderRadius: 8,
+        }}
+      >
+        <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 4 }}>DK Bas-mappstruktur</Text>
+        <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 18 }}>
+          {'Skapar standardmappar endast i DK Bas (inte i DK Site): Company/[företag]/Logos och Users, Projects (Kalkylskede, Produktion, Avslut, Eftermarknad), Företagsmallar (01–04 med Arkiv under varje). Kräver att en site är kopplad som DK Bas ovan.'}
+        </Text>
+        <TouchableOpacity
+          onPress={handleEnsureDkBasStructure}
+          disabled={ensuringStructure || loading || !dkBasSiteId}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            alignSelf: 'flex-start',
+            gap: 6,
+            paddingVertical: 8,
+            paddingHorizontal: 14,
+            borderRadius: 8,
+            backgroundColor: (ensuringStructure || loading || !dkBasSiteId) ? '#e2e8f0' : '#1e293b',
+            ...(Platform.OS === 'web' ? { cursor: (ensuringStructure || loading || !dkBasSiteId) ? 'not-allowed' : 'pointer' } : {}),
+          }}
+        >
+          {ensuringStructure ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="folder-open-outline" size={18} color="#fff" />
+          )}
+          <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>
+            {ensuringStructure ? 'Skapar mappar…' : 'Skapa mappstruktur i DK Bas'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>

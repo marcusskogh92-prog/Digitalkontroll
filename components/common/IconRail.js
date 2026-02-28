@@ -47,6 +47,18 @@ const RAIL_NAV_ITEMS = [
 const SUPERADMIN_RAIL_ITEM = { id: 'superadmin', icon: 'person-outline', label: 'Superadmin' };
 const SUPERADMIN_SHIELD_GREEN = '#22c55e';
 
+const PHASE_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad'];
+function filterRailItemsByEnabledPhases(items, enabledPhaseKeys) {
+  if (!Array.isArray(items)) return items;
+  const allowAll = !enabledPhaseKeys || enabledPhaseKeys.length === 0;
+  const set = allowAll ? null : new Set(enabledPhaseKeys.map((k) => String(k).trim()).filter(Boolean));
+  return items.filter((item) => {
+    if (item.type === 'divider') return true;
+    if (!PHASE_IDS.includes(item.id)) return true;
+    return allowAll || (set && set.has(item.id));
+  });
+}
+
 const styles = StyleSheet.create({
   rail: {
     width: ICON_RAIL.width,
@@ -188,6 +200,8 @@ export function IconRail({
   userPhotoURL,
   onUserPress,
   showSuperadmin = false,
+  /** Aktiva moduler för företaget – fas-ikoner som inte finns här visas inte i railen. */
+  enabledPhaseKeys,
   /** Fas-ids som ännu inte är aktiva – visas dimmade med rött kryss, klick visar info-modal. */
   inactivePhaseIds = [],
 }) {
@@ -209,10 +223,10 @@ export function IconRail({
 
   const expandedWidth = ICON_RAIL.widthExpanded ?? 200;
 
-  const railNavItems = React.useMemo(
-    () => (showSuperadmin ? [...RAIL_NAV_ITEMS, SUPERADMIN_RAIL_ITEM] : RAIL_NAV_ITEMS),
-    [showSuperadmin]
-  );
+  const railNavItems = React.useMemo(() => {
+    const filtered = filterRailItemsByEnabledPhases(RAIL_NAV_ITEMS, enabledPhaseKeys);
+    return showSuperadmin ? [...filtered, SUPERADMIN_RAIL_ITEM] : filtered;
+  }, [showSuperadmin, enabledPhaseKeys]);
 
   const getScaleAnim = (id) => {
     if (!scaleAnims[id]) scaleAnims[id] = new Animated.Value(1);

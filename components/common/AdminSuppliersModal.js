@@ -240,14 +240,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   footerBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
-  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminSuppliersModal({ visible, companyId, onClose }) {
@@ -1396,10 +1396,10 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
             <Text style={{ fontSize: 18, fontWeight: '600', color: '#0f172a', marginBottom: 8 }}>Osparade ändringar</Text>
             <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>Vill du spara ändringarna innan du stänger?</Text>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-              <TouchableOpacity onPress={() => setAddModalUnsavedVisible(false)} style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, backgroundColor: '#f1f5f9' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+              <TouchableOpacity onPress={() => setAddModalUnsavedVisible(false)} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#f1f5f9' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a' }}>Fortsätt redigera</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setAddModalUnsavedVisible(false); closeAddModal(); }} style={{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
+              <TouchableOpacity onPress={() => { setAddModalUnsavedVisible(false); closeAddModal(); }} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Kasta ändringar</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -1407,7 +1407,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                   setAddModalUnsavedVisible(false);
                   addFormSubmitRef.current?.submit?.();
                 }}
-                style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 6, backgroundColor: '#475569' }}
+                style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569' }}
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>

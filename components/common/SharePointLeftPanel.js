@@ -10,8 +10,9 @@ import { filterHierarchyByConfig } from '../../utils/filterSharePointHierarchy';
 import { extractProjectMetadata, isProjectFolder } from '../../utils/isProjectFolder';
 import { stripNumberPrefixForDisplay } from '../../utils/labelUtils';
 import ContextMenu from '../ContextMenu';
-import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
+import { archiveCompanyProject, auth, deleteFolderCallable, deleteProjectCallable, fetchSharePointProjectMetadataMap, getCompanySharePointSiteIdByRole, getCompanyVisibleSharePointSiteIds, getProjectPresenceOtherUserIds, getSharePointNavigationConfig, isLockedKalkylskedeSharePointFolderPath, normalizeSharePointPath, patchCompanyProject, subscribeCompanyProjects, syncSharePointSiteVisibilityRemote, upsertCompanyProject } from '../firebase';
 import { LeftPanelProjectSearch } from '../HeaderComponents';
+import { useBackgroundTasks } from '../../contexts/BackgroundTasksContext';
 import { SIDEBAR_BG } from './layoutConstants';
 import { AnimatedChevron, MicroPulse, MicroShake } from './leftNavMicroAnimations';
 import { ConfirmModal } from './Modals';
@@ -126,7 +127,7 @@ function RecursiveFolderView({
     (folder?.phase && String(folder.phase).trim()) ||
     (fallbackPhaseKey && fallbackPhaseKey !== 'all' ? String(fallbackPhaseKey).trim() : null) ||
     DEFAULT_PHASE;
-  const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#43A047';
+  const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#1976D2';
   
   const handlePress = () => {
     try {
@@ -454,6 +455,7 @@ export function SharePointLeftPanel({
   createPortal,
   onSelectProject, // Optional callback for project selection (from HomeScreen)
   onOpenCreateProjectModal, // Optional: open create-project modal (e.g. from phase header plus)
+  onOpenEditProjectModal, // Optional: open edit-project modal with project data (from phase list right-click Ändra)
   onOpenPhaseItem, // Optional callback to open a phase navigation item
   phaseActiveSection = null,
   phaseActiveItem = null,
@@ -539,6 +541,9 @@ export function SharePointLeftPanel({
   const contentPendingRef = useRef(new Set()); // path
   const projectBackfillRef = useRef(new Set()); // key: companyId|siteId|projectNumber
   const projectSelfHealCacheRef = useRef(new Map()); // key: siteId|path -> { checkedAtMs, exists }
+  const pendingDeleteProjectIdsRef = useRef(new Set()); // projectId – filtreras bort från subscription tills radering är klar
+  const deleteQueueRef = useRef([]); // { projectId, siteIdForFolder, folderPathForDelete } – kö för att radera en i taget
+  const deleteInProgressRef = useRef(false);
   const kalkylStructureSelfHealCacheRef = useRef(new Map()); // key: siteId|rootPath -> { checkedAtMs }
   const projectStructureSelfHealCacheRef = useRef(new Map()); // key: siteId|rootPath -> { checkedAtMs }
   const [sharepointSyncState, setSharepointSyncState] = useState('idle');
@@ -719,6 +724,21 @@ export function SharePointLeftPanel({
     setDeleteConfirm({ visible: false, kind: null, busy: false, error: '', target: null });
   }, []);
 
+  // När radera-projekt-modalen öppnas: hämta andra användare som har projektet öppet (närvaro).
+  useEffect(() => {
+    if (!deleteConfirm?.visible || deleteConfirm?.kind !== 'project') return;
+    const projectId = String(deleteConfirm?.target?.projectId || '').trim();
+    const cid = String(companyId || '').trim();
+    const uid = auth?.currentUser?.uid ?? null;
+    if (!projectId || !cid) return;
+    let cancelled = false;
+    getProjectPresenceOtherUserIds(cid, projectId, uid).then((otherIds) => {
+      if (cancelled) return;
+      setDeleteConfirm((cur) => (cur?.visible && cur?.kind === 'project' ? { ...cur, otherUsersInProject: Array.isArray(otherIds) ? otherIds : [] } : cur));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [deleteConfirm?.visible, deleteConfirm?.kind, deleteConfirm?.target?.projectId, companyId, auth?.currentUser?.uid]);
+
   const closeArchiveConfirm = useCallback(() => {
     setArchiveConfirm((cur) => {
       if (cur?.busy) return cur;
@@ -766,32 +786,111 @@ export function SharePointLeftPanel({
     : 'Detta raderar projektet permanent, inklusive alla dokument, AI-analyser och historik.\nÅtgärden kan inte ångras.';
   const deleteConfirmLabel = deleteConfirm?.kind === 'folder' ? 'Radera mapp' : 'Radera projekt';
 
+  const deleteTargetProjectId = deleteConfirm?.kind === 'project' ? String(deleteConfirm?.target?.projectId || '').trim() : '';
+  const activeProjectId = selectedProject ? String(selectedProject?.id || selectedProject?.projectId || selectedProject?.projectNumber || '').trim() : '';
+  const isDeletingActiveProject = !!deleteTargetProjectId && !!activeProjectId && deleteTargetProjectId === activeProjectId;
+  const deleteConfirmBlockedByOthers = (deleteConfirm?.otherUsersInProject?.length || 0) > 0;
+  const deleteConfirmWarningText = deleteConfirmBlockedByOthers
+    ? (deleteConfirm.otherUsersInProject.length === 1
+        ? 'Det går inte att radera detta projekt – en annan användare har det öppet och jobbar i det just nu.'
+        : `Det går inte att radera detta projekt – ${deleteConfirm.otherUsersInProject.length} användare har det öppet och jobbar i det just nu.`)
+    : [
+        isDeletingActiveProject ? 'Du håller på att radera ett projekt som du har öppet. Vill du verkligen radera?' : null,
+      ].filter(Boolean).join('\n\n') || '';
+
   const getCallableUiErrorMessage = (err) => {
     try {
       if (!err) return '';
 
       const msg = typeof err?.message === 'string' ? err.message.trim() : '';
-      if (msg) return msg;
+      const code = typeof err?.code === 'string' ? err.code.trim() : '';
+
+      if (msg && msg.toLowerCase() !== 'internal') return msg;
 
       const details = err?.details;
       if (typeof details === 'string' && details.trim()) return details.trim();
       if (details && typeof details === 'object') {
         const dm = typeof details?.message === 'string' ? details.message.trim() : '';
-        if (dm) return dm;
+        if (dm && dm.toLowerCase() !== 'internal') return dm;
         try {
           const asJson = JSON.stringify(details);
           if (asJson && asJson !== '{}' && asJson !== 'null') return asJson;
         } catch (_e) {}
       }
+
+      if (code === 'internal' || (msg && msg.toLowerCase() === 'internal')) {
+        return 'Ett serverfel inträffade. Projektet kan redan vara borttaget från SharePoint – ladda om sidan för att uppdatera listan. Om felet kvarstår: kontrollera att Firebase-funktioner är deployade (firebase deploy --only functions) och att SharePoint är konfigurerat.';
+      }
     } catch (_e) {}
     return '';
   };
+
+  const { addTask, removeTask } = useBackgroundTasks();
+
+  const processDeleteQueue = useCallback(() => {
+    if (deleteInProgressRef.current) return;
+    const queue = deleteQueueRef.current;
+    if (!queue.length) {
+      removeTask('delete-projects');
+      return;
+    }
+    const job = queue.shift();
+    if (!job) return;
+    const { projectId, siteIdForFolder, folderPathForDelete } = job;
+    deleteInProgressRef.current = true;
+    const remaining = queue.length;
+    addTask('delete-projects', 'Raderar projekt', remaining > 0 ? `${remaining + 1} i kö` : 'Raderar…');
+
+    const removeFromPending = () => {
+      pendingDeleteProjectIdsRef.current.delete(projectId);
+    };
+
+    deleteProjectCallable({ companyId, projectId })
+      .then(async (res) => {
+        const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
+        const projectOk = data && typeof data === 'object' && String(data.status) === 'success';
+        if (!projectOk) {
+          removeFromPending();
+          showToast('Radering misslyckades. Ladda om sidan för att se aktuell status.', 6000);
+          try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+          return;
+        }
+        if (siteIdForFolder && folderPathForDelete) {
+          try {
+            await deleteFolderCallable({ companyId, siteId: siteIdForFolder, folderPath: folderPathForDelete });
+          } catch (e) {
+            console.warn('[SharePointLeftPanel] deleteFolderCallable after project delete:', e?.message || e);
+          }
+        }
+        removeFromPending();
+        showToast('Projektet har raderats.');
+        try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+      })
+      .catch((e) => {
+        removeFromPending();
+        const msg = getCallableUiErrorMessage(e) || 'Projektet kunde inte raderas.';
+        showToast(msg, 7000);
+        try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+      })
+      .finally(() => {
+        deleteInProgressRef.current = false;
+        const left = deleteQueueRef.current.length;
+        if (left > 0) {
+          addTask('delete-projects', 'Raderar projekt', `${left} i kö`);
+          processDeleteQueue();
+        } else {
+          removeTask('delete-projects');
+        }
+      });
+  }, [companyId, onPressRefresh, addTask, removeTask]);
 
   const runDeleteConfirmed = async () => {
     const kind = String(deleteConfirm?.kind || '').trim();
     const t = deleteConfirm?.target || null;
     if (!companyId || !kind || !t) return;
     if (!canArchiveProjects) return;
+
+    if (kind === 'project' && (deleteConfirm?.otherUsersInProject?.length || 0) > 0) return;
 
     // Validate required fields before closing the modal.
     // After this point, we close immediately and run the backend delete in the background.
@@ -816,17 +915,14 @@ export function SharePointLeftPanel({
       }
     }
 
-    // Close immediately to avoid “frozen” UI while waiting for SharePoint/Graph.
-    forceCloseDeleteConfirm();
-    showToast(kind === 'project'
-      ? 'Projektet raderas. Detta kan ta upp till 1 minut.'
-      : 'Mappen raderas. Detta kan ta upp till 1 minut.', 5200);
-
     try {
       if (kind === 'project') {
         const projectId = String(t?.projectId || '').trim();
+        const siteIdForFolder = String(t?.siteId || '').trim();
+        const folderPathForDelete = normalizeSharePointPath(t?.folderPath || '');
 
-        // Optimistic UI updates (best-effort)
+        pendingDeleteProjectIdsRef.current.add(projectId);
+        forceCloseDeleteConfirm();
         try {
           setFirestoreProjects((prev) => {
             const list = Array.isArray(prev) ? prev : [];
@@ -836,33 +932,20 @@ export function SharePointLeftPanel({
             });
           });
         } catch (_e) {}
-
         try {
-          const siteId = String(t?.siteId || '').trim();
-          const folderPath = normalizeSharePointPath(t?.folderPath || '');
-          if (siteId && folderPath) removeFolderFromFilteredHierarchy(siteId, folderPath);
+          if (siteIdForFolder && folderPathForDelete) removeFolderFromFilteredHierarchy(siteIdForFolder, folderPathForDelete);
         } catch (_e) {}
-
         ensureHomeAfterDeleteIfNeeded({ projectId });
-
-        // Run backend deletion in background (do not block UI).
-        deleteProjectCallable({ companyId, projectId })
-          .then((res) => {
-            try {
-              const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
-              if (data && typeof data === 'object' && data.status && String(data.status) !== 'success') {
-                showToast('Radering misslyckades. Ladda om och försök igen.', 6000);
-                try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
-              }
-            } catch (_e) {}
-          })
-          .catch((e) => {
-            const backendMsg = getCallableUiErrorMessage(e);
-            const nice = backendMsg || 'Projektet kunde inte raderas. Ladda om och försök igen.';
-            showToast(nice, 7000);
-            try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
-          });
-
+        const queue = deleteQueueRef.current;
+        const wasEmpty = queue.length === 0;
+        queue.push({ projectId, siteIdForFolder, folderPathForDelete });
+        addTask('delete-projects', 'Raderar projekt', queue.length === 1 ? 'Raderar…' : `${queue.length} i kö`);
+        if (wasEmpty) {
+          showToast('Projektet raderas i bakgrunden. Detta kan ta upp till en minut.', 5000);
+        } else {
+          showToast(`Projekt raderas en i taget i bakgrunden (${queue.length} i kö).`, 4000);
+        }
+        processDeleteQueue();
         return;
       }
 
@@ -871,28 +954,28 @@ export function SharePointLeftPanel({
         const folderPath = normalizeSharePointPath(t?.folderPath || '');
         const folderId = String(t?.folderId || t?.driveItemId || '').trim();
 
-        // Optimistic UI: hide folder immediately.
+        try {
+          const res = await deleteFolderCallable({ companyId, siteId, folderPath, ...(folderId ? { folderId } : {}) });
+          const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
+          if (!data || typeof data !== 'object' || String(data.status) !== 'success') {
+            setDeleteConfirm((cur) => ({ ...(cur || {}), busy: false, error: 'Radering misslyckades.' }));
+            showToast('Radering misslyckades. Ladda om och försök igen.', 6000);
+            try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+            return;
+          }
+        } catch (e) {
+          const msg = getCallableUiErrorMessage(e) || 'Mappen kunde inte raderas.';
+          setDeleteConfirm((cur) => ({ ...(cur || {}), busy: false, error: msg }));
+          showToast(msg, 7000);
+          try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
+          return;
+        }
+
+        forceCloseDeleteConfirm();
         try { removeFolderFromFilteredHierarchy(siteId, folderPath); } catch (_e) {}
         ensureHomeAfterDeleteIfNeeded(null, { siteId, folderPath });
-
-        // Run backend deletion in background (do not block UI).
-        deleteFolderCallable({ companyId, siteId, folderPath, ...(folderId ? { folderId } : {}) })
-          .then((res) => {
-            try {
-              const data = (res && typeof res === 'object' && Object.prototype.hasOwnProperty.call(res, 'data')) ? res.data : res;
-              if (data && typeof data === 'object' && data.status && String(data.status) !== 'success') {
-                showToast('Radering misslyckades. Ladda om och försök igen.', 6000);
-                try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
-              }
-            } catch (_e) {}
-          })
-          .catch((e) => {
-            const backendMsg = getCallableUiErrorMessage(e);
-            const nice = backendMsg || 'Mappen kunde inte raderas. Ladda om och försök igen.';
-            showToast(nice, 7000);
-            try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
-          });
-
+        showToast('Mappen har raderats.');
+        try { if (typeof onPressRefresh === 'function') onPressRefresh(); } catch (_e) {}
         return;
       }
     } catch (e) {
@@ -977,8 +1060,8 @@ export function SharePointLeftPanel({
     const y = Number(ne.clientY ?? ne.pageY ?? 0) || 0;
 
     setProjectContextMenuItems([
-      { key: 'delete-project', label: 'Radera projekt', iconName: 'trash-outline', danger: true },
-      { key: 'archive-project', label: 'Arkivera projekt', iconName: 'archive-outline' },
+      { key: 'edit-project', label: 'Ändra', iconName: 'pencil-outline' },
+      { key: 'delete-project', label: 'Ta bort', iconName: 'trash-outline', danger: true },
     ]);
     setProjectContextMenu({ visible: true, x, y, target: target || null });
   };
@@ -986,7 +1069,7 @@ export function SharePointLeftPanel({
   // SharePoint folder management (DK Site / role === "projects" only)
   const [spContextMenu, setSpContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
   const [spContextMenuItems, setSpContextMenuItems] = useState([]);
-  const [spActionModal, setSpActionModal] = useState({ visible: false, kind: null, title: '', siteId: null, itemId: null, itemPath: '', basePath: '' });
+  const [spActionModal, setSpActionModal] = useState({ visible: false, kind: null, title: '', siteId: null, itemId: null, itemPath: '', basePath: '', isProjectFolder: false });
   const [spActionValue, setSpActionValue] = useState('');
   const [spActionBusy, setSpActionBusy] = useState(false);
 
@@ -1043,7 +1126,8 @@ export function SharePointLeftPanel({
     const isSite = type === 'site';
     const siteId = String(t?.siteId || t?.id || '').trim();
     const folderPath = isFolder ? normalizeSharePointPath(t?.path || '') : '';
-    const lockCtx = isFolder ? getSpLockedContext(siteId, folderPath) : null;
+    const isProject = isFolder && isProjectFolder(t);
+    const lockCtx = isFolder && !isProject ? getSpLockedContext(siteId, folderPath) : null;
 
     // Only allow folder management for project sites (this panel only renders those).
     const items = [];
@@ -1052,14 +1136,23 @@ export function SharePointLeftPanel({
     }
     if (isFolder) {
       items.push({ key: 'sp-create-child', label: 'Skapa undermapp', iconName: 'add-circle-outline' });
-      // Locked system folders: allow only creating extra subfolders (no rename/move/delete).
-      if (!lockCtx) {
+      if (isProject) {
+        // Projekt: alltid Byt namn, Flytta, Ta bort (ingen lock för projektrot).
         items.push({ key: 'sp-rename', label: 'Byt namn', iconName: 'pencil-outline' });
         items.push({ key: 'sp-move', label: 'Flytta…', iconName: 'arrow-forward-outline' });
         if (canArchiveProjects) {
-          items.push({ key: 'sp-delete', label: 'Radera mapp', iconName: 'trash-outline', danger: true });
+          items.push({ key: 'sp-delete', label: 'Ta bort', iconName: 'trash-outline', danger: true });
         }
-        items.push({ key: 'sp-archive', label: 'Arkivera', iconName: 'archive-outline', danger: true });
+      } else {
+        // Vanlig mapp: låsta systemmappar får bara Skapa undermapp.
+        if (!lockCtx) {
+          items.push({ key: 'sp-rename', label: 'Byt namn', iconName: 'pencil-outline' });
+          items.push({ key: 'sp-move', label: 'Flytta…', iconName: 'arrow-forward-outline' });
+          if (canArchiveProjects) {
+            items.push({ key: 'sp-delete', label: 'Radera mapp', iconName: 'trash-outline', danger: true });
+          }
+          items.push({ key: 'sp-archive', label: 'Arkivera', iconName: 'archive-outline', danger: true });
+        }
       }
     }
 
@@ -1069,7 +1162,7 @@ export function SharePointLeftPanel({
 
   const closeSpActionModal = () => {
     if (spActionBusy) return;
-    setSpActionModal({ visible: false, kind: null, title: '', siteId: null, itemId: null, itemPath: '', basePath: '' });
+    setSpActionModal({ visible: false, kind: null, title: '', siteId: null, itemId: null, itemPath: '', basePath: '', isProjectFolder: false });
     setSpActionValue('');
   };
 
@@ -1336,7 +1429,8 @@ export function SharePointLeftPanel({
 
     setSpActionBusy(true);
     try {
-      const lockCtx = (kind === 'rename' || kind === 'move' || kind === 'delete')
+      const isProjectFolderAction = !!spActionModal?.isProjectFolder;
+      const lockCtx = !isProjectFolderAction && (kind === 'rename' || kind === 'move' || kind === 'delete')
         ? getSpLockedContext(siteId, itemPath)
         : null;
       if (lockCtx && (kind === 'rename' || kind === 'move' || kind === 'delete')) {
@@ -1380,12 +1474,28 @@ export function SharePointLeftPanel({
         if (itemId) {
           await renameDriveItemByIdGuarded({ siteId, itemId, newName: value, projectRootPath: null, itemPath });
         } else {
-          // Fallback to resolving by path
           const item = await getDriveItemByPath(siteId, itemPath);
           await renameDriveItemByIdGuarded({ siteId, itemId: item?.id, newName: value, projectRootPath: null, itemPath });
         }
+        if (isProjectFolderAction && companyId) {
+          const projects = Array.isArray(firestoreProjects) ? firestoreProjects : [];
+          const normPath = normalizeSharePointPath(itemPath);
+          const match = projects.find((p) => {
+            const psid = String(p?.sharePointSiteId || '').trim();
+            const root = normalizeSharePointPath(p?.rootFolderPath || p?.path || '');
+            return psid === siteId && root === normPath;
+          });
+          if (match) {
+            const projectId = String(match?.id || match?.projectId || match?.projectNumber || '').trim();
+            const pathParts = itemPath.split('/').filter(Boolean);
+            pathParts.pop();
+            const newRootPath = pathParts.length ? `${pathParts.join('/')}/${value}`.replace(/^\/+/, '').replace(/\/+$/, '') : value.replace(/^\/+/, '').replace(/\/+$/, '');
+            const nameParts = value.trim().split(/\s+/);
+            const projectName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : value.trim();
+            await patchCompanyProject(companyId, projectId, { rootFolderPath: newRootPath, projectName: projectName || value.trim() });
+          }
+        }
       } else if (kind === 'move') {
-        // value = new parent path (relative). Empty string means root.
         const parentItem = await getDriveItemByPath(siteId, value);
         const parentId = parentItem?.id;
         if (!parentId) throw new Error('Kunde inte hitta målmapp');
@@ -1395,6 +1505,21 @@ export function SharePointLeftPanel({
         } else {
           const item = await getDriveItemByPath(siteId, itemPath);
           await moveDriveItemByIdGuarded({ siteId, itemId: item?.id, newParentItemId: parentId, projectRootPath: null, itemPath });
+        }
+        if (isProjectFolderAction && companyId) {
+          const projects = Array.isArray(firestoreProjects) ? firestoreProjects : [];
+          const normPath = normalizeSharePointPath(itemPath);
+          const match = projects.find((p) => {
+            const psid = String(p?.sharePointSiteId || '').trim();
+            const root = normalizeSharePointPath(p?.rootFolderPath || p?.path || '');
+            return psid === siteId && root === normPath;
+          });
+          if (match) {
+            const projectId = String(match?.id || match?.projectId || match?.projectNumber || '').trim();
+            const folderName = itemPath.split('/').filter(Boolean).pop() || '';
+            const newRootPath = value ? `${value.replace(/\/+$/, '')}/${folderName}`.replace(/^\/+/, '').trim() : folderName;
+            await patchCompanyProject(companyId, projectId, { rootFolderPath: newRootPath });
+          }
         }
       }
 
@@ -1424,19 +1549,38 @@ export function SharePointLeftPanel({
           const siteId = String(t?.siteId || t?.id || '').trim();
           const folderPath = isFolder ? normalizeSharePointPath(t?.path || '') : '';
           const folderId = String(t?.driveItemId || t?.itemId || '').trim();
-          const lockCtx = isFolder ? getSpLockedContext(siteId, folderPath) : null;
+          const isProject = isFolder && isProjectFolder(t);
 
           if (!canArchiveProjects) return;
           if (!isFolder || !siteId || !folderPath) return;
-          if (lockCtx) return;
 
-          setDeleteConfirm({
-            visible: true,
-            kind: 'folder',
-            busy: false,
-            error: '',
-            target: { siteId, folderPath, folderId },
-          });
+          if (isProject) {
+            const projects = Array.isArray(firestoreProjects) ? firestoreProjects : [];
+            const normPath = normalizeSharePointPath(folderPath);
+            const match = projects.find((p) => {
+              const psid = String(p?.sharePointSiteId || '').trim();
+              const root = normalizeSharePointPath(p?.rootFolderPath || p?.path || '');
+              return psid === siteId && root === normPath;
+            });
+            const projectId = match ? String(match?.id || match?.projectId || match?.projectNumber || '').trim() : '';
+            setDeleteConfirm({
+              visible: true,
+              kind: 'project',
+              busy: false,
+              error: projectId ? '' : 'Projekt hittades inte i listan. Ladda om och försök igen.',
+              target: { projectId, siteId, folderPath, folderId },
+            });
+          } else {
+            const lockCtx = getSpLockedContext(siteId, folderPath);
+            if (lockCtx) return;
+            setDeleteConfirm({
+              visible: true,
+              kind: 'folder',
+              busy: false,
+              error: '',
+              target: { siteId, folderPath, folderId },
+            });
+          }
           return;
         }
     const target = spContextMenu?.target;
@@ -1462,8 +1606,9 @@ export function SharePointLeftPanel({
       setSpActionModal({ visible: true, kind: 'create', title: `Skapa undermapp i ${String(target?.name || '').trim() || 'mapp'}`, siteId, itemId: null, itemPath: folderPath, basePath: folderPath });
       return;
     }
+    const isProject = isProjectFolder(target);
     if (key === 'sp-rename') {
-      if (lockCtx) {
+      if (!isProject && lockCtx) {
         const msg = 'Denna systemmapp är låst och kan inte bytas namn på.';
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           try { window.alert(msg); } catch (_e) {}
@@ -1473,11 +1618,11 @@ export function SharePointLeftPanel({
         return;
       }
       setSpActionValue(String(target?.name || '').trim());
-      setSpActionModal({ visible: true, kind: 'rename', title: 'Byt namn', siteId, itemId: driveItemId || null, itemPath: folderPath, basePath: '' });
+      setSpActionModal({ visible: true, kind: 'rename', title: isProject ? 'Byt namn på projekt' : 'Byt namn', siteId, itemId: driveItemId || null, itemPath: folderPath, basePath: '', isProjectFolder: isProject });
       return;
     }
     if (key === 'sp-move') {
-      if (lockCtx) {
+      if (!isProject && lockCtx) {
         const msg = 'Denna systemmapp är låst och kan inte flyttas.';
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           try { window.alert(msg); } catch (_e) {}
@@ -1487,7 +1632,7 @@ export function SharePointLeftPanel({
         return;
       }
       setSpActionValue('');
-      setSpActionModal({ visible: true, kind: 'move', title: 'Flytta till (ange målmappens sökväg)', siteId, itemId: driveItemId || null, itemPath: folderPath, basePath: '' });
+      setSpActionModal({ visible: true, kind: 'move', title: isProject ? 'Flytta projekt till (ange målmapp eller site)' : 'Flytta till (ange målmappens sökväg)', siteId, itemId: driveItemId || null, itemPath: folderPath, basePath: '', isProjectFolder: isProject });
       return;
     }
     if (key === 'sp-archive') {
@@ -1605,6 +1750,15 @@ export function SharePointLeftPanel({
     if (!canArchiveProjects) return;
     if (!companyId || !pid) return;
 
+    if (key === 'edit-project') {
+      try {
+        if (typeof onOpenEditProjectModal === 'function') {
+          onOpenEditProjectModal(target);
+        }
+      } catch (_e) {}
+      return;
+    }
+
     if (key === 'delete-project') {
       const siteId = String(target?.sharePointSiteId || '').trim();
       const folderPath = normalizeSharePointPath(target?.rootFolderPath || target?.path || '');
@@ -1618,10 +1772,6 @@ export function SharePointLeftPanel({
       });
       return;
     }
-
-    if (key !== 'archive-project') return;
-
-    setArchiveConfirm({ visible: true, busy: false, error: '', target: { projectId: pid } });
   };
 
   useEffect(() => {
@@ -1713,7 +1863,15 @@ export function SharePointLeftPanel({
       companyId,
       { siteRole: 'projects' },
       (projects) => {
-        setFirestoreProjects(Array.isArray(projects) ? projects : []);
+        const pending = pendingDeleteProjectIdsRef.current;
+        const list = Array.isArray(projects) ? projects : [];
+        const filtered = pending.size > 0
+          ? list.filter((p) => {
+              const id = String(p?.id || p?.projectId || p?.projectNumber || '').trim();
+              return !id || !pending.has(id);
+            })
+          : list;
+        setFirestoreProjects(filtered);
         setProjectsLoading(false);
       },
       (err) => {
@@ -2992,7 +3150,7 @@ export function SharePointLeftPanel({
                       const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
                       const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || DEFAULT_PHASE;
                       const phaseStatus = String(savedMeta?.status || (effectivePhaseKey === 'avslut' ? 'completed' : 'ongoing'));
-                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#43A047';
+                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#1976D2';
                       const rowKey = `${siteId || 'no-site'}|${number || p?.id || ''}`;
 
                       const onSelect = () => {
@@ -3280,7 +3438,7 @@ export function SharePointLeftPanel({
                       const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
                       const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || DEFAULT_PHASE;
                       const phaseStatus = String(savedMeta?.status || (effectivePhaseKey === 'avslut' ? 'completed' : 'ongoing'));
-                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#43A047';
+                      const indicatorColor = getPhaseConfig(effectivePhaseKey)?.color || '#1976D2';
                       const rowKey = `${siteId || 'no-site'}|${number || p?.id || ''}`;
 
                       const onSelect = () => {
@@ -3611,6 +3769,9 @@ export function SharePointLeftPanel({
           danger
           busy={!!deleteConfirm?.busy}
           error={deleteConfirm?.error || ''}
+          warningText={deleteConfirmWarningText || undefined}
+          confirmDisabled={deleteConfirmBlockedByOthers}
+          hideKeyboardHints
           onCancel={closeDeleteConfirm}
           onConfirm={runDeleteConfirmed}
         />

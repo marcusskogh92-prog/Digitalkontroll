@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 import { fetchCompanyProfile, getCompanyAIPrompt, getDefaultAIPrompt, setCompanyAIPrompt } from '../firebase';
 
 /** Fallback om Cloud Function inte svarar – samma innehåll som getDefaultFFUPromptForDisplay i functions. */
@@ -127,7 +128,7 @@ const styles = StyleSheet.create({
   },
   editBtnText: { fontSize: 14, fontWeight: '500', color: '#1976D2' },
   footer: { flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 12, paddingHorizontal: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', backgroundColor: '#f8fafc' },
-  footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
+  footerBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
 
   innerModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   innerModalBox: { width: '100%', maxWidth: 640, maxHeight: '90%', backgroundColor: '#fff', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: '#E2E8F0' },
@@ -141,8 +142,8 @@ const styles = StyleSheet.create({
   extraInstructionLabel: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8 },
   innerModalError: { fontSize: 13, color: '#dc2626', marginBottom: 12 },
   innerModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
-  innerModalBtnSecondary: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: '#E2E8F0' },
-  innerModalBtnPrimary: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: '#1976D2', minWidth: 100, alignItems: 'center' },
+  innerModalBtnSecondary: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#E2E8F0' },
+  innerModalBtnPrimary: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#1976D2', minWidth: 100, alignItems: 'center' },
   innerModalBtnDisabled: { opacity: 0.7 },
 });
 

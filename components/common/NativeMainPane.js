@@ -7,6 +7,7 @@ export default function NativeMainPane({
   rightPaneScrollRef,
   selectedProject,
   companyId,
+  enabledPhaseKeys,
   projectSelectedAction,
   handleInlineLockChange,
   phaseActiveSection,
@@ -107,6 +108,7 @@ export default function NativeMainPane({
       ) : (
         <View style={{ flex: 1, padding: 18 }}>
           <Dashboard
+            enabledPhaseKeys={enabledPhaseKeys}
             dashboardLoading={dashboardLoading}
             dashboardOverview={dashboardOverview}
             dashboardRecentProjects={dashboardRecentProjects}

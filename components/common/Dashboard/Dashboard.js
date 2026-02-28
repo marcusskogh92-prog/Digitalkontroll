@@ -9,6 +9,8 @@ import DashboardAllProjects from './DashboardAllProjects';
 
 const Dashboard = ({
   authClaims,
+  /** Aktiva moduler för företaget – endast dessa fas-kort visas på dashboarden. */
+  enabledPhaseKeys,
   // State
   dashboardLoading,
   dashboardOverview,
@@ -61,6 +63,7 @@ const Dashboard = ({
         <View style={{ marginBottom: 24 }}>
           <DashboardAllProjects
             hierarchy={hierarchy}
+            enabledPhaseKeys={enabledPhaseKeys}
             onProjectSelect={onProjectSelect}
             formatRelativeTime={formatRelativeTime}
             companyName={companyName}

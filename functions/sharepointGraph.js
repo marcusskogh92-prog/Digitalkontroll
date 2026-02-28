@@ -326,6 +326,48 @@ async function ensureDkBasStructureAdmin({ siteId, accessToken }) {
   }
 }
 
+/**
+ * Ensure DK Bas folder structure for a company (Company/, Projects/, Företagsmallar/).
+ * Called when a new company is provisioned so the base site has the expected folders.
+ * Safe to call multiple times – existing folders are skipped.
+ */
+async function ensureCompanyBaseSiteStructureAdmin({ siteId, companyId, accessToken }) {
+  const cid = String(companyId || '').trim();
+  if (!cid) throw new Error('companyId is required');
+  const sid = String(siteId || '').trim();
+  if (!sid) throw new Error('siteId is required');
+  if (!accessToken) throw new Error('accessToken is required');
+
+  const folders = [
+    'Company',
+    `Company/${cid}`,
+    `Company/${cid}/Logos`,
+    `Company/${cid}/Users`,
+    'Projects',
+    'Projects/Kalkylskede',
+    'Projects/Produktion',
+    'Projects/Avslut',
+    'Projects/Eftermarknad',
+    'Företagsmallar',
+    'Företagsmallar/01 - Kalkylskede',
+    'Företagsmallar/01 - Kalkylskede/Arkiv',
+    'Företagsmallar/02 - Produktion',
+    'Företagsmallar/02 - Produktion/Arkiv',
+    'Företagsmallar/03 - Avslutat',
+    'Företagsmallar/03 - Avslutat/Arkiv',
+    'Företagsmallar/04 - Eftermarknad',
+    'Företagsmallar/04 - Eftermarknad/Arkiv',
+  ];
+
+  for (const path of folders) {
+    try {
+      await ensureFolderPathAdmin({ siteId: sid, path, accessToken });
+    } catch (err) {
+      console.warn('[ensureCompanyBaseSiteStructureAdmin] Folder create failed:', path, err?.message || err);
+    }
+  }
+}
+
 module.exports = {
   encodeGraphPath,
   graphGetSiteByUrl,
@@ -341,4 +383,5 @@ module.exports = {
   deleteDriveTreeByIdAdmin,
   ensureFolderPathAdmin,
   ensureDkBasStructureAdmin,
+  ensureCompanyBaseSiteStructureAdmin,
 };

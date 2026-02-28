@@ -206,14 +206,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   footerBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
-  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
   footerBtnPrimary: {
     borderColor: ICON_RAIL.bg,
     backgroundColor: ICON_RAIL.bg,

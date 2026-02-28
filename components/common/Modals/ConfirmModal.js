@@ -26,6 +26,7 @@ const CONFIRM_MODAL = {
   paddingTop: 24,
   paddingHorizontal: 24,
   paddingBottom: 14,
+  paddingBottomNoHints: 12,
   overlay: 'rgba(0,0,0,0.35)',
   shadowColor: '#000',
   shadowOpacity: 0.12,
@@ -90,8 +91,12 @@ export default function ConfirmModal({
   busy = false,
   error = '',
   compact = false,
+  /** Dölj ESC/ENTER-hintar under knapparna och minska nedre padding */
+  hideKeyboardHints = false,
   /** Valfri varningsrad ovanför knapparna (t.ex. "Denna leverantör är kopplad till 3 kontakter.") */
   warningText = '',
+  /** Inaktivera bekräfta-knappen (t.ex. när radering blockeras pga andra användare) */
+  confirmDisabled = false,
   onCancel,
   onConfirm,
 }) {
@@ -106,11 +111,11 @@ export default function ConfirmModal({
   }, [busy, onCancel]);
 
   const handleConfirm = useCallback(() => {
-    if (busy) return;
+    if (busy || confirmDisabled) return;
     try {
       onConfirm?.();
     } catch (_e) {}
-  }, [busy, onConfirm]);
+  }, [busy, confirmDisabled, onConfirm]);
 
   // ESC = Avbryt, ENTER = Bekräfta (samma som Radera)
   useEffect(() => {
@@ -187,7 +192,7 @@ export default function ConfirmModal({
             borderRadius: CONFIRM_MODAL.borderRadius,
             paddingTop: CONFIRM_MODAL.paddingTop,
             paddingHorizontal: CONFIRM_MODAL.paddingHorizontal,
-            paddingBottom: CONFIRM_MODAL.paddingBottom,
+            paddingBottom: hideKeyboardHints ? CONFIRM_MODAL.paddingBottomNoHints : CONFIRM_MODAL.paddingBottom,
             width: '100%',
             maxWidth: CONFIRM_MODAL.maxWidth,
             borderWidth: 1,
@@ -350,18 +355,20 @@ export default function ConfirmModal({
                   {cancelLabel}
                 </Text>
               </Pressable>
-              <Text
-                style={{
-                  fontSize: CONFIRM_MODAL.hintFontSize,
-                  opacity: CONFIRM_MODAL.hintOpacity,
-                  marginTop: CONFIRM_MODAL.hintMarginTop,
-                  color: CONFIRM_MODAL.hintColor,
-                  textTransform: 'uppercase',
-                  letterSpacing: CONFIRM_MODAL.hintLetterSpacing,
-                }}
-              >
-                ESC
-              </Text>
+                {!hideKeyboardHints ? (
+                  <Text
+                    style={{
+                      fontSize: CONFIRM_MODAL.hintFontSize,
+                      opacity: CONFIRM_MODAL.hintOpacity,
+                      marginTop: CONFIRM_MODAL.hintMarginTop,
+                      color: CONFIRM_MODAL.hintColor,
+                      textTransform: 'uppercase',
+                      letterSpacing: CONFIRM_MODAL.hintLetterSpacing,
+                    }}
+                  >
+                    ESC
+                  </Text>
+                ) : null}
             </View>
 
             {/* Radera/Bekräfta + ENTER-hint */}
@@ -369,13 +376,13 @@ export default function ConfirmModal({
               <Pressable
                 ref={confirmRef}
                 onPress={handleConfirm}
-                disabled={busy}
+                disabled={busy || confirmDisabled}
                 style={({ pressed }) => ({
                   backgroundColor: danger
-                    ? pressed
+                    ? pressed && !confirmDisabled
                       ? CONFIRM_MODAL.dangerBgHover
                       : CONFIRM_MODAL.dangerBg
-                    : pressed
+                    : pressed && !confirmDisabled
                       ? '#1557b0'
                       : '#1976D2',
                   borderRadius: danger
@@ -391,10 +398,10 @@ export default function ConfirmModal({
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexDirection: 'row',
-                  opacity: busy ? 0.75 : 1,
+                  opacity: busy || confirmDisabled ? 0.75 : 1,
                   ...(Platform.OS === 'web'
                     ? {
-                        cursor: busy ? 'not-allowed' : 'pointer',
+                        cursor: busy || confirmDisabled ? 'not-allowed' : 'pointer',
                         outlineStyle: 'none',
                       }
                     : {}),
@@ -416,18 +423,20 @@ export default function ConfirmModal({
                   {confirmLabelDisplay}
                 </Text>
               </Pressable>
-              <Text
-                style={{
-                  fontSize: CONFIRM_MODAL.hintFontSize,
-                  opacity: CONFIRM_MODAL.hintOpacity,
-                  marginTop: CONFIRM_MODAL.hintMarginTop,
-                  color: CONFIRM_MODAL.hintColor,
-                  textTransform: 'uppercase',
-                  letterSpacing: CONFIRM_MODAL.hintLetterSpacing,
-                }}
-              >
-                ENTER
-              </Text>
+              {!hideKeyboardHints ? (
+                <Text
+                  style={{
+                    fontSize: CONFIRM_MODAL.hintFontSize,
+                    opacity: CONFIRM_MODAL.hintOpacity,
+                    marginTop: CONFIRM_MODAL.hintMarginTop,
+                    color: CONFIRM_MODAL.hintColor,
+                    textTransform: 'uppercase',
+                    letterSpacing: CONFIRM_MODAL.hintLetterSpacing,
+                  }}
+                >
+                  ENTER
+                </Text>
+              ) : null}
             </View>
           </View>
         </View>

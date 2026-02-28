@@ -3,7 +3,16 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
-import { getAuth, getReactNativePersistence, initializeAuth, signInWithEmailAndPassword } from "firebase/auth";
+import {
+  EmailAuthProvider,
+  getAuth,
+  getReactNativePersistence,
+  initializeAuth,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  updatePassword,
+  updateProfile,
+} from "firebase/auth";
 import { addDoc, collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, getDocsFromServer, getFirestore, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'firebase/storage';
@@ -46,6 +55,42 @@ export const functionsClient = getFunctions(app, 'us-central1');
 // Callable wrappers (must be invoked via httpsCallable)
 export const deleteProjectCallable = httpsCallable(functionsClient, 'deleteProject');
 export const deleteFolderCallable = httpsCallable(functionsClient, 'deleteFolder');
+
+/** Sätt att användaren har projektet öppet (anropas när användaren öppnar ett projekt). */
+export async function setProjectPresence(companyId, projectId, userId, displayName = null) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  const uid = String(userId || '').trim();
+  if (!cid || !pid || !uid) return;
+  const ref = doc(db, 'foretag', cid, 'projectPresence', pid, 'users', uid);
+  await setDoc(ref, { updatedAt: serverTimestamp(), ...(displayName ? { displayName: String(displayName).trim() } : {}) }, { merge: true });
+}
+
+/** Ta bort användarens närvaro (anropas när användaren lämnar projektet). */
+export async function clearProjectPresence(companyId, projectId, userId) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  const uid = String(userId || '').trim();
+  if (!cid || !pid || !uid) return;
+  const ref = doc(db, 'foretag', cid, 'projectPresence', pid, 'users', uid);
+  await deleteDoc(ref).catch(() => {});
+}
+
+/** Returnerar användar-id:n (utom currentUserId) som har projektet öppet. Används vid radera-projekt för varning. */
+export async function getProjectPresenceOtherUserIds(companyId, projectId, currentUserId) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  const me = String(currentUserId || '').trim();
+  if (!cid || !pid) return [];
+  const col = collection(db, 'foretag', cid, 'projectPresence', pid, 'users');
+  const snap = await getDocs(col).catch(() => ({ docs: [] }));
+  const others = [];
+  snap.docs.forEach((d) => {
+    const id = d.id;
+    if (id && id !== me) others.push(id);
+  });
+  return others;
+}
 
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset, permissions }) {
@@ -410,12 +455,11 @@ export async function uploadUserAvatar({ companyId, uid, file }) {
   
   const safeName = String(file?.name || 'avatar').replace(/[^a-zA-Z0-9_.-]/g, '_');
   const fileName = `${Date.now()}_${safeName}`;
-  const azurePath = `01-Company/${companyId}/Users/${uid}/${fileName}`;
+  // DK Bas structure: Company/{companyId}/Users/{uid}/ (not 01-Company – that was legacy in DK Site)
+  const azurePath = `Company/${companyId}/Users/${uid}/${fileName}`;
   
   try {
-    // IMPORTANT GUARD:
-    // DK Site (role=projects) must remain a pure project site.
-    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
+    // DK Bas (system) only – never upload to DK Site (projects).
     const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
 
     // Ensure system folder structure exists (best-effort; may require auth)
@@ -443,6 +487,40 @@ export async function uploadUserAvatar({ companyId, uid, file }) {
 }
 
 /**
+ * Ladda upp egen profilbild (Min profil). Sparas i DK Bas (Company/{companyId}/Users/{uid}/)
+ * så att BAS tillhandahåller gemensamma resurser; DK Site är endast produktionssite.
+ */
+export async function uploadMyProfileAvatar({ companyId, uid, file }) {
+  if (!companyId || !uid || !file) throw new Error('companyId, uid och file krävs');
+  const cid = String(companyId).trim();
+  const safeUid = String(uid).trim();
+  const fileName = `avatar_${Date.now()}.jpg`;
+  const azurePath = `Company/${cid}/Users/${safeUid}/${fileName}`;
+
+  try {
+    const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
+    if (!systemSiteId) throw new Error('Ingen DK Bas-site kopplad. Koppla DK Bas under Företagsinställningar → SharePoint.');
+
+    const url = await uploadFileToAzure({
+      file,
+      path: azurePath,
+      companyId: cid,
+      siteId: systemSiteId,
+      siteRole: 'system',
+    });
+    console.log('[uploadMyProfileAvatar] ✅ Uploaded to DK Bas (Company/Users):', url);
+    return url;
+  } catch (error) {
+    console.warn('[uploadMyProfileAvatar] ⚠️ DK Bas upload failed, falling back to Firebase Storage:', error);
+    const path = `user-avatars/${cid}/${safeUid}/${fileName}`;
+    const r = storageRef(storage, path);
+    const contentType = String(file?.type || '').trim() || 'image/jpeg';
+    await uploadBytes(r, file, { contentType });
+    return await getDownloadURL(r);
+  }
+}
+
+/**
  * Upload company logo to Azure (with fallback to Firebase Storage)
  * @param {Object} options - Upload options
  * @param {string} options.companyId - Company ID
@@ -455,12 +533,10 @@ export async function uploadCompanyLogo({ companyId, file }) {
   
   const safeCompanyId = String(companyId).trim();
   const fileName = `${Date.now()}_${file.name}`;
-  const azurePath = `01-Company/${safeCompanyId}/Logos/${fileName}`;
+  // DK Bas structure: Company/{companyId}/Logos/
+  const azurePath = `Company/${safeCompanyId}/Logos/${fileName}`;
   
   try {
-    // IMPORTANT GUARD:
-    // DK Site (role=projects) must remain a pure project site.
-    // System folders like 01-Company/02-Projects must live in DK Bas (role=system).
     const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: true });
 
     // Try to ensure system folder structure exists first (but don't fail if auth is not available)
@@ -1222,6 +1298,60 @@ export async function upsertCompanyMember({ companyId: companyIdOverride, uid, d
   } catch(_e) {
     return false;
   }
+}
+
+/** Hämta en enskild medlemsprofil (t.ex. för Min profil). Firestore: foretag/{companyId}/members/{uid}. */
+export async function getCompanyMember(companyId, uid) {
+  if (!companyId || !uid) return null;
+  try {
+    const ref = doc(db, 'foretag', String(companyId).trim(), 'members', String(uid).trim());
+    const snap = await getDoc(ref);
+    if (snap.exists()) return { id: snap.id, ...snap.data() };
+  } catch (_e) {}
+  return null;
+}
+
+/**
+ * Uppdatera den inloggade användarens egen medlemsprofil (Firestore).
+ * Tillåtna fält: displayName, firstName, lastName, avatarPreset, phone, photoURL.
+ * Firestore-regler tillåter update när request.auth.uid == uid.
+ */
+export async function updateMyProfileRemote(companyId, patch) {
+  const uid = auth?.currentUser?.uid;
+  if (!uid || !companyId) throw new Error('Ej inloggad eller saknat companyId');
+  const ref = doc(db, 'foretag', String(companyId).trim(), 'members', uid);
+  const allowed = {};
+  if (patch.displayName !== undefined) allowed.displayName = patch.displayName == null ? null : String(patch.displayName).trim() || null;
+  if (patch.firstName !== undefined) allowed.firstName = patch.firstName == null ? null : String(patch.firstName).trim() || null;
+  if (patch.lastName !== undefined) allowed.lastName = patch.lastName == null ? null : String(patch.lastName).trim() || null;
+  if (patch.avatarPreset !== undefined) allowed.avatarPreset = patch.avatarPreset == null ? null : String(patch.avatarPreset).trim() || null;
+  if (patch.phone !== undefined) allowed.phone = patch.phone == null ? null : String(patch.phone).trim().replace(/\D/g, '') || null;
+  if (patch.photoURL !== undefined) allowed.photoURL = patch.photoURL == null ? null : String(patch.photoURL).trim() || null;
+  if (Object.keys(allowed).length === 0) return;
+  await updateDoc(ref, allowed);
+  if (auth.currentUser) {
+    try {
+      const updates = {};
+      if (allowed.displayName !== undefined) updates.displayName = allowed.displayName || auth.currentUser.email || '';
+      if (allowed.photoURL !== undefined) updates.photoURL = allowed.photoURL || null;
+      if (Object.keys(updates).length > 0) await updateProfile(auth.currentUser, updates);
+    } catch (_e) { /* non-blocking */ }
+  }
+}
+
+/**
+ * Byt lösenord för inloggad användare. Kräver nuvarande lösenord (reauth) och nytt lösenord.
+ */
+export async function changePasswordRemote(currentPassword, newPassword) {
+  const user = auth?.currentUser;
+  if (!user || !user.email) throw new Error('Ej inloggad eller saknar e-post');
+  const cur = String(currentPassword || '').trim();
+  const neu = String(newPassword || '').trim();
+  if (!cur) throw new Error('Ange nuvarande lösenord');
+  if (neu.length < 6) throw new Error('Nytt lösenord måste vara minst 6 tecken');
+  const credential = EmailAuthProvider.credential(user.email, cur);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, neu);
 }
 
 export async function fetchCompanyMembers(companyIdOverride, { role } = {}) {
@@ -3978,7 +4108,8 @@ export function formatSharePointProjectFolderName(projectNumber, projectName) {
   const left = num || '';
   const right = name || '';
   if (left && right) return `${left} – ${right}`;
-  return left || right || '';
+  if (left) return `${left} – Projekt`;
+  return right || '';
 }
 
 export function isLockedKalkylskedeSharePointFolderPath({ projectRootPath, itemPath, structureVersion = null }) {

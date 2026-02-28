@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -756,9 +757,9 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   secondaryButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     backgroundColor: '#fff',
@@ -771,9 +772,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   primaryButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
+    borderRadius: D.buttonRadius,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

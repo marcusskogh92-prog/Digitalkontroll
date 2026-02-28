@@ -112,8 +112,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   btnAvbryt: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#fecaca',
@@ -122,8 +122,8 @@ const styles = StyleSheet.create({
   },
   btnAvbrytText: { fontSize: 13, fontWeight: '500', color: '#b91c1c' },
   btnSpara: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#475569',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),

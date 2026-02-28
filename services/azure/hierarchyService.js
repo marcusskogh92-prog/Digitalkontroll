@@ -1007,6 +1007,51 @@ export async function deleteDriveItemByPath(siteId, itemPath) {
   return await deleteDriveItemById(siteId, item?.id);
 }
 
+/**
+ * Download file content from SharePoint (for copy/export).
+ * @param {string} siteId
+ * @param {string} itemPath - Path relative to drive root
+ * @returns {Promise<Blob>}
+ */
+export async function downloadDriveFileContent(siteId, itemPath) {
+  const item = await getDriveItemByPath(siteId, itemPath);
+  const url = item?.['@microsoft.graph.downloadUrl'];
+  if (!url) throw new Error('Filen har ingen nedladdnings-URL');
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Failed to get access token');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`Nedladdning misslyckades: ${res.status}`);
+  return await res.blob();
+}
+
+/**
+ * Hämta kortlivad inbäddnings-URL för förhandsgranskning (Excel, Word, etc.).
+ * Används för att visa filen i iframe utan "Det gick inte att hitta filen".
+ * Kräver Files.Read (eller Files.ReadWrite).
+ * @param {string} siteId - SharePoint site ID
+ * @param {string} itemId - Drive item ID
+ * @returns {Promise<string|null>} getUrl för iframe, eller null om inte tillgängligt
+ */
+export async function getDriveItemPreviewUrl(siteId, itemId) {
+  if (!siteId || !itemId) return null;
+  const accessToken = await getAccessToken();
+  if (!accessToken) return null;
+  const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${encodeURIComponent(itemId)}/preview`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const url = data?.getUrl;
+  return typeof url === 'string' && url.trim() ? url.trim() : null;
+}
+
 export async function moveDriveItemByPath(siteId, itemPath, newParentPath) {
   const item = await getDriveItemByPath(siteId, itemPath);
   const parentClean = String(newParentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
@@ -1361,4 +1406,48 @@ export async function createSharePointFolder(companyId, parentPath, folderName) 
     console.error('[hierarchyService] Error creating SharePoint folder:', error);
     throw error;
   }
+}
+
+/**
+ * Skapa mapp i en valfri SharePoint-site (t.ex. projektsite).
+ * @param {string} siteId - SharePoint site ID
+ * @param {string} parentPath - Föräldramapp (tom sträng = root)
+ * @param {string} folderName - Namn på den nya mappen
+ * @returns {Promise<{ id, name, path }>}
+ */
+export async function createFolderInSite(siteId, parentPath, folderName) {
+  if (!siteId || !folderName) throw new Error('Site ID och mappnamn krävs.');
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error('Kunde inte hämta åtkomsttoken.');
+  let endpoint;
+  const path = String(parentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
+  if (path) {
+    const encoded = encodeGraphPath(path);
+    endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encoded}:`;
+  } else {
+    endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/root`;
+  }
+  const res = await fetch(`${endpoint}/children`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      name: String(folderName).trim(),
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'rename',
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Kunde inte skapa mapp: ${res.status} ${err}`);
+  }
+  const data = await res.json();
+  return {
+    id: data.id,
+    name: data.name,
+    path: path ? `${path}/${data.name}` : data.name,
+  };
 }

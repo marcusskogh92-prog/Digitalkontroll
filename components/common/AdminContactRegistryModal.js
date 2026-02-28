@@ -75,8 +75,8 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
   selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
-  footerBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
-  mainModalStangBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  footerBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
   addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: D.overlayBg },
   addModalBox: { backgroundColor: '#fff', borderRadius: D.radius, width: Platform.OS === 'web' ? 440 : '90%', maxWidth: 440, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 30, elevation: 8 },
   addModalHeader: {
@@ -109,8 +109,8 @@ const styles = StyleSheet.create({
     minHeight: Platform.OS === 'web' ? 520 : undefined,
   },
   editModalContent: { padding: D.contentPadding, paddingBottom: 24 },
-  editModalAvbrytBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
-  editModalSparaBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#475569', borderWidth: 0 },
+  editModalAvbrytBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminContactRegistryModal({ visible, companyId, onClose }) {
@@ -1097,7 +1097,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                 <TouchableOpacity style={styles.footerBtn} onPress={() => !addModalSaving && setAddModalVisible(false)} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
                   <Text style={{ fontSize: 14, fontWeight: '500', color: '#475569' }}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.iconBtnPrimary, { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }]} onPress={handleAddModalSave} disabled={addModalSaving || !addModalName.trim()} {...(Platform.OS === 'web' ? { cursor: addModalSaving || !addModalName.trim() ? 'not-allowed' : 'pointer' } : {})}>
+                <TouchableOpacity style={[styles.iconBtnPrimary, { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius }]} onPress={handleAddModalSave} disabled={addModalSaving || !addModalName.trim()} {...(Platform.OS === 'web' ? { cursor: addModalSaving || !addModalName.trim() ? 'not-allowed' : 'pointer' } : {})}>
                   <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
                 </TouchableOpacity>
               </View>

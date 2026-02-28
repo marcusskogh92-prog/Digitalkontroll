@@ -37,15 +37,15 @@ export const MODAL_DESIGN_2026 = {
   titleColor: '#0f172a',
   subtitleFontSize: 13,
   subtitleColor: '#64748b',
-  /** Header – neutral (Kontaktregister): toolbar-kompakt, rail-färg, vit text */
+  /** Header – neutral (Kontaktregister): kompakt toppremsa, rail-färg, vit text. Höjd 38px. */
   headerNeutral: {
     backgroundColor: '#1E2A38',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.1)',
-    paddingVertical: 8,
+    paddingVertical: 5,
     paddingHorizontal: 14,
-    minHeight: 40,
-    maxHeight: 44,
+    minHeight: 38,
+    maxHeight: 38,
   },
   headerNeutralTitleFontSize: 15,
   headerNeutralTitleFontWeight: '600',
@@ -81,8 +81,10 @@ export const MODAL_DESIGN_2026 = {
     paddingHorizontal: 24,
   },
 
-  /** Knappar – radius 6, inga pill */
+  /** Knappar – radius 6, inga pill. Footer-knappar: standard 6/18 px padding. */
   buttonRadius: 6,
+  buttonPaddingVertical: 6,
+  buttonPaddingHorizontal: 18,
   buttonPrimaryBg: '#1976D2',
   buttonPrimaryColor: '#fff',
   buttonPrimaryFontWeight: '500',

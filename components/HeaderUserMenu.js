@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Text, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
+import MyProfileModal from './common/Modals/MyProfileModal';
 import { auth } from './firebase';
 import { formatPersonName } from './formatPersonName';
 
@@ -19,6 +20,8 @@ export default function HeaderUserMenu() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 20, y: 64 });
   const [roleLabel, setRoleLabel] = useState('');
+  const [myProfileModalVisible, setMyProfileModalVisible] = useState(false);
+  const [myProfileCompanyId, setMyProfileCompanyId] = useState('');
   const chevronSpinAnim = useRef(new Animated.Value(0)).current;
   const chevronDeg = useRef(0);
 
@@ -117,7 +120,11 @@ export default function HeaderUserMenu() {
           }
 
           if (it.key === 'my_profile') {
-            try { navigation.navigate('ManageUsers', { companyId: String(await AsyncStorage.getItem('dk_companyId') || '').trim() }); } catch(_e) {}
+            try {
+              const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
+              setMyProfileCompanyId(cid);
+              setMyProfileModalVisible(true);
+            } catch (_e) {}
             return;
           }
         } catch(_e) {}
@@ -144,6 +151,12 @@ export default function HeaderUserMenu() {
           <Ionicons name="chevron-down" size={14} color="#666" />
         </Animated.View>
       </TouchableOpacity>
+      <MyProfileModal
+        visible={myProfileModalVisible}
+        companyId={myProfileCompanyId}
+        onClose={() => setMyProfileModalVisible(false)}
+        onSaved={() => {}}
+      />
       {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' ? (() => {
         try {
           let portalRoot = document.getElementById(portalRootId);

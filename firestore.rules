@@ -493,5 +493,14 @@ service cloud.firestore {
     match /foretag/{company}/sharepoint_project_metadata/{docId} {
       allow read, write: if isCompanyMember(company) || isGlobalAdmin();
     }
+
+    // Project presence: vilka användare som har ett projekt öppet (för varning vid radering).
+    // Path: foretag/{company}/projectPresence/{projectId}/users/{userId}
+    // Läs: företagsmedlemmar (för att se om andra har projektet öppet).
+    // Skriv: endast sin egen userId (set on open, delete on leave).
+    match /foretag/{company}/projectPresence/{projectId}/users/{userId} {
+      allow read: if isCompanyMember(company);
+      allow create, update, delete: if isCompanyMember(company) && request.auth.uid == userId;
+    }
   }
 }

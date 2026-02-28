@@ -6,7 +6,7 @@ const {
   getSharePointProvisioningOwnerEmail,
 } = require('./sharedConfig');
 const { sleep, normalizeSharePointSiteSlug } = require('./sharedUtils');
-const { graphGetSiteByUrl, graphCreateTeamSite } = require('./sharepointGraph');
+const { graphGetSiteByUrl, graphCreateTeamSite, ensureCompanyBaseSiteStructureAdmin } = require('./sharepointGraph');
 
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
@@ -220,6 +220,19 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
         siteName: workspaceDisplayName,
         siteSlug: workspaceSlug,
       };
+    }
+
+    // Skapa mappstruktur i DK Bas (Company/, Projects/, Företagsmallar/ med fas-mappar)
+    if (baseSite && baseSite.siteId) {
+      try {
+        await ensureCompanyBaseSiteStructureAdmin({
+          siteId: baseSite.siteId,
+          companyId,
+          accessToken,
+        });
+      } catch (structureErr) {
+        console.warn('[ensureCompanySharePointSites] DK Bas structure create failed (non-fatal):', structureErr?.message || structureErr);
+      }
     }
 
     await cfgRef.set({

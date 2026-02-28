@@ -72,6 +72,7 @@ export default function WebMainPane(props) {
     companyProfile,
     companyId,
     routeCompanyId,
+    enabledPhaseKeys,
     phaseActiveSection,
     phaseActiveItem,
     phaseActiveNode,
@@ -201,6 +202,7 @@ export default function WebMainPane(props) {
 
         <Dashboard
           authClaims={authClaims}
+          enabledPhaseKeys={enabledPhaseKeys}
           dashboardLoading={dashboardLoading}
           dashboardOverview={dashboardOverview}
           dashboardRecentProjects={dashboardRecentProjects}

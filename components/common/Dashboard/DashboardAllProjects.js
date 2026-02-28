@@ -13,6 +13,8 @@ import { resolveProjectId } from './dashboardUtils';
 
 const DashboardAllProjects = ({
   hierarchy = [],
+  /** Aktiva moduler för företaget – endast dessa skede-kort visas. */
+  enabledPhaseKeys,
   onProjectSelect,
   formatRelativeTime,
   companyName,
@@ -360,6 +362,7 @@ const DashboardAllProjects = ({
           projects={visibleProjects}
           activeStageFilter={stageFilter}
           onStageFilter={handleStageFilter}
+          enabledPhaseKeys={enabledPhaseKeys}
         />
       )}
 

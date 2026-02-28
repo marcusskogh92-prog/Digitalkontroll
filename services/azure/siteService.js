@@ -209,8 +209,40 @@ export async function ensureCompanySiteStructure(siteId, companyId, options = nu
         console.warn(`[siteService] Could not create folder ${folderPath}:`, folderError);
       }
     }
+
+    // Företagsmallar: befintliga mappar 01–04 + Översikt/Checklista/Arkiv under varje (för mallar).
+    const foretagsmallarFolders = [
+      'Företagsmallar',
+      'Företagsmallar/01 - Kalkylskede',
+      'Företagsmallar/01 - Kalkylskede/Arkiv',
+      'Företagsmallar/01 - Kalkylskede/Översikt',
+      'Företagsmallar/01 - Kalkylskede/Översikt/Checklista',
+      'Företagsmallar/01 - Kalkylskede/Översikt/Checklista/Arkiv',
+      'Företagsmallar/02 - Produktion',
+      'Företagsmallar/02 - Produktion/Arkiv',
+      'Företagsmallar/02 - Produktion/Översikt',
+      'Företagsmallar/02 - Produktion/Översikt/Checklista',
+      'Företagsmallar/02 - Produktion/Översikt/Checklista/Arkiv',
+      'Företagsmallar/03 - Avslutat',
+      'Företagsmallar/03 - Avslutat/Arkiv',
+      'Företagsmallar/03 - Avslutat/Översikt',
+      'Företagsmallar/03 - Avslutat/Översikt/Checklista',
+      'Företagsmallar/03 - Avslutat/Översikt/Checklista/Arkiv',
+      'Företagsmallar/04 - Eftermarknad',
+      'Företagsmallar/04 - Eftermarknad/Arkiv',
+      'Företagsmallar/04 - Eftermarknad/Översikt',
+      'Företagsmallar/04 - Eftermarknad/Översikt/Checklista',
+      'Företagsmallar/04 - Eftermarknad/Översikt/Checklista/Arkiv',
+    ];
+    for (const folderPath of foretagsmallarFolders) {
+      try {
+        await ensureFolder(folderPath, companyId, siteId);
+      } catch (folderError) {
+        console.warn(`[siteService] Could not create folder ${folderPath}:`, folderError);
+      }
+    }
     
-    console.log(`[siteService] ✅ Phase-based folder structure created for company: ${companyId}`);
+    console.log(`[siteService] ✅ Phase-based folder structure and Företagsmallar created for company: ${companyId}`);
   } catch (error) {
     console.error('[siteService] Error creating company site structure:', error);
     // Don't throw - structure creation is not critical, can be created later

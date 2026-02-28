@@ -122,8 +122,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   btnStang: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#fef2f2',
     borderWidth: 1,
@@ -135,8 +135,8 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
   },
   btnSpara: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#475569',
   },

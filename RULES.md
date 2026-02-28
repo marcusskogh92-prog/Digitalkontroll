@@ -99,9 +99,9 @@ Innehåll i RULES.md
 	•	Detaljerad beskrivning: docs/MODAL_GOLDEN_RULE.md.
 	•	Loading: Använd komponenten LoadingState (animerad spinner + text). Tema: LOADING_THEME i constants/modalTheme.js. Se MODAL_GOLDEN_RULE.md §4.
 	•	Banner (header):
-	•	Mörk färg (ICON_RAIL.bg). Titel 14px, undertitel 12px på en rad. Ikonruta 28×28 px. Stäng (X): mörk bakgrund, vit ikon.
+	•	Höjd 38 px. Mörk färg (ICON_RAIL.bg). Titel 14px, undertitel 12px på en rad. Ikonruta 28×28 px. Stäng (X): mörk bakgrund, vit ikon.
 	•	Footer-knappar:
-	•	Stäng och Spara ska vara mörka (samma färg som bannern) med vit text.
+	•	Stäng och Spara ska vara mörka (samma färg som bannern) med vit text. Standardstorlek: vertikal padding 6 px, horisontell padding 18 px. Bredd/längd anpassas vid behov så att all text får plats (t.ex. minWidth eller större horisontell padding för långa etiketter).
 	•	Tangentbord: Esc stänger. Enter sparar när fokus inte är i input/textarea. Tab och pilar fungerar normalt.
 	•	Webb: modalen ska vara flyttbar (drag i bannern) och storleksändringbar (dra i högerkant, nederkant, nedre högra hörnet). Vid mus över kant/hörn ska muspekaren bli resize-cursor (streck med pilar, Windows-liknande).
 	•	Implementering:

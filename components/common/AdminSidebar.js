@@ -34,7 +34,7 @@ export default function AdminSidebar({
   showCompanySelector = true,
 }) {
   const navigation = useNavigation();
-  const { openAIPromptsModal, openKategoriModal } = useContext(AdminModalContext) || {};
+  const { openAIPromptsModal, openKategoriModal, openMallarModal } = useContext(AdminModalContext) || {};
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -232,7 +232,8 @@ export default function AdminSidebar({
       } else if (item.screen === 'ManageUsers') {
         navigation.navigate('ManageUsers', { companyId: cid });
       } else if (item.screen === 'ManageControlTypes') {
-        navigation.navigate('ManageControlTypes', { companyId: cid });
+        if (openMallarModal) openMallarModal(cid);
+        else navigation.navigate('ManageControlTypes', { companyId: cid });
       } else if (item.screen === 'ContactRegistry') {
         navigation.navigate('ContactRegistry', {
           companyId: cid,
