@@ -295,6 +295,7 @@ export default function SharePointFolderFileArea({
   const [createOfficeFileType, setCreateOfficeFileType] = useState('docx');
   const [newOfficeFileName, setNewOfficeFileName] = useState('');
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+  const [uploadDropdownOpen, setUploadDropdownOpen] = useState(false);
   const createDropdownRef = useRef(null);
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -670,7 +671,7 @@ export default function SharePointFolderFileArea({
         }
 
         setError(
-          'Inga filer hittades i droppen. Om du försöker släppa en mapp: använd knappen ”Välj mapp” (rekommenderas), eller prova en webbläsare som stöder mapp-drop (t.ex. Chrome/Edge).',
+          'Inga filer hittades i droppen. Om du försöker släppa en mapp: använd knappen ”Ladda upp → Mappar…” (rekommenderas), eller prova en webbläsare som stöder mapp-drop (t.ex. Chrome/Edge).',
         );
       } catch (err) {
         setError(String(err?.message || err || 'Kunde inte läsa uppladdningen.'));
@@ -877,14 +878,17 @@ export default function SharePointFolderFileArea({
   }, [enableWebDnD, resetDragState]);
 
   useEffect(() => {
-    if (!createDropdownOpen || Platform.OS !== 'web') return;
+    if ((!createDropdownOpen && !uploadDropdownOpen) || Platform.OS !== 'web') return;
     const onPointerDown = (e) => {
       const el = createDropdownRef.current;
-      if (el && !el.contains?.(e.target)) setCreateDropdownOpen(false);
+      if (el && !el.contains?.(e.target)) {
+        setCreateDropdownOpen(false);
+        setUploadDropdownOpen(false);
+      }
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [createDropdownOpen]);
+  }, [createDropdownOpen, uploadDropdownOpen]);
 
   useEffect(() => {
     if (!hasContext) {
@@ -1474,13 +1478,23 @@ export default function SharePointFolderFileArea({
     const isFolder = it?.type === 'folder';
     const lockedSys = Boolean(lockSystemFolder && isFolder && isSystemFolder(it));
 
-    return [
+    const items = [
       {
         key: 'open',
         label: 'Öppna',
         iconName: 'open-outline',
         disabled: !safeText(it?.webUrl),
       },
+      ...(isFile
+        ? [
+            {
+              key: 'edit-new-tab',
+              label: 'Redigera – öppna i ny flik',
+              iconName: 'open-outline',
+              disabled: !safeText(it?.webUrl),
+            },
+          ]
+        : []),
       {
         key: 'download',
         label: 'Ladda ner',
@@ -1510,6 +1524,7 @@ export default function SharePointFolderFileArea({
         disabled: lockedSys || !(isFile || isFolder),
       },
     ];
+    return items;
   }, [menuTarget, lockSystemFolder, isSystemFolder]);
 
   const onSelectMenuItem = async (item) => {
@@ -1518,6 +1533,11 @@ export default function SharePointFolderFileArea({
     if (!key || !it) return;
 
     if (key === 'open') {
+      await openUrl(it?.webUrl);
+      return;
+    }
+
+    if (key === 'edit-new-tab') {
       await openUrl(it?.webUrl);
       return;
     }
@@ -1840,7 +1860,7 @@ export default function SharePointFolderFileArea({
       ) : null}
 
       {Array.isArray(breadcrumbParts) && breadcrumbParts.length > 0 ? (
-        <View style={[styles.breadcrumbRow, createDropdownOpen && Platform.OS === 'web' ? styles.breadcrumbRowDropdownOpen : null]}>
+        <View style={[styles.breadcrumbRow, (createDropdownOpen || uploadDropdownOpen) && Platform.OS === 'web' ? styles.breadcrumbRowDropdownOpen : null]}>
           <View style={styles.breadcrumbCrumbs}>
             <FileExplorerBreadcrumb
               parts={breadcrumbParts}
@@ -1858,42 +1878,69 @@ export default function SharePointFolderFileArea({
 
           {Platform.OS === 'web' ? (
             <View ref={createDropdownRef} style={styles.breadcrumbActions}>
-              <Pressable
-                onPress={() => {
-                  try { fileInputRef.current?.click?.(); } catch (_e) {}
-                }}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 8,
-                  backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-                accessibilityRole="button"
-              >
-                <Text style={{ color: '#525252', fontSize: 13, fontWeight: '500' }}>Välj filer</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => {
-                  try { folderInputRef.current?.click?.(); } catch (_e) {}
-                }}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 6,
-                  paddingHorizontal: 10,
-                  borderRadius: 8,
-                  backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-                accessibilityRole="button"
-              >
-                <Text style={{ color: '#525252', fontSize: 13, fontWeight: '500' }}>Välj mapp</Text>
-              </Pressable>
+              {/* Golden rule: en "Ladda upp"-knapp med moln+pil-ikon; dropdown för Filer / Mappar (flera filer, mappar eller kombinerat). */}
+              <View style={{ position: 'relative' }}>
+                <Pressable
+                  onPress={() => {
+                    setCreateDropdownOpen(false);
+                    setUploadDropdownOpen((v) => !v);
+                  }}
+                  style={({ hovered, pressed }) => ({
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.06)' : 'transparent',
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  })}
+                  accessibilityRole="button"
+                  accessibilityLabel="Ladda upp filer eller mappar"
+                >
+                  <Ionicons name="cloud-upload-outline" size={18} color="#525252" />
+                  <Text style={{ color: '#525252', fontSize: 13, fontWeight: '500' }}>Ladda upp</Text>
+                  <Ionicons name={uploadDropdownOpen ? 'chevron-up' : 'chevron-down'} size={12} color="#525252" />
+                </Pressable>
+                {uploadDropdownOpen ? (
+                  <View style={styles.createDropdown} pointerEvents="box-none">
+                    <Pressable
+                      onPress={() => {
+                        setUploadDropdownOpen(false);
+                        try { fileInputRef.current?.click?.(); } catch (_e) {}
+                      }}
+                      style={({ hovered }) => [
+                        styles.createDropdownItem,
+                        hovered && styles.createDropdownItemHover,
+                      ]}
+                    >
+                      <Ionicons name="document-outline" size={16} color="#525252" />
+                      <Text style={styles.createDropdownItemText}>Filer…</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setUploadDropdownOpen(false);
+                        try { folderInputRef.current?.click?.(); } catch (_e) {}
+                      }}
+                      style={({ hovered }) => [
+                        styles.createDropdownItem,
+                        hovered && styles.createDropdownItemHover,
+                      ]}
+                    >
+                      <Ionicons name="folder-outline" size={16} color="#525252" />
+                      <Text style={styles.createDropdownItemText}>Mappar…</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
 
               {showCreateFolderButton ? (
               <View style={{ position: 'relative' }}>
                 <Pressable
-                  onPress={() => setCreateDropdownOpen((v) => !v)}
+                  onPress={() => {
+                    setUploadDropdownOpen(false);
+                    setCreateDropdownOpen((v) => !v);
+                  }}
                   style={({ hovered, pressed }) => ({
                     paddingVertical: 6,
                     paddingHorizontal: 10,

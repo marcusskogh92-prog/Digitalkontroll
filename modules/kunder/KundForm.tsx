@@ -59,27 +59,37 @@ const styles = StyleSheet.create({
     borderColor: '#bfdbfe',
   },
   segmentText: { fontSize: 13, color: '#475569', fontWeight: '500' },
-  btnRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  btnPrimary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#1976D2',
+  btnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 16,
     alignItems: 'center',
   },
-  btnPrimaryDisabled: { backgroundColor: '#cbd5e1' },
+  btnSecondary: {
+    paddingVertical: 5,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  btnSecondaryText: { color: '#b91c1c', fontSize: 14, fontWeight: '500' },
+  btnPrimary: {
+    paddingVertical: 5,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    backgroundColor: '#1E2A38',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+  },
+  btnPrimaryDisabled: { backgroundColor: '#475569' },
   btnPrimaryText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   btnPrimaryTextDisabled: { color: '#94a3b8' },
-  btnSecondary: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    alignItems: 'center',
-  },
-  btnSecondaryText: { color: '#475569', fontSize: 14, fontWeight: '500' },
 });
 
 export interface KundFormValues {
@@ -238,6 +248,15 @@ export default function KundForm({
 
       <View style={styles.btnRow}>
         <TouchableOpacity
+          style={styles.btnSecondary}
+          onPress={onCancel}
+          disabled={saving}
+          activeOpacity={0.8}
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <Text style={styles.btnSecondaryText}>Avbryt</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.btnPrimary, (!name.trim() || saving) ? styles.btnPrimaryDisabled : null]}
           onPress={handleSubmit}
           disabled={!name.trim() || saving}
@@ -252,15 +271,6 @@ export default function KundForm({
           >
             {saving ? 'Sparar…' : 'Spara'}
           </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.btnSecondary}
-          onPress={onCancel}
-          disabled={saving}
-          activeOpacity={0.8}
-          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-        >
-          <Text style={styles.btnSecondaryText}>Avbryt</Text>
         </TouchableOpacity>
       </View>
     </View>

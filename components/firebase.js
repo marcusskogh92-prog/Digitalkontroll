@@ -4184,6 +4184,68 @@ export async function updateSharePointProjectPropertiesFromFirestoreProject(comp
   return await patchDriveItemListItemFieldsByPath({ siteId, path: projectPath, fields });
 }
 
+/**
+ * Rename the SharePoint project folder to match new project number/name, and update
+ * Firestore project path + sharepoint_project_metadata so the system stays in sync.
+ * Call this after saving project info when projectNumber or projectName has changed.
+ *
+ * @param {string|null} companyIdOverride
+ * @param {{ siteId: string, projectPath: string, projectId: string, phaseKey?: string }} context
+ * @param {string} newProjectNumber
+ * @param {string} newProjectName
+ * @returns {Promise<{ newProjectPath: string }>}
+ */
+export async function renameSharePointProjectFolderAndUpdateProject(companyIdOverride, context, newProjectNumber, newProjectName) {
+  const companyId = await resolveCompanyId(companyIdOverride, context);
+  if (!companyId) throw new Error('Company ID is required');
+
+  const siteId = String(context?.siteId || '').trim();
+  const projectPath = String(context?.projectPath || '').trim();
+  const projectId = String(context?.projectId || '').trim();
+  if (!siteId || !projectPath || !projectId) {
+    throw new Error('siteId, projectPath and projectId are required to rename SharePoint project folder');
+  }
+
+  const newFolderName = formatSharePointProjectFolderName(newProjectNumber, newProjectName);
+  if (!newFolderName) throw new Error('Ogiltigt projektnummer/namn för mappnamn');
+
+  const currentFolderName = projectPath.replace(/^.*\//, '').trim() || projectPath;
+  if (currentFolderName === newFolderName) {
+    return { newProjectPath: projectPath };
+  }
+
+  const { renameDriveItemByPath } = await import('../services/azure/hierarchyService');
+  await renameDriveItemByPath(siteId, projectPath, newFolderName);
+
+  const parentPath = projectPath.replace(/\/[^/]*$/, '').trim();
+  const newProjectPath = parentPath ? `${parentPath}/${newFolderName}` : newFolderName;
+
+  await patchCompanyProject(companyId, projectId, {
+    rootFolderPath: newProjectPath,
+    projectPath: newProjectPath,
+    path: newProjectPath,
+    sharePointPath: newProjectPath,
+  });
+
+  try {
+    const oldMetaId = encodeSharePointProjectMetaId(siteId, projectPath);
+    const oldRef = doc(db, 'foretag', companyId, 'sharepoint_project_metadata', oldMetaId);
+    await deleteDoc(oldRef);
+  } catch (_e) {
+    // best-effort: old metadata doc might not exist
+  }
+
+  await patchSharePointProjectMetadata(companyId, {
+    siteId,
+    projectPath: newProjectPath,
+    projectNumber: newProjectNumber,
+    projectName: newProjectName,
+    phaseKey: context?.phaseKey,
+  });
+
+  return { newProjectPath };
+}
+
 function encodeSharePointProjectMetaId(siteId, projectPath) {
   const sid = String(siteId || '').trim();
   const p = String(projectPath || '').trim();
@@ -4540,12 +4602,15 @@ export async function patchCompanyProject(companyIdOverride, projectId, patch) {
     Object.prototype.hasOwnProperty.call(incoming, 'number');
 
   if (!touchesProjectNumber) {
+    // Ensure we never send project-number fields so Firestore rules' projectNumberFieldsUnchanged() allows the update
+    const { projectNumber: _pn, number: _num, projectNumberNormalized: _pnn, projectNumberIndexId: _pnid, ...rest } = incoming;
     const payload = {
-      ...incoming,
+      ...rest,
       updatedAt: serverTimestamp(),
       updatedBy: auth.currentUser?.uid || null,
     };
-    await updateDoc(ref, sanitizeForFirestore(payload));
+    // setDoc with merge: true så att dokumentet skapas om det inte finns (t.ex. projekt bara i hierarki/SharePoint)
+    await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
     return { id: pid, ...payload };
   }
 
@@ -4567,6 +4632,7 @@ export async function patchCompanyProject(companyIdOverride, projectId, patch) {
   };
 
   // If projectNumber is being changed, enforce uniqueness via transaction-based index.
+  // Firestore requires ALL reads before ANY writes – so read old index doc before any tx.set/tx.delete.
   await runTransaction(db, async (tx) => {
     const projectSnap = await tx.get(ref);
     if (!projectSnap.exists()) {
@@ -4595,6 +4661,23 @@ export async function patchCompanyProject(companyIdOverride, projectId, patch) {
       }
     }
 
+    // Read old index doc before any writes (Firestore: all reads before all writes)
+    let prevIdxRefToDelete = null;
+    if (prevPnNorm && prevPnNorm !== desiredNorm) {
+      const prevIdxId = projectNumberIndexDocIdFromNormalized(prevPnNorm);
+      if (prevIdxId) {
+        const prevIdxRef = doc(db, 'foretag', companyId, 'project_number_index', prevIdxId);
+        const prevIdxSnap = await tx.get(prevIdxRef);
+        if (prevIdxSnap.exists()) {
+          const d = prevIdxSnap.data() || {};
+          const owner = String(d?.projectId || '').trim();
+          if (owner && owner === pid) {
+            prevIdxRefToDelete = prevIdxRef;
+          }
+        }
+      }
+    }
+
     tx.set(ref, sanitizeForFirestore(payload), { merge: true });
     tx.set(
       idxRef,
@@ -4608,19 +4691,8 @@ export async function patchCompanyProject(companyIdOverride, projectId, patch) {
       { merge: true }
     );
 
-    if (prevPnNorm && prevPnNorm !== desiredNorm) {
-      const prevIdxId = projectNumberIndexDocIdFromNormalized(prevPnNorm);
-      if (prevIdxId) {
-        const prevIdxRef = doc(db, 'foretag', companyId, 'project_number_index', prevIdxId);
-        const prevIdxSnap = await tx.get(prevIdxRef);
-        if (prevIdxSnap.exists()) {
-          const d = prevIdxSnap.data() || {};
-          const owner = String(d?.projectId || '').trim();
-          if (owner && owner === pid) {
-            tx.delete(prevIdxRef);
-          }
-        }
-      }
+    if (prevIdxRefToDelete) {
+      tx.delete(prevIdxRefToDelete);
     }
   });
 

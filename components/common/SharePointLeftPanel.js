@@ -794,9 +794,9 @@ export function SharePointLeftPanel({
     ? (deleteConfirm.otherUsersInProject.length === 1
         ? 'Det går inte att radera detta projekt – en annan användare har det öppet och jobbar i det just nu.'
         : `Det går inte att radera detta projekt – ${deleteConfirm.otherUsersInProject.length} användare har det öppet och jobbar i det just nu.`)
-    : [
-        isDeletingActiveProject ? 'Du håller på att radera ett projekt som du har öppet. Vill du verkligen radera?' : null,
-      ].filter(Boolean).join('\n\n') || '';
+    : isDeletingActiveProject
+      ? 'Du måste lämna projektet först. Gå till Dashboard eller välj ett annat projekt innan du kan radera detta projekt.'
+      : '';
 
   const getCallableUiErrorMessage = (err) => {
     try {
@@ -1760,6 +1760,22 @@ export function SharePointLeftPanel({
     }
 
     if (key === 'delete-project') {
+      const activeProjectId = selectedProject
+        ? String(selectedProject?.id || selectedProject?.projectId || selectedProject?.projectNumber || '').trim()
+        : '';
+      if (activeProjectId && pid === activeProjectId) {
+        const msg =
+          'Du måste lämna projektet först. Gå till Dashboard eller välj ett annat projekt innan du kan radera detta projekt.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          try {
+            window.alert(msg);
+          } catch (_e) {}
+        } else {
+          Alert.alert('Kan inte radera', msg);
+        }
+        return;
+      }
+
       const siteId = String(target?.sharePointSiteId || '').trim();
       const folderPath = normalizeSharePointPath(target?.rootFolderPath || target?.path || '');
 
@@ -3770,7 +3786,7 @@ export function SharePointLeftPanel({
           busy={!!deleteConfirm?.busy}
           error={deleteConfirm?.error || ''}
           warningText={deleteConfirmWarningText || undefined}
-          confirmDisabled={deleteConfirmBlockedByOthers}
+          confirmDisabled={deleteConfirmBlockedByOthers || isDeletingActiveProject}
           hideKeyboardHints
           onCancel={closeDeleteConfirm}
           onConfirm={runDeleteConfirmed}

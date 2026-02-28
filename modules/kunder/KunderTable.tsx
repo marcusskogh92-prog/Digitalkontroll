@@ -8,6 +8,7 @@ import { Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { SelectDropdownChip } from '../../components/common/SelectDropdown';
 import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../constants/tableLayout';
+import { formatOrganizationNumber } from '../../utils/formatOrganizationNumber';
 import type { Customer } from './kunderService';
 
 const TABLE = MODAL_DESIGN_2026;
@@ -265,6 +266,9 @@ const styles = StyleSheet.create({
   openContactTableRowAlt: {
     backgroundColor: '#f8fafc',
   },
+  openContactTableRowHover: {
+    backgroundColor: '#eef6ff',
+  },
   openContactTableCell: {
     fontSize: 13,
     color: '#334155',
@@ -423,12 +427,12 @@ interface KunderTableProps {
   contactRegistry?: { id: string; name: string; role?: string; email?: string; phone?: string }[];
   contactsByCustomerId?: Record<string, { id: string; name: string; role?: string; email?: string; phone?: string }[]>;
   onContactMenu?: (e: unknown, customer: Customer, contact: { id: string; name: string; role?: string; email?: string; phone?: string }) => void;
-  onAddContact?: (customer: Customer, contact: { name: string; role?: string; email?: string; phone?: string }) => void;
+  onAddContact?: (customer: Customer, contact: { name: string; role?: string; email?: string; phone?: string; workPhone?: string }) => void;
   onRemoveContact?: (customer: Customer, contactId: string) => void;
   onLinkContact?: (
     customer: Customer,
     contactId: string,
-    patch?: { role?: string; phone?: string; email?: string; contactCompanyName?: string }
+    patch?: { role?: string; phone?: string; workPhone?: string; email?: string; contactCompanyName?: string }
   ) => void;
   inlineEnabled?: boolean;
   inlineValues?: {
@@ -484,10 +488,11 @@ export default function KunderTable({
   onCancelEdit,
 }: KunderTableProps): React.ReactElement {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredContactKey, setHoveredContactKey] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [editingContactSection, setEditingContactSection] = useState<Record<string, boolean>>({});
   const [openContactEmailHoverId, setOpenContactEmailHoverId] = useState<string | null>(null);
-  const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string }>>({});
+  const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; phone: string; workPhone: string; email: string }>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
   const [editDraft, setEditDraft] = useState<{
     name: string;
@@ -580,8 +585,9 @@ export default function KunderTable({
         role: draft.role?.trim(),
         email: draft.email?.trim(),
         phone: draft.phone?.trim(),
+        workPhone: draft.workPhone?.trim(),
       });
-      setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', email: '', phone: '' } }));
+      setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
       setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
       setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
     }
@@ -993,7 +999,7 @@ export default function KunderTable({
               </View>
               <View style={[styles.cellFixed, col('personalOrOrgNumber')]}>
                 <View style={styles.columnContent}>
-                  <Text style={styles.cellMuted} numberOfLines={1}>{safeText(customer.personalOrOrgNumber)}</Text>
+                  <Text style={styles.cellMuted} numberOfLines={1}>{formatOrganizationNumber(customer.personalOrOrgNumber ?? '') || '—'}</Text>
                 </View>
               </View>
               <View style={[styles.cellFlex, col('address')]}>
@@ -1045,7 +1051,6 @@ export default function KunderTable({
                       <View style={[styles.cellFlex, { flex: FLEX_CONTACT.email }]}>
                         <Text style={styles.openContactTableHeaderCell}>E-post</Text>
                       </View>
-                      <View style={styles.openContactTableKebabCol} />
                     </View>
                     {(contactMap[customer.id] || []).map((contact, cIdx) => {
                       const workPhone = (contact as { workPhone?: string }).workPhone;
@@ -1055,7 +1060,19 @@ export default function KunderTable({
                           style={[
                             styles.openContactTableRow,
                             cIdx % 2 === 1 ? styles.openContactTableRowAlt : null,
+                            Platform.OS === 'web' && hoveredContactKey === `${customer.id}-${contact.id}` ? styles.openContactTableRowHover : null,
                           ]}
+                          {...(Platform.OS === 'web'
+                            ? {
+                                onContextMenu: (e: React.MouseEvent) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  onContactMenu?.(e, customer, contact);
+                                },
+                                onMouseEnter: () => setHoveredContactKey(`${customer.id}-${contact.id}`),
+                                onMouseLeave: () => setHoveredContactKey(null),
+                              }
+                            : {})}
                         >
                           <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
                             <Text style={[styles.openContactTableCell, { fontWeight: '500' }]} numberOfLines={1}>
@@ -1101,16 +1118,6 @@ export default function KunderTable({
                               </Text>
                             )}
                           </View>
-                          <View style={styles.openContactTableKebabCol}>
-                            <TouchableOpacity
-                              style={styles.rowMenuBtn}
-                              onPress={(e) => onContactMenu?.(e, customer, contact)}
-                              activeOpacity={0.8}
-                              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                            >
-                              <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-                            </TouchableOpacity>
-                          </View>
                         </View>
                       );
                     })}
@@ -1137,11 +1144,11 @@ export default function KunderTable({
                     onChangeText={(v) =>
                       setContactDrafts((prev) => ({
                         ...prev,
-                        [customer.id]: { name: v, role: prev[customer.id]?.role || '', email: prev[customer.id]?.email || '', phone: prev[customer.id]?.phone || '' },
+                        [customer.id]: { name: v, role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
                       }))
                     }
-                    placeholder="Namn (ny kontakt)"
-                    style={[styles.contactInput, { flex: 1.2 }]}
+                    placeholder="Namn"
+                    style={[styles.contactInput, { flex: FLEX_CONTACT.name }]}
                     placeholderTextColor="#94a3b8"
                     {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
                     returnKeyType="next"
@@ -1153,27 +1160,11 @@ export default function KunderTable({
                     onChangeText={(v) =>
                       setContactDrafts((prev) => ({
                         ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name || '', role: v, email: prev[customer.id]?.email || '', phone: prev[customer.id]?.phone || '' },
+                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: v, phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
                       }))
                     }
                     placeholder="Roll"
-                    style={[styles.contactInput, { flex: 1, marginLeft: 8 }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                  <TextInput
-                    value={contactDrafts[customer.id]?.email ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name || '', role: prev[customer.id]?.role || '', email: v, phone: prev[customer.id]?.phone || '' },
-                      }))
-                    }
-                    placeholder="E-post"
-                    style={[styles.contactInput, { flex: 1.2, marginLeft: 8 }]}
+                    style={[styles.contactInput, { flex: FLEX_CONTACT.role, marginLeft: 8 }]}
                     placeholderTextColor="#94a3b8"
                     {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
                     returnKeyType="next"
@@ -1185,11 +1176,43 @@ export default function KunderTable({
                     onChangeText={(v) =>
                       setContactDrafts((prev) => ({
                         ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name || '', role: prev[customer.id]?.role || '', email: prev[customer.id]?.email || '', phone: v },
+                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: v, workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
                       }))
                     }
-                    placeholder="Telefon"
-                    style={[styles.contactInput, { flex: 1, marginLeft: 8 }]}
+                    placeholder="Mobil"
+                    style={[styles.contactInput, { width: FIXED_CONTACT.mobile, marginLeft: 8 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => submitDraft(customer)}
+                  />
+                  <TextInput
+                    value={contactDrafts[customer.id]?.workPhone ?? ''}
+                    onChangeText={(v) =>
+                      setContactDrafts((prev) => ({
+                        ...prev,
+                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: v, email: prev[customer.id]?.email ?? '' },
+                      }))
+                    }
+                    placeholder="Arbete"
+                    style={[styles.contactInput, { width: FIXED_CONTACT.workPhone, marginLeft: 8 }]}
+                    placeholderTextColor="#94a3b8"
+                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => submitDraft(customer)}
+                  />
+                  <TextInput
+                    value={contactDrafts[customer.id]?.email ?? ''}
+                    onChangeText={(v) =>
+                      setContactDrafts((prev) => ({
+                        ...prev,
+                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: v },
+                      }))
+                    }
+                    placeholder="E-post"
+                    style={[styles.contactInput, { flex: FLEX_CONTACT.email, marginLeft: 8 }]}
                     placeholderTextColor="#94a3b8"
                     {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
                     returnKeyType="done"
@@ -1198,7 +1221,7 @@ export default function KunderTable({
                   />
                 </View>
                 {(() => {
-                  const draft = contactDrafts[customer.id] || { name: '', role: '', email: '', phone: '' };
+                  const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
                   const q = String(draft.name || '').trim().toLowerCase();
                   const linkedIds = new Set((contactMap[customer.id] || []).map((c) => c.id));
                   const matches = q
@@ -1219,10 +1242,11 @@ export default function KunderTable({
                             onLinkContact?.(customer, m.id, {
                               role: draft.role,
                               phone: draft.phone,
+                              workPhone: draft.workPhone,
                               email: draft.email,
                               contactCompanyName: customer.name || '',
                             });
-                            setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', email: '', phone: '' } }));
+                            setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
                             setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
                           }}
                           activeOpacity={0.8}
@@ -1249,16 +1273,17 @@ export default function KunderTable({
                       onPress={() => {
                         const dup = duplicatePrompt[customer.id];
                         if (dup) {
-                          const draft = contactDrafts[customer.id] || { role: '', phone: '', email: '' };
+                          const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
                           onLinkContact?.(customer, dup.contactId, {
                             role: draft.role,
                             phone: draft.phone,
+                            workPhone: draft.workPhone,
                             email: draft.email,
                             contactCompanyName: customer.name || '',
                           });
                         }
                         setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
-                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', email: '', phone: '' } }));
+                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
                         setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
                       }}
                     >
@@ -1274,10 +1299,11 @@ export default function KunderTable({
                             role: draft.role?.trim(),
                             email: draft.email?.trim(),
                             phone: draft.phone?.trim(),
+                            workPhone: draft.workPhone?.trim(),
                           });
                         }
                         setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
-                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', email: '', phone: '' } }));
+                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
                         setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
                       }}
                     >
@@ -1289,7 +1315,7 @@ export default function KunderTable({
                   style={{ marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', alignSelf: 'flex-start' }}
                   onPress={() => {
                     setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
-                    setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', email: '', phone: '' } }));
+                    setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
                     setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
                   }}
                   {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}

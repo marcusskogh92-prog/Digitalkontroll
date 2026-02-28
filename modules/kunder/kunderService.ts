@@ -123,7 +123,7 @@ export function normalizeCustomerType(value: string): 'Privatperson' | 'Företag
 export async function addContactToCustomer(
   companyId: string | undefined | null,
   customer: Customer,
-  contact: { name: string; email?: string; phone?: string; role?: string }
+  contact: { name: string; email?: string; phone?: string; workPhone?: string; role?: string }
 ): Promise<{ contactId: string; created: boolean }> {
   const cid = safeCompanyId(companyId);
   const existingContacts = await fetchCompanyContacts(cid);
@@ -134,6 +134,7 @@ export async function addContactToCustomer(
       name: contact.name,
       email: contact.email ?? '',
       phone: contact.phone ?? '',
+      workPhone: contact.workPhone ?? '',
       role: contact.role ?? '',
     },
     contactCompanyName: customer.name,
@@ -147,6 +148,7 @@ export async function addContactToCustomer(
     };
     if (contact.role?.trim()) patch.role = contact.role.trim();
     if (contact.phone?.trim()) patch.phone = contact.phone.trim();
+    if (contact.workPhone !== undefined) patch.workPhone = (contact.workPhone ?? '').trim();
     if (contact.email?.trim()) patch.email = contact.email.trim();
     await updateCompanyContact({ id: result.id, patch }, cid);
   }
@@ -174,7 +176,7 @@ export async function linkExistingContactToCustomer(
   companyId: string | undefined | null,
   customer: Customer,
   contactId: string,
-  patch?: { role?: string; phone?: string; email?: string; contactCompanyName?: string }
+  patch?: { role?: string; phone?: string; workPhone?: string; email?: string; contactCompanyName?: string }
 ): Promise<void> {
   const cid = safeCompanyId(companyId);
   const nextPatch: Record<string, unknown> = {
@@ -185,6 +187,7 @@ export async function linkExistingContactToCustomer(
   if (patch?.contactCompanyName) nextPatch.contactCompanyName = patch.contactCompanyName;
   if (patch?.role?.trim()) nextPatch.role = patch.role.trim();
   if (patch?.phone?.trim()) nextPatch.phone = patch.phone.trim();
+  if (patch?.workPhone !== undefined) nextPatch.workPhone = (patch.workPhone ?? '').trim();
   if (patch?.email?.trim()) nextPatch.email = patch.email.trim();
   await updateCompanyContact({ id: contactId, patch: nextPatch }, cid);
   const nextIds = Array.from(new Set([...(customer.contactIds || []), contactId].filter(Boolean)));

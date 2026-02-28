@@ -42,7 +42,7 @@ import {
     validateHeaders,
 } from '../../utils/registerExcel';
 import ContextMenu from '../ContextMenu';
-import { createCategory, fetchByggdelar, fetchCategories, fetchCompanyProfile, fetchKontoplan } from '../firebase';
+import { createCategory, deleteCompanyContact, fetchByggdelar, fetchCategories, fetchCompanyProfile, fetchKontoplan } from '../firebase';
 import { AdminModalContext } from './AdminModalContext';
 import ModalBase from './ModalBase';
 import ConfirmModal from './Modals/ConfirmModal';
@@ -283,8 +283,14 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
   const [rowMenuVisible, setRowMenuVisible] = useState(false);
   const [rowMenuPos, setRowMenuPos] = useState({ x: 20, y: 64 });
   const [rowMenuSupplier, setRowMenuSupplier] = useState(null);
+  const [contactMenuVisible, setContactMenuVisible] = useState(false);
+  const [contactMenuPos, setContactMenuPos] = useState({ x: 20, y: 64 });
+  const [contactMenuSupplier, setContactMenuSupplier] = useState(null);
+  const [contactMenuContact, setContactMenuContact] = useState(null);
   const [deleteConfirmSupplier, setDeleteConfirmSupplier] = useState(null);
+  const [deleteConfirmContact, setDeleteConfirmContact] = useState(null); // { supplier, contact }
   const [deleting, setDeleting] = useState(false);
+  const [deletingContact, setDeletingContact] = useState(false);
   const [excelMenuVisible, setExcelMenuVisible] = useState(false);
   const [excelMenuPos, setExcelMenuPos] = useState({ x: 20, y: 64 });
   const [importPlan, setImportPlan] = useState(null);
@@ -422,12 +428,16 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        if (deleteConfirmContact) {
+          setDeleteConfirmContact(null);
+          return;
+        }
         onClose?.();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible, onClose]);
+  }, [visible, onClose, deleteConfirmContact]);
 
   useLayoutEffect(() => {
     if (!notice && !error) return;
@@ -878,6 +888,43 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
     }
   };
 
+  /** Bara koppla bort kontakten från leverantören (behåll i kontaktregistret). */
+  const performRemoveOnlyFromSupplier = async () => {
+    const { supplier, contact } = deleteConfirmContact || {};
+    if (!cid || !supplier || !contact) return;
+    setDeletingContact(true);
+    try {
+      await removeContactFromSupplier(cid, supplier.id, contact.id);
+      await loadContacts();
+      await loadSuppliers();
+      showNotice('Kontakt kopplad bort från leverantör');
+      setDeleteConfirmContact(null);
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setDeletingContact(false);
+    }
+  };
+
+  /** Radera kontakten från kontaktregistret och koppla bort från leverantören. */
+  const performDeleteContactFromSupplier = async () => {
+    const { supplier, contact } = deleteConfirmContact || {};
+    if (!cid || !supplier || !contact) return;
+    setDeletingContact(true);
+    try {
+      await deleteCompanyContact({ id: contact.id }, cid);
+      await removeContactFromSupplier(cid, supplier.id, contact.id);
+      await loadContacts();
+      await loadSuppliers();
+      showNotice('Kontaktperson raderad');
+      setDeleteConfirmContact(null);
+    } catch (e) {
+      setError(formatWriteError(e));
+    } finally {
+      setDeletingContact(false);
+    }
+  };
+
   const handleLinkContact = async (supplier, contactId, patch) => {
     if (!cid) return;
     try {
@@ -914,6 +961,11 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
 
   const rowMenuItems = [
     { key: 'edit', label: 'Redigera', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
+    { key: 'delete', label: 'Radera', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
+  ];
+
+  const contactMenuItems = [
+    { key: 'edit', label: 'Redigera kontakt', icon: <Ionicons name="create-outline" size={16} color="#0f172a" /> },
     { key: 'delete', label: 'Radera', danger: true, icon: <Ionicons name="trash-outline" size={16} color="#b91c1c" /> },
   ];
 
@@ -1154,6 +1206,16 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     onAddContact={handleAddContact}
                     onRemoveContact={handleRemoveContact}
                     onLinkContact={handleLinkContact}
+                    onContactMenu={(e, supplier, contact) => {
+                      if (Platform.OS !== 'web') return;
+                      const ne = e?.nativeEvent || e;
+                      const x = Number(ne?.pageX ?? 20);
+                      const y = Number(ne?.pageY ?? 64);
+                      setContactMenuPos({ x: Number.isFinite(x) ? x : 20, y: Number.isFinite(y) ? y : 64 });
+                      setContactMenuSupplier(supplier);
+                      setContactMenuContact(contact);
+                      setContactMenuVisible(true);
+                    }}
                     companyCategories={companyCategories}
                     keepExpandedSupplierId={keepExpandedSupplierId}
                     companyByggdelar={companyByggdelar}
@@ -1274,6 +1336,44 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
         busy={deleting}
         onCancel={() => setDeleteConfirmSupplier(null)}
         onConfirm={confirmDelete}
+      />
+
+      <ContextMenu
+        visible={contactMenuVisible}
+        x={contactMenuPos.x}
+        y={contactMenuPos.y}
+        items={contactMenuItems}
+        onClose={() => setContactMenuVisible(false)}
+        onSelect={(it) => {
+          setContactMenuVisible(false);
+          const supplier = contactMenuSupplier;
+          const contact = contactMenuContact;
+          if (!supplier || !contact || !it) return;
+          if (it.key === 'edit') {
+            // TODO: öppna redigera-kontakt-modal (samma mönster som AdminCustomersModal)
+          } else if (it.key === 'delete') {
+            setDeleteConfirmContact({ supplier, contact });
+          }
+        }}
+      />
+
+      <ConfirmModal
+        visible={!!deleteConfirmContact}
+        title="Ta bort kontakt?"
+        message={
+          deleteConfirmContact
+            ? `Kontakter synkas mellan leverantörer och kontaktregistret. Vill du bara koppla bort "${String(deleteConfirmContact.contact?.name ?? '').trim() || 'kontakten'}" från leverantören, eller även radera från kontaktregistret?`
+            : 'Kontakter synkas mellan leverantörer och kontaktregistret. Vill du bara koppla bort kontakten från leverantören, eller även radera från kontaktregistret?'
+        }
+        confirmLabel="Koppla bort kontakt"
+        secondConfirmLabel="Radera från kontaktregister"
+        danger
+        hideCancel
+        hideKeyboardHints
+        busy={deletingContact}
+        onCancel={() => setDeleteConfirmContact(null)}
+        onConfirm={performRemoveOnlyFromSupplier}
+        onSecondConfirm={performDeleteContactFromSupplier}
       />
 
       <ModalBase

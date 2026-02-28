@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { MODAL_DESIGN_2026 } from '../../constants/modalDesign2026';
 import ModalBase from './ModalBase';
+import { formatMobileDisplay, mobileDigitsOnly } from '../../utils/formatPhone';
 import {
     buildAndDownloadExcel,
     computeSyncPlan,
@@ -965,7 +966,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                     companyId: inlineCompanyId,
                     contactCompanyName: inlineCompanyName,
                     role: inlineRole,
-                    phone: inlinePhone,
+                    phone: formatMobileDisplay(inlinePhone),
                     workPhone: inlineWorkPhone,
                     email: inlineEmail,
                   }}
@@ -974,7 +975,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                     if (field === 'companyId') setInlineCompanyId(value);
                     if (field === 'contactCompanyName') setInlineCompanyName(value);
                     if (field === 'role') setInlineRole(value);
-                    if (field === 'phone') setInlinePhone(value);
+                    if (field === 'phone') setInlinePhone(mobileDigitsOnly(value));
                     if (field === 'workPhone') setInlineWorkPhone(value);
                     if (field === 'email') setInlineEmail(value);
                   }}
@@ -1083,7 +1084,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
               </View>
               <View style={styles.addModalField}>
                 <Text style={styles.addModalLabel}>Mobil</Text>
-                <TextInput value={addModalPhone} onChangeText={(v) => setAddModalPhone(String(v).replace(/\D/g, '').slice(0, 15))} placeholder="Siffror" keyboardType="number-pad" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+                <TextInput value={formatMobileDisplay(addModalPhone)} onChangeText={(v) => setAddModalPhone(mobileDigitsOnly(v))} placeholder="xxx xxx xx xx" keyboardType="number-pad" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
               </View>
               <View style={styles.addModalField}>
                 <Text style={styles.addModalLabel}>Arbete</Text>
@@ -1169,7 +1170,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         </View>
         <View style={styles.addModalField}>
           <Text style={styles.addModalLabel}>Mobil</Text>
-          <TextInput value={editModalPhone} onChangeText={(v) => setEditModalPhone(String(v).replace(/\D/g, '').slice(0, 15))} placeholder="Siffror" keyboardType="number-pad" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
+          <TextInput value={formatMobileDisplay(editModalPhone)} onChangeText={(v) => setEditModalPhone(mobileDigitsOnly(v))} placeholder="xxx xxx xx xx" keyboardType="number-pad" style={styles.addModalInput} placeholderTextColor="#94a3b8" {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})} />
         </View>
         <View style={styles.addModalField}>
           <Text style={styles.addModalLabel}>Arbete</Text>

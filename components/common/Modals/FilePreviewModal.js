@@ -95,7 +95,8 @@ export default function FilePreviewModal({
   const typeLabel = (typeMeta?.label || 'FIL').toUpperCase();
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [commentsPanelOpen, setCommentsPanelOpen] = useState(true);
+  /** Golden rule: kommentarer dolda från början – hela ytan används till filförhandsgranskning. */
+  const [commentsPanelOpen, setCommentsPanelOpen] = useState(false);
   const [rect, setRect] = useState(getInitialRect);
   const [dragState, setDragState] = useState(null);
   const [resizeState, setResizeState] = useState(null);
@@ -110,9 +111,9 @@ export default function FilePreviewModal({
     if (show && isWeb) {
       setRect(getInitialRect());
       setIsFullscreen(false);
-      if (showComments) setCommentsPanelOpen(true);
+      setCommentsPanelOpen(false);
     }
-  }, [show, isWeb, showComments]);
+  }, [show, isWeb]);
 
   useEffect(() => {
     if (!isWeb) return;
@@ -417,9 +418,8 @@ export default function FilePreviewModal({
           pointerEvents="box-none"
         >
           {headerContent}
-          {/* Body layout: preview area + fixed right sidebar. The sidebar column is always reserved so the preview doesn't shift when toggling comments. */}
-          <View style={[styles.body, showComments && styles.bodyRow]}>
-            {/* Preview area: neutral background + a subtle "paper" frame for readability. */}
+          {/* Body: när kommentarer är stängda används hela ytan till förhandsgranskning; när öppna visas kommentarspanelen till höger. */}
+          <View style={[styles.body, showComments && commentsPanelOpen && styles.bodyRow]}>
             <View style={styles.previewArea} pointerEvents="box-none">
               <View style={styles.previewPaper} pointerEvents="box-none">
                 {React.Children.count(children) === 1 && React.isValidElement(children)
@@ -427,22 +427,19 @@ export default function FilePreviewModal({
                   : children}
               </View>
             </View>
-            {showComments ? (
+            {showComments && commentsPanelOpen ? (
               <View style={styles.commentsColumn}>
                 <View style={styles.commentsPanelWrap}>
-                  {/* Comments sidebar is a locked 3-zone column (header / scroll list / composer). */}
-                  {commentsPanelOpen ? (
-                    <FileCommentsPanel
-                      companyId={cid}
-                      projectId={pid}
-                      fileId={fileId}
-                      fileName={name}
-                      pageNumber={pageNumber}
-                      variant="sidebar"
-                      comments={fileComments}
-                      onNavigateToPage={typeof onRequestPage === 'function' ? onRequestPage : undefined}
-                    />
-                  ) : null}
+                  <FileCommentsPanel
+                    companyId={cid}
+                    projectId={pid}
+                    fileId={fileId}
+                    fileName={name}
+                    pageNumber={pageNumber}
+                    variant="sidebar"
+                    comments={fileComments}
+                    onNavigateToPage={typeof onRequestPage === 'function' ? onRequestPage : undefined}
+                  />
                 </View>
               </View>
             ) : null}

@@ -286,11 +286,22 @@ export function useCreateSharePointProjectModal({ companyId }) {
       }
 
       // Persist metadata for phase/structure so UI can show the correct indicator
+      const phaseKeyForMeta =
+        structureType === 'system' && systemPhase
+          ? String(systemPhase || '').trim() || 'kalkylskede'
+          : 'free';
+      const phaseKey =
+        systemPhase === 'produktion'
+          ? 'produktion'
+          : systemPhase === 'avslut'
+            ? 'avslut'
+            : systemPhase === 'eftermarknad'
+              ? 'eftermarknad'
+              : systemPhase === 'kalkyl' || systemPhase === 'kalkylskede'
+                ? 'kalkylskede'
+                : 'kalkylskede';
+
       try {
-        const phaseKeyForMeta =
-          structureType === 'system' && systemPhase
-            ? String(systemPhase || '').trim() || 'kalkylskede'
-            : 'free';
         await saveSharePointProjectMetadata(companyId, {
           siteId,
           projectPath,
@@ -307,8 +318,24 @@ export function useCreateSharePointProjectModal({ companyId }) {
         console.warn('[useCreateSharePointProjectModal] Warning saving project metadata:', metaError?.message || metaError);
       }
 
-      // Stäng modalen direkt när projektet finns i Firestore (syns i vänsterpanelen).
-      // Mappstruktur och SharePoint-egenskaper skapas i bakgrunden så att användaren inte behöver vänta.
+      // När användaren valt Kalkylskede: skapa mappstruktur och kopiera checklista-Excel från företagets mall
+      // direkt här så filen finns när projektet öppnas (annars måste användaren klicka "Skapa checklista från företagets mall").
+      const needsStructure = (structureType === 'system' && systemPhase) || systemPhase === 'kalkyl' || systemPhase === 'kalkylskede';
+      if (needsStructure && phaseKey === 'kalkylskede') {
+        try {
+          await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
+          const { copyChecklistMallToProject } = await import('../lib/mallarDkBasService');
+          await copyChecklistMallToProject(companyId, siteId, projectPath);
+          // eslint-disable-next-line no-console
+          console.log('[useCreateSharePointProjectModal] Checklista Excel från företagets mall skapad i projektet');
+        } catch (excelErr) {
+          // Företaget kan sakna aktiv mall eller DK Bas – blockera inte projektcreation.
+          // eslint-disable-next-line no-console
+          console.warn('[useCreateSharePointProjectModal] Checklista-mall kunde inte kopieras (användaren kan skapa från mall manuellt):', excelErr?.message || excelErr);
+        }
+      }
+
+      // Stäng modalen när projektet finns i Firestore och (vid Kalkylskede) checklista-Excel är skapad.
       // eslint-disable-next-line no-console
       console.log('[useCreateSharePointProjectModal] ✅ Project saved, closing modal (structure continues in background)');
       setVisible(false);

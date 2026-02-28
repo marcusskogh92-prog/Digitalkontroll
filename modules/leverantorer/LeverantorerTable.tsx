@@ -1701,6 +1701,15 @@ export default function LeverantorerTable({
                                 styles.openContactTableRow,
                                 cIdx % 2 === 1 ? styles.openContactTableRowAlt : null,
                               ]}
+                              {...(Platform.OS === 'web'
+                                ? {
+                                    onContextMenu: (e: React.MouseEvent) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      onContactMenu?.(e, supplier, contact);
+                                    },
+                                  }
+                                : {})}
                             >
                               <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
                                 <Text style={[styles.openContactTableCell, { fontWeight: '500' }]} numberOfLines={1}>

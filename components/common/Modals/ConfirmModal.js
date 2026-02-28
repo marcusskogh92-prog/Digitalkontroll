@@ -9,6 +9,7 @@
  * Används för: radera leverantör, kund, kontakt, byggdel, konto, kategori m.m.
  */
 
+import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef } from 'react';
 import {
     ActivityIndicator,
@@ -16,12 +17,15 @@ import {
     Platform,
     Pressable,
     Text,
+    TouchableOpacity,
     View,
 } from 'react-native';
 
 // Design tokens – samma känsla som övriga systemet
 const CONFIRM_MODAL = {
   maxWidth: 480,
+  /** När två val (t.ex. koppla bort / radera från register) – bredare så knapparna ryms */
+  maxWidthTwoButtons: 520,
   borderRadius: 12,
   paddingTop: 24,
   paddingHorizontal: 24,
@@ -70,6 +74,14 @@ const CONFIRM_MODAL = {
   dangerPaddingHorizontal: 16,
   dangerMinWidth: 100,
 
+  /** Sekundär knapp (t.ex. "Koppla bort kontakt" när andra knappen är "Radera från kontaktregister") */
+  secondaryBg: '#fff',
+  secondaryBgHover: '#f1f5f9',
+  secondaryBorderColor: '#cbd5e1',
+  secondaryText: '#334155',
+  /** Minbredd för de två valknapparna så att längre texter ryms */
+  twoButtonMinWidth: 180,
+
   hintFontSize: 10,
   hintOpacity: 0.35,
   hintMarginTop: 4,
@@ -97,6 +109,11 @@ export default function ConfirmModal({
   warningText = '',
   /** Inaktivera bekräfta-knappen (t.ex. när radering blockeras pga andra användare) */
   confirmDisabled = false,
+  /** Valfri andra bekräftelseknapp (t.ex. "Radera från kontaktregister") */
+  secondConfirmLabel = '',
+  onSecondConfirm,
+  /** Dölj Avbryt-knappen och visa stäng-kryss (X) uppe till höger + Esc för att stänga */
+  hideCancel = false,
   onCancel,
   onConfirm,
 }) {
@@ -116,6 +133,13 @@ export default function ConfirmModal({
       onConfirm?.();
     } catch (_e) {}
   }, [busy, confirmDisabled, onConfirm]);
+
+  const handleSecondConfirm = useCallback(() => {
+    if (busy) return;
+    try {
+      onSecondConfirm?.();
+    } catch (_e) {}
+  }, [busy, onSecondConfirm]);
 
   // ESC = Avbryt, ENTER = Bekräfta (samma som Radera)
   useEffect(() => {
@@ -194,7 +218,7 @@ export default function ConfirmModal({
             paddingHorizontal: CONFIRM_MODAL.paddingHorizontal,
             paddingBottom: hideKeyboardHints ? CONFIRM_MODAL.paddingBottomNoHints : CONFIRM_MODAL.paddingBottom,
             width: '100%',
-            maxWidth: CONFIRM_MODAL.maxWidth,
+            maxWidth: secondConfirmLabel ? CONFIRM_MODAL.maxWidthTwoButtons : CONFIRM_MODAL.maxWidth,
             borderWidth: 1,
             borderColor: CONFIRM_MODAL.dividerColor,
             shadowColor: CONFIRM_MODAL.shadowColor,
@@ -206,7 +230,7 @@ export default function ConfirmModal({
           onStartShouldSetResponder={() => true}
           onResponderRelease={(e) => e.stopPropagation()}
         >
-          {/* 1. Titelrad: vid danger = röd cirkel med "!" + titel (Radera X?) */}
+          {/* 1. Titelrad: vid danger = röd cirkel med "!" + titel; vid hideCancel = kryss till höger */}
           <View
             style={{
               flexDirection: 'row',
@@ -236,10 +260,27 @@ export default function ConfirmModal({
                 fontWeight: CONFIRM_MODAL.titleFontWeight,
                 color: CONFIRM_MODAL.titleColor,
                 flex: 1,
+                minWidth: 0,
               }}
             >
               {titleDisplay}
             </Text>
+            {hideCancel ? (
+              <TouchableOpacity
+                onPress={handleCancel}
+                disabled={busy}
+                style={{
+                  padding: 6,
+                  borderRadius: 8,
+                  backgroundColor: 'transparent',
+                  ...(Platform.OS === 'web' ? { cursor: busy ? 'not-allowed' : 'pointer', outlineStyle: 'none' } : {}),
+                }}
+                accessibilityLabel="Stäng"
+                accessibilityRole="button"
+              >
+                <Ionicons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {/* 2. Brödtext */}
@@ -317,44 +358,46 @@ export default function ConfirmModal({
               alignItems: 'flex-start',
               gap: CONFIRM_MODAL.buttonGap,
               marginTop: String(warningText ?? '').trim() ? 0 : 4,
+              ...(secondConfirmLabel ? { flexWrap: 'wrap' } : {}),
             }}
           >
-            {/* Avbryt + ESC-hint */}
-            <View style={{ alignItems: 'center' }}>
-              <Pressable
-                ref={cancelRef}
-                onPress={handleCancel}
-                disabled={busy}
-                style={({ pressed }) => ({
-                  backgroundColor: pressed ? CONFIRM_MODAL.cancelBgHover : CONFIRM_MODAL.cancelBg,
-                  borderRadius: CONFIRM_MODAL.cancelBorderRadius,
-                  paddingVertical: CONFIRM_MODAL.cancelPaddingVertical,
-                  paddingHorizontal: CONFIRM_MODAL.cancelPaddingHorizontal,
-                  minWidth: CONFIRM_MODAL.cancelMinWidth,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: busy ? 0.6 : 1,
-                  ...(Platform.OS === 'web'
-                    ? {
-                        cursor: busy ? 'not-allowed' : 'pointer',
-                        outlineStyle: 'none',
-                      }
-                    : {}),
-                })}
-                accessibilityLabel={cancelLabel}
-                accessibilityRole="button"
-                {...(Platform.OS === 'web' ? { tabIndex: 0 } : {})}
-              >
-                <Text
-                  style={{
-                    color: CONFIRM_MODAL.cancelText,
-                    fontWeight: '500',
-                    fontSize: 14,
-                  }}
+            {/* Avbryt (döljs om hideCancel) + ESC-hint */}
+            {!hideCancel ? (
+              <View style={{ alignItems: 'center' }}>
+                <Pressable
+                  ref={cancelRef}
+                  onPress={handleCancel}
+                  disabled={busy}
+                  style={({ pressed }) => ({
+                    backgroundColor: pressed ? CONFIRM_MODAL.cancelBgHover : CONFIRM_MODAL.cancelBg,
+                    borderRadius: CONFIRM_MODAL.cancelBorderRadius,
+                    paddingVertical: CONFIRM_MODAL.cancelPaddingVertical,
+                    paddingHorizontal: CONFIRM_MODAL.cancelPaddingHorizontal,
+                    minWidth: CONFIRM_MODAL.cancelMinWidth,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: busy ? 0.6 : 1,
+                    ...(Platform.OS === 'web'
+                      ? {
+                          cursor: busy ? 'not-allowed' : 'pointer',
+                          outlineStyle: 'none',
+                        }
+                      : {}),
+                  })}
+                  accessibilityLabel={cancelLabel}
+                  accessibilityRole="button"
+                  {...(Platform.OS === 'web' ? { tabIndex: 0 } : {})}
                 >
-                  {cancelLabel}
-                </Text>
-              </Pressable>
+                  <Text
+                    style={{
+                      color: CONFIRM_MODAL.cancelText,
+                      fontWeight: '500',
+                      fontSize: 14,
+                    }}
+                  >
+                    {cancelLabel}
+                  </Text>
+                </Pressable>
                 {!hideKeyboardHints ? (
                   <Text
                     style={{
@@ -369,53 +412,61 @@ export default function ConfirmModal({
                     ESC
                   </Text>
                 ) : null}
-            </View>
+              </View>
+            ) : null}
 
-            {/* Radera/Bekräfta + ENTER-hint */}
+            {/* Första bekräftelsen: sekundär stil (kant + ljus bakgrund) om det finns en andra röd knapp */}
             <View style={{ alignItems: 'center' }}>
               <Pressable
                 ref={confirmRef}
                 onPress={handleConfirm}
                 disabled={busy || confirmDisabled}
-                style={({ pressed }) => ({
-                  backgroundColor: danger
-                    ? pressed && !confirmDisabled
-                      ? CONFIRM_MODAL.dangerBgHover
-                      : CONFIRM_MODAL.dangerBg
-                    : pressed && !confirmDisabled
-                      ? '#1557b0'
-                      : '#1976D2',
-                  borderRadius: danger
-                    ? CONFIRM_MODAL.dangerBorderRadius
-                    : CONFIRM_MODAL.cancelBorderRadius,
-                  paddingVertical: danger
-                    ? CONFIRM_MODAL.dangerPaddingVertical
-                    : CONFIRM_MODAL.cancelPaddingVertical,
-                  paddingHorizontal: danger
-                    ? CONFIRM_MODAL.dangerPaddingHorizontal
-                    : CONFIRM_MODAL.cancelPaddingHorizontal,
-                  minWidth: CONFIRM_MODAL.dangerMinWidth,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexDirection: 'row',
-                  opacity: busy || confirmDisabled ? 0.75 : 1,
-                  ...(Platform.OS === 'web'
-                    ? {
-                        cursor: busy || confirmDisabled ? 'not-allowed' : 'pointer',
-                        outlineStyle: 'none',
-                      }
-                    : {}),
-                })}
+                style={({ pressed }) => {
+                  if (secondConfirmLabel) {
+                    return {
+                      backgroundColor: pressed && !confirmDisabled ? CONFIRM_MODAL.secondaryBgHover : CONFIRM_MODAL.secondaryBg,
+                      borderWidth: 1,
+                      borderColor: CONFIRM_MODAL.secondaryBorderColor,
+                      borderRadius: CONFIRM_MODAL.dangerBorderRadius,
+                      paddingVertical: CONFIRM_MODAL.dangerPaddingVertical,
+                      paddingHorizontal: CONFIRM_MODAL.dangerPaddingHorizontal,
+                      minWidth: CONFIRM_MODAL.twoButtonMinWidth,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexDirection: 'row',
+                      opacity: busy || confirmDisabled ? 0.75 : 1,
+                      ...(Platform.OS === 'web'
+                        ? { cursor: busy || confirmDisabled ? 'not-allowed' : 'pointer', outlineStyle: 'none' }
+                        : {}),
+                    };
+                  }
+                  return {
+                    backgroundColor: danger
+                      ? pressed && !confirmDisabled ? CONFIRM_MODAL.dangerBgHover : CONFIRM_MODAL.dangerBg
+                      : pressed && !confirmDisabled ? '#1557b0' : '#1976D2',
+                    borderRadius: danger ? CONFIRM_MODAL.dangerBorderRadius : CONFIRM_MODAL.cancelBorderRadius,
+                    paddingVertical: danger ? CONFIRM_MODAL.dangerPaddingVertical : CONFIRM_MODAL.cancelPaddingVertical,
+                    paddingHorizontal: danger ? CONFIRM_MODAL.dangerPaddingHorizontal : CONFIRM_MODAL.cancelPaddingHorizontal,
+                    minWidth: CONFIRM_MODAL.dangerMinWidth,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'row',
+                    opacity: busy || confirmDisabled ? 0.75 : 1,
+                    ...(Platform.OS === 'web'
+                      ? { cursor: busy || confirmDisabled ? 'not-allowed' : 'pointer', outlineStyle: 'none' }
+                      : {}),
+                  };
+                }}
                 accessibilityLabel={confirmLabelDisplay}
                 accessibilityRole="button"
                 {...(Platform.OS === 'web' ? { tabIndex: 0 } : {})}
               >
                 {busy ? (
-                  <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />
+                  <ActivityIndicator size="small" color={secondConfirmLabel ? CONFIRM_MODAL.secondaryText : '#fff'} style={{ marginRight: 6 }} />
                 ) : null}
                 <Text
                   style={{
-                    color: danger ? CONFIRM_MODAL.dangerText : '#fff',
+                    color: secondConfirmLabel ? CONFIRM_MODAL.secondaryText : (danger ? CONFIRM_MODAL.dangerText : '#fff'),
                     fontWeight: '500',
                     fontSize: 14,
                   }}
@@ -423,7 +474,7 @@ export default function ConfirmModal({
                   {confirmLabelDisplay}
                 </Text>
               </Pressable>
-              {!hideKeyboardHints ? (
+              {!hideKeyboardHints && !secondConfirmLabel ? (
                 <Text
                   style={{
                     fontSize: CONFIRM_MODAL.hintFontSize,
@@ -438,6 +489,45 @@ export default function ConfirmModal({
                 </Text>
               ) : null}
             </View>
+
+            {/* Andra bekräftelsen (röd, t.ex. "Radera från kontaktregister") */}
+            {secondConfirmLabel ? (
+              <View style={{ alignItems: 'center' }}>
+                <Pressable
+                  onPress={handleSecondConfirm}
+                  disabled={busy}
+                  style={({ pressed }) => ({
+                    backgroundColor: pressed ? CONFIRM_MODAL.dangerBgHover : CONFIRM_MODAL.dangerBg,
+                    borderRadius: CONFIRM_MODAL.dangerBorderRadius,
+                    paddingVertical: CONFIRM_MODAL.dangerPaddingVertical,
+                    paddingHorizontal: CONFIRM_MODAL.dangerPaddingHorizontal,
+                    minWidth: CONFIRM_MODAL.twoButtonMinWidth,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: busy ? 0.75 : 1,
+                    ...(Platform.OS === 'web'
+                      ? {
+                          cursor: busy ? 'not-allowed' : 'pointer',
+                          outlineStyle: 'none',
+                        }
+                      : {}),
+                  })}
+                  accessibilityLabel={secondConfirmLabel}
+                  accessibilityRole="button"
+                  {...(Platform.OS === 'web' ? { tabIndex: 0 } : {})}
+                >
+                  <Text
+                    style={{
+                      color: CONFIRM_MODAL.dangerText,
+                      fontWeight: '500',
+                      fontSize: 14,
+                    }}
+                  >
+                    {String(secondConfirmLabel)}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         </View>
       </View>

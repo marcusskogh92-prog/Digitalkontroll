@@ -68,8 +68,8 @@ export default function CreateProjectModal({
   const [projectName, setProjectName] = useState('');
   const [selectedProjectRoot, setSelectedProjectRoot] = useState(null); // { siteId, siteName, folderPath, folderName }
 
-  // Project structure/phase selection
-  const [selectedStructureKey, setSelectedStructureKey] = useState('');
+  // Project structure/phase selection (default: Kalkylskede)
+  const [selectedStructureKey, setSelectedStructureKey] = useState('kalkylskede');
   const initialProjectFilledRef = useRef(null);
   
   // State for location picker
@@ -93,9 +93,6 @@ export default function CreateProjectModal({
   const [locationRenaming, setLocationRenaming] = useState(false);
 
   // State for structure picker (web dropdown)
-  const [structurePickerOpen, setStructurePickerOpen] = useState(false);
-  const structurePickerRef = useRef(null);
-  const [structurePickerPosition, setStructurePickerPosition] = useState({ top: 0, left: 0, width: 0 });
   
   // Refs för att mäta dropdown-trigger positioner
   const locationPickerRef = useRef(null);
@@ -261,10 +258,6 @@ export default function CreateProjectModal({
       
       // Reset dropdown positions
       setLocationPickerPosition({ top: 0, left: 0, width: 0 });
-
-      // Reset structure picker state
-      setStructurePickerOpen(false);
-      setStructurePickerPosition({ top: 0, left: 0, width: 0 });
     }
   }, [visible]);
 
@@ -424,8 +417,6 @@ export default function CreateProjectModal({
   }, [activeSite?.id, locationContextMenu]);
 
   const openLocationPicker = (startStep = 'sites') => {
-    // Avoid overlapping dropdowns
-    try { setStructurePickerOpen(false); } catch (_e) {}
     setLocationContextMenu(null);
     setLocationRenamingFolder(null);
     setLocationRenameValue('');
@@ -494,8 +485,8 @@ export default function CreateProjectModal({
   useModalKeyboard(visible, onClose, handleCreate, { canSave });
 
   const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!visible, {
-    defaultWidth: 880,
-    defaultHeight: 720,
+    defaultWidth: 1120,
+    defaultHeight: 780,
     minWidth: 520,
     minHeight: 480,
   });
@@ -703,132 +694,130 @@ export default function CreateProjectModal({
 
               <View style={[styles.section, styles.sectionAfterTitle]}>
                 <Text style={styles.label}>Välj struktur *</Text>
-                <Text style={styles.helperText}>
-                  Styr vilka systemmappar som skapas i projektmappen.
-                </Text>
 
                 {(() => {
-                  const options = (PROJECT_PHASES || [])
-                    .slice()
-                    .sort((a, b) => (a.order || 999) - (b.order || 999));
+                  const STRUCTURE_CARDS = [
+                    {
+                      key: 'kalkylskede',
+                      name: 'Kalkylskede',
+                      color: '#2563EB',
+                      icon: 'calculator-outline',
+                      description: 'Kalkyl, offerter, översikt, checklista. AI-stöd.',
+                      detailDescription: 'Färdig mappstruktur för kalkyl, offerter, översikt och checklista. Stöd för AI-analys och dokumentation.',
+                      disabled: false,
+                    },
+                    {
+                      key: 'produktion',
+                      name: 'Produktion',
+                      color: '#16A34A',
+                      icon: 'construct-outline',
+                      description: 'Kommer snart.',
+                      detailDescription: 'Struktur för produktion. Denna fas är under uppbyggnad och aktiveras i en senare version.',
+                      disabled: true,
+                    },
+                    {
+                      key: 'eftermarknad',
+                      name: 'Eftermarknad',
+                      color: '#9333EA',
+                      icon: 'time-outline',
+                      description: 'Kommer snart.',
+                      detailDescription: 'Struktur för eftermarknad. Denna fas är under uppbyggnad och aktiveras i en senare version.',
+                      disabled: true,
+                    },
+                    {
+                      key: 'avslut',
+                      name: 'Avslutat',
+                      color: '#374151',
+                      icon: 'checkmark-circle-outline',
+                      description: 'Kommer snart.',
+                      detailDescription: 'Struktur för avslut och överlämning. Denna fas är under uppbyggnad och aktiveras i en senare version.',
+                      disabled: true,
+                    },
+                    {
+                      key: 'free',
+                      name: 'Valfri',
+                      color: '#D97706',
+                      icon: 'folder-open-outline',
+                      description: 'Endast projektmapp.',
+                      detailDescription: 'Skapar bara projektmappen utan systemmappar. Använd om du vill styra mappstrukturen helt själv.',
+                      disabled: false,
+                    },
+                  ];
 
-                  const getDescription = (key) => {
-                    const k = String(key || '').trim();
-                    if (k === 'kalkylskede') return 'Digitalkontrolls kalkylskede skapar en färdig mappstruktur anpassad för tidiga projektfaser.\nInnehåller fördefinierade mappar, sektioner och stöd för AI-assisterad kalkyl, dokumentation och beslut';
-                    if (k === 'produktion') return 'Struktur för produktion (kan byggas ut).';
-                    if (k === 'avslut') return 'Struktur för avslut/överlämning (kan byggas ut).';
-                    if (k === 'eftermarknad') return 'Struktur för eftermarknad (kan byggas ut).';
-                    if (k === 'free') return 'Skapar bara projektmappen utan systemmappar.';
-                    return '';
-                  };
+                  const selectedCard = STRUCTURE_CARDS.find((c) => String(selectedStructureKey) === String(c.key));
 
-                  if (Platform.OS === 'web') {
-                    const selectedDesc = getDescription(selectedStructureKey);
-                    const selectedName = options.find((o) => String(o?.key || '') === String(selectedStructureKey || ''))?.name;
-                    return (
-                      <View style={{ marginTop: 8 }}>
-                        <View
-                          ref={structurePickerRef}
-                          style={styles.dropdownContainer}
-                          onLayout={(event) => {
-                            if (Platform.OS === 'web') {
-                              const element = event.target;
-                              if (element && element.getBoundingClientRect) {
-                                const rect = element.getBoundingClientRect();
-                                setStructurePickerPosition({
-                                  top: rect.bottom + 4,
-                                  left: rect.left,
-                                  width: rect.width,
-                                });
-                              }
-                            } else if (structurePickerRef.current) {
-                              structurePickerRef.current.measure((_x, _y, _width, _height, pageX, pageY) => {
-                                setStructurePickerPosition({ top: pageY + _height + 4, left: pageX, width: _width });
-                              });
-                            }
-                          }}
-                        >
-                          <TouchableOpacity
-                            onPress={() => {
-                              try { setLocationPickerOpen(false); } catch (_e) {}
-                              if (Platform.OS === 'web' && structurePickerRef.current) {
-                                try {
-                                  const node = structurePickerRef.current;
-                                  if (node && typeof node.getBoundingClientRect === 'function') {
-                                    const rect = node.getBoundingClientRect();
-                                    setStructurePickerPosition({
-                                      top: rect.bottom + 4,
-                                      left: rect.left,
-                                      width: rect.width,
-                                    });
-                                  }
-                                } catch (_e) {}
-                              } else if (structurePickerRef.current) {
-                                structurePickerRef.current.measure((x, y, width, height, pageX, pageY) => {
-                                  setStructurePickerPosition({ top: pageY + height + 4, left: pageX, width });
-                                });
-                              }
-                              setStructurePickerOpen((v) => !v);
-                            }}
-                            style={styles.dropdownHeader}
-                          >
-                            <Text style={styles.dropdownText}>
-                              {selectedName ? String(selectedName) : 'Välj struktur'}
-                            </Text>
-                            <View style={styles.dropdownChevronWrapper}>
-                              <Ionicons
-                                name={structurePickerOpen ? 'chevron-up' : 'chevron-down'}
-                                size={18}
-                                color="#374151"
-                              />
-                            </View>
-                          </TouchableOpacity>
-                        </View>
-
-                        {!!selectedDesc && (
-                          <Text style={[styles.structureDescription, { marginTop: 6 }]}>
-                            {selectedDesc}
-                          </Text>
-                        )}
-
-                        <Text style={[styles.helperText, { marginTop: 6, marginBottom: 0 }]}>
-                          Just nu kan du välja Kalkylskede eller Valfri mappstruktur. Produktion, Avslut och Eftermarknad kommer snart.
-                        </Text>
+                  return (
+                    <>
+                      <View style={styles.structureCardsGrid}>
+                        {STRUCTURE_CARDS.map((card) => {
+                          const selected = String(selectedStructureKey) === String(card.key);
+                          return (
+                            <TouchableOpacity
+                              key={card.key}
+                              onPress={() => {
+                                if (card.disabled) return;
+                                setSelectedStructureKey(card.key);
+                              }}
+                              activeOpacity={0.85}
+                              style={[
+                                styles.structureCard,
+                                { borderColor: card.color },
+                                selected && styles.structureCardSelected,
+                                selected && { borderColor: card.color },
+                                card.disabled && styles.structureCardDisabled,
+                              ]}
+                              {...(Platform.OS === 'web' ? { cursor: card.disabled ? 'not-allowed' : 'pointer' } : {})}
+                            >
+                              <View style={styles.structureCardHeader}>
+                                {card.disabled ? (
+                                  <View style={styles.structureCardInactiveIcon}>
+                                    <Ionicons name="close" size={10} color="#fff" />
+                                  </View>
+                                ) : (
+                                  <Ionicons
+                                    name={card.icon}
+                                    size={18}
+                                    color={card.color}
+                                    style={{ marginRight: 6 }}
+                                  />
+                                )}
+                                {card.disabled && <View style={{ width: 6 }} />}
+                                <Text
+                                  style={[
+                                    styles.structureCardTitle,
+                                    !card.disabled && { color: card.color },
+                                    card.disabled && styles.structureCardTitleDisabled,
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {card.name}
+                                </Text>
+                              </View>
+                              <Text
+                                style={[
+                                  styles.structureCardDescription,
+                                  card.disabled && styles.structureCardDescriptionDisabled,
+                                ]}
+                                numberOfLines={2}
+                              >
+                                {card.description}
+                              </Text>
+                              {selected && !card.disabled && (
+                                <View style={[styles.structureCardCheck, { borderColor: card.color }]}>
+                                  <Ionicons name="checkmark-circle" size={20} color={card.color} />
+                                </View>
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
-                    );
-                  }
-
-                  return options.map((opt) => {
-                    const selected = String(selectedStructureKey) === String(opt.key);
-                    const disabled = ['produktion', 'avslut', 'eftermarknad'].includes(String(opt.key || '').trim());
-                    const description = getDescription(opt.key);
-
-                    return (
-                      <TouchableOpacity
-                        key={opt.id || opt.key}
-                        onPress={() => {
-                          if (disabled) return;
-                          setSelectedStructureKey(opt.key);
-                        }}
-                        style={[
-                          styles.structureRow,
-                          selected && styles.structureRowSelected,
-                          disabled && styles.structureRowDisabled,
-                        ]}
-                        activeOpacity={0.8}
-                      >
-                        <View style={styles.radio}>
-                          {selected && <View style={styles.radioDot} />}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.structureTitle}>{opt.name}</Text>
-                          {!!description && (
-                            <Text style={styles.structureDescription}>{description}</Text>
-                          )}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  });
+                      {selectedCard && (
+                        <Text style={styles.structureDetailDescription}>
+                          {selectedCard.detailDescription}
+                        </Text>
+                      )}
+                    </>
+                  );
                 })()}
               </View>
 
@@ -877,14 +866,6 @@ export default function CreateProjectModal({
             />
           )}
 
-          {structurePickerOpen && (
-            <TouchableOpacity
-              style={styles.dropdownBackdrop}
-              activeOpacity={1}
-              onPress={() => setStructurePickerOpen(false)}
-            />
-          )}
-          
           {/* Lagringsplats-utforskare – egen modal, golden rules (flyttbar, storleksändring) */}
           {locationPickerOpen && (
             <Modal visible transparent animationType="fade" onRequestClose={() => setLocationPickerOpen(false)}>
@@ -1116,48 +1097,6 @@ export default function CreateProjectModal({
             </Modal>
           )}
 
-          {/* Structure picker - renderas direkt i modal-root */}
-          {structurePickerOpen && Platform.OS === 'web' && (
-            <View style={[
-              styles.dropdownListAbsolute,
-              {
-                top: structurePickerPosition.top,
-                left: structurePickerPosition.left,
-                width: structurePickerPosition.width || 400,
-                maxHeight: 320,
-              }
-            ]}>
-              <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
-                {(PROJECT_PHASES || [])
-                  .slice()
-                  .sort((a, b) => (a.order || 999) - (b.order || 999))
-                  .map((opt) => {
-                    const selected = String(selectedStructureKey) === String(opt.key);
-                    const disabled = ['produktion', 'avslut', 'eftermarknad'].includes(String(opt.key || '').trim());
-
-                    return (
-                      <TouchableOpacity
-                        key={opt.id || opt.key}
-                        onPress={() => {
-                          if (disabled) return;
-                          setSelectedStructureKey(opt.key);
-                          setStructurePickerOpen(false);
-                        }}
-                        style={[
-                          styles.structureOptionRow,
-                          selected && styles.structureOptionRowSelected,
-                          disabled && styles.structureRowDisabled,
-                        ]}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.structureOptionTitle}>{opt.name}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-              </ScrollView>
-            </View>
-          )}
-
           {resizeHandles}
       </Pressable>
     </Pressable>
@@ -1174,8 +1113,8 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   modal: {
-    width: '90%',
-    maxWidth: 880,
+    width: '92%',
+    maxWidth: 1120,
     backgroundColor: '#fff',
     borderRadius: 14,
     overflow: 'hidden',
@@ -1590,6 +1529,72 @@ const styles = StyleSheet.create({
     marginTop: 1,
     lineHeight: 16,
     whiteSpace: Platform.OS === 'web' ? 'pre-line' : 'normal',
+  },
+  structureCardsGrid: {
+    marginTop: 10,
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'nowrap',
+  },
+  structureCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 2,
+    backgroundColor: '#ffffff',
+    position: 'relative',
+    ...(Platform.OS === 'web' ? { boxSizing: 'border-box' } : {}),
+  },
+  structureCardSelected: {
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 1px currentColor' } : {}),
+  },
+  structureCardDisabled: {
+    opacity: 0.7,
+  },
+  structureCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  structureCardTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1f2937',
+    flex: 1,
+  },
+  structureCardTitleDisabled: {
+    color: '#6B7280',
+  },
+  structureCardDescription: {
+    fontSize: 11,
+    color: '#64748b',
+    lineHeight: 14,
+    paddingRight: 20,
+  },
+  structureCardDescriptionDisabled: {
+    color: '#9CA3AF',
+  },
+  structureCardCheck: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+  },
+  structureCardInactiveIcon: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 0,
+  },
+  structureDetailDescription: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 19,
   },
   disabledText: {
     color: '#999',

@@ -226,6 +226,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		contactCompanyName: safeText(contactCompanyName),
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
+		workPhone: safeText(contact?.workPhone),
 		email: safeText(contact?.email),
 		linkedSupplierId: linkedSupplierId ?? undefined,
 	}, cid);
@@ -237,6 +238,7 @@ export async function upsertContactInRegistry({ companyId, existingContacts, con
 		contactCompanyName: safeText(contactCompanyName),
 		role: safeText(contact?.role),
 		phone: safeText(contact?.phone),
+		workPhone: safeText(contact?.workPhone) ?? null,
 		email: safeText(contact?.email),
 		linkedSupplierId: linkedSupplierId ?? null,
 	};

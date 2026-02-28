@@ -34,6 +34,7 @@ import {
     removeContactFromCustomer,
     updateCustomer,
 } from '../../modules/kunder/kunderService';
+import { formatMobileDisplay, mobileDigitsOnly } from '../../utils/formatPhone';
 import {
     buildAndDownloadExcel,
     computeSyncPlan,
@@ -254,13 +255,15 @@ const styles = StyleSheet.create({
   },
   modalHeader: {
     flexShrink: 0,
+    minHeight: 38,
+    maxHeight: 38,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.06)',
     backgroundColor: ICON_RAIL.bg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 5,
     paddingHorizontal: 14,
   },
   modalHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
@@ -291,6 +294,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  addModalLabel: { fontSize: 12, fontWeight: '500', color: '#475569', marginBottom: 4 },
+  addModalInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: '#111', backgroundColor: '#fff' },
+  addModalField: { marginBottom: 14 },
+  addModalFieldReadOnly: { borderWidth: 1, borderColor: '#E6E8EC', paddingVertical: 8, paddingHorizontal: 10, borderRadius: D.inputRadius, backgroundColor: '#F8FAFC' },
+  editModalBox: { width: Platform.OS === 'web' ? 520 : '92%', maxWidth: 520, minHeight: Platform.OS === 'web' ? 380 : undefined },
+  editModalContent: { padding: D.contentPadding, paddingBottom: 24 },
+  editModalAvbrytBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
+  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
 });
 
 export default function AdminCustomersModal({ visible, companyId, onClose }) {
@@ -309,6 +320,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
   const [sortDirection, setSortDirection] = useState('asc');
   const [editingId, setEditingId] = useState(null);
   const [formModalVisible, setFormModalVisible] = useState(false);
+  /** När satt: formmodalen är i redigeringsläge med denna kund. Null = lägg till ny. */
+  const [formModalEditCustomer, setFormModalEditCustomer] = useState(null);
   const [saving, setSaving] = useState(false);
   const [inlineName, setInlineName] = useState('');
   const [inlinePersonalOrOrgNumber, setInlinePersonalOrOrgNumber] = useState('');
@@ -337,7 +350,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
   const [contactMenuContact, setContactMenuContact] = useState(null);
   const [contactEditOpen, setContactEditOpen] = useState(false);
   const [contactEditSaving, setContactEditSaving] = useState(false);
-  const [contactEdit, setContactEdit] = useState({ id: '', name: '', role: '', phone: '', email: '' });
+  const [contactEditCustomer, setContactEditCustomer] = useState(null); // kund för Företag-visning
+  const [contactEdit, setContactEdit] = useState({ id: '', name: '', role: '', phone: '', workPhone: '', email: '' });
 
   const statusOpacity = useRef(new Animated.Value(0)).current;
   const statusTimeoutRef = useRef(null);
@@ -386,18 +400,6 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
       return () => { document.body.style.overflow = prev; };
     }
   }, [visible]);
-
-  useEffect(() => {
-    if (!visible || Platform.OS !== 'web') return;
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose?.();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [visible, onClose]);
 
   useLayoutEffect(() => {
     if (!notice && !error) return;
@@ -534,13 +536,19 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     }
   };
 
+  const closeFormModal = useCallback(() => {
+    setFormModalVisible(false);
+    setFormModalEditCustomer(null);
+  }, []);
+
   const handleSaveForm = async (values) => {
     if (!cid) return;
     setSaving(true);
     setError('');
     try {
-      if (editingId) {
-        await updateCustomer(cid, editingId, {
+      const editId = formModalEditCustomer?.id;
+      if (editId) {
+        await updateCustomer(cid, editId, {
           name: values.name,
           personalOrOrgNumber: values.personalOrOrgNumber,
           address: values.address,
@@ -560,8 +568,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
         });
         showNotice('Kund tillagd');
       }
-      setFormModalVisible(false);
-      setEditingId(null);
+      closeFormModal();
       await loadCustomers();
     } catch (e) {
       setError(formatWriteError(e));
@@ -599,10 +606,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     try {
       await deleteCustomer(cid, customer.id);
       showNotice('Kund borttagen');
-      if (editingId === customer.id) {
-        setFormModalVisible(false);
-        setEditingId(null);
-      }
+      if (editingId === customer.id) setEditingId(null);
+      if (formModalEditCustomer?.id === customer.id) closeFormModal();
       await loadCustomers();
       setDeleteConfirmCustomer(null);
     } catch (e) {
@@ -707,6 +712,24 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     }
   };
 
+  /** Bara koppla bort kontakten från kunden (behåll i kontaktregistret). */
+  const performRemoveOnlyFromCustomer = async () => {
+    const { customer, contact } = deleteConfirmContact || {};
+    if (!cid || !customer || !contact) return;
+    setDeletingContact(true);
+    try {
+      await removeContactFromCustomer(cid, customer, contact.id);
+      await loadContacts();
+      showNotice('Kontakt kopplad bort från kund');
+      setDeleteConfirmContact(null);
+    } catch (e) {
+      setError(e?.message || 'Kunde inte koppla bort.');
+    } finally {
+      setDeletingContact(false);
+    }
+  };
+
+  /** Radera kontakten från kontaktregistret och koppla bort från kunden. */
   const performDeleteContact = async () => {
     const { customer, contact } = deleteConfirmContact || {};
     if (!cid || !customer || !contact) return;
@@ -724,11 +747,78 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
     }
   };
 
+  /** Spara redigerad kontakt (anropas av Spara-knappen och Enter). */
+  const performContactEditSave = useCallback(async () => {
+    if (!contactEdit.name.trim() || contactEditSaving) return;
+    setContactEditSaving(true);
+    try {
+      await updateCompanyContact(
+        {
+          id: contactEdit.id,
+          patch: {
+            name: contactEdit.name.trim(),
+            role: contactEdit.role.trim(),
+            phone: String(contactEdit.phone ?? '').replace(/\D/g, ''),
+            workPhone: contactEdit.workPhone.trim(),
+            email: contactEdit.email.trim(),
+          },
+        },
+        cid
+      );
+      await loadContacts();
+      setContactEditOpen(false);
+      setContactEditCustomer(null);
+      showNotice('Kontakt uppdaterad');
+    } catch (e) {
+      setError(e?.message || 'Kunde inte spara.');
+    } finally {
+      setContactEditSaving(false);
+    }
+  }, [cid, contactEdit.id, contactEdit.name, contactEdit.role, contactEdit.phone, contactEdit.workPhone, contactEdit.email, contactEditSaving]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'web') return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (formModalVisible) {
+          if (!saving) {
+            setFormModalVisible(false);
+            setFormModalEditCustomer(null);
+          }
+          return;
+        }
+        if (contactEditOpen) {
+          if (!contactEditSaving) {
+            setContactEditOpen(false);
+            setContactEditCustomer(null);
+          }
+          return;
+        }
+        if (deleteConfirmContact) {
+          setDeleteConfirmContact(null);
+          return;
+        }
+        onClose?.();
+      } else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && contactEditOpen) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!contactEditSaving && contactEdit.name.trim()) performContactEditSave();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, onClose, formModalVisible, contactEditOpen, deleteConfirmContact, saving, contactEditSaving, contactEdit.name, performContactEditSave]);
+
   const openRowMenu = (e, customer) => {
     if (Platform.OS !== 'web') {
       Alert.alert('Kund', String(customer.name ?? 'Kund'), [
         { text: 'Avbryt', style: 'cancel' },
-        { text: 'Redigera', onPress: () => setEditingId(customer.id) },
+        { text: 'Redigera', onPress: () => {
+          setFormModalEditCustomer(customer);
+          setFormModalVisible(true);
+        } },
         { text: 'Radera', style: 'destructive', onPress: () => requestDeleteCustomer(customer) },
       ]);
       return;
@@ -757,7 +847,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
       out[c.id] = (c.contactIds || [])
         .map((id) => contacts.find((ct) => ct.id === id))
         .filter(Boolean)
-        .map((ct) => ({ id: ct.id, name: ct.name, role: ct.role, email: ct.email, phone: ct.phone }));
+        .map((ct) => ({ id: ct.id, name: ct.name, role: ct.role, email: ct.email, phone: ct.phone, workPhone: ct.workPhone ?? '' }));
     });
     return out;
   }, [customers, contacts]);
@@ -868,7 +958,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
-                      onPress={() => { setFormModalVisible(true); }}
+                      onPress={() => { setFormModalEditCustomer(null); setFormModalVisible(true); }}
                       accessibilityLabel="Lägg till kund"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                     >
@@ -1018,20 +1108,20 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           ) : null}
     </ModalBase>
 
-      {/* Add customer form modal (edit is inline in table) */}
-      <Modal visible={formModalVisible} transparent animationType="fade" onRequestClose={() => !saving && setFormModalVisible(false)}>
-        <Pressable style={styles.modalBack} onPress={() => !saving && setFormModalVisible(false)}>
+      {/* Add/Edit customer form modal – same as leverantör: Redigera öppnar denna modal */}
+      <Modal visible={formModalVisible} transparent animationType="fade" onRequestClose={() => !saving && closeFormModal()}>
+        <Pressable style={styles.modalBack} onPress={() => !saving && closeFormModal()}>
           <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
             <View style={styles.modalHeader}>
               <View style={styles.modalHeaderLeft}>
                 <View style={styles.titleIcon}>
-                  <Ionicons name="person-add-outline" size={18} color={ICON_RAIL.iconColorActive} />
+                  <Ionicons name={formModalEditCustomer ? 'create-outline' : 'person-add-outline'} size={18} color={ICON_RAIL.iconColorActive} />
                 </View>
-                <Text style={styles.modalTitle}>Lägg till kund</Text>
+                <Text style={styles.modalTitle}>{formModalEditCustomer ? 'Redigera kund' : 'Lägg till kund'}</Text>
               </View>
               <TouchableOpacity
                 style={styles.modalCloseBtn}
-                onPress={() => !saving && setFormModalVisible(false)}
+                onPress={() => !saving && closeFormModal()}
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
                 <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
@@ -1039,10 +1129,10 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
             </View>
             <ScrollView style={{ maxHeight: '75vh' }} contentContainerStyle={{ paddingBottom: 20 }}>
               <KundForm
-                initial={undefined}
+                initial={formModalEditCustomer ?? undefined}
                 saving={saving}
                 onSave={handleSaveForm}
-                onCancel={() => !saving && setFormModalVisible(false)}
+                onCancel={() => !saving && closeFormModal()}
               />
             </ScrollView>
           </Pressable>
@@ -1060,7 +1150,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           const c = rowMenuCustomer;
           if (!c || !it) return;
           if (it.key === 'edit') {
-            setEditingId(c.id);
+            setFormModalEditCustomer(c);
+            setFormModalVisible(true);
           } else if (it.key === 'delete') {
             requestDeleteCustomer(c);
           }
@@ -1085,18 +1176,21 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
 
       <ConfirmModal
         visible={!!deleteConfirmContact}
-        title="Radera kontakt"
+        title="Ta bort kontakt?"
         message={
           deleteConfirmContact
-            ? `Du är på väg att permanent radera kontaktpersonen "${String(deleteConfirmContact.name ?? '').trim() || 'kontakten'}".\nDetta går inte att ångra.`
-            : 'Du är på väg att permanent radera kontaktpersonen.\nDetta går inte att ångra.'
+            ? `Kontakter synkas mellan kunder och kontaktregistret. Vill du bara koppla bort "${String(deleteConfirmContact.contact?.name ?? '').trim() || 'kontakten'}" från kunden, eller även radera från kontaktregistret?`
+            : 'Kontakter synkas mellan kunder och kontaktregistret. Vill du bara koppla bort kontakten från kunden, eller även radera från kontaktregistret?'
         }
-        cancelLabel="Avbryt"
-        confirmLabel="Radera"
+        confirmLabel="Koppla bort kontakt"
+        secondConfirmLabel="Radera från kontaktregister"
         danger
+        hideCancel
+        hideKeyboardHints
         busy={deletingContact}
         onCancel={() => setDeleteConfirmContact(null)}
-        onConfirm={performDeleteContact}
+        onConfirm={performRemoveOnlyFromCustomer}
+        onSecondConfirm={performDeleteContact}
       />
 
       {Platform.OS === 'web' && (
@@ -1158,11 +1252,13 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
           const contact = contactMenuContact;
           if (!customer || !contact || !it) return;
           if (it.key === 'edit') {
+            setContactEditCustomer(customer);
             setContactEdit({
               id: contact.id,
               name: contact.name || '',
               role: contact.role || '',
               phone: contact.phone || '',
+              workPhone: String(contact.workPhone ?? '').trim(),
               email: contact.email || '',
             });
             setContactEditOpen(true);
@@ -1172,87 +1268,108 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
         }}
       />
 
-      {/* Contact edit modal - simplified inline */}
-      {contactEditOpen && (
-        <Modal visible={contactEditOpen} transparent animationType="fade" onRequestClose={() => !contactEditSaving && setContactEditOpen(false)}>
-          <Pressable style={styles.modalBack} onPress={() => !contactEditSaving && setContactEditOpen(false)}>
-            <Pressable style={[styles.modalBox, { width: 420 }]} onPress={(e) => e.stopPropagation()}>
-              <View style={styles.modalHeader}>
-                <View style={styles.modalHeaderLeft}>
-                  <View style={styles.titleIcon}>
-                    <Ionicons name="create-outline" size={18} color={ICON_RAIL.iconColorActive} />
-                  </View>
-                  <Text style={styles.modalTitle}>Redigera kontakt</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.modalCloseBtn}
-                  onPress={() => !contactEditSaving && setContactEditOpen(false)}
-                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                >
-                  <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
-                </TouchableOpacity>
-              </View>
-              <View style={{ padding: 16, gap: 10 }}>
-                <TextInput
-                  value={contactEdit.name}
-                  onChangeText={(v) => setContactEdit((prev) => ({ ...prev, name: v }))}
-                  placeholder="Namn"
-                  style={[styles.searchInput, { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10 }]}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={contactEdit.role}
-                  onChangeText={(v) => setContactEdit((prev) => ({ ...prev, role: v }))}
-                  placeholder="Roll"
-                  style={[styles.searchInput, { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10 }]}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={contactEdit.phone}
-                  onChangeText={(v) => setContactEdit((prev) => ({ ...prev, phone: v }))}
-                  placeholder="Telefon"
-                  style={[styles.searchInput, { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10 }]}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={contactEdit.email}
-                  onChangeText={(v) => setContactEdit((prev) => ({ ...prev, email: v }))}
-                  placeholder="E-post"
-                  style={[styles.searchInput, { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10 }]}
-                  placeholderTextColor="#94a3b8"
-                />
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TouchableOpacity
-                    style={[styles.iconBtn, styles.iconBtnPrimary, { flex: 1, height: 40, borderRadius: 10 }]}
-                    onPress={async () => {
-                      if (!contactEdit.name.trim()) return;
-                      setContactEditSaving(true);
-                      try {
-                        await updateCompanyContact(
-                          { id: contactEdit.id, patch: { name: contactEdit.name.trim(), role: contactEdit.role.trim(), phone: contactEdit.phone.trim(), email: contactEdit.email.trim() } },
-                          cid
-                        );
-                        await loadContacts();
-                        setContactEditOpen(false);
-                        showNotice('Kontakt uppdaterad');
-                      } catch (e) {
-                        setError(e?.message || 'Kunde inte spara.');
-                      } finally {
-                        setContactEditSaving(false);
-                      }
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontWeight: '500' }}>Spara</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.iconBtn, { flex: 1, height: 40, borderRadius: 10 }]} onPress={() => !contactEditSaving && setContactEditOpen(false)}>
-                    <Text style={{ color: '#475569', fontWeight: '500' }}>Avbryt</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </Pressable>
-          </Pressable>
-        </Modal>
-      )}
+      {/* Contact edit modal – samma utseende som Redigera kontakt i Kontaktregistret */}
+      <ModalBase
+        visible={contactEditOpen}
+        onClose={() => {
+          if (!contactEditSaving) {
+            setContactEditOpen(false);
+            setContactEditCustomer(null);
+          }
+        }}
+        title="Redigera kontakt"
+        headerVariant="neutral"
+        titleIcon={<Ionicons name="create-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+        boxStyle={styles.editModalBox}
+        contentStyle={styles.editModalContent}
+        footer={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity
+              style={styles.editModalAvbrytBtn}
+              onPress={() => { if (!contactEditSaving) { setContactEditOpen(false); setContactEditCustomer(null); } }}
+              disabled={contactEditSaving}
+              {...(Platform.OS === 'web' ? { cursor: contactEditSaving ? 'not-allowed' : 'pointer' } : {})}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.editModalSparaBtn}
+              onPress={performContactEditSave}
+              disabled={contactEditSaving || !contactEdit.name.trim()}
+              {...(Platform.OS === 'web' ? { cursor: contactEditSaving || !contactEdit.name.trim() ? 'not-allowed' : 'pointer' } : {})}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Spara</Text>
+            </TouchableOpacity>
+          </View>
+        }
+      >
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Namn *</Text>
+          <TextInput
+            value={contactEdit.name}
+            onChangeText={(v) => setContactEdit((prev) => ({ ...prev, name: v }))}
+            placeholder="Förnamn Efternamn"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Företag</Text>
+          <View style={styles.addModalFieldReadOnly}>
+            <Text style={{ fontSize: 14, color: '#111', fontWeight: '600' }} numberOfLines={1}>
+              {contactEditCustomer?.name ?? '—'}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Roll</Text>
+          <TextInput
+            value={contactEdit.role}
+            onChangeText={(v) => setContactEdit((prev) => ({ ...prev, role: v }))}
+            placeholder="t.ex. Platschef"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Mobil</Text>
+          <TextInput
+            value={formatMobileDisplay(contactEdit.phone)}
+            onChangeText={(v) => setContactEdit((prev) => ({ ...prev, phone: mobileDigitsOnly(v) }))}
+            placeholder="xxx xxx xx xx"
+            keyboardType="number-pad"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>Arbete</Text>
+          <TextInput
+            value={contactEdit.workPhone}
+            onChangeText={(v) => setContactEdit((prev) => ({ ...prev, workPhone: v }))}
+            placeholder="Jobbtelefon"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+        </View>
+        <View style={styles.addModalField}>
+          <Text style={styles.addModalLabel}>E-post</Text>
+          <TextInput
+            value={contactEdit.email}
+            onChangeText={(v) => setContactEdit((prev) => ({ ...prev, email: v }))}
+            placeholder="namn@foretag.se"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={styles.addModalInput}
+            placeholderTextColor="#94a3b8"
+            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+          />
+        </View>
+      </ModalBase>
     </>
   );
 }

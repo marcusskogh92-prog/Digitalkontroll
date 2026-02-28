@@ -8,7 +8,7 @@ service cloud.firestore {
     function isCompanyMember(company) {
       return isSignedIn()
         && (
-          request.auth.token.companyId == company
+          request.auth.token.get('companyId', '') == company
           || (
             exists(/databases/$(database)/documents/users/$(request.auth.uid))
             && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId == company
@@ -30,20 +30,18 @@ service cloud.firestore {
         );
     }
 
+    // Använd .get() så att saknade token-claims inte får regeln att kasta (t.ex. email saknas vid vissa providers)
     function isGlobalAdmin() {
       return request.auth != null
         && (
-          // Token-baserade superadmins
-          request.auth.token.globalAdmin == true ||
-          request.auth.token.superadmin == true ||
-          request.auth.token.role == 'superadmin' ||
-          // Admin i MS Byggsystem
-          (request.auth.token.companyId == 'MS Byggsystem' && (request.auth.token.admin == true || request.auth.token.role == 'admin')) ||
-          // Whitelist specifika superadmin-mail (jämförelse är skiftlägeskänslig i token)
-          request.auth.token.email == 'marcus@msbyggsystem.se' ||
-          request.auth.token.email == 'Marcus@msbyggsystem.se' ||
-          request.auth.token.email == 'marcus.skogh@msbyggsystem.se' ||
-          request.auth.token.email == 'marcus.skogh@msbyggsystem'
+          request.auth.token.get('globalAdmin', false) == true
+          || request.auth.token.get('superadmin', false) == true
+          || request.auth.token.get('role', '') == 'superadmin'
+          || (request.auth.token.get('companyId', '') == 'MS Byggsystem' && (request.auth.token.get('admin', false) == true || request.auth.token.get('role', '') == 'admin'))
+          || request.auth.token.get('email', '') == 'marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'Marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem'
         );
     }
 
@@ -424,13 +422,38 @@ service cloud.firestore {
     // Projects (company-scoped)
     // Firestore is the source of truth for which projects exist and how they map to SharePoint.
     // Collection: foretag/{company}/projects/{projectId}
+    // Update: allow when project number fields are unchanged (e.g. kund/organisationsnummer) for any allowed user;
+    // when project number is changed, require index check (company member or global admin only).
+    function projectNumberFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['projectNumber', 'number', 'projectNumberNormalized', 'projectNumberIndexId']);
+    }
     match /foretag/{company}/projects/{projectId} {
       allow read: if isCompanyMember(company) || isGlobalAdmin();
       // If a write introduces/changes projectNumberIndexId, it must also create/update
       // the matching index doc in the same request (transaction/batch).
       allow create: if (isCompanyMember(company) || isGlobalAdmin())
         && hasValidProjectNumberIndex(company, projectId);
-      allow update: if (isCompanyMember(company) || isGlobalAdmin())
+      // Skapa projekt-dokument utan projektnummer-index (t.ex. bara kund) när det inte finns än
+      allow create: if (isCompanyMember(company) || isGlobalAdmin() || canAccessFileComments(company, projectId))
+        && (!('projectNumberIndexId' in request.resource.data) || request.resource.data.projectNumberIndexId == null || request.resource.data.projectNumberIndexId == '');
+      // Explicit allow för superadmin (säkra .get() så att saknade claims inte får regeln att kasta)
+      allow update: if request.auth != null
+        && (
+          request.auth.token.get('superadmin', false) == true
+          || request.auth.token.get('globalAdmin', false) == true
+          || request.auth.token.get('role', '') == 'superadmin'
+          || request.auth.token.get('email', '') == 'marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'Marcus@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem.se'
+          || request.auth.token.get('email', '') == 'marcus.skogh@msbyggsystem'
+        );
+      // Global admins may always update (app uses transaction for project number changes).
+      allow update: if isGlobalAdmin();
+      // Allow update when only non–project-number fields change (e.g. Kund & Beställare)
+      allow update: if (isCompanyMember(company) || canAccessFileComments(company, projectId))
+        && projectNumberFieldsUnchanged();
+      // Allow update when project number is changed and index is valid (company member / global admin)
+      allow update: if isCompanyMember(company)
         && (projectNumberIndexUnchanged() || hasValidProjectNumberIndex(company, projectId));
       allow delete: if isCompanyMember(company) || isGlobalAdmin();
     }
