@@ -4,6 +4,7 @@
  * Flikar: Översikt, Moduler, Licenser, Användare, Sharepoint, Register.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -38,17 +39,19 @@ import {
     setCompanyUserLimitRemote,
     uploadCompanyLogo,
 } from '../firebase';
+import ContextMenu from '../ContextMenu';
 import { AdminModalContext } from './AdminModalContext';
 import LoadingState from './LoadingState';
 
 const MODULE_PHASES = PROJECT_PHASES.filter((p) => p.key !== 'free');
 
-// Alla 5 moduler inkl. AI-analys. Produktion, Avslutat, Eftermarknad kan aktiveras för rail-layout; klick i rail visar "Kommer snart".
+// Moduler inkl. Planering och AI-analys. Aktiveras per företag i Företagsinställningar → Moduler.
 const ALL_MODULES = [
   { key: 'kalkylskede', name: 'Kalkyl', description: 'Kalkylskede, offerter och projekthantering.', icon: 'calculator-outline', comingSoon: false },
   { key: 'produktion', name: 'Produktion', description: 'Produktionsfas och fältarbete.', icon: 'construct-outline', comingSoon: false },
   { key: 'avslut', name: 'Avslutat', description: 'Avslut och slutleverans.', icon: 'checkmark-circle-outline', comingSoon: false },
   { key: 'eftermarknad', name: 'Eftermarknad', description: 'Eftermarknad och underhåll.', icon: 'time-outline', comingSoon: false },
+  { key: 'planering', name: 'Planering', description: 'Veckoplanering och kapacitet – Gantt-liknande vy med veckor och dagar.', icon: 'calendar-outline', comingSoon: false },
   { key: 'ai-analys', name: 'AI-analys', description: 'AI-stöd för analys och beslut.', icon: 'sparkles-outline', comingSoon: false },
 ];
 
@@ -59,8 +62,20 @@ const TABS = [
   { key: 'anvandare', label: 'Användare', icon: 'people-outline' },
   { key: 'sharepoint', label: 'Sharepoint', icon: 'cloud-outline' },
   { key: 'register', label: 'Register', icon: 'folder-open-outline' },
+  { key: 'planering', label: 'Planering', icon: 'calendar-outline' },
   { key: 'ai-installningar', label: 'AI-Inställningar', icon: 'sparkles-outline' },
 ];
+
+const PLANERING_STORAGE_PREFIX = 'dk_planering';
+
+const PLANNING_TYPES = [
+  { value: 'entreprenad', label: 'Entreprenad', infoText: 'Planering av personal i projekt.' },
+  { value: 'service', label: 'Service', infoText: 'Veckoplanering för personal.' },
+];
+
+function makePlaneringTabId() {
+  return `plan_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
 
 const REGISTER_LINKS = [
   { key: 'kontoplan', label: 'Kontoplan', description: 'Kontoplan och konton', icon: 'list-outline', openModal: 'openKontoplanModal', comingSoon: false },
@@ -267,6 +282,120 @@ const styles = StyleSheet.create({
   },
   dataLinkLabel: { fontSize: 14, fontWeight: '600', color: '#0f172a', marginBottom: 2 },
   dataLinkDesc: { fontSize: 12, color: '#64748b' },
+  planeringList: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  planeringRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  planeringRowLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0f172a',
+  },
+  planeringRowType: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  planeringRowLabelHidden: {
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  planeringRowLast: {
+    borderBottomWidth: 0,
+  },
+  planeringRowHover: {
+    backgroundColor: '#f8fafc',
+  },
+  planeringRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+  },
+  planeringRowSynlig: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  planeringRowDelete: {
+    padding: 4,
+  },
+  planeringRenameOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  planeringRenameBox: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: 320,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  planeringAddRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  planeringAddInput: {
+    flex: 1,
+    minWidth: 140,
+    marginBottom: 0,
+  },
+  planeringAddCheckboxGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  planeringAddCheckbox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  planeringAddCheckboxSelected: {},
+  planeringAddCheckboxBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  planeringAddCheckboxBoxChecked: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  planeringAddCheckboxLabel: {
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  planeringAddInfo: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 8,
+  },
+  planeringAddBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
   licenseGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -459,6 +588,84 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
   const [logoUrl, setLogoUrl] = useState('');
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState(null);
   const fileInputRef = useRef(null);
+  const [planeringTabs, setPlaneringTabs] = useState([]);
+  const [planeringTabsLoaded, setPlaneringTabsLoaded] = useState(false);
+  const [newPlaneringTabName, setNewPlaneringTabName] = useState('');
+  const [newPlaneringTabType, setNewPlaneringTabType] = useState('entreprenad');
+  const [lastSavedPlaneringTabs, setLastSavedPlaneringTabs] = useState(null);
+  const [hoveredPlaneringTabId, setHoveredPlaneringTabId] = useState(null);
+  const [planeringContextMenu, setPlaneringContextMenu] = useState(null);
+  const [planeringRenameTab, setPlaneringRenameTab] = useState(null);
+  const [planeringRenameDraft, setPlaneringRenameDraft] = useState('');
+
+  const loadPlaneringTabs = useCallback(async () => {
+    if (!cid) return;
+    try {
+      const raw = await AsyncStorage.getItem(`${PLANERING_STORAGE_PREFIX}_tabs_${cid}`);
+      const list = raw ? JSON.parse(raw) : null;
+      const arr = (Array.isArray(list) ? list : []).map((t) => ({
+        ...t,
+        visible: t.visible !== false,
+        planningType: t.planningType === 'service' ? 'service' : 'entreprenad',
+      }));
+      setPlaneringTabs(arr);
+      setLastSavedPlaneringTabs(arr);
+    } catch (_e) {
+      setPlaneringTabs([]);
+      setLastSavedPlaneringTabs([]);
+    } finally {
+      setPlaneringTabsLoaded(true);
+    }
+  }, [cid]);
+
+  useEffect(() => {
+    if (visible && cid && effectiveTab === 'planering') {
+      setPlaneringTabsLoaded(false);
+      loadPlaneringTabs();
+    }
+  }, [visible, cid, effectiveTab, loadPlaneringTabs]);
+
+  useEffect(() => {
+    if (!visible) {
+      setLastSavedPlaneringTabs(null);
+      setPlaneringTabs([]);
+      setPlaneringTabsLoaded(false);
+      setPlaneringContextMenu(null);
+      setPlaneringRenameTab(null);
+      setPlaneringRenameDraft('');
+      setHoveredPlaneringTabId(null);
+    }
+  }, [visible]);
+
+  const addPlaneringTab = useCallback(() => {
+    const name = newPlaneringTabName.trim();
+    if (!name || !cid) return;
+    const id = makePlaneringTabId();
+    const planningType = newPlaneringTabType === 'service' ? 'service' : 'entreprenad';
+    setPlaneringTabs((prev) => [...prev, { id, name, planningType, visible: true }]);
+    setNewPlaneringTabName('');
+    setNewPlaneringTabType('entreprenad');
+  }, [cid, newPlaneringTabName, newPlaneringTabType]);
+
+  const togglePlaneringTabVisible = useCallback((tabId) => {
+    setPlaneringTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, visible: !t.visible } : t))
+    );
+  }, []);
+
+  const removePlaneringTab = useCallback((tabId) => {
+    setPlaneringTabs((prev) => prev.filter((t) => t.id !== tabId));
+  }, []);
+
+  const renamePlaneringTab = useCallback((tabId, newName) => {
+    const trimmed = String(newName || '').trim();
+    if (!trimmed) return;
+    setPlaneringTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, name: trimmed } : t))
+    );
+    setPlaneringRenameTab(null);
+    setPlaneringRenameDraft('');
+  }, []);
 
   const loadProfile = useCallback(async () => {
     if (!cid) {
@@ -546,17 +753,24 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
   }, [visible, cid, loadProfile]);
 
   const isDirty = useMemo(() => {
-    if (!lastSavedSnapshot) return false;
-    const nameEq = (companyNameDraft || '').trim() === (lastSavedSnapshot.companyName || '').trim();
-    const enabledEq = companyEnabled === lastSavedSnapshot.enabled;
-    const derivedTotal = (parseInt(String(adminLimitDraft || '0').trim(), 10) || 0) + (parseInt(String(workerLimitDraft || '0').trim(), 10) || 0);
-    const limitEq = derivedTotal === parseInt(String(lastSavedSnapshot.userLimit || '0').trim(), 10);
-    const adminLimitEq = String(adminLimitDraft || '').trim() === String(lastSavedSnapshot.adminLimit || '').trim();
-    const workerLimitEq = String(workerLimitDraft || '').trim() === String(lastSavedSnapshot.workerLimit || '').trim();
-    const phasesEq = JSON.stringify([...enabledPhases].sort()) === JSON.stringify([...(lastSavedSnapshot.enabledPhases || [])].sort());
-    const logoEq = (logoUrl || '') === (lastSavedSnapshot.logoUrl || '');
-    return !(nameEq && enabledEq && limitEq && adminLimitEq && workerLimitEq && phasesEq && logoEq);
-  }, [lastSavedSnapshot, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, enabledPhases, logoUrl]);
+    const profileDirty = lastSavedSnapshot
+      ? !(
+          (companyNameDraft || '').trim() === (lastSavedSnapshot.companyName || '').trim()
+          && companyEnabled === lastSavedSnapshot.enabled
+          && (() => {
+            const derivedTotal = (parseInt(String(adminLimitDraft || '0').trim(), 10) || 0) + (parseInt(String(workerLimitDraft || '0').trim(), 10) || 0);
+            return derivedTotal === parseInt(String(lastSavedSnapshot.userLimit || '0').trim(), 10);
+          })()
+          && String(adminLimitDraft || '').trim() === String(lastSavedSnapshot.adminLimit || '').trim()
+          && String(workerLimitDraft || '').trim() === String(lastSavedSnapshot.workerLimit || '').trim()
+          && JSON.stringify([...enabledPhases].sort()) === JSON.stringify([...(lastSavedSnapshot.enabledPhases || [])].sort())
+          && (logoUrl || '') === (lastSavedSnapshot.logoUrl || '')
+        )
+      : false;
+    const planeringDirty = lastSavedPlaneringTabs != null
+      && JSON.stringify(planeringTabs) !== JSON.stringify(lastSavedPlaneringTabs);
+    return profileDirty || planeringDirty;
+  }, [lastSavedSnapshot, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, enabledPhases, logoUrl, planeringTabs, lastSavedPlaneringTabs]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -623,6 +837,12 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
         enabledPhases: enabledPhases.slice(),
         logoUrl: logoUrl || '',
       });
+      if (lastSavedPlaneringTabs != null) {
+        try {
+          await AsyncStorage.setItem(`${PLANERING_STORAGE_PREFIX}_tabs_${cid}`, JSON.stringify(planeringTabs));
+          setLastSavedPlaneringTabs(planeringTabs.slice());
+        } catch (_e) {}
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (e) {
@@ -630,7 +850,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     } finally {
       setSaving(false);
     }
-  }, [cid, profile, enabledPhases, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, logoUrl]);
+  }, [cid, profile, enabledPhases, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, logoUrl, planeringTabs, lastSavedPlaneringTabs]);
 
   useEffect(() => {
     if (!visible || Platform.OS !== 'web') return;
@@ -1039,8 +1259,195 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
+                {effectiveTab === 'planering' && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Planeringsflikar</Text>
+                    <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
+                      Skapa och hantera flikar för resursplaneringen (t.ex. Entreprenad, Byggservice, Måleri). Synliga flikar visas i planeringsvyn; dölj istället för att radera om du vill behålla historik.
+                    </Text>
+                    {!planeringTabsLoaded ? (
+                      <Text style={styles.infoLabel}>Laddar…</Text>
+                    ) : (
+                      <>
+                        <View style={[styles.card, { marginBottom: 16 }]}>
+                          <View style={styles.planeringAddRow}>
+                            <TextInput
+                              style={[styles.input, styles.planeringAddInput]}
+                              value={newPlaneringTabName}
+                              onChangeText={setNewPlaneringTabName}
+                              placeholder="T.ex. Byggservice 2026"
+                              placeholderTextColor="#94a3b8"
+                              onSubmitEditing={addPlaneringTab}
+                            />
+                            <View style={styles.planeringAddCheckboxGroup}>
+                              {PLANNING_TYPES.map((opt) => (
+                                <Pressable
+                                  key={opt.value}
+                                  style={[styles.planeringAddCheckbox, newPlaneringTabType === opt.value && styles.planeringAddCheckboxSelected]}
+                                  onPress={() => setNewPlaneringTabType(opt.value)}
+                                >
+                                  <View style={[styles.planeringAddCheckboxBox, newPlaneringTabType === opt.value && styles.planeringAddCheckboxBoxChecked]}>
+                                    {newPlaneringTabType === opt.value ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+                                  </View>
+                                  <Text style={styles.planeringAddCheckboxLabel}>{opt.label}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                            <TouchableOpacity
+                              style={[styles.footerBtnPrimary, styles.planeringAddBtn]}
+                              onPress={addPlaneringTab}
+                              disabled={!newPlaneringTabName.trim()}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Lägg till flik</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={styles.planeringAddInfo}>
+                            {PLANNING_TYPES.find((o) => o.value === newPlaneringTabType)?.infoText ?? ''}
+                          </Text>
+                        </View>
+                        <Text style={[styles.sectionTitle, { marginTop: 4 }]}>
+                          Flikar ({planeringTabs.length}) · {planeringTabs.filter((t) => t.visible).length} synliga
+                        </Text>
+                        {planeringTabs.length === 0 ? (
+                          <Text style={[styles.infoLabel, { marginTop: 8 }]}>
+                            Inga flikar än. Lägg till en ovan – de visas sedan i planeringsvyn.
+                          </Text>
+                        ) : (
+                          <View style={styles.planeringList}>
+                            {planeringTabs.map((tab, idx) => {
+                              const isHovered = Platform.OS === 'web' && hoveredPlaneringTabId === tab.id;
+                              return (
+                                <View
+                                  key={tab.id}
+                                  style={[
+                                    styles.planeringRow,
+                                    idx === planeringTabs.length - 1 && styles.planeringRowLast,
+                                    isHovered && styles.planeringRowHover,
+                                  ]}
+                                  onMouseEnter={Platform.OS === 'web' ? () => setHoveredPlaneringTabId(tab.id) : undefined}
+                                  onMouseLeave={Platform.OS === 'web' ? () => setHoveredPlaneringTabId(null) : undefined}
+                                  onContextMenu={
+                                    Platform.OS === 'web'
+                                      ? (e) => {
+                                          e?.preventDefault?.();
+                                          const x = e?.nativeEvent?.clientX ?? e?.clientX ?? 0;
+                                          const y = e?.nativeEvent?.clientY ?? e?.clientY ?? 0;
+                                          setPlaneringContextMenu({ x, y, tab });
+                                        }
+                                      : undefined
+                                  }
+                                >
+                                  <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text
+                                      style={[styles.planeringRowLabel, !tab.visible && styles.planeringRowLabelHidden]}
+                                      numberOfLines={1}
+                                    >
+                                      {tab.name}
+                                    </Text>
+                                    <Text style={styles.planeringRowType} numberOfLines={1}>
+                                      Typ: {tab.planningType === 'service' ? 'Service' : 'Entreprenad'}
+                                    </Text>
+                                  </View>
+                                  <View style={styles.planeringRowActions}>
+                                    <Text style={styles.planeringRowSynlig}>Synlig</Text>
+                                    <Switch
+                                      value={tab.visible}
+                                      onValueChange={() => togglePlaneringTabVisible(tab.id)}
+                                      trackColor={{ false: '#cbd5e1', true: '#86efac' }}
+                                      thumbColor="#fff"
+                                    />
+                                    <TouchableOpacity
+                                      onPress={() => removePlaneringTab(tab.id)}
+                                      style={styles.planeringRowDelete}
+                                      accessibilityLabel={`Radera ${tab.name}`}
+                                    >
+                                      <Ionicons name="trash-outline" size={18} color="#94a3b8" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+
                 {error ? <Text style={styles.error}>{error}</Text> : null}
               </ScrollView>
+
+              {planeringContextMenu != null && (
+                <ContextMenu
+                  visible
+                  x={planeringContextMenu.x}
+                  y={planeringContextMenu.y}
+                  items={[{ key: 'rename', label: 'Byt namn' }]}
+                  onSelect={(item) => {
+                    if (item?.key === 'rename' && planeringContextMenu?.tab) {
+                      setPlaneringRenameTab(planeringContextMenu.tab);
+                      setPlaneringRenameDraft(planeringContextMenu.tab.name);
+                    }
+                    setPlaneringContextMenu(null);
+                  }}
+                  onClose={() => setPlaneringContextMenu(null)}
+                  compact
+                />
+              )}
+
+              {planeringRenameTab != null && (
+                <Modal
+                  visible
+                  transparent
+                  animationType="fade"
+                  onRequestClose={() => {
+                    setPlaneringRenameTab(null);
+                    setPlaneringRenameDraft('');
+                  }}
+                >
+                  <View style={styles.planeringRenameOverlay}>
+                    <Pressable
+                      style={StyleSheet.absoluteFill}
+                      onPress={() => {
+                        setPlaneringRenameTab(null);
+                        setPlaneringRenameDraft('');
+                      }}
+                    />
+                    <View
+                      style={styles.planeringRenameBox}
+                      onStartShouldSetResponder={() => true}
+                    >
+                      <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>Byt namn på flik</Text>
+                      <TextInput
+                        style={[styles.input, { marginBottom: 16 }]}
+                        value={planeringRenameDraft}
+                        onChangeText={setPlaneringRenameDraft}
+                        placeholder="Namn på flik"
+                        placeholderTextColor="#94a3b8"
+                        onSubmitEditing={() => renamePlaneringTab(planeringRenameTab.id, planeringRenameDraft)}
+                      />
+                      <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
+                        <TouchableOpacity
+                          style={[styles.footerBtn, { paddingVertical: 10, paddingHorizontal: 16 }]}
+                          onPress={() => {
+                            setPlaneringRenameTab(null);
+                            setPlaneringRenameDraft('');
+                          }}
+                        >
+                          <Text style={styles.infoValue}>Avbryt</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.footerBtnPrimary, { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 }]}
+                          onPress={() => renamePlaneringTab(planeringRenameTab.id, planeringRenameDraft)}
+                          disabled={!planeringRenameDraft.trim()}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Spara</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
+              )}
 
               <View style={[styles.footer, saving && styles.saving]}>
                 <TouchableOpacity style={styles.footerBtn} onPress={onClose}>

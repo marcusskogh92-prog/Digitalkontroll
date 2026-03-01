@@ -11,7 +11,6 @@ import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { getProjectPhase } from '../../features/projects/constants';
 
 const TOPBAR_HEIGHT = 60;
-const TOPBAR_HEIGHT_WITH_BREADCRUMB = 72;
 const GRID = 8;
 
 function normalizeProjectLabel(project) {
@@ -46,10 +45,6 @@ const styles = StyleSheet.create({
     borderBottomColor: LAYOUT_2026.dividerColor,
     flexShrink: 0,
   },
-  barWithBreadcrumb: {
-    minHeight: TOPBAR_HEIGHT_WITH_BREADCRUMB,
-    alignItems: 'flex-start',
-  },
   title: {
     fontSize: 18,
     fontWeight: '600',
@@ -73,14 +68,10 @@ const styles = StyleSheet.create({
   projectTitleName: {
     fontWeight: '400',
   },
-  breadcrumbRow: {
-    marginTop: 2,
-  },
-  breadcrumbText: {
-    marginTop: 2,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#475569',
+  breadcrumbPath: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
   },
   actions: {
     flexDirection: 'row',
@@ -125,6 +116,7 @@ const styles = StyleSheet.create({
 
 /**
  * @param {string} [pageTitle] - Sidtitel när inget projekt (t.ex. Startsida)
+ * @param {React.ReactNode} [pageTitleIcon] - Ikon framför pageTitle (t.ex. för Planering)
  * @param {Object} [project] - Projekt för rubrik (ikon + nummer – namn + breadcrumb)
  * @param {string} [sectionLabel] - Sektionsnamn för breadcrumb (t.ex. Översikt)
  * @param {string} [itemLabel] - Punktnamn för breadcrumb (t.ex. Tidsplan och viktiga datum)
@@ -140,6 +132,7 @@ const styles = StyleSheet.create({
  */
 export function MinimalTopbar({
   pageTitle = 'Startsida',
+  pageTitleIcon = null,
   project = null,
   sectionLabel = '',
   itemLabel = '',
@@ -159,9 +152,10 @@ export function MinimalTopbar({
   const section = String(sectionLabel || '').trim();
   const item = String(itemLabel || '').trim();
   const breadcrumb = section && item ? `${section} / ${item}` : section || item;
+  const projectPart = [number || name || 'Projekt', name && number ? ` – ${name}` : (name || '')].filter(Boolean).join('') || 'Projekt';
 
   return (
-    <View style={[styles.bar, showProjectHeader && styles.barWithBreadcrumb]}>
+    <View style={styles.bar}>
       {showProjectHeader ? (
         <View style={styles.projectHeaderWrap}>
           <View style={styles.projectTitleRow}>
@@ -169,26 +163,20 @@ export function MinimalTopbar({
               <Ionicons name={phase.icon} size={22} color={phase.color || '#475569'} />
             ) : null}
             <Text style={styles.projectTitleText} numberOfLines={1} ellipsizeMode="tail">
-              {number || name ? (
-                <>
-                  {number || ''}
-                  {name ? <Text style={styles.projectTitleName}>{number ? ` – ${name}` : name}</Text> : null}
-                </>
-              ) : (
-                'Projekt'
-              )}
+              {projectPart}
+              {breadcrumb ? (
+                <Text style={styles.breadcrumbPath}> · {breadcrumb}</Text>
+              ) : null}
             </Text>
           </View>
-          {breadcrumb ? (
-            <Text style={styles.breadcrumbText} numberOfLines={1} ellipsizeMode="tail">
-              {breadcrumb}
-            </Text>
-          ) : null}
         </View>
       ) : (
-        <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
-          {pageTitle || 'Startsida'}
-        </Text>
+        <View style={styles.projectTitleRow}>
+          {pageTitleIcon || null}
+          <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
+            {pageTitle || 'Startsida'}
+          </Text>
+        </View>
       )}
       <View style={styles.actions}>
         {showRightPanelToggle && typeof onRightPanelToggle === 'function' && (

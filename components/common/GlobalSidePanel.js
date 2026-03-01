@@ -55,6 +55,7 @@ export function GlobalSidePanel({
   collapsed = false,
   onCollapseChange,
   visible = true,
+  showCollapseButton = true,
   leftWidth: leftWidthProp,
   setLeftWidth,
   panResponder,
@@ -105,7 +106,7 @@ export function GlobalSidePanel({
       {showResize && (
         <View style={styles.resizeHandle} {...(resizeHandlers || panResponder?.panHandlers || {})} />
       )}
-      {visible && (
+      {visible && showCollapseButton && (
         <TouchableOpacity
           onPress={() => onCollapseChange?.(!collapsed)}
           style={styles.collapseButton}

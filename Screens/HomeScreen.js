@@ -30,6 +30,7 @@ import { onProjectUpdated } from '../components/projectBus';
 import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
 import { LAYOUT_2026 } from '../constants/iconRailTheme';
 import { ProjectScrollContext } from '../contexts/ProjectScrollContext';
+import PlaneringView from '../features/planering/PlaneringView';
 import { usePhaseNavigation } from '../features/project-phases/phases/hooks/usePhaseNavigation';
 import { DEFAULT_PHASE, getProjectPhase } from '../features/projects/constants';
 import { useAdminSupportTools } from '../hooks/useAdminSupportTools';
@@ -278,6 +279,8 @@ export default function HomeScreen({ navigation, route }) {
   const [inactivePhaseModal, setInactivePhaseModal] = useState(null); // 'produktion' | 'avslut' | 'eftermarknad' | null
   /** Modal för SharePoint Nav (Superadmin) – ny layout. */
   const [sharePointNavModalVisible, setSharePointNavModalVisible] = useState(false);
+  /** Aktiv planeringsflik (namn) – visas i MinimalTopbar som itemLabel när rail är planering. */
+  const [planeringActiveTabName, setPlaneringActiveTabName] = useState('');
 
   useModalKeyboard(sharePointNavModalVisible, () => setSharePointNavModalVisible(false));
 
@@ -398,6 +401,16 @@ export default function HomeScreen({ navigation, route }) {
   }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openMallarModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
 
   const handleAdminItemPress = useCallback(async (item) => {
+    if (item.key === 'planering') {
+      try {
+        const cid = await getEffectiveCompanyIdForRegister();
+        if (openCompanyModal && cid) openCompanyModal(cid, 'planering');
+        else setRailActiveId('planering');
+      } catch (_e) {
+        setRailActiveId('planering');
+      }
+      return;
+    }
     if (item.route !== 'ManageSharePointNavigation') {
       setActiveSidePanelItemKey(item.key);
     }
@@ -644,7 +657,7 @@ export default function HomeScreen({ navigation, route }) {
   // - Home (dashboard)
   // - Logout
   // - Switching project (handled inside useHomeProjectSelection)
-  const PHASE_SHORTCUT_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad'];
+  const PHASE_SHORTCUT_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'];
 
   const [pendingLeaveAction, setPendingLeaveAction] = useState(null);
 
@@ -1520,7 +1533,7 @@ export default function HomeScreen({ navigation, route }) {
   } = useCompanyControlTypes({ companyId });
 
   // Aktiva moduler för företaget – styr synlighet i rail och dashboard-kort (Företagsinställningar → Moduler)
-  const PHASE_RAIL_AND_CARD_KEYS = useMemo(() => ['kalkylskede', 'produktion', 'avslut', 'eftermarknad'], []);
+  const PHASE_RAIL_AND_CARD_KEYS = useMemo(() => ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'], []);
   const enabledPhaseKeys = useMemo(() => {
     const raw = companyProfile?.enabledPhases;
     if (Array.isArray(raw) && raw.length > 0) {
@@ -1714,6 +1727,21 @@ export default function HomeScreen({ navigation, route }) {
       setPhaseHeaderLabels({ sectionLabel: '', itemLabel: '' });
     }
   }, [selectedProjectSafe]);
+
+  // Rensa planeringsflik-namn när användaren lämnar Planering (används i MinimalTopbar).
+  useEffect(() => {
+    if (railActiveId !== 'planering') {
+      setPlaneringActiveTabName('');
+    }
+  }, [railActiveId]);
+
+  // När användaren går in i Planering: vänsterpanelen ska inte vara tillgänglig (håll stängd), högerpanelen stängs men kan öppnas igen.
+  useEffect(() => {
+    if (railActiveId === 'planering') {
+      setSidePanelCollapsed(true);
+      setDashboardRightPanelCollapsed(true);
+    }
+  }, [railActiveId]);
   const selectedProjectFoldersSafe = Array.isArray(selectedProjectFolders) ? selectedProjectFolders : [];
   const selectedProjectFoldersLoadingSafe = Boolean(selectedProjectFoldersLoading);
   const controlTypeOptionsSafe = Array.isArray(controlTypeOptions) ? controlTypeOptions : [];
@@ -2099,10 +2127,8 @@ export default function HomeScreen({ navigation, route }) {
                       }
 
                       // Toggle left panel when clicking the already active rail icon.
-                      // Exclusions:
-                      // - dashboard (Home): should keep closing the panel
-                      // - inställningar: should not auto-open the panel
-                      if (id === railActiveId && id !== 'dashboard' && id !== 'inställningar') {
+                      // Exclusions: dashboard, inställningar, planering (panel ska inte gå att öppna i Planering)
+                      if (id === railActiveId && id !== 'dashboard' && id !== 'inställningar' && id !== 'planering') {
                         setSidePanelCollapsed((c) => !c);
                         return;
                       }
@@ -2122,8 +2148,14 @@ export default function HomeScreen({ navigation, route }) {
                         return;
                       }
 
-                      // Auto-open left panel for all rail items except Home + Settings.
-                      // Profile button is handled separately (onUserPress).
+                      // Planering: vänsterpanelen stängd (inte tillgänglig), högerpanelen stängs vid entré men kan öppnas igen.
+                      if (id === 'planering') {
+                        setSidePanelCollapsed(true);
+                        setDashboardRightPanelCollapsed(true);
+                        return;
+                      }
+
+                      // Auto-open left panel for all other rail items except Settings.
                       if (id !== 'inställningar') {
                         setSidePanelCollapsed(false);
                       }
@@ -2225,8 +2257,9 @@ export default function HomeScreen({ navigation, route }) {
                     </Pressable>
                   </Modal>
                   <GlobalSidePanel
-                    collapsed={sidePanelCollapsed}
-                    onCollapseChange={setSidePanelCollapsed}
+                    collapsed={railActiveId === 'planering' ? true : sidePanelCollapsed}
+                    onCollapseChange={railActiveId === 'planering' ? undefined : setSidePanelCollapsed}
+                    showCollapseButton={railActiveId !== 'planering'}
                     visible
                     leftWidth={leftWidth}
                     setLeftWidth={setLeftWidth}
@@ -2261,6 +2294,15 @@ export default function HomeScreen({ navigation, route }) {
                           openCreateCompanyModal?.();
                         }}
                       />
+                    ) : railActiveId === 'planering' ? (
+                      <View style={{ flex: 1, minHeight: 0 }}>
+                        <LeftPanelRailHeader title="Planering" />
+                        <View style={{ padding: 16, paddingTop: 12 }}>
+                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>
+                            Veckoplanering och kapacitet. Huvudvyn visas i innehållsområdet.
+                          </Text>
+                        </View>
+                      </View>
                     ) : (appMode === 'project' || railActiveId === 'sharepoint' || railActiveId === 'projekt' || railActiveId === 'kalkylskede' || railActiveId === 'produktion' || railActiveId === 'avslut' || railActiveId === 'eftermarknad') ? (
                       <View style={{ flex: 1, minHeight: 0 }}>
                       <SharePointLeftPanel
@@ -2451,10 +2493,11 @@ export default function HomeScreen({ navigation, route }) {
                     ]}
                   >
                     <MinimalTopbar
-                      pageTitle={selectedProjectSafe?.name || 'Startsida'}
+                      pageTitle={railActiveId === 'planering' ? 'Planering' : (selectedProjectSafe?.name || 'Startsida')}
+                      pageTitleIcon={railActiveId === 'planering' ? <Ionicons name="calendar-outline" size={22} color="#475569" /> : null}
                       project={selectedProjectSafe || null}
-                      sectionLabel={phaseHeaderLabels.sectionLabel}
-                      itemLabel={phaseHeaderLabels.itemLabel}
+                      sectionLabel={railActiveId === 'planering' ? 'Planering' : phaseHeaderLabels.sectionLabel}
+                      itemLabel={railActiveId === 'planering' ? planeringActiveTabName : phaseHeaderLabels.itemLabel}
                       showCreateProject={false}
                       showRightPanelToggle
                       rightPanelOpen={!dashboardRightPanelCollapsed}
@@ -2473,6 +2516,12 @@ export default function HomeScreen({ navigation, route }) {
                       }}
                       notificationsBadgeCount={notificationsUnreadCount}
                     />
+                    {railActiveId === 'planering' ? (
+                      <PlaneringView
+                        companyId={companyId}
+                        onActiveTabName={setPlaneringActiveTabName}
+                      />
+                    ) : (
                     <HomeMainPaneContainer
                     webPaneHeight={webPaneHeight}
                     rightPaneScrollRef={rightPaneScrollRef}
@@ -2566,6 +2615,7 @@ export default function HomeScreen({ navigation, route }) {
 
                     projectModuleRoute={projectModuleRoute}
                   />
+                    )}
                   </View>
                   {/* Kalenderpanelen visas alltid när den är öppen (dashboard och projekt) */}
                   {(

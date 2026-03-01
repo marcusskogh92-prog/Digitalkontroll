@@ -37,6 +37,7 @@ const RAIL_NAV_ITEMS = [
   { id: 'produktion', icon: 'hammer-outline', label: 'Produktion' },
   { id: 'avslut', icon: 'checkmark-done-outline', label: 'Avslutat' },
   { id: 'eftermarknad', icon: 'construct-outline', label: 'Eftermarknad' },
+  { id: 'planering', icon: 'calendar-outline', label: 'Planering' },
   RAIL_DIVIDER,
   { id: 'sharepoint', icon: 'cloud-outline', label: 'SharePoint' },
   { id: 'register', icon: 'grid-outline', label: 'Register' },
@@ -47,7 +48,7 @@ const RAIL_NAV_ITEMS = [
 const SUPERADMIN_RAIL_ITEM = { id: 'superadmin', icon: 'person-outline', label: 'Superadmin' };
 const SUPERADMIN_SHIELD_GREEN = '#22c55e';
 
-const PHASE_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad'];
+const PHASE_IDS = ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'];
 function filterRailItemsByEnabledPhases(items, enabledPhaseKeys) {
   if (!Array.isArray(items)) return items;
   const allowAll = !enabledPhaseKeys || enabledPhaseKeys.length === 0;

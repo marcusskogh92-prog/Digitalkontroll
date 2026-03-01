@@ -525,5 +525,19 @@ service cloud.firestore {
       allow read: if isCompanyMember(company);
       allow create, update, delete: if isCompanyMember(company) && request.auth.uid == userId;
     }
+
+    // Planering: delad planeringsdata per företag och flik (live-uppdateringar).
+    // Path: foretag/{company}/planering_plans/{tabId} (jämnt antal segment krävs)
+    match /foretag/{company}/planering_plans/{tabId} {
+      allow read, write: if isCompanyMember(company);
+    }
+
+    // Planering presence: vilka som är inne i planeringen på en flik (ikoner i UI).
+    // Path: foretag/{company}/planering_presence/{tabId}/users/{userId} (udda segment för collection)
+    match /foretag/{company}/planering_presence/{tabId}/users/{userId} {
+      allow read: if isCompanyMember(company);
+      allow create, update: if isCompanyMember(company) && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }

@@ -137,12 +137,13 @@ function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
   );
 }
 
-/** Administration: Användare, Roller, Företagsinställningar, SharePoint-kopplingar */
+/** Administration: Användare, Roller, Företagsinställningar, SharePoint-kopplingar, Planering */
 const ADMIN_ITEMS = [
   { key: 'anvandare', label: 'Användare', route: 'ManageUsers' },
   { key: 'roller', label: 'Roller', route: 'ManageControlTypes' },
   { key: 'foretagsinstallningar', label: 'Företagsinställningar', route: 'ManageCompany' },
   { key: 'integrationer', label: 'SharePoint-kopplingar', route: 'ManageCompany', focus: 'sharepoint' },
+  { key: 'planering', label: 'Planering', route: 'Planering' },
 ];
 
 /** SharePoint: Siter, Projekt, Trädstruktur */

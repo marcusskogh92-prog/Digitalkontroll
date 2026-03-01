@@ -92,6 +92,106 @@ export async function getProjectPresenceOtherUserIds(companyId, projectId, curre
   return others;
 }
 
+// --- Planering (live-uppdateringar + närvaro) ---
+
+/** Prenumerera på planeringsdata för en flik. Returnerar avprenumereringsfunktion. */
+export function subscribePlaneringPlan(companyId, tabId, { onData, onError } = {}) {
+  const cid = String(companyId || '').trim();
+  const tid = String(tabId || '').trim();
+  if (!cid || !tid) {
+    try { if (typeof onData === 'function') onData(null); } catch (_e) {}
+    return () => {};
+  }
+  const ref = doc(db, 'foretag', cid, 'planering_plans', tid);
+  const unsub = onSnapshot(
+    ref,
+    (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      try {
+        if (typeof onData === 'function') onData(data);
+      } catch (_e) {}
+    },
+    (err) => {
+      try { if (typeof onError === 'function') onError(err); } catch(_e) {}
+    }
+  );
+  return () => { try { unsub(); } catch (_e) {} };
+}
+
+/** Tar bort undefined från objekt/array så att Firestore accepterar datan (setDoc tillåter inte undefined). */
+function stripUndefinedForFirestore(value) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (Array.isArray(value)) return value.map((item) => stripUndefinedForFirestore(item));
+  if (typeof value === 'object' && value !== null) {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      const v = value[key];
+      if (v === undefined) continue;
+      out[key] = stripUndefinedForFirestore(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Spara planeringsdata för en flik (merge). */
+export async function savePlaneringPlan(companyId, tabId, data) {
+  const cid = String(companyId || '').trim();
+  const tid = String(tabId || '').trim();
+  if (!cid || !tid || !data || typeof data !== 'object') return;
+  const ref = doc(db, 'foretag', cid, 'planering_plans', tid);
+  const clean = stripUndefinedForFirestore(data);
+  await setDoc(ref, { ...clean, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+/** Prenumerera på närvaro i planeringen för en flik (vilka som är inne). onData(users) där users är { uid: { displayName, updatedAt } }. */
+export function subscribePlaneringPresence(companyId, tabId, { onData, onError } = {}) {
+  const cid = String(companyId || '').trim();
+  const tid = String(tabId || '').trim();
+  if (!cid || !tid) {
+    try { if (typeof onData === 'function') onData([]); } catch (_e) {}
+    return () => {};
+  }
+  const col = collection(db, 'foretag', cid, 'planering_presence', tid, 'users');
+  const unsub = onSnapshot(
+    col,
+    (snap) => {
+      const users = [];
+      snap.forEach((d) => {
+        const dta = d.data();
+        const updatedAt = dta.updatedAt?.toDate?.() ?? dta.updatedAt ?? null;
+        users.push({ uid: d.id, displayName: dta.displayName ?? null, updatedAt });
+      });
+      try { if (typeof onData === 'function') onData(users); } catch (_e) {}
+    },
+    (err) => {
+      try { if (typeof onError === 'function') onError(err); } catch(_e) {}
+    }
+  );
+  return () => { try { unsub(); } catch (_e) {} };
+}
+
+/** Sätt att användaren är inne i planeringen på fliken (anropas vid öppning + heartbeat). */
+export async function setPlaneringPresence(companyId, tabId, userId, displayName = null) {
+  const cid = String(companyId || '').trim();
+  const tid = String(tabId || '').trim();
+  const uid = String(userId || '').trim();
+  if (!cid || !tid || !uid) return;
+  const ref = doc(db, 'foretag', cid, 'planering_presence', tid, 'users', uid);
+  await setDoc(ref, { updatedAt: serverTimestamp(), ...(displayName ? { displayName: String(displayName).trim() } : {}) }, { merge: true });
+}
+
+/** Ta bort användarens närvaro i planeringen (anropas vid lämna vy). */
+export async function clearPlaneringPresence(companyId, tabId, userId) {
+  const cid = String(companyId || '').trim();
+  const tid = String(tabId || '').trim();
+  const uid = String(userId || '').trim();
+  if (!cid || !tid || !uid) return;
+  const ref = doc(db, 'foretag', cid, 'planering_presence', tid, 'users', uid);
+  await deleteDoc(ref).catch(() => {});
+}
+
 // Callable wrappers
 export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset, permissions }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
