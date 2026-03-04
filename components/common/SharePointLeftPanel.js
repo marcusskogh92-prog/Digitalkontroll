@@ -434,7 +434,8 @@ export function SharePointLeftPanel({
   selectedProjectFoldersLoading = false,
   navigation,
   companyId,
-    reloadKey,
+  reloadKey,
+  projectsListRefreshKey,
   handleSelectFunction,
   projectStatusFilter,
   loadingHierarchy,
@@ -456,6 +457,7 @@ export function SharePointLeftPanel({
   onSelectProject, // Optional callback for project selection (from HomeScreen)
   onOpenCreateProjectModal, // Optional: open create-project modal (e.g. from phase header plus)
   onOpenEditProjectModal, // Optional: open edit-project modal with project data (from phase list right-click Ändra)
+  editProjectPayloadRef, // Optional: ref set by panel when opening context menu; HomeScreen reads it if payload not passed
   onOpenPhaseItem, // Optional callback to open a phase navigation item
   phaseActiveSection = null,
   phaseActiveItem = null,
@@ -534,6 +536,9 @@ export function SharePointLeftPanel({
   const [archivingProjectId, setArchivingProjectId] = useState(null);
   const [authUid, setAuthUid] = useState(null);
   const [projectContextMenu, setProjectContextMenu] = useState({ visible: false, x: 0, y: 0, target: null });
+  const projectContextMenuTargetRef = useRef(null);
+  const projectContextMenuPayloadRef = useRef(null);
+  const [projectContextMenuPayloadState, setProjectContextMenuPayloadState] = useState(null);
   const [projectContextMenuItems, setProjectContextMenuItems] = useState([]);
   const [projectFolderTree, setProjectFolderTree] = useState([]);
   const [lastProjectId, setLastProjectId] = useState(null);
@@ -669,7 +674,10 @@ export function SharePointLeftPanel({
     return `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
   }, [selectedProject]);
 
-  const closeProjectContextMenu = () => setProjectContextMenu({ visible: false, x: 0, y: 0, target: null });
+  const closeProjectContextMenu = () => {
+    setProjectContextMenu({ visible: false, x: 0, y: 0, target: null });
+    setProjectContextMenuPayloadState(null);
+  };
 
   const toastTimeoutRef = useRef(null);
   const [toast, setToast] = useState({ visible: false, message: '' });
@@ -1059,11 +1067,57 @@ export function SharePointLeftPanel({
     const x = Number(ne.clientX ?? ne.pageX ?? 0) || 0;
     const y = Number(ne.clientY ?? ne.pageY ?? 0) || 0;
 
+    const targetObj = target && typeof target === 'object' ? target : null;
+    projectContextMenuTargetRef.current = targetObj;
+
+    if (targetObj) {
+      const pid = String(targetObj.projectId || targetObj.projectNumber || targetObj.id || '').trim();
+      const siteId = String(targetObj.sharePointSiteId || targetObj.siteId || '').trim();
+      const path = String(targetObj.rootFolderPath || targetObj.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const projects = Array.isArray(firestoreProjects) ? firestoreProjects : [];
+      const resolved = pid
+        ? projects.find((p) => {
+            const pId = String(p?.projectId || p?.projectNumber || p?.id || '').trim();
+            return pId && pId === pid;
+          })
+        : siteId && path
+          ? projects.find((p) => {
+              const pSite = String(p?.sharePointSiteId || p?.siteId || '').trim();
+              const pPath = String(p?.rootFolderPath || p?.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+              return pSite === siteId && pPath === path;
+            })
+          : null;
+      const source = resolved || targetObj;
+      const rawNum = String(source.projectNumber || source.number || source.id || source.projectId || '').trim();
+      const rawName = String(source.projectName || source.name || source.fullName || '').trim();
+      const payload = {
+        projectId: source.projectId || source.id || source.projectNumber || rawNum,
+        projectNumber: rawNum || String(source.projectId || source.id || '').trim(),
+        projectName: rawName,
+        fullName: String(source.fullName || source.projectName || source.name || '').trim() || rawName,
+        sharePointSiteId: source.sharePointSiteId || source.siteId,
+        rootFolderPath: String(source.rootFolderPath || source.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, ''),
+        phase: source.phase || 'kalkylskede',
+      };
+      projectContextMenuPayloadRef.current = payload;
+      setProjectContextMenuPayloadState(payload);
+      if (editProjectPayloadRef && typeof editProjectPayloadRef === 'object' && 'current' in editProjectPayloadRef) {
+        editProjectPayloadRef.current = payload;
+      }
+    } else {
+      projectContextMenuPayloadRef.current = null;
+      setProjectContextMenuPayloadState(null);
+      if (editProjectPayloadRef && typeof editProjectPayloadRef === 'object' && 'current' in editProjectPayloadRef) {
+        editProjectPayloadRef.current = null;
+      }
+    }
+
+    const editPayload = targetObj ? (projectContextMenuPayloadRef.current || null) : null;
     setProjectContextMenuItems([
-      { key: 'edit-project', label: 'Ändra', iconName: 'pencil-outline' },
+      { key: 'edit-project', label: 'Ändra', iconName: 'pencil-outline', _projectPayload: editPayload },
       { key: 'delete-project', label: 'Ta bort', iconName: 'trash-outline', danger: true },
     ]);
-    setProjectContextMenu({ visible: true, x, y, target: target || null });
+    setProjectContextMenu({ visible: true, x, y, target: targetObj });
   };
 
   // SharePoint folder management (DK Site / role === "projects" only)
@@ -1741,25 +1795,68 @@ export function SharePointLeftPanel({
 
   const handleProjectContextMenuSelect = async (item) => {
     const key = String(item?.key || '').trim();
-    const target = projectContextMenu?.target;
-    const pid = String(target?.projectId || target?.projectNumber || '').trim();
+    const target = projectContextMenuTargetRef.current ?? projectContextMenu?.target;
+    const payloadCaptured = item?._projectPayload ?? projectContextMenuPayloadState ?? projectContextMenuPayloadRef.current;
+    projectContextMenuTargetRef.current = null;
 
     closeProjectContextMenu();
 
     if (!key) return;
     if (!canArchiveProjects) return;
-    if (!companyId || !pid) return;
+    if (!companyId) return;
+
+    const pid = String(target?.projectId || target?.projectNumber || target?.id || '').trim();
+    const siteId = String(target?.sharePointSiteId || target?.siteId || '').trim();
+    const path = String(target?.rootFolderPath || target?.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
 
     if (key === 'edit-project') {
       try {
-        if (typeof onOpenEditProjectModal === 'function') {
-          onOpenEditProjectModal(target);
+        if (typeof onOpenEditProjectModal !== 'function') return;
+        let payloadToUse = null;
+        if (target && typeof target === 'object') {
+          const projects = Array.isArray(firestoreProjects) ? firestoreProjects : [];
+          const resolved = pid
+            ? projects.find((p) => {
+                const pId = String(p?.projectId || p?.projectNumber || p?.id || '').trim();
+                return pId && pId === pid;
+              })
+            : siteId && path
+              ? projects.find((p) => {
+                  const pSite = String(p?.sharePointSiteId || p?.siteId || '').trim();
+                  const pPath = String(p?.rootFolderPath || p?.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+                  return pSite === siteId && pPath === path;
+                })
+              : null;
+          const source = resolved || target;
+          const rawNum = String(source.projectNumber ?? source.number ?? source.id ?? source.projectId ?? '').trim();
+          const rawName = String(source.projectName ?? source.name ?? source.fullName ?? '').trim();
+          payloadToUse = {
+            projectId: source.projectId || source.id || source.projectNumber || rawNum,
+            projectNumber: rawNum || String(source.projectId || source.id || '').trim(),
+            projectName: rawName || rawNum,
+            fullName: String(source.fullName ?? source.projectName ?? source.name ?? '').trim() || rawName || rawNum,
+            sharePointSiteId: source.sharePointSiteId || source.siteId,
+            rootFolderPath: String(source.rootFolderPath ?? source.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, ''),
+            phase: source.phase || 'kalkylskede',
+          };
+        }
+        if (!payloadToUse) payloadToUse = payloadCaptured;
+        if (payloadToUse && (payloadToUse.projectId || payloadToUse.projectNumber || payloadToUse.fullName)) {
+          if (editProjectPayloadRef && typeof editProjectPayloadRef === 'object' && 'current' in editProjectPayloadRef) {
+            editProjectPayloadRef.current = payloadToUse;
+          }
+          onOpenEditProjectModal(payloadToUse);
+        } else if (typeof onOpenEditProjectModal === 'function' && editProjectPayloadRef && typeof editProjectPayloadRef === 'object' && 'current' in editProjectPayloadRef && editProjectPayloadRef.current) {
+          onOpenEditProjectModal();
         }
       } catch (_e) {}
+      projectContextMenuPayloadRef.current = null;
+      setProjectContextMenuPayloadState(null);
       return;
     }
 
     if (key === 'delete-project') {
+      if (!pid) return;
       const activeProjectId = selectedProject
         ? String(selectedProject?.id || selectedProject?.projectId || selectedProject?.projectNumber || '').trim()
         : '';
@@ -1964,6 +2061,31 @@ export function SharePointLeftPanel({
       scanFoldersForProjects(sid, siteUrl, children);
     });
   }, [companyId, filteredHierarchy, firestoreProjects]);
+
+  // Map (siteId|path) -> aktuellt mappnamn från SharePoint-hierarki, så visning synkar med namn som bytts i SharePoint
+  const sharePointFolderDisplayNameByKey = useMemo(() => {
+    const map = new Map();
+    if (!Array.isArray(filteredHierarchy) || filteredHierarchy.length === 0) return map;
+    const walk = (nodes, siteId) => {
+      (nodes || []).forEach((node) => {
+        if (!node) return;
+        const sid = siteId || String(node?.siteId || node?.id || '').trim();
+        if (isProjectFolder(node)) {
+          const path = normalizeSharePointPath(node?.path || node?.name || '');
+          if (sid && path) map.set(`${sid}|${path}`, String(node?.name || '').trim());
+        }
+        if (Array.isArray(node.children) && node.children.length > 0) {
+          walk(node.children, sid || siteId);
+        }
+      });
+    };
+    filteredHierarchy.forEach((siteNode) => {
+      const sid = String(siteNode?.siteId || siteNode?.id || '').trim();
+      if (!sid) return;
+      walk(Array.isArray(siteNode?.children) ? siteNode.children : [], sid);
+    });
+    return map;
+  }, [filteredHierarchy]);
 
   // Self-heal: if a project exists in Firestore but its root folder is missing in SharePoint,
   // create it automatically in the DK Site (siteRole = "projects").
@@ -3150,7 +3272,7 @@ export function SharePointLeftPanel({
                 .sort((a, b) => String(a?.projectNumber || '').localeCompare(String(b?.projectNumber || ''), undefined, { numeric: true, sensitivity: 'base' }));
 
               return (
-                <View style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
+                <View key={`phase-list-${phaseShortcutKey}-${reloadKey ?? 0}-${projectsListRefreshKey ?? 0}`} style={styles.leftPanelScrollContent} nativeID={isWeb ? 'dk-tree-root' : undefined}>
                   {items.length === 0 ? (
                     <Text style={{ paddingVertical: 12, paddingHorizontal: NAV.rowPaddingHorizontal, color: NAV.textMuted, fontSize: NAV.rowFontSize }}>
                       Det finns inga projekt i denna modul.
@@ -3159,9 +3281,12 @@ export function SharePointLeftPanel({
                     items.map((p) => {
                       const number = String(p?.projectNumber || p?.id || '').trim();
                       const name = String(p?.projectName || '').trim();
-                      const fullName = String(p?.fullName || `${number} ${name}`.trim()).trim();
                       const siteId = String(p?.sharePointSiteId || '').trim();
                       const path = String(p?.rootFolderPath || '').trim();
+                      const pathNorm = normalizeSharePointPath(path);
+                      const fromHierarchy = siteId && pathNorm ? sharePointFolderDisplayNameByKey.get(`${siteId}|${pathNorm}`) : null;
+                      const canonicalFromFirestore = [number, name].filter(Boolean).join(' – ') || String(p?.fullName || '').trim();
+                      const displayLabel = fromHierarchy || canonicalFromFirestore || String(p?.fullName || '').trim();
                       const metaKey = siteId && path ? `${siteId}|${path}` : null;
                       const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
                       const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || DEFAULT_PHASE;
@@ -3173,10 +3298,10 @@ export function SharePointLeftPanel({
                         const projectData = {
                           id: number || String(p?.id || '').trim(),
                           number,
-                          name: name || fullName,
+                          name: name || displayLabel,
                           projectNumber: number,
                           projectName: name,
-                          fullName,
+                          fullName: displayLabel,
                           siteId,
                           path,
                           sharePointPath: path,
@@ -3191,7 +3316,16 @@ export function SharePointLeftPanel({
                       const onOpenMenu = (e) => {
                         try {
                           if (!canArchiveProjects) return null;
-                          openProjectContextMenu(e, { projectId: number, fullName, projectNumber: number, sharePointSiteId: siteId, rootFolderPath: path });
+                          openProjectContextMenu(e, {
+                            projectId: String(p?.id || '').trim() || number,
+                            projectNumber: number,
+                            projectName: name || displayLabel,
+                            name: name || displayLabel,
+                            fullName: displayLabel,
+                            sharePointSiteId: siteId,
+                            rootFolderPath: path,
+                            phase: effectivePhaseKey,
+                          });
                         } catch (_e) {}
                       };
 
@@ -3201,7 +3335,7 @@ export function SharePointLeftPanel({
                           <View key={number || p?.id || rowKey}>
                             <SidebarItem
                               fullWidth
-                              label={fullName || number}
+                              label={displayLabel || number}
                               labelStyle={{ fontSize: NAV.rowFontSize }}
                               hovered={isHovered}
                               onPress={onSelect}
@@ -3229,7 +3363,7 @@ export function SharePointLeftPanel({
                         <View key={number || p?.id || rowKey}>
                           <SidebarItem
                             fullWidth
-                            label={fullName || number}
+                            label={displayLabel || number}
                             labelStyle={{ fontSize: NAV.rowFontSize }}
                             onPress={onSelect}
                             onLongPress={onOpenMenu}
@@ -3447,9 +3581,12 @@ export function SharePointLeftPanel({
                     {items.map((p) => {
                       const number = String(p?.projectNumber || p?.id || '').trim();
                       const name = String(p?.projectName || '').trim();
-                      const fullName = String(p?.fullName || `${number} ${name}`.trim()).trim();
                       const siteId = String(p?.sharePointSiteId || '').trim();
                       const path = String(p?.rootFolderPath || '').trim();
+                      const pathNorm = normalizeSharePointPath(path);
+                      const fromHierarchy = siteId && pathNorm ? sharePointFolderDisplayNameByKey.get(`${siteId}|${pathNorm}`) : null;
+                      const canonicalFromFirestore = [number, name].filter(Boolean).join(' – ') || String(p?.fullName || '').trim();
+                      const displayLabel = fromHierarchy || canonicalFromFirestore || String(p?.fullName || '').trim();
                       const metaKey = siteId && path ? `${siteId}|${path}` : null;
                       const savedMeta = metaKey && projectMetadataMap ? projectMetadataMap.get(metaKey) : null;
                       const effectivePhaseKey = (savedMeta?.phaseKey && String(savedMeta.phaseKey).trim()) || DEFAULT_PHASE;
@@ -3461,10 +3598,10 @@ export function SharePointLeftPanel({
                         const projectData = {
                           id: number || String(p?.id || '').trim(),
                           number,
-                          name: name || fullName,
+                          name: name || displayLabel,
                           projectNumber: number,
                           projectName: name,
-                          fullName,
+                          fullName: displayLabel,
                           siteId,
                           path,
                           sharePointPath: path,
@@ -3481,7 +3618,16 @@ export function SharePointLeftPanel({
                       const onOpenMenu = (e) => {
                         try {
                           if (!canArchiveProjects) return;
-                          openProjectContextMenu(e, { projectId: number, fullName, projectNumber: number, sharePointSiteId: siteId, rootFolderPath: path });
+                          openProjectContextMenu(e, {
+                            projectId: String(p?.id || '').trim() || number,
+                            projectNumber: number,
+                            projectName: name || displayLabel,
+                            name: name || displayLabel,
+                            fullName: displayLabel,
+                            sharePointSiteId: siteId,
+                            rootFolderPath: path,
+                            phase: effectivePhaseKey,
+                          });
                         } catch (_e) {}
                       };
 
@@ -3491,7 +3637,7 @@ export function SharePointLeftPanel({
                           <View key={number || p?.id || rowKey}>
                             <SidebarItem
                               fullWidth
-                              label={fullName || number}
+                              label={displayLabel || number}
                               labelStyle={{ fontSize: NAV.rowFontSize }}
                               hovered={isHovered}
                               onPress={onSelect}
@@ -3520,7 +3666,7 @@ export function SharePointLeftPanel({
                         <View key={number || p?.id || rowKey}>
                           <SidebarItem
                             fullWidth
-                            label={fullName || number}
+                            label={displayLabel || number}
                             labelStyle={{ fontSize: NAV.rowFontSize }}
                             onPress={onSelect}
                             onLongPress={onOpenMenu}

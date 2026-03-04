@@ -1,7 +1,7 @@
 /**
- * Modal design standard 2026 – stram SaaS B2B.
- * Kontaktregister-modalen är referens. Alla modaler använder dessa tokens.
- * Ingen mörk banner, ingen pill-form, ingen glow. Premium affärssystemkänsla.
+ * Modal design – en golden rule för alla modaler.
+ * Referens: AdminCreateCompanyModal (Skapa nytt företag). Mörk banner, primärknapp = bannerns färg (dimmad), ingen ljusblå.
+ * Se docs/MODAL_GOLDEN_RULE.md.
  */
 
 import { Platform } from 'react-native';
@@ -37,7 +37,7 @@ export const MODAL_DESIGN_2026 = {
   titleColor: '#0f172a',
   subtitleFontSize: 13,
   subtitleColor: '#64748b',
-  /** Header – neutral (Kontaktregister): kompakt toppremsa, rail-färg, vit text. Höjd 38px. */
+  /** Header – neutral (mörk banner). Standard: #1E2A38, vit text. */
   headerNeutral: {
     backgroundColor: '#1E2A38',
     borderBottomWidth: 1,
@@ -57,6 +57,19 @@ export const MODAL_DESIGN_2026 = {
   headerNeutralIconSize: 17,
   headerNeutralCloseIconColor: '#fff',
   headerNeutralCloseBtnHover: 'rgba(255,255,255,0.12)',
+  /** Standard kompakt banner – samma som Leverantörer och Företagsinställningar. 28px höjd, titel 12px normal. ModalBase: headerVariant="neutralCompact". */
+  headerNeutralCompact: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    minHeight: 28,
+    maxHeight: 28,
+  },
+  headerNeutralCompactTitleFontSize: 12,
+  headerNeutralCompactTitleFontWeight: '400',
+  headerNeutralCompactTitleLineHeight: 16,
+  headerNeutralCompactIconSize: 22,
+  headerNeutralCompactIconPx: 14,
+  headerNeutralCompactCloseIconPx: 18,
   /** Stäng-knapp – diskret, ingen cirkel */
   closeBtn: {
     padding: 6,
@@ -81,11 +94,12 @@ export const MODAL_DESIGN_2026 = {
     paddingHorizontal: 24,
   },
 
-  /** Knappar – radius 6, inga pill. Footer-knappar: standard 6/18 px padding. */
+  /** Knappar – radius 6, inga pill. Primär = bannerns färg (dimmad), inte ljusblå. */
   buttonRadius: 6,
   buttonPaddingVertical: 6,
   buttonPaddingHorizontal: 18,
-  buttonPrimaryBg: '#1976D2',
+  /** Primärknapp (Spara/Skapa): dimmad bannern #1E2A38 – golden rule enhetlig med banner */
+  buttonPrimaryBg: '#2D3A4B',
   buttonPrimaryColor: '#fff',
   buttonPrimaryFontWeight: '500',
   buttonSecondaryBorder: '1px solid #ddd',
@@ -97,9 +111,22 @@ export const MODAL_DESIGN_2026 = {
   inputBorder: '1px solid #ddd',
   inputBorderFocus: '#1976D2',
 
-  /** Tabeller inuti modal – ingen rundning, tajt radhöjd */
+  /** Tabeller – golden rule för alla register (Leverantörer, Kunder, Kontakter, Byggdelar, Kontoplan, Kategorier, Användare). Se docs/TABLE_GOLDEN_RULE.md. */
   tableRadius: 0,
   tableRowHeight: 24,
   tableCellPaddingVertical: 4,
   tableCellPaddingHorizontal: 12,
+  tableBorderColor: '#e2e8f0',
+  tableHeaderBackgroundColor: '#f1f5f9',
+  tableHeaderBorderColor: '#e2e8f0',
+  tableHeaderFontSize: 12,
+  tableHeaderFontWeight: '500',
+  tableHeaderColor: '#475569',
+  tableRowBorderColor: '#eef0f3',
+  tableRowBackgroundColor: '#fff',
+  tableRowAltBackgroundColor: '#f8fafc',
+  tableRowHoverBackgroundColor: '#eef6ff',
+  tableCellFontSize: 13,
+  tableCellColor: '#111',
+  tableCellMutedColor: '#64748b',
 };

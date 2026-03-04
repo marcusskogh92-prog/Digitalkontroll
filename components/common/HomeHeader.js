@@ -80,7 +80,7 @@ export function HomeHeader({
   const [registerDropdownVisible, setRegisterDropdownVisible] = useState(false);
   const [registerDropdownPosition, setRegisterDropdownPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const registerButtonRef = useRef(null);
-  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal, openKategoriModal } = useContext(AdminModalContext) || {};
+  const { openCustomersModal, openContactRegistryModal, openSuppliersModal, openByggdelModal, openKontoplanModal, openMallarModal, openAIPromptsModal, openKategoriModal, openCompanyModal } = useContext(AdminModalContext) || {};
 
   /** Samma logik som Kunder/Kontakter: använd inloggat företag (companyId/route eller token). */
   const getEffectiveCompanyIdForRegister = useCallback(async () => {
@@ -403,16 +403,16 @@ export function HomeHeader({
               <Pressable style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 9998 }} onPress={() => setRegisterDropdownVisible(false)} />
               <View style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, minWidth: 200, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#ddd', zIndex: 9999, paddingVertical: 8 }}>
                 <Text style={{ paddingHorizontal: 12, paddingBottom: 6, fontSize: 12, fontWeight: '700', color: '#333' }}>Register</Text>
-                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openByggdelModal) openByggdelModal(cid); else navigation.navigate('ManageCompany', { focus: 'byggdel' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openByggdelModal) openByggdelModal(cid); else if (openCompanyModal) openCompanyModal(cid, 'register'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>Byggdelstabell</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKontoplanModal) openKontoplanModal(cid); else navigation.navigate('ManageCompany', { focus: 'kontoplan' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKontoplanModal) openKontoplanModal(cid); else if (openCompanyModal) openCompanyModal(cid, 'register'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>Kontoplan</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openMallarModal) openMallarModal(cid); else showAlert('Utveckling pågår', 'Denna del är under utveckling.'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>Mallar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKategoriModal) openKategoriModal(cid); else navigation.navigate('ManageCompany', { focus: 'kategorier' }); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                <TouchableOpacity onPress={async () => { setRegisterDropdownVisible(false); try { const cid = await getEffectiveCompanyIdForRegister(); if (openKategoriModal) openKategoriModal(cid); else if (openCompanyModal) openCompanyModal(cid, 'register'); } catch (_e) {} }} style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>Kategorier</Text>
                 </TouchableOpacity>
               </View>
@@ -923,12 +923,15 @@ export function HomeHeader({
                       setRegisterDropdownVisible(false);
                       try {
                         const cid = await getEffectiveCompanyIdForRegister();
-                        if (it.key === 'byggdelstabell' && openByggdelModal) {
-                          openByggdelModal(cid);
-                        } else if (it.key === 'kontoplan' && openKontoplanModal) {
-                          openKontoplanModal(cid);
-                        } else if (it.key === 'kategorier' && openKategoriModal) {
-                          openKategoriModal(cid);
+                        if (it.key === 'byggdelstabell') {
+                          if (openByggdelModal) openByggdelModal(cid);
+                          else openCompanyModal?.(cid, 'register');
+                        } else if (it.key === 'kontoplan') {
+                          if (openKontoplanModal) openKontoplanModal(cid);
+                          else openCompanyModal?.(cid, 'register');
+                        } else if (it.key === 'kategorier') {
+                          if (openKategoriModal) openKategoriModal(cid);
+                          else openCompanyModal?.(cid, 'register');
                         } else if (it.screen === 'ManageControlTypes') {
                           if (openMallarModal) openMallarModal(cid);
                           else showAlert('Utveckling pågår', 'Denna del är under utveckling.');

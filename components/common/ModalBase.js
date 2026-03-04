@@ -48,13 +48,31 @@ const styles = StyleSheet.create({
     borderBottomColor: D.headerNeutral.borderBottomColor,
     backgroundColor: D.headerNeutral.backgroundColor,
   },
+  /** Kompakt banner som Företagsinställningar – 28px höjd, titel 12px */
+  headerNeutralCompact: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: D.headerNeutralCompact.paddingVertical,
+    paddingHorizontal: D.headerNeutralCompact.paddingHorizontal,
+    minHeight: D.headerNeutralCompact.minHeight,
+    maxHeight: D.headerNeutralCompact.maxHeight,
+    borderBottomWidth: D.headerNeutral.borderBottomWidth,
+    borderBottomColor: D.headerNeutral.borderBottomColor,
+    backgroundColor: D.headerNeutral.backgroundColor,
+  },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  headerLeftCompact: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 },
   title: { fontSize: D.titleFontSize, fontWeight: D.titleFontWeight, color: D.titleColor },
   subtitle: { fontSize: D.subtitleFontSize, color: D.subtitleColor, marginTop: 2 },
   titleNeutral: { fontSize: D.headerNeutralTitleFontSize, fontWeight: D.headerNeutralTitleFontWeight, lineHeight: D.headerNeutralTitleLineHeight, color: D.headerNeutralTextColor, marginVertical: 0 },
   subtitleNeutral: { fontSize: D.headerNeutralSubtitleFontSize, lineHeight: D.headerNeutralSubtitleLineHeight, color: D.headerNeutralTextColor, opacity: D.headerNeutralSubtitleOpacity, marginTop: 2, marginVertical: 0 },
+  titleNeutralCompact: { fontSize: D.headerNeutralCompactTitleFontSize, fontWeight: D.headerNeutralCompactTitleFontWeight, lineHeight: D.headerNeutralCompactTitleLineHeight, color: D.headerNeutralTextColor, marginVertical: 0 },
+  subtitleNeutralCompact: { fontSize: D.headerNeutralCompactTitleFontSize, lineHeight: D.headerNeutralCompactTitleLineHeight, color: D.headerNeutralTextColor, fontWeight: '400', opacity: 0.9, marginVertical: 0 },
   titleLineNeutral: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, gap: 6, flexWrap: 'nowrap' },
   separatorNeutral: { fontSize: D.headerNeutralSubtitleFontSize, lineHeight: D.headerNeutralSubtitleLineHeight, color: D.headerNeutralTextColor, opacity: D.headerNeutralSubtitleOpacity, marginVertical: 0 },
+  separatorNeutralCompact: { fontSize: D.headerNeutralCompactTitleFontSize, lineHeight: D.headerNeutralCompactTitleLineHeight, color: D.headerNeutralTextColor, opacity: 0.9, marginVertical: 0 },
   closeBtn: {
     padding: D.closeBtn.padding,
     borderRadius: D.closeBtn.borderRadius,
@@ -94,7 +112,7 @@ const styles = StyleSheet.create({
  * @param {Object} [headerProps] - { onMouseDown, style } for drag
  * @param {React.ReactNode} [resizeHandles]
  * @param {Object} [contentStyle] - override content container (e.g. { padding: 0 } for full-bleed table)
- * @param {'light'|'neutral'} [headerVariant] - 'neutral' = ljusgrå header, ikon + titel staplad, mörkgrå stäng
+ * @param {'light'|'neutral'|'neutralCompact'} [headerVariant] - 'neutral' = mörk banner 38px; 'neutralCompact' = som Företagsinställningar 28px, titel 12px
  */
 export default function ModalBase({
   visible,
@@ -111,13 +129,15 @@ export default function ModalBase({
   contentStyle,
   headerVariant = 'light',
 }) {
-  const isNeutralHeader = headerVariant === 'neutral';
-  const headerStyle = isNeutralHeader ? styles.headerNeutral : styles.header;
+  const isNeutralHeader = headerVariant === 'neutral' || headerVariant === 'neutralCompact';
+  const isCompact = headerVariant === 'neutralCompact';
+  const headerStyle = isCompact ? styles.headerNeutralCompact : (isNeutralHeader ? styles.headerNeutral : styles.header);
   const [closeHover, setCloseHover] = useState(false);
   const closeBtnStyle = [
     styles.closeBtn,
     isNeutralHeader && closeHover && { backgroundColor: D.headerNeutralCloseBtnHover },
   ];
+  const closeIconSize = isCompact ? D.headerNeutralCompactCloseIconPx : D.closeIconSize;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
@@ -127,17 +147,17 @@ export default function ModalBase({
             style={[headerStyle, headerProps.style]}
             {...(Platform.OS === 'web' && headerProps.onMouseDown ? { onMouseDown: headerProps.onMouseDown } : {})}
           >
-            <View style={styles.headerLeft}>
-              {titleIcon != null ? <View style={{ marginRight: 8 }}>{titleIcon}</View> : null}
+            <View style={isCompact ? styles.headerLeftCompact : styles.headerLeft}>
+              {titleIcon != null ? <View style={{ marginRight: isCompact ? 6 : 8 }}>{titleIcon}</View> : null}
               {isNeutralHeader ? (
                 <View style={styles.titleLineNeutral}>
-                  <Text style={styles.titleNeutral} numberOfLines={1} ellipsizeMode="tail">
+                  <Text style={isCompact ? styles.titleNeutralCompact : styles.titleNeutral} numberOfLines={1} ellipsizeMode="tail">
                     {title}
                   </Text>
                   {subtitle != null && subtitle !== '' ? (
                     <>
-                      <Text style={styles.separatorNeutral}>—</Text>
-                      <Text style={[styles.subtitleNeutral, { marginTop: 0, flex: 1, minWidth: 0 }]} numberOfLines={1} ellipsizeMode="tail">
+                      <Text style={isCompact ? styles.separatorNeutralCompact : styles.separatorNeutral}>—</Text>
+                      <Text style={[isCompact ? styles.subtitleNeutralCompact : styles.subtitleNeutral, { marginTop: 0, flex: 1, minWidth: 0 }]} numberOfLines={1} ellipsizeMode="tail">
                         {subtitle}
                       </Text>
                     </>
@@ -166,7 +186,7 @@ export default function ModalBase({
             >
               <Ionicons
                 name="close"
-                size={D.closeIconSize}
+                size={closeIconSize}
                 color={isNeutralHeader ? D.headerNeutralCloseIconColor : D.closeIconColor}
               />
             </TouchableOpacity>

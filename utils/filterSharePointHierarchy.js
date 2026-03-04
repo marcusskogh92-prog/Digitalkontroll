@@ -5,6 +5,7 @@
 
 import { fetchCompanySharePointSiteMetas, getAvailableSharePointSites, getCompanyVisibleSharePointSiteIds, getSharePointNavigationConfig, saveSharePointNavigationConfig } from '../components/firebase';
 import { getDriveItems } from '../services/azure/hierarchyService';
+import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 
 /**
  * Build hierarchy from all enabled SharePoint sites
@@ -103,13 +104,14 @@ export async function filterHierarchyByConfig(hierarchy, companyId, navConfig = 
     const siteHierarchies = [];
     const invalidPathsBySite = {}; // siteId -> Set(paths) som inte längre finns i SharePoint
     
-    for (const siteId of enabledSites) {
-      if (!siteId) continue;
-      
-      const site = sitesMap[siteId];
-      const siteName = siteMetaNameBySiteId[siteId] || site?.name || site?.displayName || siteId;
-      const siteConfig = siteConfigs[siteId] || {};
-      const hasExplicitSiteConfig = Object.prototype.hasOwnProperty.call(siteConfigs, siteId);
+    for (const rawSiteId of enabledSites) {
+      if (!rawSiteId) continue;
+      const siteId = normalizeSiteIdForGraph(String(rawSiteId).trim());
+
+      const site = sitesMap[rawSiteId] || sitesMap[siteId];
+      const siteName = siteMetaNameBySiteId[rawSiteId] || siteMetaNameBySiteId[siteId] || site?.name || site?.displayName || siteId;
+      const siteConfig = siteConfigs[rawSiteId] || siteConfigs[siteId] || {};
+      const hasExplicitSiteConfig = Object.prototype.hasOwnProperty.call(siteConfigs, rawSiteId) || Object.prototype.hasOwnProperty.call(siteConfigs, siteId);
       
       try {
         // Load root folders for this site

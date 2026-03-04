@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Modal, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Modal, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 let createPortal = null;
 let flushSync = (fn) => { if (typeof fn === 'function') fn(); };
@@ -13,7 +13,9 @@ try {
   createPortal = null;
 }
 import { collectionGroup, deleteDoc, doc, getDocs, getDocsFromServer, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
+import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
 import { MODAL_THEME } from '../constants/modalTheme';
+import { useDraggableResizableModal } from '../hooks/useDraggableResizableModal';
 import { HomeHeader } from '../components/common/HomeHeader';
 import SharePointSiteIcon from '../components/common/SharePointSiteIcon';
 import MainLayout from '../components/MainLayout';
@@ -25,6 +27,7 @@ import {
   fetchCompanySharePointSiteMetas,
   fetchCompanySharePointSiteMetasFromServer,
   getAvailableSharePointSites,
+  provisionCompanySharePointRemote,
   syncSharePointSiteVisibilityRemote,
   upsertCompanySharePointSiteMeta,
 } from '../components/firebase';
@@ -131,6 +134,7 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
   const siteStatusRef = useRef({});
   const [statusFilter, setStatusFilter] = useState('all');
   const [creatingCustomSite, setCreatingCustomSite] = useState(false);
+  const [provisioningSharePointCompanyId, setProvisioningSharePointCompanyId] = useState('');
   const [assigningSiteId, setAssigningSiteId] = useState('');
   const [showHeaderUserMenu, setShowHeaderUserMenu] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -148,6 +152,13 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
   const [actionInProgressKey, setActionInProgressKey] = useState(null);
   const [refreshingList, setRefreshingList] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!embedInModal, {
+    defaultWidth: 920,
+    defaultHeight: 560,
+    minWidth: 640,
+    minHeight: 400,
+  });
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const searchSpinAnim = useRef(new Animated.Value(0)).current;
   const { sharePointStatus } = useSharePointStatus({ companyId, searchSpinAnim });
@@ -266,6 +277,23 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
     return () => { mounted = false; };
   }, [isSuperadmin]);
 
+  // När ett nytt företag skapats (inkl. Site + Bas): uppdatera företagslistan och sharepoint_sites så att de syns i Nav
+  useEffect(() => {
+    if (!isSuperadmin || typeof window === 'undefined') return;
+    const handler = () => {
+      setTimeout(async () => {
+        try {
+          const list = await fetchCompanies();
+          setCompanies(Array.isArray(list) ? list : []);
+          await refreshAllCompanySiteMetas({ afterWrite: true });
+          setLastSyncTime(new Date());
+        } catch (_e) {}
+      }, 1200);
+    };
+    window.addEventListener('dkCompanyCreated', handler);
+    return () => window.removeEventListener('dkCompanyCreated', handler);
+  }, [isSuperadmin]);
+
   // Load available SharePoint sites
   useEffect(() => {
     let mounted = true;
@@ -358,7 +386,7 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
     return byCompany;
   };
 
-  // Load all company SharePoint metas (collection group eller per-företag)
+  // Load all company SharePoint metas (collection group – från servern så nya kopplingar syns direkt)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -367,7 +395,8 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
       if (list.length === 0) return;
       setLoadingMetas(true);
       try {
-        const snap = await getDocs(collectionGroup(db, 'sharepoint_sites'));
+        const coll = collectionGroup(db, 'sharepoint_sites');
+        const snap = await getDocsFromServer(coll).catch(() => getDocs(coll));
         const byCompany = {};
         snap.forEach((docSnap) => {
           const data = docSnap.data() || {};
@@ -571,29 +600,33 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
 
   const siteOwnerMap = useMemo(() => {
     const map = {};
-    Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => {
+    const add = (cid, metas) => {
       (Array.isArray(metas) ? metas : []).forEach((m) => {
         const sid = String(m?.siteId || m?.id || '').trim();
         if (!sid) return;
         map[sid] = cid;
       });
-    });
+    };
+    Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => add(cid, metas));
+    Object.entries(supplementalSiteMetas || {}).forEach(([cid, metas]) => add(cid, metas));
     return map;
-  }, [allCompanySiteMetas]);
+  }, [allCompanySiteMetas, supplementalSiteMetas]);
 
   /** Map normalized webUrl -> company id so we treat a site as owned if either id or webUrl matches. */
   const webUrlToOwnerMap = useMemo(() => {
     const map = {};
-    Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => {
+    const add = (cid, metas) => {
       (Array.isArray(metas) ? metas : []).forEach((m) => {
         const url = String(m?.siteUrl || m?.webUrl || '').trim();
         const key = normalizeWebUrl(url);
         if (!key) return;
         map[key] = cid;
       });
-    });
+    };
+    Object.entries(allCompanySiteMetas || {}).forEach(([cid, metas]) => add(cid, metas));
+    Object.entries(supplementalSiteMetas || {}).forEach(([cid, metas]) => add(cid, metas));
     return map;
-  }, [allCompanySiteMetas]);
+  }, [allCompanySiteMetas, supplementalSiteMetas]);
 
   const unassignedSites = useMemo(() => {
     return (Array.isArray(availableSites) ? availableSites : []).filter((site) => {
@@ -606,11 +639,11 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
     });
   }, [availableSites, siteOwnerMap, webUrlToOwnerMap]);
 
-  const getStatusInfo = (siteId, isPaused = false) => {
+  const getStatusInfo = (siteId, isPaused = false, isSystemSite = false) => {
     if (isPaused) {
       return {
         statusValue: 'paused',
-        statusLabel: 'Pausad',
+        statusLabel: isSystemSite ? 'Dold' : 'Pausad',
         statusColor: '#6B7280',
         statusBg: '#F3F4F6',
       };
@@ -763,7 +796,7 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
           const isLinked = true;
           const isLocked = isSystem || isProjects;
           const isPaused = meta?.visibleInLeftPanel === false;
-          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(statusSiteId, isPaused);
+          const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(statusSiteId, isPaused, isSystem);
           const roleLabel = isSystem ? 'Låst' : isProjects ? 'Låst' : '';
           let displayName = String(meta?.siteName || site?.displayName || site?.name || site?.webUrl || siteId).trim();
           if (isDkBasByName && /dk\s*[- ]?ba\s*$/i.test(displayName)) {
@@ -826,10 +859,14 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
       return isDigitalkontrollCompany(id, name, n);
     });
     if (!hasDigitalkontrollCompany) {
+      const unassignedLive = (Array.isArray(unassignedSites) ? unassignedSites : []).filter(
+        (s) => getStatusInfo(String(s?.id || '').trim()).statusValue !== 'error'
+      );
+      const hiddenErrorCount = (unassignedSites?.length || 0) - unassignedLive.length;
       rows.unshift({
         id: 'digitalkontroll-unassigned',
         name: 'Digitalkontroll',
-        rows: unassignedSites.map((site) => {
+        rows: unassignedLive.map((site) => {
           const siteId = String(site?.id || '').trim();
           const { statusValue, statusLabel, statusColor, statusBg } = getStatusInfo(siteId);
           const displayName = String(site?.displayName || site?.name || site?.webUrl || siteId).trim();
@@ -848,11 +885,12 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
             visibleInLeftPanel: false,
           };
         }),
-        total: unassignedSites.length,
-        statusKind: unassignedSites.some((s) => getStatusInfo(String(s?.id || '').trim()).statusValue === 'error') ? 'error' : (unassignedSites.length ? 'ok' : 'warning'),
-        statusLabel: unassignedSites.length ? 'OK' : 'Varning',
-        statusColor: unassignedSites.length ? '#2E7D32' : '#B45309',
-        statusBg: unassignedSites.length ? '#E8F5E9' : '#FEF3C7',
+        total: unassignedLive.length,
+        hiddenErrorCount,
+        statusKind: unassignedLive.some((s) => getStatusInfo(String(s?.id || '').trim()).statusValue === 'error') ? 'error' : (unassignedLive.length ? 'ok' : (hiddenErrorCount ? 'warning' : 'warning')),
+        statusLabel: unassignedLive.length ? 'OK' : (hiddenErrorCount ? 'Varning' : 'Varning'),
+        statusColor: unassignedLive.length ? '#2E7D32' : '#B45309',
+        statusBg: unassignedLive.length ? '#E8F5E9' : '#FEF3C7',
       });
     }
 
@@ -1076,6 +1114,21 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
     }
   };
 
+  /** Full refresh: metas + (superadmin) site list from Graph so deleted 365 sites can disappear. */
+  const refreshListAndSites = useCallback(async () => {
+    const result = await refreshAllCompanySiteMetas({ afterWrite: true });
+    if (isSuperadmin) {
+      try {
+        const allSites = await getAvailableSharePointSites();
+        setAvailableSites(Array.isArray(allSites) ? allSites : []);
+      } catch (_e) {
+        // keep current availableSites on error
+      }
+    }
+    setLastSyncTime(new Date());
+    return result;
+  }, [isSuperadmin]);
+
   const handleRenameSite = async (row, companyId) => {
     const cid = String(companyId || '').trim();
     if (!cid || !row?.siteId) return;
@@ -1233,6 +1286,22 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
       showSimpleAlert('Fel', e?.message || String(e));
     } finally {
       setAssigningSiteId(null);
+    }
+  };
+
+  const runProvisionCompanySharePoint = async (targetCompanyId, targetCompanyName) => {
+    const cid = String(targetCompanyId || '').trim();
+    if (!cid || !isSuperadmin) return;
+    setProvisioningSharePointCompanyId(cid);
+    try {
+      await provisionCompanySharePointRemote({ companyId: cid, companyName: targetCompanyName || cid });
+      showSimpleAlert('Etablerat', 'SharePoint (Site + Bas) har etablerats för företaget. Uppdatera listan om siter inte syns direkt.');
+      setMetasVersion((v) => v + 1);
+    } catch (e) {
+      const msg = (e && e.message) ? String(e.message) : String(e);
+      showSimpleAlert('Etablering misslyckades', msg || 'Kunde inte etablera SharePoint. Kontrollera att SharePoint-token är satt i functions config.');
+    } finally {
+      setProvisioningSharePointCompanyId('');
     }
   };
 
@@ -1417,10 +1486,10 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                   const minShowMs = 500;
                   const start = Date.now();
                   try {
-                    const result = await refreshAllCompanySiteMetas();
+                    const result = await refreshListAndSites();
                     const elapsed = Date.now() - start;
                     if (elapsed < minShowMs) await new Promise((r) => setTimeout(r, minShowMs - elapsed));
-                    showSimpleAlert('Uppdaterad', result?.fromCache ? 'Listan är uppdaterad (från cache).' : 'Listan är uppdaterad.');
+                    showSimpleAlert('Uppdaterad', result?.fromCache ? 'Listan är uppdaterad (från cache).' : 'Listan är uppdaterad. Siter som raderats i 365 har tagits bort.');
                   } catch (e) {
                     showSimpleAlert('Kunde inte uppdatera', e?.message || String(e));
                   } finally {
@@ -1478,14 +1547,31 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                       </View>
 
                       {isSuperadmin && !isUnassignedGroup(company.id) && !isDeletedSitesGroup(company.id) ? (
-                        <View style={{ paddingHorizontal: 8, paddingTop: 6 }}>
+                        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 8, paddingTop: 6, flexWrap: 'wrap' }}>
+                          {company.total === 0 ? (
+                            <TouchableOpacity
+                              onPress={() => runProvisionCompanySharePoint(company.id, company.name)}
+                              disabled={!!provisioningSharePointCompanyId}
+                              style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: '#059669', backgroundColor: '#ECFDF5', opacity: provisioningSharePointCompanyId ? 0.6 : 1 }}
+                            >
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#059669' }}>{provisioningSharePointCompanyId === company.id ? 'Etablerar…' : 'Etablera SharePoint'}</Text>
+                            </TouchableOpacity>
+                          ) : null}
                           <TouchableOpacity
                             onPress={() => createCustomSiteForCompany(company.id, company.name)}
                             disabled={creatingCustomSite}
-                            style={{ alignSelf: 'flex-end', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', backgroundColor: '#fff', opacity: creatingCustomSite ? 0.6 : 1 }}
+                            style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', backgroundColor: '#fff', opacity: creatingCustomSite ? 0.6 : 1 }}
                           >
                             <Text style={{ fontSize: 11, fontWeight: '700', color: '#1976D2' }}>Lägg till ny site</Text>
                           </TouchableOpacity>
+                        </View>
+                      ) : null}
+
+                      {isUnassignedGroup(company.id) && (company.hiddenErrorCount || 0) > 0 ? (
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#B45309' }}>
+                            {company.hiddenErrorCount} siter som inte längre finns i 365 visas inte. Klicka på "Uppdatera lista" för att hämta senaste listan.
+                          </Text>
                         </View>
                       ) : null}
 
@@ -1677,62 +1763,64 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
           );
           return embedInModal ? (
             <>
-              <View style={{ flex: 1, backgroundColor: '#fff', minHeight: 0 }}>
-                {typeof onClose === 'function' && (
-                  <>
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingVertical: MODAL_THEME.banner.paddingVertical,
-                      paddingHorizontal: MODAL_THEME.banner.paddingHorizontal,
-                      backgroundColor: MODAL_THEME.banner.backgroundColor,
-                      borderBottomWidth: 1,
-                      borderBottomColor: MODAL_THEME.banner.borderBottomColor,
-                    }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                        <View style={{
-                          width: MODAL_THEME.banner.iconSize,
-                          height: MODAL_THEME.banner.iconSize,
-                          borderRadius: MODAL_THEME.banner.iconBgRadius,
-                          backgroundColor: MODAL_THEME.banner.iconBg,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}>
-                          <Ionicons name="cloud-outline" size={20} color={MODAL_THEME.banner.titleColor} />
+              <Pressable
+                style={[
+                  { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: D.overlayBg },
+                  Platform.OS === 'web' ? { backdropFilter: `blur(${D.overlayBlur}px)` } : {},
+                  overlayStyle,
+                ]}
+                onPress={onClose}
+              >
+                <Pressable
+                  style={[
+                    { backgroundColor: '#fff', borderRadius: D.radius, overflow: 'hidden', flexDirection: 'column', maxHeight: '90%', flex: 1, minHeight: 0 },
+                    Platform.OS === 'web' ? { boxShadow: D.shadow } : { ...D.shadowNative },
+                    boxStyle,
+                  ]}
+                  onPress={(e) => e?.stopPropagation?.()}
+                  data-modal="true"
+                  {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : { onStartShouldSetResponder: () => true })}
+                >
+                  {typeof onClose === 'function' && (
+                    <View
+                      style={[
+                        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: D.headerNeutralCompact.paddingVertical, paddingHorizontal: D.headerNeutralCompact.paddingHorizontal, minHeight: D.headerNeutralCompact.minHeight, maxHeight: D.headerNeutralCompact.maxHeight, borderBottomWidth: D.headerNeutral.borderBottomWidth, borderBottomColor: D.headerNeutral.borderBottomColor, backgroundColor: D.headerNeutral.backgroundColor },
+                        headerProps?.style,
+                      ]}
+                      {...(Platform.OS === 'web' && headerProps?.onMouseDown ? { onMouseDown: headerProps.onMouseDown } : {})}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                        <View style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                          <Ionicons name="cloud-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />
                         </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={{ fontSize: MODAL_THEME.banner.titleFontSize, fontWeight: MODAL_THEME.banner.titleFontWeight, color: MODAL_THEME.banner.titleColor }}>
-                            SharePoint Nav
-                          </Text>
-                          <Text style={{ fontSize: MODAL_THEME.banner.subtitleFontSize, color: MODAL_THEME.banner.subtitleColor, marginTop: 2 }}>
-                            Företagsöversikt
-                          </Text>
-                        </View>
+                        <Text style={{ fontSize: D.headerNeutralCompactTitleFontSize, fontWeight: D.headerNeutralCompactTitleFontWeight, lineHeight: 16, color: D.headerNeutralTextColor }} numberOfLines={1}>
+                          SharePoint Nav — Företagsöversikt
+                        </Text>
                       </View>
-                      <TouchableOpacity onPress={onClose} style={{ padding: MODAL_THEME.banner.closeBtnPadding, borderRadius: MODAL_THEME.banner.iconBgRadius, backgroundColor: MODAL_THEME.banner.iconBg }} accessibilityLabel="Stäng">
-                        <Ionicons name="close" size={MODAL_THEME.banner.closeIconSize} color={MODAL_THEME.banner.titleColor} />
+                      <TouchableOpacity onPress={onClose} style={D.closeBtn} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e?.stopPropagation?.() } : {})}>
+                        <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx} color={D.headerNeutralCloseIconColor} />
                       </TouchableOpacity>
                     </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 8, paddingHorizontal: MODAL_THEME.banner.paddingHorizontal, backgroundColor: MODAL_THEME.banner.backgroundColor, borderBottomWidth: 1, borderBottomColor: MODAL_THEME.banner.borderBottomColor }}>
-                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>FÖRETAG: {kpiAggregate.totalCompanies} st</Text>
+                  )}
+                  {typeof onClose === 'function' && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: D.headerNeutral.backgroundColor, borderBottomWidth: 1, borderBottomColor: D.headerNeutral.borderBottomColor }}>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: D.buttonRadius, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: D.headerNeutralTextColor }}>FÖRETAG: {kpiAggregate.totalCompanies} st</Text>
                       </View>
-                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>TOTALT SITER: {kpiAggregate.totalSites} st</Text>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: D.buttonRadius, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: D.headerNeutralTextColor }}>TOTALT SITER: {kpiAggregate.totalSites} st</Text>
                       </View>
-                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>VARNINGAR: {kpiAggregate.withWarning}</Text>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: D.buttonRadius, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: D.headerNeutralTextColor }}>VARNINGAR: {kpiAggregate.withWarning}</Text>
                       </View>
-                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>FEL: {kpiAggregate.withError}</Text>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: D.buttonRadius, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: D.headerNeutralTextColor }}>FEL: {kpiAggregate.withError}</Text>
                       </View>
-                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: MODAL_THEME.banner.subtitleColor }}>SENAST SYNK: {lastSyncTime ? lastSyncTime.toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</Text>
+                      <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: D.buttonRadius, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: D.headerNeutralTextColor }}>SENAST SYNK: {lastSyncTime ? lastSyncTime.toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</Text>
                       </View>
                     </View>
-                  </>
-                )}
+                  )}
                 <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
                   {embedInModal && (
                     <>
@@ -1772,13 +1860,14 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                               style={{
                                 paddingVertical: 6,
                                 paddingHorizontal: 12,
-                                borderRadius: 999,
+                                borderRadius: D.buttonRadius,
                                 borderWidth: 1,
-                                borderColor: active ? '#2563EB' : '#E5E7EB',
-                                backgroundColor: active ? '#EFF6FF' : '#fff',
+                                borderColor: active ? D.buttonPrimaryBg : '#E5E7EB',
+                                backgroundColor: active ? D.buttonPrimaryBg : '#fff',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                               }}
                             >
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#1D4ED8' : '#6B7280' }}>{item.label}</Text>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: active ? '#fff' : '#6B7280' }}>{item.label}</Text>
                             </TouchableOpacity>
                           );
                         })}
@@ -1796,36 +1885,36 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                             flexDirection: 'row',
                             alignItems: 'center',
                             gap: 6,
-                            paddingVertical: 8,
+                            paddingVertical: D.buttonPaddingVertical,
                             paddingHorizontal: 14,
-                            borderRadius: 8,
-                            backgroundColor: MODAL_THEME.footer.btnBackground,
+                            borderRadius: D.buttonRadius,
+                            backgroundColor: D.buttonPrimaryBg,
                             opacity: (refreshingList || syncingCompanies) ? 0.7 : 1,
                             ...(Platform.OS === 'web' ? { cursor: (refreshingList || syncingCompanies) ? 'not-allowed' : 'pointer' } : {}),
                           }}
                         >
                           {(refreshingList || syncingCompanies) ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="sync" size={16} color="#fff" />}
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>{syncingCompanies ? `Synkar… (${syncProgress?.done ?? 0}/${syncProgress?.total ?? 0})` : 'Synka alla'}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: D.buttonPrimaryColor }}>{syncingCompanies ? `Synkar… (${syncProgress?.done ?? 0}/${syncProgress?.total ?? 0})` : 'Synka alla'}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          onPress={async () => { setRefreshingList(true); try { await refreshAllCompanySiteMetas(); } finally { setRefreshingList(false); } }}
+                          onPress={async () => { setRefreshingList(true); try { await refreshListAndSites(); } finally { setRefreshingList(false); } }}
                           disabled={refreshingList}
                           style={{
                             flexDirection: 'row',
                             alignItems: 'center',
                             gap: 6,
-                            paddingVertical: 8,
+                            paddingVertical: D.buttonPaddingVertical,
                             paddingHorizontal: 14,
-                            borderRadius: 8,
+                            borderRadius: D.buttonRadius,
                             borderWidth: 1,
-                            borderColor: '#E5E7EB',
-                            backgroundColor: '#fff',
+                            borderColor: '#ddd',
+                            backgroundColor: D.buttonSecondaryBg,
                             opacity: refreshingList ? 0.7 : 1,
                             ...(Platform.OS === 'web' ? { cursor: refreshingList ? 'not-allowed' : 'pointer' } : {}),
                           }}
                         >
-                          {refreshingList ? <ActivityIndicator size="small" color="#2563EB" /> : <Ionicons name="refresh" size={16} color="#2563EB" />}
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#2563EB' }}>Uppdatera lista</Text>
+                          {refreshingList ? <ActivityIndicator size="small" color={D.buttonPrimaryBg} /> : <Ionicons name="refresh" size={16} color={D.buttonPrimaryBg} />}
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: D.buttonSecondaryColor }}>Uppdatera lista</Text>
                         </TouchableOpacity>
                       </View>
                       <View style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
@@ -1871,13 +1960,35 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                                 {isOpen ? (
                                   <View style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F9FAFB', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
                                     {isSuperadmin && !isUnassignedGroup(company.id) && !isDeletedSitesGroup(company.id) ? (
-                                      <TouchableOpacity
-                                        onPress={() => createCustomSiteForCompany(company.id, company.name)}
-                                        disabled={creatingCustomSite}
-                                        style={{ alignSelf: 'flex-end', marginBottom: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', backgroundColor: '#fff', opacity: creatingCustomSite ? 0.6 : 1 }}
-                                      >
-                                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#1976D2' }}>+ Lägg till ny site</Text>
-                                      </TouchableOpacity>
+                                      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                                        {company.total === 0 ? (
+                                          <TouchableOpacity
+                                            onPress={() => runProvisionCompanySharePoint(company.id, company.name)}
+                                            disabled={!!provisioningSharePointCompanyId}
+                                            style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#059669', backgroundColor: '#ECFDF5', opacity: provisioningSharePointCompanyId ? 0.6 : 1 }}
+                                          >
+                                            {provisioningSharePointCompanyId === company.id ? (
+                                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#059669' }}>Etablerar…</Text>
+                                            ) : (
+                                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#059669' }}>Etablera SharePoint</Text>
+                                            )}
+                                          </TouchableOpacity>
+                                        ) : null}
+                                        <TouchableOpacity
+                                          onPress={() => createCustomSiteForCompany(company.id, company.name)}
+                                          disabled={creatingCustomSite}
+                                          style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CBD5E1', backgroundColor: '#fff', opacity: creatingCustomSite ? 0.6 : 1 }}
+                                        >
+                                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#1976D2' }}>+ Lägg till ny site</Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    ) : null}
+                                    {isUnassignedGroup(company.id) && (company.hiddenErrorCount || 0) > 0 ? (
+                                      <View style={{ paddingVertical: 6, paddingHorizontal: 8, marginBottom: 4 }}>
+                                        <Text style={{ fontSize: 11, color: '#B45309' }}>
+                                          {company.hiddenErrorCount} siter som inte längre finns i 365 visas inte. Klicka på "Uppdatera lista" för att hämta senaste listan.
+                                        </Text>
+                                      </View>
                                     ) : null}
                                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, marginBottom: 6 }}>
                                       <Text style={{ flex: 1, fontSize: 11, fontWeight: '600', color: '#6B7280' }}>Site</Text>
@@ -1897,20 +2008,49 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                                             <Text style={{ fontSize: 10, fontWeight: '600', color: row.statusColor }}>{row.statusLabel}</Text>
                                           </View>
                                         </View>
-                                        <View style={{ width: 100, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                                        <View style={{ width: 100, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}>
                                           {actionInProgressKey === `${company.id}-${row.siteId}` ? <ActivityIndicator size="small" color="#2563EB" /> : null}
-                                          {Platform.OS === 'web' ? (
+                                          {(isUnassignedGroup(company.id) || isDeletedSitesGroup(company.id)) && Platform.OS === 'web' ? (
+                                            <select
+                                              disabled={assigningSiteId === row.siteId}
+                                              onChange={(e) => {
+                                                const val = String(e.target.value || '').trim();
+                                                if (!val) return;
+                                                if (isDeletedSitesGroup(company.id)) {
+                                                  restoreDeletedSiteToCompany(row.siteId, row.deletedCompanyId, val, row);
+                                                } else {
+                                                  assignSiteToCompany(row.siteId, val);
+                                                }
+                                                e.target.value = '';
+                                              }}
+                                              style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', fontSize: 11, minWidth: 100 }}
+                                            >
+                                              <option value="">Koppla till företag</option>
+                                              {(companies || []).filter((c) => {
+                                                const cid = String(c?.id || '').trim();
+                                                return cid && cid !== 'digitalkontroll-unassigned' && cid !== 'deleted-sites';
+                                              }).map((c) => {
+                                                const cid = String(c?.id || '').trim();
+                                                return cid ? <option key={cid} value={cid}>{getCompanyLabel(cid)}</option> : null;
+                                              })}
+                                            </select>
+                                          ) : null}
+                                          {Platform.OS === 'web' && !(isUnassignedGroup(company.id) || isDeletedSitesGroup(company.id)) ? (
                                             <button
                                               type="button"
                                               ref={(el) => { if (openKebabKey === `${company.id}-${row.siteId}`) kebabButtonRef.current = el; }}
                                               onClick={(e) => { e.stopPropagation(); e.preventDefault(); const key = `${company.id}-${row.siteId}`; if (openKebabKey === key) { closeKebabMenu(); return; } const rect = e.target.getBoundingClientRect(); kebabButtonRef.current = e.target; setKebabMenuPosition({ left: rect.left, top: rect.bottom + 4 }); setKebabMenuContent({ row, company }); setOpenKebabKey(key); }}
                                               style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', backgroundColor: '#fff', fontSize: 14, cursor: 'pointer', color: '#6B7280' }}
                                             >⋮</button>
-                                          ) : (
+                                          ) : Platform.OS !== 'web' && (isUnassignedGroup(company.id) || isDeletedSitesGroup(company.id)) ? (
+                                            <TouchableOpacity onPress={() => showSimpleAlert('Info', 'Koppla site till företag via webbläget.')} style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, borderColor: '#E5E7EB' }}>
+                                              <Text style={{ fontSize: 10, color: '#6B7280' }}>Koppla</Text>
+                                            </TouchableOpacity>
+                                          ) : Platform.OS !== 'web' ? (
                                             <TouchableOpacity onPress={() => toggleSiteEnabled(row.siteId, company.id, !row.visibleInLeftPanel, row)} style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' }}>
                                               <Text style={{ fontSize: 11, fontWeight: '600', color: '#2563EB' }}>{row.visibleInLeftPanel ? 'Aktiv' : 'Pausa'}</Text>
                                             </TouchableOpacity>
-                                          )}
+                                          ) : null}
                                         </View>
                                       </View>
                                     ))}
@@ -1926,17 +2066,19 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
                   {!embedInModal ? bodyContent : null}
                 </ScrollView>
                 {typeof onClose === 'function' && (
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', paddingVertical: 12, paddingHorizontal: MODAL_THEME.banner.paddingHorizontal, borderTopWidth: 1, borderTopColor: MODAL_THEME.footer.borderTopColor, backgroundColor: MODAL_THEME.footer.backgroundColor }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', paddingVertical: D.footer.paddingVertical, paddingHorizontal: D.footer.paddingHorizontal, borderTopWidth: D.footer.borderTopWidth, borderTopColor: D.footer.borderTopColor, backgroundColor: D.footer.backgroundColor }}>
                     <TouchableOpacity
                       onPress={onClose}
-                      style={{ paddingVertical: MODAL_THEME.footer.btnPaddingVertical, paddingHorizontal: MODAL_THEME.footer.btnPaddingHorizontal, borderRadius: MODAL_THEME.footer.btnBorderRadius, borderWidth: 1, borderColor: MODAL_THEME.footer.btnBorderColor, backgroundColor: MODAL_THEME.footer.btnBackground, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
+                      style={{ paddingVertical: 4, paddingHorizontal: 12, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg, minWidth: 96, alignItems: 'center', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
                       accessibilityLabel="Stäng"
                     >
-                      <Text style={{ fontSize: MODAL_THEME.footer.btnFontSize, fontWeight: MODAL_THEME.footer.btnFontWeight, color: MODAL_THEME.footer.btnTextColor }}>Stäng</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: D.buttonPrimaryColor }}>Stäng</Text>
                     </TouchableOpacity>
                   </View>
                 )}
-              </View>
+                {resizeHandles}
+              </Pressable>
+            </Pressable>
         {Platform.OS === 'web' && createPortal && typeof document !== 'undefined' && openKebabKey && kebabMenuPosition && kebabMenuContent ? createPortal(
           <div
             ref={kebabMenuPortalRef}
@@ -2292,7 +2434,7 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
 
   return (
     <View style={{ flex: 1 }}>
-      {(loadingSites || loadingMetas || syncingCompanies || creatingCustomSite) && (
+      {(loadingSites || loadingMetas || syncingCompanies || creatingCustomSite || !!provisioningSharePointCompanyId) && (
         <View
           style={{
             position: 'absolute',
@@ -2309,7 +2451,7 @@ export default function ManageSharePointNavigation({ navigation, route, embedInM
           <View style={{ backgroundColor: '#111827', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, minWidth: 260, maxWidth: 360, alignItems: 'center' }}>
             <ActivityIndicator color="#fff" />
             <Text style={{ color: '#fff', fontWeight: '800', marginTop: 8, fontSize: 13, textAlign: 'center' }}>
-              {syncingCompanies ? `Synkar företag… (${syncProgress.done}/${syncProgress.total})` : (creatingCustomSite ? 'Skapar ny SharePoint-site…' : 'Laddar SharePoint-nav…')}
+              {syncingCompanies ? `Synkar företag… (${syncProgress.done}/${syncProgress.total})` : (provisioningSharePointCompanyId ? 'Etablerar SharePoint…' : (creatingCustomSite ? 'Skapar ny SharePoint-site…' : 'Laddar SharePoint-nav…'))}
             </Text>
           </View>
         </View>

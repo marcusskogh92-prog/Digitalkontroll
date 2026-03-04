@@ -20,9 +20,15 @@ import { useUploadManager } from '../uploads/UploadManagerContext';
 import FileExplorerBreadcrumb from './FileExplorerBreadcrumb';
 import MoveFilesModal from './MoveFilesModal';
 import SharePointFilePreviewPane from './SharePointFilePreviewPane';
-import { ALLOWED_UPLOAD_EXTENSIONS, classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, isAllowedUploadFile, safeText } from './sharePointFileUtils';
+import { MODAL_DESIGN_2026 } from '../../../constants/modalDesign2026';
+import { classifyFileType, dedupeFileName, dedupeFolderName, fileExtFromName, safeText } from './sharePointFileUtils';
+
+const T = MODAL_DESIGN_2026;
 
 const DND_MOVE_TYPE = 'application/x-digitalkontroll-move';
+
+/** Standardbredder för utforskartabellen – initial state så kolumnerna aldrig startar ihoptryckta. Justerbar bredd enligt docs/TABLE_GOLDEN_RULE.md §7 (samma mönster som Leverantörer/Kontakter). */
+const EXPLORER_TABLE_COLUMN_DEFAULTS = { name: 280, type: 107, uploadedBy: 165, modified: 140 };
 
 function joinPath(a, b) {
   const left = safeText(a).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -46,9 +52,8 @@ function toIsoDateText(value) {
 }
 
 function buildAcceptAttr() {
-  // Helps the file picker, but we still validate extensions.
-  const ext = Array.from(ALLOWED_UPLOAD_EXTENSIONS);
-  return ext.map((e) => `.${e}`).join(',');
+  // Tillåt alla filtyper – samma som i vanlig SharePoint-utforskare. SharePoint hanterar eventuella begränsningar.
+  return '';
 }
 
 function stripNumericPrefix(name) {
@@ -159,7 +164,6 @@ export default function SharePointFolderFileArea({
 }) {
   // Keep "Senast ändrad" anchored to the right, while letting other columns share space closer to Filnamn.
   const COL_DATE_W = 140;
-  const COL_MENU_W = 46;
   const COL_SELECT_W = 34;
 
   const cid = safeText(companyId);
@@ -312,21 +316,23 @@ export default function SharePointFolderFileArea({
   const [sortBy, setSortBy] = useState('name'); // 'name' | 'type' | 'modified'
   const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
 
-  const [colWidths, setColWidths] = useState({});
-  const resizeRef = useRef({ col: null, startX: 0, startW: 0 });
-  const COL_RESIZE_DEFAULTS = useMemo(() => ({ name: 280, type: 107, uploadedBy: 165, modified: 140 }), []);
+  const COL_RESIZE_DEFAULTS = useMemo(() => ({ ...EXPLORER_TABLE_COLUMN_DEFAULTS }), []);
   const COL_RESIZE_MIN = useMemo(() => ({ name: 120, type: 74, uploadedBy: 80, modified: 100 }), []);
   const COL_RESIZE_MAX = useMemo(() => ({ name: 600, type: 200, uploadedBy: 300, modified: 220 }), []);
+  const [colWidths, setColWidths] = useState(() => ({ ...EXPLORER_TABLE_COLUMN_DEFAULTS }));
+  const resizeRef = useRef({ col: null, startX: 0, startW: 0 });
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onMove = (e) => {
-      const { col, startX, startW } = resizeRef.current;
-      if (!col) return;
-      const delta = e.clientX - startX;
-      const min = COL_RESIZE_MIN[col] ?? 80;
-      const max = COL_RESIZE_MAX[col] ?? 300;
-      const next = Math.max(min, Math.min(max, startW + delta));
-      setColWidths((w) => ({ ...w, [col]: next }));
+      const r = resizeRef.current;
+      if (!r.col) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - r.startX;
+      const min = COL_RESIZE_MIN[r.col] ?? 80;
+      const max = COL_RESIZE_MAX[r.col] ?? 300;
+      const newWidth = Math.max(min, Math.min(max, r.startW + delta));
+      setColWidths((w) => ({ ...w, [r.col]: newWidth }));
+      resizeRef.current = { col: r.col, startX: clientX, startW: newWidth };
     };
     const onUp = () => {
       resizeRef.current = { col: null, startX: 0, startW: 0 };
@@ -337,18 +343,21 @@ export default function SharePointFolderFileArea({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, [colWidths, COL_RESIZE_MIN, COL_RESIZE_MAX]);
+  }, [COL_RESIZE_MIN, COL_RESIZE_MAX]);
   const startResize = useCallback((col, e) => {
     if (Platform.OS !== 'web') return;
     try { e?.stopPropagation?.(); e?.preventDefault?.(); } catch (_) {}
-    const def = COL_RESIZE_DEFAULTS[col] ?? 140;
-    resizeRef.current = { col, startX: e?.nativeEvent?.clientX ?? 0, startW: colWidths[col] ?? def };
+    const clientX = e?.clientX ?? e?.nativeEvent?.clientX ?? e?.nativeEvent?.pageX ?? 0;
+    const startW = colWidths[col] ?? COL_RESIZE_DEFAULTS[col] ?? 140;
+    resizeRef.current = { col, startX: clientX, startW };
   }, [colWidths, COL_RESIZE_DEFAULTS]);
 
   const colStyle = useCallback((key) => {
     const w = colWidths[key];
     const base = key === 'name' ? styles.colName : key === 'type' ? styles.colType : key === 'uploadedBy' ? styles.colUploadedBy : styles.colModified;
-    const extra = w != null ? { width: w, flexGrow: 0, flexShrink: 0 } : (key === 'modified' ? { width: COL_DATE_W } : {});
+    const extra = w != null
+      ? { width: w, minWidth: w, maxWidth: w, flexGrow: 0, flexShrink: 0 }
+      : (key === 'modified' ? { width: COL_DATE_W, minWidth: COL_DATE_W, flexShrink: 0 } : {});
     return [base, extra];
   }, [colWidths]);
 
@@ -1067,13 +1076,7 @@ export default function SharePointFolderFileArea({
 
     if (normalized.length === 0) return;
 
-    // Validate types first
-    const invalid = normalized.filter((x) => !isAllowedUploadFile(x.file));
-    if (invalid.length > 0) {
-      const names = invalid.map((x) => safeText(x?.file?.name) || 'fil').slice(0, 8);
-      setError(`Otillåten filtyp: ${names.join(', ')}${invalid.length > 8 ? '…' : ''}`);
-      return;
-    }
+    // Inga client-side filtypsbegränsningar – alla filer tillåts, som i vanlig SharePoint-utforskare. SharePoint hanterar eventuella begränsningar.
 
     // Build tasks: preserve directory structure.
     const tasks = normalized.map((x) => {
@@ -1225,7 +1228,7 @@ export default function SharePointFolderFileArea({
 
       uploadManager.setBatchMessage(batchId, 'Laddar upp filer…');
 
-      const refreshEvery = 8;
+      const refreshEvery = 32;
       let uploadedSinceRefresh = 0;
 
       const worker = async (t, idx) => {
@@ -1289,8 +1292,8 @@ export default function SharePointFolderFileArea({
         }
       };
 
-      // Controlled parallelism; keep it conservative to avoid throttling.
-      await runWithConcurrency(tasks, 2, worker);
+      // Högre parallellitet för snabbare uppladdning (t.ex. mappar med många filer). SharePoint klarar flera samtidiga uppladdningar.
+      await runWithConcurrency(tasks, 6, worker);
 
       if (failures.length > 0) {
         uploadManager.setBatchMessage(batchId, `Klart (med fel: ${failures.length})`);
@@ -1298,8 +1301,8 @@ export default function SharePointFolderFileArea({
         uploadManager.setBatchMessage(batchId, 'Klart');
       }
     } finally {
-      // Kort fördröjning så SharePoint hinner indexera nya filer innan vi hämtar listan.
-      await new Promise((r) => setTimeout(r, 500));
+      // Kort paus så SharePoint hinner indexera innan vi hämtar listan.
+      await new Promise((r) => setTimeout(r, 200));
       await refresh();
       try {
         if (typeof onDidMutate === 'function') onDidMutate();
@@ -2274,7 +2277,6 @@ export default function SharePointFolderFileArea({
                       <ResizeHandle col="modified" />
                     </View>
                   ) : null}
-                  <Text style={[styles.th, styles.colMenu, { width: COL_MENU_W }]} numberOfLines={1}>⋮</Text>
                 </View>
 
                 {isTableDragActive ? (
@@ -2414,6 +2416,10 @@ export default function SharePointFolderFileArea({
                       return;
                     }
                     const id = safeText(it?.id) || null;
+                    if (!isFolder && it?.type === 'file' && fileExtFromName(name) === 'msg') {
+                      openUrl(it?.downloadUrl || it?.webUrl);
+                      return;
+                    }
                     if (id !== selectedItemId) setSelectedItemId(id);
                     if (id) {
                       setPreviewItemId(id);
@@ -2434,33 +2440,41 @@ export default function SharePointFolderFileArea({
                   try { e.preventDefault(); } catch (_) {}
                   if (!isLockedFolder && (isFolder || it?.type === 'file')) openMenuFor(it, e);
                 } : undefined}
-                style={({ hovered, pressed }) => ({
-                  position: 'relative',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 14,
-                  paddingVertical: 4,
-                  paddingHorizontal: 12,
-                  borderBottomWidth: 1,
-                  borderBottomColor: '#EEF2F7',
-                  opacity: isRowDragging ? 0.8 : 1,
-                  ...(isRowDragOver
-                    ? {
-                      backgroundColor: '#E8F4FD',
-                      borderLeftWidth: 2,
-                      borderLeftColor: '#2563EB',
-                    }
-                    : {
-                      backgroundColor: isRowActive
-                        ? 'rgba(25, 118, 210, 0.12)'
-                        : isRowSelected
-                          ? (hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.06)')
-                          : (hovered || pressed ? '#F8FAFC' : '#fff'),
-                      borderLeftWidth: isRowActive ? 3 : 0,
-                      borderLeftColor: isRowActive ? '#1976D2' : 'transparent',
-                    }),
-                  ...(Platform.OS === 'web' ? { cursor: isRowDragging ? 'move' : 'pointer', transition: 'opacity 150ms ease, background-color 150ms ease' } : {}),
-                })}
+                onLongPress={Platform.OS !== 'web' ? (e) => {
+                  if (!isLockedFolder && (isFolder || it?.type === 'file')) openMenuFor(it, e);
+                } : undefined}
+                style={({ hovered, pressed }) => {
+                  const baseBg = idx % 2 === 1 ? T.tableRowAltBackgroundColor : T.tableRowBackgroundColor;
+                  const hoverBg = hovered || pressed ? T.tableRowHoverBackgroundColor : baseBg;
+                  return {
+                    position: 'relative',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 14,
+                    minHeight: T.tableRowHeight,
+                    paddingVertical: T.tableCellPaddingVertical,
+                    paddingHorizontal: T.tableCellPaddingHorizontal,
+                    borderBottomWidth: 1,
+                    borderBottomColor: T.tableRowBorderColor,
+                    opacity: isRowDragging ? 0.8 : 1,
+                    ...(isRowDragOver
+                      ? {
+                        backgroundColor: '#E8F4FD',
+                        borderLeftWidth: 2,
+                        borderLeftColor: '#2563EB',
+                      }
+                      : {
+                        backgroundColor: isRowActive
+                          ? 'rgba(25, 118, 210, 0.12)'
+                          : isRowSelected
+                            ? (hovered || pressed ? 'rgba(25, 118, 210, 0.10)' : 'rgba(25, 118, 210, 0.06)')
+                            : hoverBg,
+                        borderLeftWidth: isRowActive ? 3 : 0,
+                        borderLeftColor: isRowActive ? '#1976D2' : 'transparent',
+                      }),
+                    ...(Platform.OS === 'web' ? { cursor: isRowDragging ? 'move' : 'pointer', transition: 'opacity 150ms ease, background-color 150ms ease' } : {}),
+                  };
+                }}
               >
                 {isRowDragOver && enableWebDnD ? (
                   <View style={styles.dropHintTooltip} pointerEvents="none">
@@ -2580,24 +2594,6 @@ export default function SharePointFolderFileArea({
                     </Text>
                   </View>
                 ) : null}
-
-                <Pressable
-                  onPress={(e) => {
-                    try { e.stopPropagation?.(); } catch (_e2) {}
-                    openMenuFor(it, e);
-                  }}
-                  style={({ hovered, pressed }) => ({
-                    width: COL_MENU_W,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingVertical: 4,
-                    borderRadius: 10,
-                    backgroundColor: hovered || pressed ? 'rgba(0,0,0,0.04)' : 'transparent',
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-                </Pressable>
               </Pressable>
                 );
               })}
@@ -2978,8 +2974,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     borderWidth: 1,
-    borderColor: '#E6E8EC',
-    borderRadius: 12,
+    borderColor: T.tableBorderColor,
+    borderRadius: T.tableRadius,
+    backgroundColor: T.tableRowBackgroundColor,
     overflow: 'hidden',
     marginTop: 12,
     position: 'relative',
@@ -3109,11 +3106,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#F1F5F9',
-    borderBottomWidth: 2,
-    borderBottomColor: '#E2E8F0',
+    paddingVertical: T.tableCellPaddingVertical,
+    paddingHorizontal: T.tableCellPaddingHorizontal,
+    backgroundColor: T.tableHeaderBackgroundColor,
+    borderBottomWidth: 1,
+    borderBottomColor: T.tableHeaderBorderColor,
   },
 
   tableHeaderDimmed: {
@@ -3124,11 +3121,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: T.tableCellPaddingVertical,
+    paddingHorizontal: T.tableCellPaddingHorizontal,
     borderBottomWidth: 1,
-    borderBottomColor: '#EEF2F7',
-    backgroundColor: '#fff',
+    borderBottomColor: T.tableRowBorderColor,
+    backgroundColor: T.tableRowBackgroundColor,
   },
 
   emptyStateRow: {
@@ -3219,8 +3216,11 @@ const styles = StyleSheet.create({
         right: 0,
         top: 0,
         bottom: 0,
-        width: 6,
+        width: 10,
         cursor: 'col-resize',
+        borderRightWidth: 1,
+        borderRightColor: 'rgba(226, 232, 240, 0.8)',
+        zIndex: 2,
       }
       : {}),
   },
@@ -3447,34 +3447,30 @@ const styles = StyleSheet.create({
   colModified: {
     flexShrink: 0,
   },
-  colMenu: {
-    flexShrink: 0,
-    textAlign: 'center',
-  },
 
   th: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#334155',
+    fontSize: T.tableHeaderFontSize,
+    fontWeight: T.tableHeaderFontWeight,
+    color: T.tableHeaderColor,
     textTransform: 'none',
   },
 
   tdName: {
-    fontSize: 12,
+    fontSize: T.tableCellFontSize,
     fontWeight: '400',
-    color: '#111',
+    color: T.tableCellColor,
     flex: 1,
     minWidth: 0,
   },
 
   tdUploader: {
-    fontSize: 12,
-    color: '#475569',
+    fontSize: T.tableCellFontSize,
+    color: T.tableCellMutedColor,
   },
 
   td: {
-    fontSize: 12,
-    color: '#475569',
+    fontSize: T.tableCellFontSize,
+    color: T.tableCellMutedColor,
   },
 
   breadcrumbRow: {

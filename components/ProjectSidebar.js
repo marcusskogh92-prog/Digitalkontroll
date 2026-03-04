@@ -1,7 +1,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Platform, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { LEFT_NAV } from '../constants/leftNavTheme';
 import { ensureDkBasStructure } from '../services/azure/fileService';
@@ -10,7 +10,7 @@ import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolde
 
 import ContextMenu from './ContextMenu';
 import UserEditModal from './UserEditModal';
-import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteIdByRole, provisionCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
+import { adminFetchCompanyMembers, auth, createUserRemote, DEFAULT_CONTROL_TYPES, deleteCompanyControlType, deleteCompanyMall, deleteUserRemote, fetchCompanies, fetchCompanyControlTypes, fetchCompanyMallar, fetchCompanyMembers, fetchCompanyProfile, getCompanySharePointSiteIdByRole, provisionCompanyRemote, purgeAllCompaniesExceptMSByggsystemRemote, purgeCompanyRemote, saveUserProfile, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, updateCompanyControlType, updateCompanyMall, updateUserRemote, uploadUserAvatar } from './firebase';
 
 const CHEVRON_SIZE = LEFT_NAV.chevronSize ?? 12;
 const INDENT_PER_LEVEL = LEFT_NAV.indentPerLevel ?? 12;
@@ -19,6 +19,13 @@ const EXPAND_TRANSITION_MS = LEFT_NAV.expandTransitionMs ?? 200;
 
 const PRIMARY_BLUE = '#1976D2';
 const HOVER_BG = 'rgba(25, 118, 210, 0.10)';
+
+/** Företag som alltid ska ligga överst i Superadmin och inte får raderas/döljas. */
+const SUPERADMIN_COMPANY_IDS = ['MS Byggsystem', 'ms-byggsystem'];
+function isSuperadminCompany(id) {
+  const s = String(id || '').trim();
+  return SUPERADMIN_COMPANY_IDS.some((x) => s === x || s.toLowerCase() === x.toLowerCase());
+}
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -227,6 +234,10 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
   const [contextMenuX, setContextMenuX] = useState(0);
   const [contextMenuY, setContextMenuY] = useState(0);
   const [contextMenuCompany, setContextMenuCompany] = useState(null);
+  /** Tydlig loadingskärm vid "Radera företag permanent" – companyName när purge pågår, null annars. */
+  const [purgeCompanyLoading, setPurgeCompanyLoading] = useState(null);
+  /** True när "Rensa alla företag utom MS Byggsystem" körs. */
+  const [purgeAllExceptMSLoading, setPurgeAllExceptMSLoading] = useState(false);
   const [memberFetchErrors, setMemberFetchErrors] = useState({});
   const [effectiveGlobalAdmin, setEffectiveGlobalAdmin] = useState(false);
   const [isSuperadminViewer, setIsSuperadminViewer] = useState(false);
@@ -1696,6 +1707,45 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
               <span>Visa dolda företag</span>
             </div>
           ) : null}
+          {isSuperadminViewer && !purgeAllExceptMSLoading ? (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  const msg = 'Radera ALLA företag i Firebase utom MS Byggsystem? Detta tar bort all data (projekt, användare, SharePoint-kopplingar) för alla andra företag. MS Byggsystem behålls.';
+                  if (typeof window === 'undefined' || !window.confirm(msg)) return;
+                  const confirmTyped = (typeof window !== 'undefined' && window.prompt('Skriv "RADERA ALLA" för att bekräfta:', '')) || '';
+                  if (String(confirmTyped || '').trim() !== 'RADERA ALLA') {
+                    showToast('Avbrutet. Inget raderades.');
+                    return;
+                  }
+                  setPurgeAllExceptMSLoading(true);
+                  try {
+                    const res = await purgeAllCompaniesExceptMSByggsystemRemote();
+                    const list = await fetchCompanies();
+                    setCompanies(Array.isArray(list) ? list : []);
+                    const deleted = (res && res.deleted) || [];
+                    showToast(`Rensat: ${deleted.length} företag borttagna. MS Byggsystem kvar.`);
+                    try { Alert.alert('Klart', `${deleted.length} företag raderade. Endast MS Byggsystem finns kvar.`); } catch (_) {}
+                  } catch (e) {
+                    const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                    showToast('Kunde inte rensa: ' + rawMsg);
+                    try { Alert.alert('Fel', 'Kunde inte rensa företag: ' + rawMsg); } catch (_) {}
+                  } finally {
+                    setPurgeAllExceptMSLoading(false);
+                  }
+                }}
+                style={{ fontSize: 11, color: '#B45309', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Rensa alla företag utom MS Byggsystem
+              </button>
+            </div>
+          ) : purgeAllExceptMSLoading ? (
+            <div style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <ActivityIndicator size="small" color="#B45309" />
+              <span style={{ fontSize: 11, color: '#6B7280' }}>Rensar alla företag…</span>
+            </div>
+          ) : null}
         </>
       ) : null}
         <hr style={{ border: 0, borderTop: '1px solid #e0e0e0', margin: '12px 0 16px 0' }} />
@@ -1728,7 +1778,16 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                 <li style={{ color: '#888', fontSize: 15, textAlign: 'center', marginTop: 24 }}>Inga företag hittades.</li>
               );
             }
-            return filtered.map(company => {
+            const sorted = [...filtered].sort((a, b) => {
+              const aFirst = isSuperadminCompany(a.id);
+              const bFirst = isSuperadminCompany(b.id);
+              if (aFirst && !bFirst) return -1;
+              if (!aFirst && bFirst) return 1;
+              const aName = String((a.profile && (a.profile.companyName || a.profile.name)) || a.id || '').trim();
+              const bName = String((b.profile && (b.profile.companyName || b.profile.name)) || b.id || '').trim();
+              return aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+            });
+            return sorted.map(company => {
                 const companyEnabled = isCompanyEnabled(company);
                 return (
                 <li key={company.id}>
@@ -1836,6 +1895,26 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                             if (company.profile && company.profile.deleted) return `${baseName} (dolt)`;
                             return baseName;
                           })()}
+                          {isSuperadminCompany(company.id) ? (
+                            <span
+                              style={{
+                                marginLeft: 6,
+                                fontSize: 10,
+                                fontWeight: 600,
+                                color: '#1565C0',
+                                backgroundColor: 'rgba(21, 101, 192, 0.12)',
+                                paddingVertical: 1,
+                                paddingHorizontal: 5,
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title="Superadmin-företag – kan inte raderas eller döljas"
+                            >
+                              Superadmin
+                            </span>
+                          ) : null}
                           {(() => {
                             if (templatesMode) {
                               const summary = templatesByCompany && templatesByCompany[company.id];
@@ -1933,7 +2012,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                       items={(() => {
                         const enabled = companyEnabled;
                         const deleted = !!(company.profile && company.profile.deleted);
-                        const isProtectedCompany = String(company.id || '').trim() === 'MS Byggsystem';
+                        const isProtectedCompany = isSuperadminCompany(company.id);
 
                         // I Kontrolltyper-läget: ingen context-meny för företag (använd knappen i mittenpanelen istället)
                         if (controlTypesMode) {
@@ -1957,12 +2036,13 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                           { key: 'activate', label: 'Aktivera företag', icon: '▶️', disabled: enabled },
                           { key: 'pause', label: 'Pausa företag', icon: '⏸️', disabled: !enabled },
                           ...(!deleted ? [{ key: 'deleteCompany', label: 'Dölj företag', icon: '🗑️', danger: true, disabled: isProtectedCompany || enabled }] : []),
+                          { key: 'purgeCompany', label: 'Radera företag permanent', icon: '⚠️', danger: true, disabled: isProtectedCompany },
                         ]);
                       })()}
                       onSelect={async (item) => {
                         if (!contextMenuCompany) return;
                         const compId = contextMenuCompany.id;
-                        const isProtectedCompany = String(compId || '').trim() === 'MS Byggsystem';
+                        const isProtectedCompany = isSuperadminCompany(compId);
                         if (controlTypesMode && item.key === 'addControlType') {
                           setContextMenuVisible(false);
                           if (onSelectProject) {
@@ -2090,6 +2170,40 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                             } finally {
                               hideToast();
                             }
+                          }
+                        } else if (item.key === 'purgeCompany') {
+                          if (isProtectedCompany) {
+                            showToast('MS Byggsystem kan aldrig raderas permanent.');
+                            return;
+                          }
+                          const compName = (contextMenuCompany && contextMenuCompany.profile && (contextMenuCompany.profile.companyName || contextMenuCompany.profile.name)) || compId;
+                          const msg1 = `Radera företaget "${compName}" permanent?\n\nDetta tar bort SharePoint-siter (M365) och all data i Firebase (projekt, användare, planering, m.m.) samt alla inloggningar. MS Byggsystem kan inte raderas.`;
+                          const conf1 = (typeof window !== 'undefined') ? window.confirm(msg1) : false;
+                          if (!conf1) return;
+                          const msg2 = `Skriv "RADERA" för att bekräfta permanent radering av ${compName}:`;
+                          const typed = (typeof window !== 'undefined') ? window.prompt(msg2, '') : '';
+                          if (String(typed || '').trim().toUpperCase() !== 'RADERA') {
+                            showToast('Avbrutet. Inget raderades.');
+                            return;
+                          }
+                          setContextMenuVisible(false);
+                          setPurgeCompanyLoading(compName);
+                          try {
+                            const purgeRes = await purgeCompanyRemote({ companyId: compId });
+                            const list = await fetchCompanies();
+                            setCompanies(Array.isArray(list) ? list : []);
+                            const n = (purgeRes && purgeRes.sharePointSitesDeleted) ?? 0;
+                            const spMsg = n > 0 ? ` ${n} SharePoint-siter raderade i M365.` : ' Sätt Graph-token i functions för att radera siter i SharePoint automatiskt.';
+                            showToast('Företaget har raderats permanent.');
+                            try { Alert.alert('Raderat', `Företaget och all data har tagits bort.${spMsg}`); } catch (_) {}
+                          } catch (e) {
+                            const rawCode = e && e.code ? String(e.code) : '';
+                            const rawMsg = e && e.message ? String(e.message) : String(e || '');
+                            const combined = rawCode ? `${rawCode}: ${rawMsg}` : rawMsg;
+                            showToast('Kunde inte radera företaget: ' + combined);
+                            try { Alert.alert('Fel', 'Kunde inte radera företaget: ' + combined); } catch (_) {}
+                          } finally {
+                            setPurgeCompanyLoading(null);
                           }
                         } else if (item.key === 'setLimit') {
                           if (typeof window === 'undefined') return;
@@ -2867,6 +2981,18 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
             }
           }}
         />
+      )}
+      {purgeCompanyLoading && (
+        <Modal visible transparent animationType="fade" statusBarTranslucent>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 28, maxWidth: 360, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8 }}>
+              <ActivityIndicator size="large" color="#b91c1c" style={{ marginBottom: 16 }} />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, textAlign: 'center' }}>Raderar företag</Text>
+              <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', marginBottom: 4 }}>{purgeCompanyLoading}</Text>
+              <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>Tar bort SharePoint-siter och all data i Firebase. Vänta – avbryt inte.</Text>
+            </View>
+          </View>
+        </Modal>
       )}
       <UserEditModal
         visible={!!editingUser}

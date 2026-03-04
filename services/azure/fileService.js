@@ -6,6 +6,7 @@
 import { Platform } from 'react-native';
 import { getAccessToken } from './authService';
 import { getAzureConfig } from './config';
+import { normalizeSiteIdForGraph } from './graphSiteId';
 // Note: getCompanySharePointSiteId is imported dynamically to avoid circular dependency
 
 const dkBasEnsureInFlight = new Map(); // key: siteId -> Promise
@@ -234,6 +235,7 @@ async function uploadFileSimple(accessToken, siteId, path, file, config, onProgr
   const encodedPath = encodeGraphPathSegments(path);
   
   if (siteId) {
+    siteId = normalizeSiteIdForGraph(siteId);
     endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     // Extract site path from URL (e.g., /sites/DigitalKontroll)
@@ -350,7 +352,7 @@ async function uploadFileSimple(accessToken, siteId, path, file, config, onProgr
       onProgress({ loaded: size, total: size });
     } catch (_e) {}
   }
-  return result.webUrl || result.downloadUrl || result.url;
+  return result['@microsoft.graph.downloadUrl'] || result.webUrl || result.downloadUrl || result.url;
 }
 
 /**
@@ -368,6 +370,7 @@ async function uploadFileResumable(accessToken, siteId, path, file, config, onPr
   const encodedPath = encodeGraphPathSegments(path);
   
   if (siteId) {
+    siteId = normalizeSiteIdForGraph(siteId);
     endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
@@ -441,7 +444,7 @@ async function uploadFileResumable(accessToken, siteId, path, file, config, onPr
           onProgress({ loaded: fileSize, total: fileSize });
         } catch (_e) {}
       }
-      return result.webUrl || result.downloadUrl || result.url;
+      return result['@microsoft.graph.downloadUrl'] || result.webUrl || result.downloadUrl || result.url;
     }
     
     offset = chunkEnd;
@@ -478,6 +481,7 @@ export async function getFileUrl(path, companyId = null, siteId = null) {
   
   let endpoint;
   if (siteId) {
+    siteId = normalizeSiteIdForGraph(siteId);
     endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
@@ -503,7 +507,7 @@ export async function getFileUrl(path, companyId = null, siteId = null) {
   }
   
   const result = await response.json();
-  return result.webUrl || result.downloadUrl || result.url;
+  return result['@microsoft.graph.downloadUrl'] || result.webUrl || result.downloadUrl || result.url;
 }
 
 /**
@@ -516,6 +520,7 @@ export async function listFolders(basePath = '', siteId) {
   if (!siteId) {
     throw new Error('Site ID is required to list folders');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const config = getAzureConfig();
   const accessToken = await getAccessToken();
@@ -586,6 +591,7 @@ function extractRelativePathFromParentReference(parentReferencePath) {
  */
 export async function getDriveItemByPath(path, siteId) {
   if (!siteId) throw new Error('siteId is required');
+  siteId = normalizeSiteIdForGraph(siteId);
   const rel = normalizeDriveRelativePath(path);
   if (!rel) throw new Error('path is required');
 
@@ -614,7 +620,8 @@ export async function getDriveItemByPath(path, siteId) {
  * which can be surfaced in Office via Document Properties / Quick Parts.
  */
 export async function patchDriveItemListItemFields({ siteId, itemId, fields } = {}) {
-  const sid = String(siteId || '').trim();
+  let sid = String(siteId || '').trim();
+  if (sid) sid = normalizeSiteIdForGraph(sid);
   const iid = String(itemId || '').trim();
   const f = (fields && typeof fields === 'object') ? fields : null;
   if (!sid) throw new Error('siteId is required');
@@ -625,6 +632,10 @@ export async function patchDriveItemListItemFields({ siteId, itemId, fields } = 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
 
+  // Last-second fix: ensure siteId in URL has commas not dots (handles cache/edge cases)
+  if (sid && (sid.includes('.sharepoint.com.') || /[0-9a-f-]+\.[0-9a-f]{8}/i.test(sid))) {
+    sid = normalizeSiteIdForGraph(sid);
+  }
   const endpoint = `${config.graphApiEndpoint}/sites/${sid}/drive/items/${iid}/listItem/fields`;
   const response = await fetch(endpoint, {
     method: 'PATCH',
@@ -647,7 +658,8 @@ export async function patchDriveItemListItemFields({ siteId, itemId, fields } = 
  * Convenience: patch list item fields by drive-relative path.
  */
 export async function patchDriveItemListItemFieldsByPath({ siteId, path, fields } = {}) {
-  const sid = String(siteId || '').trim();
+  let sid = String(siteId || '').trim();
+  if (sid) sid = normalizeSiteIdForGraph(sid);
   const rel = normalizeDriveRelativePath(path);
   if (!sid) throw new Error('siteId is required');
   if (!rel) throw new Error('path is required');
@@ -668,6 +680,7 @@ export async function patchDriveItemListItemFieldsByPath({ siteId, path, fields 
  */
 export async function searchDriveItems(siteId, query) {
   if (!siteId) throw new Error('siteId is required');
+  siteId = normalizeSiteIdForGraph(siteId);
   const q = String(query || '').trim();
   if (!q) return [];
 
@@ -782,6 +795,7 @@ export async function deleteFile(path, companyId = null, siteId = null) {
   
   let endpoint;
   if (siteId) {
+    siteId = normalizeSiteIdForGraph(siteId);
     endpoint = `${config.graphApiEndpoint}/sites/${siteId}/drive/root:${encodedPath}:`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);
@@ -880,6 +894,7 @@ export async function ensureFolder(path, companyId = null, siteId = null) {
   // Build base endpoint (without the final path segment)
   let baseEndpoint;
   if (sharePointSiteId) {
+    sharePointSiteId = normalizeSiteIdForGraph(sharePointSiteId);
     baseEndpoint = `${config.graphApiEndpoint}/sites/${sharePointSiteId}/drive/root`;
   } else if (config.sharePointSiteUrl) {
     const url = new URL(config.sharePointSiteUrl);

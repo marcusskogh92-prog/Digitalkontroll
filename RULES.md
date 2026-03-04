@@ -94,20 +94,14 @@ Innehåll i RULES.md
 
 ⸻
 
-8. Modal-standard (golden rule)
-	•	Alla modaler i systemet ska se ut och bete sig som Företagsinställningar (AdminCompanyModal).
-	•	Detaljerad beskrivning: docs/MODAL_GOLDEN_RULE.md.
-	•	Loading: Använd komponenten LoadingState (animerad spinner + text). Tema: LOADING_THEME i constants/modalTheme.js. Se MODAL_GOLDEN_RULE.md §4.
-	•	Banner (header):
-	•	Höjd 38 px. Mörk färg (ICON_RAIL.bg). Titel 14px, undertitel 12px på en rad. Ikonruta 28×28 px. Stäng (X): mörk bakgrund, vit ikon.
-	•	Footer-knappar:
-	•	Stäng och Spara ska vara mörka (samma färg som bannern) med vit text. Standardstorlek: vertikal padding 6 px, horisontell padding 18 px. Bredd/längd anpassas vid behov så att all text får plats (t.ex. minWidth eller större horisontell padding för långa etiketter).
-	•	Tangentbord: Esc stänger. Enter sparar när fokus inte är i input/textarea. Tab och pilar fungerar normalt.
-	•	Webb: modalen ska vara flyttbar (drag i bannern) och storleksändringbar (dra i högerkant, nederkant, nedre högra hörnet). Vid mus över kant/hörn ska muspekaren bli resize-cursor (streck med pilar, Windows-liknande).
-	•	Implementering:
-	•	Nya modaler: använd StandardModal (components/common/StandardModal.js).
-	•	Tema: constants/modalTheme.js (MODAL_THEME). Hooks: useDraggableResizableModal, useModalKeyboard.
-	•	Befintliga modaler ska uppdateras till samma utseende och beteende vid underhåll.
+8. Modal-standard (en golden rule)
+	•	Alla modaler följer en och samma standard. Referens: AdminCreateCompanyModal (Skapa nytt företag). Full spec: docs/MODAL_GOLDEN_RULE.md.
+	•	Loading: LoadingState, tema LOADING_THEME i constants/modalTheme.js.
+	•	Banner: Mörk #1E2A38, vit text. Standard kompakt 28px höjd, titel 12px normal (400). Stäng (X) vit, diskret.
+	•	Footer: Avbryt = dimmad röd (#fef2f2, #fecaca, #b91c1c). Spara/Skapa/Primär = bannerns färg dimmad (#2D3A4B), vit text – inte ljusblå.
+	•	Tangentbord: Esc stänger. Enter sparar när fokus inte är i input/textarea.
+	•	Webb: flyttbar (drag i bannern), storleksändringbar – Windows-liknande: osynliga resize-zoner (8px), cursor + subtil kantmarkering vid hover (inga synliga handtag). useDraggableResizableModal.
+	•	Tokens: constants/modalDesign2026.js (MODAL_DESIGN_2026). Hooks: useDraggableResizableModal, useModalKeyboard.
 
 ⸻
 

@@ -132,10 +132,10 @@ const styles = StyleSheet.create({
   statusBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: D.buttonRadius,
     borderWidth: 1,
     maxWidth: 400,
     shadowColor: '#000',
@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: D.footer.borderTopColor,
     marginTop: 12,
     marginHorizontal: -D.contentPadding,
   },
@@ -180,6 +180,7 @@ const styles = StyleSheet.create({
     minHeight: 0,
     alignSelf: 'stretch',
   },
+  /** Sökfält enligt golden rule: input radius 6, border #ddd, padding 8/10, font 13 */
   searchWrap: {
     flex: 1,
     maxWidth: 400,
@@ -189,16 +190,16 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: D.inputRadius,
     backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1e293b', padding: 0, marginLeft: 8 },
   iconBtn: {
     minWidth: 28,
     height: 28,
     paddingHorizontal: 8,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#fff',
+    backgroundColor: D.buttonSecondaryBg,
     borderWidth: 1,
     borderColor: '#ddd',
     flexDirection: 'row',
@@ -210,8 +211,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
@@ -226,18 +227,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eee',
   },
-  emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
+  emptyTitle: { fontSize: 13, fontWeight: '500', color: '#475569', marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
-  selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
+  selectCompanyText: { fontSize: 13, fontWeight: '500', color: '#475569' },
+  /** Footer enligt golden rule: D.footer (padding, border, bg) */
   footer: {
     flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    paddingVertical: D.footer.paddingVertical,
+    paddingHorizontal: D.footer.paddingHorizontal,
+    borderTopWidth: D.footer.borderTopWidth,
+    borderTopColor: D.footer.borderTopColor,
+    backgroundColor: D.footer.backgroundColor,
   },
   footerBtn: {
     paddingVertical: D.buttonPaddingVertical,
@@ -247,7 +249,8 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     backgroundColor: '#fff',
   },
-  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  /** Stäng-knapp enligt golden rule: primär = bannerns färg (dimmad #2D3A4B), inte ljusgrå */
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg, borderWidth: 0 },
 });
 
 export default function AdminSuppliersModal({ visible, companyId, onClose }) {
@@ -1056,7 +1059,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
 
   const footer = (
     <TouchableOpacity style={styles.mainModalStangBtn} onPress={onClose} {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
-      <Text style={{ fontSize: 14, fontWeight: '500', color: '#fff' }}>Stäng</Text>
+      <Text style={{ fontSize: 13, fontWeight: D.buttonPrimaryFontWeight, color: D.buttonPrimaryColor }}>Stäng</Text>
     </TouchableOpacity>
   );
 
@@ -1067,8 +1070,8 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
       onClose={onClose}
       title="Leverantörer"
       subtitle="Register över leverantörer"
-      headerVariant="neutral"
-      titleIcon={<Ionicons name="business-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="business-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
       boxStyle={[defaultBoxStyle, boxStyle]}
       overlayStyle={overlayStyle}
       headerProps={headerProps}
@@ -1097,7 +1100,7 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 10, borderRadius: D.buttonRadius }}
                       onPress={() => setShowInlineAddRow((v) => !v)}
                       activeOpacity={0.7}
                       accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
@@ -1107,8 +1110,8 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                     >
                       <Ionicons
                         name={showInlineAddRow ? 'checkbox' : 'square-outline'}
-                        size={18}
-                        color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                        size={16}
+                        color={showInlineAddRow ? '#334155' : '#94a3b8'}
                       />
                       <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
                         Lägg till snabbt
@@ -1132,8 +1135,8 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
                           accessibilityLabel="Importera / exportera Excel"
                           {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                         >
-                          <Ionicons name="document-outline" size={14} color="#167534" />
-                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                          <Ionicons name="document-outline" size={14} color="#15803d" />
+                          <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight, color: '#15803d' }}>Excel</Text>
                         </TouchableOpacity>
                       </>
                     )}
@@ -1287,13 +1290,13 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
               <View style={[styles.statusBox, notice ? styles.statusBoxSuccess : styles.statusBoxError]}>
                 {notice ? (
                   <>
-                    <Ionicons name="checkmark-circle" size={18} color="#15803d" />
-                    <Text style={{ fontSize: 13, color: '#15803d', fontWeight: '500' }}>{notice}</Text>
+                    <Ionicons name="checkmark-circle" size={16} color="#15803d" />
+                    <Text style={{ fontSize: 12, color: '#15803d', fontWeight: D.buttonPrimaryFontWeight }}>{notice}</Text>
                   </>
                 ) : (
                   <>
-                    <Ionicons name="warning" size={18} color="#dc2626" />
-                    <Text style={{ fontSize: 13, color: '#dc2626', fontWeight: '500' }}>{error}</Text>
+                    <Ionicons name="warning" size={16} color="#dc2626" />
+                    <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: D.buttonPrimaryFontWeight }}>{error}</Text>
                   </>
                 )}
               </View>

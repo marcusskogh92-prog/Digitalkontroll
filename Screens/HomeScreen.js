@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, ImageBackground, Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { AdminModalContext } from '../components/common/AdminModalContext';
 import { formatRelativeTime } from '../components/common/Dashboard/dashboardUtils';
 import { useDashboard } from '../components/common/Dashboard/useDashboard';
@@ -24,7 +24,7 @@ import RailActivityPanel from '../components/common/RailActivityPanel';
 import { SearchProjectModal } from '../components/common/SearchProjectModal';
 import { SharePointLeftPanel } from '../components/common/SharePointLeftPanel';
 import ContextMenu from '../components/ContextMenu';
-import { auth, clearProjectPresence, fetchCompanies, formatSharePointProjectFolderName, markAllNotificationsAsRead, patchCompanyProject, saveControlToFirestore, saveDraftToFirestore, setProjectPresence, subscribeCompanyProjects, subscribeUserNotifications } from '../components/firebase';
+import { auth, clearProjectPresence, fetchCompanies, fetchCompanyProject, formatSharePointProjectFolderName, markAllNotificationsAsRead, patchCompanyProject, purgeCompanyRemote, saveControlToFirestore, saveDraftToFirestore, setProjectPresence, subscribeCompanyProjects, subscribeUserNotifications, updateSharePointProjectPropertiesFromFirestoreProject } from '../components/firebase';
 import { formatPersonName } from '../components/formatPersonName';
 import { onProjectUpdated } from '../components/projectBus';
 import { getMainPanelBackgroundStyle, getRightPanelBackgroundStyle, PANEL_DIVIDER_LEFT } from '../constants/backgroundTheme';
@@ -52,7 +52,8 @@ import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
-import { renameDriveItemByPath } from '../services/azure/hierarchyService';
+import { moveDriveItemByPath, renameDriveItemByPath } from '../services/azure/hierarchyService';
+import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ManageSharePointNavigation from './ManageSharePointNavigation';
 
@@ -261,6 +262,7 @@ export default function HomeScreen({ navigation, route }) {
   }, [companyId, authClaims?.companyId]);
 
   const [hierarchyReloadKey, setHierarchyReloadKey] = useState(0);
+  const [projectsListRefreshKey, setProjectsListRefreshKey] = useState(0);
   const [companyProjects, setCompanyProjects] = useState([]);
   const [railActiveId, setRailActiveId] = useState('dashboard');
   /** Web 2026: tydlig separation dashboard / sharepoint (projekt-browser) / project. Rail styr endast mode. */
@@ -275,6 +277,8 @@ export default function HomeScreen({ navigation, route }) {
   const [superadminCompanies, setSuperadminCompanies] = useState([]);
   const [superadminForetagExpanded, setSuperadminForetagExpanded] = useState(false);
   const [companyContextMenu, setCompanyContextMenu] = useState({ visible: false, x: 0, y: 0, company: null });
+  /** Tydlig loadingskärm vid "Radera företag" – { companyName } när purge pågår, null annars. */
+  const [purgeCompanyLoading, setPurgeCompanyLoading] = useState(null);
   /** Modal för inaktiva faser (Produktion, Avslutat, Eftermarknad) – visar "Under uppbyggnad". */
   const [inactivePhaseModal, setInactivePhaseModal] = useState(null); // 'produktion' | 'avslut' | 'eftermarknad' | null
   /** Modal för SharePoint Nav (Superadmin) – ny layout. */
@@ -386,19 +390,19 @@ export default function HomeScreen({ navigation, route }) {
       } else if (item.route === 'ManageCompany' && item.focus) {
         if (item.focus === 'byggdel') {
           if (openByggdelModal) openByggdelModal(cid);
-          else navigation.navigate('ManageCompany', { companyId: cid, focus: 'byggdel' });
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
         } else if (item.focus === 'kontoplan') {
           if (openKontoplanModal) openKontoplanModal(cid);
-          else navigation.navigate('ManageCompany', { companyId: cid, focus: 'kontoplan' });
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
         } else if (item.focus === 'kategorier') {
           if (openKategoriModal) openKategoriModal(cid);
-          else navigation.navigate('ManageCompany', { companyId: cid, focus: 'kategorier' });
-        } else {
-          navigation.navigate('ManageCompany', { companyId: cid, focus: item.focus });
+          else if (openCompanyModal) openCompanyModal(cid, 'register');
+        } else if (openCompanyModal) {
+          openCompanyModal(cid, item.focus);
         }
       }
     } catch (_e) {}
-  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openMallarModal, openByggdelModal, openKontoplanModal, openKategoriModal]);
+  }, [getEffectiveCompanyIdForRegister, navigation, isSuperAdminResolved, openContactRegistryModal, openSuppliersModal, openCustomersModal, openMallarModal, openByggdelModal, openKontoplanModal, openKategoriModal, openCompanyModal]);
 
   const handleAdminItemPress = useCallback(async (item) => {
     if (item.key === 'planering') {
@@ -423,20 +427,11 @@ export default function HomeScreen({ navigation, route }) {
         if (openMallarModal) openMallarModal(cid);
         else navigation.navigate('ManageControlTypes', { companyId: cid });
       } else if (item.key === 'integrationer' || (item.route === 'ManageCompany' && item.focus === 'sharepoint')) {
-        // SharePoint-kopplingar → Företagsinställningar med SharePoint-fliken direkt öppen
-        if (openCompanyModal && cid) openCompanyModal(cid, 'sharepoint');
-        else navigation.navigate('ManageCompany', { companyId: cid, focus: 'sharepoint' });
+        if (openCompanyModal) openCompanyModal(cid, 'sharepoint');
       } else if (item.key === 'foretagsinstallningar' || (item.route === 'ManageCompany' && !item.focus)) {
-        // Företagsinställningar i railen → öppna Företagsinställningar-modalen (inte gamla adminpanelen)
-        if (openCompanyModal && cid) openCompanyModal(cid);
-        else if (isSuperAdminResolved) navigation.navigate('ManageCompany', { showCompanyList: true });
-        else navigation.navigate('ManageCompany', { companyId: cid });
+        if (openCompanyModal) openCompanyModal(cid);
       } else if (item.route === 'ManageCompany') {
-        if (isSuperAdminResolved) {
-          navigation.navigate('ManageCompany', { showCompanyList: true });
-        } else {
-          navigation.navigate('ManageCompany', { companyId: cid });
-        }
+        if (openCompanyModal) openCompanyModal(cid);
       } else if (item.route === 'ManageSharePointNavigation') {
         setActiveSidePanelItemKey(null);
         setSharePointNavModalVisible(true);
@@ -1536,9 +1531,10 @@ export default function HomeScreen({ navigation, route }) {
   const PHASE_RAIL_AND_CARD_KEYS = useMemo(() => ['kalkylskede', 'produktion', 'avslut', 'eftermarknad', 'planering'], []);
   const enabledPhaseKeys = useMemo(() => {
     const raw = companyProfile?.enabledPhases;
-    if (Array.isArray(raw) && raw.length > 0) {
+    if (Array.isArray(raw)) {
       return raw.filter((k) => PHASE_RAIL_AND_CARD_KEYS.includes(String(k).trim()));
     }
+    // Företag utan fält (äldre) behåller alla faser; nya företag har enabledPhases: [] från start
     return PHASE_RAIL_AND_CARD_KEYS;
   }, [companyProfile?.enabledPhases, PHASE_RAIL_AND_CARD_KEYS]);
 
@@ -1565,18 +1561,46 @@ export default function HomeScreen({ navigation, route }) {
   // Redigera projekt (samma modal som skapa, men pre-fylld)
   const [editProject, setEditProject] = useState(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const editProjectPayloadRef = useRef(null);
   const openEditProjectModal = useCallback((project) => {
-    if (project && (project.projectId || project.projectNumber)) {
-      setEditProject({
-        projectId: project.projectId || project.projectNumber,
-        projectNumber: project.projectNumber || project.projectId,
-        projectName: project.projectName || project.name || '',
-        sharePointSiteId: project.sharePointSiteId || project.siteId,
-        rootFolderPath: project.rootFolderPath || project.path || '',
-        phase: project.phase || DEFAULT_PHASE,
-      });
+    const data = project != null && typeof project === 'object' ? project : editProjectPayloadRef.current;
+    if (!data || typeof data !== 'object') return;
+    const hasAnyId = Boolean(String(data.projectId ?? data.projectNumber ?? data.id ?? '').trim());
+    const hasAnyName = Boolean(String(data.projectName ?? data.name ?? data.fullName ?? '').trim());
+    if (!hasAnyId && !hasAnyName) return;
+    editProjectPayloadRef.current = null;
+    const num = String(data.projectNumber ?? data.number ?? data.projectId ?? data.id ?? '').trim();
+    const name = String(data.projectName ?? data.name ?? data.fullName ?? '').trim();
+    const fullNameStr = String(data.fullName ?? data.projectName ?? data.name ?? '').trim();
+    const fallback = {
+      projectId: data.projectId || data.projectNumber || data.id || num,
+      projectNumber: num,
+      projectName: name || fullNameStr || num,
+      fullName: fullNameStr || name || num,
+      sharePointSiteId: data.sharePointSiteId || data.siteId,
+      rootFolderPath: String(data.rootFolderPath ?? data.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, ''),
+      phase: data.phase || DEFAULT_PHASE,
+    };
+    setEditProject(fallback);
+    const pid = String(data.projectId || data.projectNumber || data.id || '').trim();
+    if (pid && companyId) {
+      fetchCompanyProject(companyId, pid)
+        .then((full) => {
+          if (!full) return;
+          const fromApi = {
+            projectId: full.projectId || full.id || full.projectNumber || fallback.projectId,
+            projectNumber: String(full.projectNumber ?? full.number ?? full.id ?? '').trim() || fallback.projectNumber,
+            projectName: String(full.projectName ?? full.name ?? full.fullName ?? '').trim() || fallback.projectName,
+            fullName: String(full.fullName ?? full.projectName ?? full.name ?? '').trim() || fallback.fullName,
+            sharePointSiteId: full.sharePointSiteId || full.siteId || fallback.sharePointSiteId,
+            rootFolderPath: String(full.rootFolderPath ?? full.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '') || fallback.rootFolderPath,
+            phase: full.phase || fallback.phase || DEFAULT_PHASE,
+          };
+          setEditProject(fromApi);
+        })
+        .catch(() => {});
     }
-  }, []);
+  }, [companyId]);
   const closeEditProjectModal = useCallback(() => {
     setEditProject(null);
     setIsSavingEdit(false);
@@ -1588,13 +1612,28 @@ export default function HomeScreen({ navigation, route }) {
       const projectId = String(payload.projectId).trim();
       const newNumber = String(payload.projectNumber || '').trim();
       const newName = String(payload.projectName || '').trim();
-      const newRootPath = String(payload.rootFolderPath || payload.parentFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
-      const siteId = String(payload.siteId || '').trim();
-      const oldRootPath = String(payload.initialRootFolderPath || payload.rootFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const rawNewRoot = String(payload.rootFolderPath || payload.parentFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      const siteId = normalizeSiteIdForGraph(String(payload.siteId || payload.sharePointSiteId || '').trim());
+      const oldRootPath = String(payload.initialRootFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
       const newFolderName = formatSharePointProjectFolderName(newNumber, newName);
       const oldFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
-      let finalRootPath = newRootPath;
-      if (siteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
+      let finalRootPath = oldRootPath;
+
+      const storagePathChanged = rawNewRoot && oldRootPath && rawNewRoot !== oldRootPath;
+
+      if (storagePathChanged && siteId && oldRootPath) {
+        try {
+          await moveDriveItemByPath(siteId, oldRootPath, rawNewRoot);
+          finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + oldFolderName).replace(/\/+/g, '/');
+          if (oldFolderName !== newFolderName) {
+            await renameDriveItemByPath(siteId, finalRootPath, newFolderName);
+            finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/');
+          }
+        } catch (e) {
+          console.warn('[HomeScreen] Move project folder:', e?.message || e);
+          throw e;
+        }
+      } else if (siteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
         try {
           await renameDriveItemByPath(siteId, oldRootPath, newFolderName);
           const parentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
@@ -1603,12 +1642,34 @@ export default function HomeScreen({ navigation, route }) {
           console.warn('[HomeScreen] Rename project folder after edit:', e?.message || e);
         }
       }
+
+      const newFullName = formatSharePointProjectFolderName(newNumber, newName);
       await patchCompanyProject(companyId, projectId, {
         projectNumber: newNumber,
         projectName: newName,
+        fullName: newFullName,
         rootFolderPath: finalRootPath,
       });
+      // Only sync ProjectNumber/ProjectName to SharePoint when name/number changed (avoids 400 if library lacks those columns when only moving)
+      const initialFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
+      const initialNum = (initialFolderName.split(' - ')[0] || '').trim();
+      const initialName = (initialFolderName.split(' - ').slice(1).join(' - ') || '').trim();
+      const didRename = newNumber !== initialNum || newName !== initialName;
+      if (siteId && finalRootPath && didRename) {
+        try {
+          await updateSharePointProjectPropertiesFromFirestoreProject(companyId, {
+            projectId,
+            projectNumber: newNumber,
+            projectName: newName,
+            sharePointSiteId: siteId,
+            rootFolderPath: finalRootPath,
+          });
+        } catch (e) {
+          console.warn('[HomeScreen] SharePoint project properties update after edit:', e?.message || e);
+        }
+      }
       setHierarchyReloadKey((k) => k + 1);
+      setProjectsListRefreshKey((k) => k + 1);
       setEditProject(null);
     } catch (e) {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2062,6 +2123,7 @@ export default function HomeScreen({ navigation, route }) {
 
       {/* Ny SharePoint-baserad "Skapa projekt"-modal + redigera projekt (samma modal) */}
       <CreateProjectModal
+        key={editProject ? `edit-${editProject.projectId || editProject.projectNumber || 'unknown'}` : 'create'}
         visible={createProjectVisible || !!editProject}
         onClose={() => {
           if (editProject) closeEditProjectModal();
@@ -2225,36 +2287,14 @@ export default function HomeScreen({ navigation, route }) {
                     transparent
                     animationType="fade"
                     onRequestClose={() => setSharePointNavModalVisible(false)}
+                    statusBarTranslucent
                   >
-                    <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setSharePointNavModalVisible(false)}>
-                      <View
-                        style={{
-                          flex: 1,
-                          backgroundColor: '#fff',
-                          borderRadius: 14,
-                          overflow: 'hidden',
-                          width: '100%',
-                          maxWidth: 900,
-                          maxHeight: '90%',
-                          borderWidth: 1,
-                          borderColor: 'rgba(15, 23, 42, 0.22)',
-                          shadowColor: '#000',
-                          shadowOffset: { width: 0, height: 8 },
-                          shadowOpacity: 0.15,
-                          shadowRadius: 24,
-                          elevation: 16,
-                        }}
-                        onStartShouldSetResponder={() => true}
-                        {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : {})}
-                      >
-                        <ManageSharePointNavigation
-                          navigation={navigation}
-                          route={{ params: {} }}
-                          embedInModal
-                          onClose={() => setSharePointNavModalVisible(false)}
-                        />
-                      </View>
-                    </Pressable>
+                    <ManageSharePointNavigation
+                      navigation={navigation}
+                      route={{ params: {} }}
+                      embedInModal
+                      onClose={() => setSharePointNavModalVisible(false)}
+                    />
                   </Modal>
                   <GlobalSidePanel
                     collapsed={railActiveId === 'planering' ? true : sidePanelCollapsed}
@@ -2348,6 +2388,7 @@ export default function HomeScreen({ navigation, route }) {
                     phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
                     companyId={companyId}
                     reloadKey={hierarchyReloadKey}
+                    projectsListRefreshKey={projectsListRefreshKey}
                     handleSelectFunction={handleSelectFunction}
                     projectStatusFilter={projectStatusFilterSafe}
                     loadingHierarchy={loadingHierarchy}
@@ -2368,6 +2409,7 @@ export default function HomeScreen({ navigation, route }) {
                     createPortal={createPortal}
                     onOpenCreateProjectModal={openCreateProjectModal}
                     onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
                     onSelectProject={(projectData) => {
                       try {
                         if (!projectData || !projectData.id) {
@@ -2469,6 +2511,9 @@ export default function HomeScreen({ navigation, route }) {
                         { key: 'open_popup', label: 'Visa i popup', icon: '📋' },
                         { key: 'open_full', label: 'Öppna full vy', icon: '↗️' },
                         { key: 'copy_id', label: 'Kopiera företags-ID', icon: '📄' },
+                        ...(String(companyContextMenu.company?.id || '').trim() !== 'MS Byggsystem'
+                          ? [{ key: 'purge_company', label: 'Radera företag', icon: '🗑️', danger: true }]
+                          : []),
                       ]}
                       onClose={() => setCompanyContextMenu({ visible: false, x: 0, y: 0, company: null })}
                       onSelect={(item) => {
@@ -2476,12 +2521,55 @@ export default function HomeScreen({ navigation, route }) {
                         setCompanyContextMenu({ visible: false, x: 0, y: 0, company: null });
                         if (!c) return;
                         if (item?.key === 'open_popup') openCompanyModal?.(c?.id);
-                        if (item?.key === 'open_full') try { navigation.navigate('ManageCompany', { companyId: c?.id }); } catch (_e) {}
+                        if (item?.key === 'open_full') openCompanyModal?.(c?.id);
                         if (item?.key === 'copy_id' && c?.id && Platform.OS === 'web' && typeof navigator?.clipboard?.writeText === 'function') {
                           navigator.clipboard.writeText(c.id).catch(() => {});
                         }
+                        if (item?.key === 'purge_company' && c?.id && String(c.id).trim() !== 'MS Byggsystem') {
+                          const companyName = String(c.name || c.id || '').trim() || c.id;
+                          const confirmMessage = `Vill du radera företaget "${companyName}" permanent? SharePoint-siter och all data (användare, projekt, mallar) tas bort. Detta kan inte ångras.`;
+                          const doPurge = () => {
+                            setPurgeCompanyLoading({ companyName });
+                            purgeCompanyRemote({ companyId: c.id })
+                              .then((res) => {
+                                const n = (res && res.sharePointSitesDeleted) ?? 0;
+                                const spMsg = n > 0 ? ` ${n} SharePoint-siter raderade i M365.` : ' Kontrollera att Graph-token är satt i functions om siter ska raderas i SharePoint.';
+                                showAlert('Företag raderat', `"${companyName}" har raderats.${spMsg}`);
+                                return fetchCompanies().then((list) => {
+                                  if (Array.isArray(list)) setSuperadminCompanies(list);
+                                });
+                              })
+                              .catch((e) => {
+                                showAlert('Kunde inte radera', e?.message || 'Ett fel uppstod.');
+                              })
+                              .finally(() => {
+                                setPurgeCompanyLoading(null);
+                              });
+                          };
+                          if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
+                            if (window.confirm(confirmMessage)) doPurge();
+                          } else {
+                            Alert.alert('Radera företag', confirmMessage, [
+                              { text: 'Avbryt', style: 'cancel' },
+                              { text: 'Radera permanent', style: 'destructive', onPress: doPurge },
+                            ]);
+                          }
+                        }
                       }}
                     />
+                  )}
+
+                  {purgeCompanyLoading && (
+                    <Modal visible transparent animationType="fade" statusBarTranslucent>
+                      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+                        <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 28, maxWidth: 360, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 8 }}>
+                          <ActivityIndicator size="large" color="#b91c1c" style={{ marginBottom: 16 }} />
+                          <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8, textAlign: 'center' }}>Raderar företag</Text>
+                          <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', marginBottom: 4 }}>{purgeCompanyLoading.companyName}</Text>
+                          <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>Tar bort SharePoint-siter och all data i Firebase. Vänta – avbryt inte.</Text>
+                        </View>
+                      </View>
+                    </Modal>
                   )}
 
                   <View
@@ -2605,6 +2693,7 @@ export default function HomeScreen({ navigation, route }) {
                     onPhaseHeaderLabels={onPhaseHeaderLabels}
                     onOpenCreateProjectModal={openCreateProjectModal}
                     onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
 
                     // AF-only explorer state shared with left panel
                     afRelativePath={afRelativePath}
@@ -2805,6 +2894,7 @@ export default function HomeScreen({ navigation, route }) {
               phaseShortcutKey={['kalkylskede', 'produktion', 'avslut', 'eftermarknad'].includes(railActiveId) ? railActiveId : null}
               companyId={companyId}
               reloadKey={hierarchyReloadKey}
+              projectsListRefreshKey={projectsListRefreshKey}
               handleSelectFunction={handleSelectFunction}
               projectStatusFilter={projectStatusFilterSafe}
               loadingHierarchy={loadingHierarchy}
@@ -2825,6 +2915,7 @@ export default function HomeScreen({ navigation, route }) {
               createPortal={createPortal}
               onOpenCreateProjectModal={openCreateProjectModal}
               onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
               onSelectProject={(projectData) => {
                 try {
                   if (!projectData || !projectData.id) {
@@ -2950,6 +3041,7 @@ export default function HomeScreen({ navigation, route }) {
               setPhaseActiveNode={setPhaseActiveNode}
               onOpenCreateProjectModal={openCreateProjectModal}
               onOpenEditProjectModal={openEditProjectModal}
+                    editProjectPayloadRef={editProjectPayloadRef}
 
               // AF-only explorer state shared with left panel
               afRelativePath={afRelativePath}

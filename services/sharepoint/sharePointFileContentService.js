@@ -1,4 +1,5 @@
 import { getAccessToken } from '../azure/authService';
+import { normalizeSiteIdForGraph } from '../azure/graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -88,7 +89,8 @@ function assertLikelyPdf(arrayBuffer, { label, contentType } = {}) {
 }
 
 async function getSharePointDriveItemContentArrayBuffer(siteId, itemId) {
-  const sid = safeText(siteId);
+  let sid = safeText(siteId);
+  if (sid) sid = normalizeSiteIdForGraph(sid);
   const id = safeText(itemId);
   if (!sid) throw new Error('SharePoint siteId saknas.');
   if (!id) throw new Error('SharePoint itemId saknas.');
@@ -118,7 +120,8 @@ async function getSharePointDriveItemContentArrayBuffer(siteId, itemId) {
 }
 
 export async function getSharePointDriveItemDownloadUrl(siteId, itemId) {
-  const sid = safeText(siteId);
+  let sid = safeText(siteId);
+  if (sid) sid = normalizeSiteIdForGraph(sid);
   const id = safeText(itemId);
   if (!sid) throw new Error('SharePoint siteId saknas.');
   if (!id) throw new Error('SharePoint itemId saknas.');

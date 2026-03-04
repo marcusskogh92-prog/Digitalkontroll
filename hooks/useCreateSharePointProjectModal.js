@@ -18,6 +18,7 @@ import { Alert, Platform } from 'react-native';
 
 import { ensureDefaultProjectOrganisationGroup, fetchCompanyProfile, fetchCompanyProject, fetchCompanySharePointSiteMetas, getCompanySharePointSiteIdByRole, formatSharePointProjectFolderName, hasDuplicateProjectNumber, saveSharePointProjectMetadata, syncSharePointSiteVisibilityRemote, updateSharePointProjectPropertiesFromFirestoreProject, upsertCompanyProject } from '../components/firebase';
 import { seedProjectChecklistFromTemplate } from '../features/checklist/checklistService';
+import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 
 export function useCreateSharePointProjectModal({ companyId }) {
   const [visible, setVisible] = useState(false);
@@ -70,19 +71,23 @@ export function useCreateSharePointProjectModal({ companyId }) {
           return /dk\s*bas/i.test(name);
         };
 
+        const normalizedSystemId = systemId ? normalizeSiteIdForGraph(systemId) : null;
         const sites = (metas || [])
           .filter((m) => m && canShowInProjectPicker(m))
           .filter((m) => {
             const id = String(m.siteId || m.id || '').trim();
-            return id && id !== systemId;
+            return id && normalizeSiteIdForGraph(id) !== normalizedSystemId;
           })
           .filter((m) => !isDkBas(m))
-          .map((m) => ({
-            id: String(m.siteId || m.id || '').trim(),
-            name: String(m.siteName || m.siteUrl || m.webUrl || 'SharePoint-site'),
-            type: 'meta',
-            webUrl: m.siteUrl || m.webUrl || null,
-          }))
+          .map((m) => {
+            const rawId = String(m.siteId || m.id || '').trim();
+            return {
+              id: normalizeSiteIdForGraph(rawId),
+              name: String(m.siteName || m.siteUrl || m.webUrl || 'SharePoint-site'),
+              type: 'meta',
+              webUrl: m.siteUrl || m.webUrl || null,
+            };
+          })
           .filter((s) => !!s.id);
 
         sites.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { sensitivity: 'base' }));

@@ -89,53 +89,45 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: D.overlayBg,
+    ...(Platform.OS === 'web' ? { backdropFilter: `blur(${D.overlayBlur}px)` } : {}),
   },
   box: {
     width: Platform.OS === 'web' ? '90vw' : '90%',
     maxWidth: 1200,
     height: Platform.OS === 'web' ? '85vh' : '85%',
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: D.radius,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.22)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 16,
     flexDirection: 'column',
+    ...(Platform.OS === 'web' ? { boxShadow: D.shadow } : { borderWidth: 1, borderColor: 'rgba(15, 23, 42, 0.12)', ...D.shadowNative }),
   },
   header: {
     flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    backgroundColor: ICON_RAIL.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingVertical: D.headerNeutralCompact.paddingVertical,
+    paddingHorizontal: D.headerNeutralCompact.paddingHorizontal,
+    minHeight: D.headerNeutralCompact.minHeight,
+    maxHeight: D.headerNeutralCompact.maxHeight,
+    backgroundColor: D.headerNeutral.backgroundColor,
+    borderBottomWidth: D.headerNeutral.borderBottomWidth,
+    borderBottomColor: D.headerNeutral.borderBottomColor,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 },
   titleIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: ICON_RAIL.activeBgRadius,
-    backgroundColor: ICON_RAIL.activeBg,
+    width: D.headerNeutralCompactIconSize,
+    height: D.headerNeutralCompactIconSize,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: { fontSize: 14, fontWeight: '600', color: ICON_RAIL.iconColorActive },
-  titleDot: { fontSize: 11, color: ICON_RAIL.iconColor, marginHorizontal: 5, opacity: 0.8 },
-  subtitle: { fontSize: 12, color: ICON_RAIL.iconColor, fontWeight: '400', opacity: 0.95 },
-  closeBtn: { padding: 5 },
+  title: { fontSize: D.headerNeutralCompactTitleFontSize, fontWeight: D.headerNeutralCompactTitleFontWeight, lineHeight: D.headerNeutralCompactTitleLineHeight, color: D.headerNeutralTextColor },
+  titleDot: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginHorizontal: 4, opacity: 0.9 },
+  subtitle: { fontSize: D.headerNeutralCompactTitleFontSize, color: D.headerNeutralTextColor, fontWeight: '400', opacity: 0.9 },
+  closeBtn: { padding: 4, borderRadius: D.closeBtn.borderRadius, backgroundColor: 'transparent', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) },
   statusRow: {
     flexShrink: 0,
     flexDirection: 'row',
@@ -182,7 +174,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, minHeight: 0 },
   scrollContent: { padding: 20, paddingBottom: 24 },
   section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 12 },
+  sectionTitle: { fontSize: 12, fontWeight: '500', color: '#334155', marginBottom: 10 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -449,35 +441,42 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: D.footer.paddingHorizontal,
+    borderTopWidth: D.footer.borderTopWidth,
+    borderTopColor: D.footer.borderTopColor,
+    backgroundColor: D.footer.backgroundColor,
   },
   footerBtn: {
-    paddingVertical: D.buttonPaddingVertical,
-    paddingHorizontal: D.buttonPaddingHorizontal,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
     borderRadius: D.buttonRadius,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#fff',
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
+  footerBtnText: { fontSize: 12, fontWeight: '500', color: '#b91c1c' },
   footerBtnPrimary: {
-    backgroundColor: ICON_RAIL.bg,
-    borderColor: ICON_RAIL.bg,
-    marginLeft: 8,
-    borderRadius: ICON_RAIL.activeBgRadius,
-    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: `background-color ${ICON_RAIL.hoverTransitionMs}ms ease, opacity ${ICON_RAIL.hoverTransitionMs}ms ease` } : {}),
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: D.buttonRadius,
+    backgroundColor: D.buttonPrimaryBg,
+    minWidth: 96,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
+  footerBtnPrimaryText: { fontSize: 12, fontWeight: '500', color: D.buttonPrimaryColor },
   footerBtnDark: {
-    backgroundColor: ICON_RAIL.bg,
-    borderColor: ICON_RAIL.bg,
-    borderRadius: ICON_RAIL.activeBgRadius,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: D.buttonRadius,
+    backgroundColor: D.buttonPrimaryBg,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   footerBtnPrimaryDisabled: {
-    opacity: 0.5,
+    opacity: 0.6,
     ...(Platform.OS === 'web' ? { cursor: 'not-allowed' } : {}),
   },
   saving: { opacity: 0.7 },
@@ -683,7 +682,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       setProfile(p || null);
       const raw = p?.enabledPhases;
       const phaseKeys = [...MODULE_PHASES.map((m) => m.key), 'ai-analys'];
-      if (Array.isArray(raw) && raw.length > 0) {
+      if (Array.isArray(raw)) {
         setEnabledPhases(raw.filter((k) => phaseKeys.includes(k)));
       } else {
         setEnabledPhases(phaseKeys);
@@ -718,7 +717,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       const resolvedLogo = resolved || p?.logoUrl || '';
       setLogoUrl(resolvedLogo);
 
-      const phases = Array.isArray(raw) && raw.length > 0
+      const phases = Array.isArray(raw)
         ? raw.filter((k) => [...MODULE_PHASES.map((m) => m.key), 'ai-analys'].includes(k))
         : [...MODULE_PHASES.map((m) => m.key), 'ai-analys'];
       const savedTotal = hasRoleLimits ? (p.adminLimit || 0) + (p.workerLimit || 0) : (p && p.userLimit != null ? p.userLimit : 10);
@@ -786,6 +785,32 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
     );
   }, []);
+
+  const handleModuleToggle = useCallback((key) => {
+    const mod = ALL_MODULES.find((m) => m.key === key);
+    const name = mod?.name || key;
+    const active = enabledPhases.includes(key);
+    if (Platform.OS === 'web') {
+      const message = active
+        ? `Inaktivera ${name} för detta företag? Modulen döljs i rail och funktioner blir otillgängliga.`
+        : `Aktivera ${name} för detta företag?`;
+      if (window.confirm(message)) toggleModule(key);
+      return;
+    }
+    if (active) {
+      Alert.alert(
+        'Inaktivera modul',
+        `Inaktivera ${name} för detta företag? Modulen döljs i rail och funktioner blir otillgängliga.`,
+        [{ text: 'Avbryt', style: 'cancel' }, { text: 'Inaktivera', onPress: () => toggleModule(key) }]
+      );
+    } else {
+      Alert.alert(
+        'Aktivera modul',
+        `Aktivera ${name} för detta företag?`,
+        [{ text: 'Avbryt', style: 'cancel' }, { text: 'Aktivera', onPress: () => toggleModule(key) }]
+      );
+    }
+  }, [enabledPhases, toggleModule]);
 
   const handleSave = useCallback(async () => {
     if (!cid) return;
@@ -885,10 +910,17 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     const file = e?.target?.files?.[0];
     if (!file || !cid) return;
     try {
-      const url = await uploadCompanyLogo({ companyId: cid, file });
+      const result = await uploadCompanyLogo({ companyId: cid, file });
+      const url = result && typeof result === 'object' && result.url != null ? result.url : (typeof result === 'string' ? result : '');
+      const path = result && typeof result === 'object' ? result.path : null;
       setLogoUrl(url || '');
       const p = await fetchCompanyProfile(cid);
-      const next = { ...(p || {}), logoUrl: url || (p?.logoUrl), updatedAt: new Date().toISOString() };
+      const next = {
+        ...(p || {}),
+        logoUrl: url || (p?.logoUrl),
+        ...(path != null ? { logoPath: path } : {}),
+        updatedAt: new Date().toISOString(),
+      };
       await saveCompanyProfile(cid, next);
       setProfile(next);
     } catch (err) {
@@ -909,6 +941,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
   }, [cid, openKontoplanModal, openByggdelModal, openKategoriModal, openMallarModal]);
 
   const companyName = (profile && (profile.companyName || profile.name)) || cid || 'Företag';
+  const showEmptyState = visible && !cid;
   const statusText = profile?.deleted ? 'Dolt' : companyEnabled ? 'Aktivt' : 'Inaktivt';
   const adminLimitNum = parseInt(String(adminLimitDraft || '0').trim(), 10);
   const workerLimitNum = parseInt(String(workerLimitDraft || '0').trim(), 10);
@@ -939,11 +972,17 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
           >
             <View style={styles.headerLeft}>
               <View style={styles.titleIcon}>
-                <Ionicons name="business-outline" size={16} color={ICON_RAIL.iconColorActive} />
+                <Ionicons name="business-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />
               </View>
-              <Text style={styles.title} numberOfLines={1}>{companyName}</Text>
-              <Text style={styles.titleDot}>•</Text>
-              <Text style={styles.subtitle} numberOfLines={1}>Företagsinställningar</Text>
+              {showEmptyState ? (
+                <Text style={styles.title} numberOfLines={1}>Företagsinställningar</Text>
+              ) : (
+                <>
+                  <Text style={styles.title} numberOfLines={1}>{companyName}</Text>
+                  <Text style={styles.titleDot}>•</Text>
+                  <Text style={styles.subtitle} numberOfLines={1}>Företagsinställningar</Text>
+                </>
+              )}
             </View>
             <TouchableOpacity
               style={styles.closeBtn}
@@ -951,11 +990,15 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
               accessibilityLabel="Stäng"
               {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}
             >
-              <Ionicons name="close" size={20} color={ICON_RAIL.iconColorActive} />
+              <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx} color={D.headerNeutralCloseIconColor} />
             </TouchableOpacity>
           </View>
 
-          {loading ? (
+          {showEmptyState ? (
+            <View style={{ flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, color: '#64748B', textAlign: 'center' }}>Välj ett företag i listan till vänster.</Text>
+            </View>
+          ) : loading ? (
             <LoadingState message="Laddar…" size="large" />
           ) : (
             <>
@@ -1081,7 +1124,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                               if (isComingSoon) {
                                 Alert.alert('Kommer snart', 'Denna modul är under utveckling.');
                               } else {
-                                toggleModule(mod.key);
+                                handleModuleToggle(mod.key);
                               }
                             }}
                             activeOpacity={0.8}
@@ -1103,7 +1146,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                                   {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : {})}
                                   onStartShouldSetResponder={() => true}
                                 >
-                                  <Switch value={active} onValueChange={() => toggleModule(mod.key)} trackColor={{ false: '#cbd5e1', true: '#86efac' }} thumbColor="#fff" />
+                                  <Switch value={active} onValueChange={() => handleModuleToggle(mod.key)} trackColor={{ false: '#cbd5e1', true: '#86efac' }} thumbColor="#fff" />
                                 </View>
                               </View>
                             )}
@@ -1451,18 +1494,17 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
 
               <View style={[styles.footer, saving && styles.saving]}>
                 <TouchableOpacity style={styles.footerBtn} onPress={onClose}>
-                  <Text style={styles.infoValue}>Stäng</Text>
+                  <Text style={styles.footerBtnText}>Stäng</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
-                    styles.footerBtn,
                     styles.footerBtnPrimary,
                     (!isDirty || saving) && styles.footerBtnPrimaryDisabled,
                   ]}
                   onPress={handleSave}
                   disabled={!isDirty || saving}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                  <Text style={styles.footerBtnPrimaryText}>
                     {saving ? 'Sparar…' : 'Spara ändringar'}
                   </Text>
                 </TouchableOpacity>
@@ -1484,7 +1526,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                 </View>
               )}
             </>
-          )}
+          ) }
           {resizeHandles}
         </Pressable>
       </View>

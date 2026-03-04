@@ -117,7 +117,7 @@ export default function HeaderAdminMenu() {
           setMenuVisible(false);
           if (!it) return;
           const cid = String(await AsyncStorage.getItem('dk_companyId') || '').trim();
-          if (it.key === 'manage_company') return navigation.navigate('ManageCompany');
+          if (it.key === 'manage_company') return openCompanyModal?.(cid);
           if (it.key === 'manage_users') {
             if (openCompanyModal && cid) return openCompanyModal(cid, 'anvandare');
             return navigation.navigate('ManageUsers', { companyId: cid });

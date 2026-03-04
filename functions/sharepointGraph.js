@@ -29,18 +29,53 @@ async function graphGetSiteByUrl({ hostname, siteSlug, accessToken }) {
   return { siteId: data.id, webUrl: data.webUrl };
 }
 
+/** Sanitize display name for Graph (avoids "One of the provided arguments is not acceptable"). */
+function sanitizeSiteDisplayName(name) {
+  return String(name || '')
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 256) || 'Digitalkontroll site';
+}
+
+/** Sätt visningsnamn på en site efter skapande (så att den inte visas som "Team Site" i 365-admin). */
+async function graphPatchSiteDisplayName(siteId, displayName, accessToken) {
+  const sid = String(siteId || '').trim();
+  const name = sanitizeSiteDisplayName(displayName);
+  if (!sid || !name) return;
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0/sites/${sid}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.warn('[graphPatchSiteDisplayName] PATCH failed (non-fatal):', res.status, txt.substring(0, 200));
+    }
+  } catch (e) {
+    console.warn('[graphPatchSiteDisplayName]', e?.message || e);
+  }
+}
+
 async function graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
   const host = String(hostname || '').trim().toLowerCase();
   const slug = String(siteSlug || '').trim();
+  if (!slug) throw new Error('siteSlug is required');
   const webUrl = `https://${host}/sites/${slug}`;
+  const owner = String(ownerEmail || '').trim();
+  if (!owner) throw new Error('ownerEmail is required for site creation');
   const payload = {
-    name: String(displayName || '').trim() || slug,
+    name: sanitizeSiteDisplayName(displayName) || slug,
     webUrl,
-    description: String(description || '').trim() || 'Digitalkontroll site',
+    description: String(description || '').trim().substring(0, 512) || 'Digitalkontroll site',
     template: 'sts',
     locale: 'en-US',
     shareByEmailEnabled: false,
-    ownerIdentityToResolve: { email: String(ownerEmail || '').trim() },
+    ownerIdentityToResolve: { email: owner },
   };
 
   const res = await fetch('https://graph.microsoft.com/beta/sites', {
@@ -69,11 +104,15 @@ async function graphCreateTeamSite({ hostname, siteSlug, displayName, descriptio
             const getRes = await fetch(getUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
             if (getRes.ok) {
               const siteData = await getRes.json();
+              await graphPatchSiteDisplayName(siteData.id, displayName, accessToken);
               return { siteId: siteData.id, webUrl: siteData.webUrl };
             }
           }
           const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
-          if (byPath) return byPath;
+          if (byPath) {
+            await graphPatchSiteDisplayName(byPath.siteId, displayName, accessToken);
+            return byPath;
+          }
         }
         if (statusJson?.status === 'failed') {
           const errMsg = statusJson?.error?.message || 'Site creation failed';
@@ -82,7 +121,10 @@ async function graphCreateTeamSite({ hostname, siteSlug, displayName, descriptio
       }
     }
     const byPath = await graphGetSiteByUrl({ hostname: host, siteSlug: slug, accessToken });
-    if (byPath) return byPath;
+    if (byPath) {
+      await graphPatchSiteDisplayName(byPath.siteId, displayName, accessToken);
+      return byPath;
+    }
     throw new Error('Site skapades inte inom avvänt tid (202).');
   }
 
@@ -99,10 +141,14 @@ async function graphCreateTeamSite({ hostname, siteSlug, displayName, descriptio
     if (res.status === 400) {
       throw new Error(`Graph avvisade skapandet (400): ${graphMsg}`);
     }
-    throw new Error(`Graph createSite failed: ${res.status} - ${txt}`);
+    if (res.status === 429) {
+      throw new Error(`Graph throttling (429): ${graphMsg}`);
+    }
+    throw new Error(`Graph createSite failed: ${res.status} - ${graphMsg}`);
   }
 
   const data = await res.json();
+  await graphPatchSiteDisplayName(data.id, displayName, accessToken);
   return { siteId: data.id, webUrl: data.webUrl };
 }
 

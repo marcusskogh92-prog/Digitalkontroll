@@ -188,3 +188,50 @@ firebase deploy --only functions:createSharePointSite,functions:provisionCompany
 4. Spara och vänta tills funktionen är omdeployad.
 
 **Värden som används i koden:** `sharedConfig.js` läser hostname från `SHAREPOINT_SITE_URL` eller `sharepoint.site_url`; token från `SHAREPOINT_PROVISION_ACCESS_TOKEN` eller `sharepoint.provision_access_token`. URL behöver bara peka på er tenant (t.ex. vilken site som helst under `*.sharepoint.com`); hostname blir `msbyggsystem.sharepoint.com`.
+
+---
+
+## SharePoint-token: samma konfiguration för skapande och radering
+
+När du **skapar företag** (provisionCompany) och när du **raderar företag** (purgeCompany) används **samma token**. Koden anropar `getSharePointGraphAccessToken()` i `sharedConfig.js`, som fungerar på ett av två sätt:
+
+### Sätt 1: Statisk token (en lång sträng)
+
+Du sätter **en** access token. Den används direkt, men går ut efter typ 1 timme.
+
+- **Firebase config:**  
+  `sharepoint.provision_access_token`  
+  eller  
+  `sharepoint.provisionAccessToken` / `sharepoint.access_token` / `sharepoint.accessToken`
+- **Miljövariabler:**  
+  `SHAREPOINT_PROVISION_ACCESS_TOKEN` eller `SHAREPOINT_GRAPH_ACCESS_TOKEN`
+
+Exempel (ersätt med er token):
+
+```bash
+firebase functions:config:set sharepoint.provision_access_token="eyJ0eXAiOiJKV1..."
+```
+
+### Sätt 2: Client credentials (Azure-app – rekommenderat)
+
+Ingen token sträng – koden **hämtar själv en token** från Microsoft med er Azure-app (tenant + client id + client secret). Gäller längre och behöver inte förnyas manuellt.
+
+Koden läser (i denna ordning):
+
+| Vad        | Firebase config              | Miljövariabler              |
+|-----------|------------------------------|-----------------------------|
+| Tenant ID | `sharepoint.tenant_id`        | `SHAREPOINT_TENANT_ID` / `AZURE_TENANT_ID` |
+| Client ID | `sharepoint.client_id`       | `SHAREPOINT_CLIENT_ID` / `AZURE_CLIENT_ID` |
+| Secret    | `sharepoint.client_secret`   | `SHAREPOINT_CLIENT_SECRET` / `AZURE_CLIENT_SECRET` |
+
+Exempel (ersätt med era värden från Azure Portal → App-registrering → Översikt / Certifikat och hemligheter):
+
+```bash
+firebase functions:config:set sharepoint.tenant_id="7cc624b0-5031-459a-b8a9-aa23a72cffdb"
+firebase functions:config:set sharepoint.client_id="6c4578e5-3d26-47c1-a5c1-9d4ddf847df8"
+firebase functions:config:set sharepoint.client_secret="DITT_VERKLIGA_SECRET_FRÅN_AZURE"
+```
+
+**Logik i koden:** Om **någon** statisk token är satt används den. Annars används client credentials (tenant_id + client_id + client_secret). Om både token och credentials saknas får du inget token – då skapas inga siter vid etablering och inga siter raderas vid purge (Firebase rensas ändå).
+
+**För att se vad som är satt** (utan att visa hemliga värden) kan du i Firebase/Cloud Console titta på functions config eller miljövariabler. I koden används alltid `getSharePointGraphAccessToken()` – den returnerar antingen den statiska token eller en ny token från `mintSharePointGraphAccessTokenClientCredentials()`.

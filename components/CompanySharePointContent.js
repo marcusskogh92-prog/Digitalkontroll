@@ -10,7 +10,9 @@ import {
     Alert,
     Animated,
     Linking,
+    Modal,
     Platform,
+    Pressable,
     ScrollView,
     Text,
     TextInput,
@@ -50,6 +52,9 @@ export default function CompanySharePointContent({ companyId, companyName }) {
   const [projectSiteId, setProjectSiteId] = useState('');
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [creatingSiteName, setCreatingSiteName] = useState('');
+  const [showCreateSiteModal, setShowCreateSiteModal] = useState(false);
+  const [newSiteNameDraft, setNewSiteNameDraft] = useState('');
   const [refreshSpin, setRefreshSpin] = useState(0);
   const [kebabSiteId, setKebabSiteId] = useState(null);
   const [kebabPosition, setKebabPosition] = useState({ x: 0, y: 0 });
@@ -199,20 +204,35 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     }
   };
 
-  const handleCreateSite = useCallback(async () => {
-    if (!cid || Platform.OS !== 'web') {
-      if (Platform.OS !== 'web') Alert.alert('Info', 'Skapande av siter stöds i webbläget.');
+  const handleOpenCreateSiteModal = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      Alert.alert('Info', 'Skapande av siter stöds i webbläget.');
       return;
     }
-    const namePart = String((typeof window !== 'undefined' && window.prompt('Namn på ny site', '')) || '').trim();
-    if (!namePart) return;
+    setNewSiteNameDraft('');
+    setShowCreateSiteModal(true);
+  }, []);
+
+  const handleCreateSiteSubmit = useCallback(async () => {
+    if (!cid) return;
+    const namePart = String(newSiteNameDraft || '').trim();
+    if (!namePart) {
+      if (Platform.OS === 'web' && window.alert) window.alert('Ange ett namn på siten.');
+      return;
+    }
+    setShowCreateSiteModal(false);
+    setCreatingSiteName(namePart);
     setCreating(true);
     try {
       const { functionsClient } = await import('./firebase');
       const { httpsCallable } = await import('firebase/functions');
       if (!functionsClient) throw new Error('Functions inte tillgänglig');
-      const createSharePointSite = httpsCallable(functionsClient, 'createSharePointSite');
-      const result = await createSharePointSite({ companyId: cid, siteName: namePart });
+      const createSharePointSite = httpsCallable(functionsClient, 'createSharePointSite', { timeout: 200000 });
+      const result = await createSharePointSite({
+        companyId: cid,
+        siteNamePart: namePart,
+        companyName: companyName || cid,
+      });
       const data = result?.data || {};
       const siteId = data?.siteId || data?.id;
       const siteUrl = data?.webUrl || data?.siteUrl;
@@ -226,19 +246,35 @@ export default function CompanySharePointContent({ companyId, companyName }) {
         });
         try { await syncSharePointSiteVisibilityRemote({ companyId: cid }); } catch (_e) {}
         await reload(true);
-        if (typeof window !== 'undefined' && window.alert) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
           window.alert(siteUrl ? `Site skapad.\n\nURL: ${siteUrl}` : 'Site skapad.');
+        } else {
+          Alert.alert('Site skapad', siteUrl ? `URL: ${siteUrl}` : 'Siten är skapad och kopplad till företaget.');
         }
       }
     } catch (e) {
       console.error('[CompanySharePointContent] createSharePointSite failed:', e);
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert('Kunde inte skapa site: ' + (e?.message || String(e)));
+      const msg = e?.message || String(e);
+      const code = e?.code || '';
+      const isTimeoutOrInternal = code === 'internal' || code === 'deadline-exceeded' || /internal|deadline|timeout/i.test(String(msg));
+      const userMsg = isTimeoutOrInternal
+        ? 'Skapandet tog för lång tid (SharePoint kan vara långsam). Siten kan ändå ha skapats – kontrollera i SharePoint eller under denna lista om några minuter. Försök gärna igen om den saknas.'
+        : 'Kunde inte skapa site: ' + msg;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
+        window.alert(userMsg);
+      } else {
+        Alert.alert(isTimeoutOrInternal ? 'Kan ha lyckats' : 'Kunde inte skapa site', userMsg);
       }
     } finally {
       setCreating(false);
+      setCreatingSiteName('');
     }
-  }, [cid, reload]);
+  }, [cid, companyName, newSiteNameDraft, reload]);
+
+  const handleCreateSite = useCallback(() => {
+    if (!cid) return;
+    handleOpenCreateSiteModal();
+  }, [cid, handleOpenCreateSiteModal]);
 
   const handleDeleteSite = useCallback(async (siteId, siteName) => {
     if (!cid || !siteId) return;
@@ -339,6 +375,44 @@ export default function CompanySharePointContent({ companyId, companyName }) {
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
+      {/* Modal: Ange namn på ny site – håller kvar i appen så att Företagsinställningar inte stängs */}
+      <Modal visible={showCreateSiteModal} transparent animationType="fade">
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setShowCreateSiteModal(false)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#1e293b', marginBottom: 16 }}>Ny SharePoint-site</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>Namn på siten (t.ex. "Projekt" eller "Site 2"). Siten får visningsnamn: {companyName || cid} – [namn].</Text>
+            <TextInput
+              style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: '#1e293b', marginBottom: 20 }}
+              placeholder="t.ex. Projekt"
+              placeholderTextColor="#94a3b8"
+              value={newSiteNameDraft}
+              onChangeText={setNewSiteNameDraft}
+              editable={!creating}
+              autoFocus
+              onSubmitEditing={handleCreateSiteSubmit}
+              returnKeyType="done"
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+              <TouchableOpacity onPress={() => setShowCreateSiteModal(false)} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#f1f5f9' }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>Avbryt</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleCreateSiteSubmit} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#1e293b' }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Skapa site</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Laddningsöverlägg när site skapas – tydlig feedback så att modalen inte kännas "stängd" */}
+      {creating ? (
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 10, borderRadius: 12 }}>
+          <ActivityIndicator size="large" color="#1e293b" />
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', marginTop: 12 }}>Skapar site – {creatingSiteName || '…'}</Text>
+          <Text style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>Det kan ta en halv minut. Stäng inte modalen.</Text>
+        </View>
+      ) : null}
+
       <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
         Siter som företaget har tillgång till. DK Bas och DK Site är låsta och kan inte tas bort.
       </Text>
@@ -378,8 +452,8 @@ export default function CompanySharePointContent({ companyId, companyName }) {
               ...(Platform.OS === 'web' ? { cursor: (creating || loading) ? 'not-allowed' : 'pointer' } : {}),
             }}
           >
-            <Ionicons name="add" size={18} color="#fff" />
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Ny site</Text>
+            {creating ? <ActivityIndicator size="small" color="#64748b" /> : <Ionicons name="add" size={18} color="#fff" />}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: (creating || loading) ? '#64748b' : '#fff' }}>{creating ? 'Skapar…' : 'Ny site'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setRefreshSpin((n) => n + 1); reload(false); }}

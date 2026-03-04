@@ -1,29 +1,20 @@
-# Modal-standard (SaaS 2026 B2B)
+# Modal-standard (en golden rule)
 
-**Full spec och golden rule:** `docs/MODAL_GOLDEN_RULE.md` – alla nya modaler ska följa den från och med nu.
+**Alla modaler följer en och samma standard.** Full spec: **docs/MODAL_GOLDEN_RULE.md**.
 
-Alla modaler använder **MODAL_DESIGN_2026** och **ModalBase**.
-
----
-
-## Referens
-
-- **Komponent:** `components/common/ModalBase.js`
-- **Tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026)
-- **Referensmodal:** `components/common/AdminContactRegistryModal.js` (Kontaktregister + Redigera kontakt)
-- **Hook för drag/resize:** `hooks/useDraggableResizableModal.js`
+**Referensmodal:** `components/common/AdminCreateCompanyModal.js` (Skapa nytt företag)  
+**Tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026)  
+**Hook:** `hooks/useDraggableResizableModal.js`
 
 ---
 
-## Snabböversikt
+## Kort översikt
 
-- **Modal:** radius 8px, shadow `0 10px 30px rgba(0,0,0,0.08)`, overlay `rgba(0,0,0,0.35)` + max 4px blur.
-- **Header (standard för nya modaler):** Neutral – mörk `#1E2A38`, vit text, ikon + titel (+ undertitel med "—"). Stäng (X) vit, diskret hover.
-- **Stäng-knapp i footer:** Dimmad blå – bakgrund `#475569`, vit text.
-- **Formulärmodaler:** Avbryt = dimmad röd (#fef2f2, #fecaca, #b91c1c). Spara = dimmad blå (#475569, vit text). Dirty-prompt vid stängning; ESC/Enter som stäng respektive spara.
-- **Innehåll:** Padding 24px; sektioner 16px mellanrum. Tabeller: radius 0, radhöjd 24px, cell 4px 12px. Inline-fält i tabell: kantiga (borderRadius 0).
-- **Checkbox (t.ex. Lägg till snabbt):** Av = tom ruta (square-outline, #94a3b8). På = checkbox, #0ea5e9.
-- **Tangentbord:** Esc = stäng (vid dirty, fråga först). Enter = spara i formulärmodaler när möjligt.
-- **Drag/resize (webb):** Header för flytt, hooken för resize-handtag.
+- **Modal:** radius 8px, shadow `0 10px 30px rgba(0,0,0,0.08)`, overlay `rgba(0,0,0,0.35)` + blur 4px.
+- **Banner:** Mörk `#1E2A38`, vit text. Standard kompakt: 28px höjd, titel 12px normal (400).
+- **Avbryt:** Dimmad röd (#fef2f2, #fecaca, #b91c1c).
+- **Spara/Skapa/Primär:** **Bannerns färg, dimmad (#2D3A4B)**, vit text – **inte ljusblå**.
+- **Innehåll:** Padding 20px; sektionstitel/etiketter 12px; input 13px, padding 8/10.
+- **Drag/resize (webb):** Dra i bannern. Resize: Windows-liknande – osynliga zoner (8px) vid kanter/hörn, cursor + subtil 1px kant vid hover (inga synliga handtag). `useDraggableResizableModal`.
 
-Implementationssteg och alla detaljer står i **MODAL_GOLDEN_RULE.md**.
+Detaljer och alla värden står i **MODAL_GOLDEN_RULE.md**.

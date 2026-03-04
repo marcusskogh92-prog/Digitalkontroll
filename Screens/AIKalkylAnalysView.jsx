@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConfirmModal } from '../components/common/Modals';
-import { functionsClient, subscribeLatestProjectKalkylAnalysis } from '../components/firebase';
+import { functionsClient, setKalkylAnalysisCancelRequested, subscribeLatestProjectKalkylAnalysis } from '../components/firebase';
 
 function safeText(v) {
   if (v === null || v === undefined) return '';
@@ -63,6 +63,7 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
 
   const [runError, setRunError] = useState('');
   const [analysisTriggered, setAnalysisTriggered] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState(false);
 
   const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
   const subKeyRef = useRef('');
@@ -71,6 +72,10 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
 
   const effectiveStatus = safeText(analysisDoc?.status);
   const isAnalyzing = effectiveStatus === 'analyzing' || analysisTriggered;
+  const docCancelRequested = analysisDoc?.cancelRequested === true;
+  const cancelRequestedOrDoc = cancelRequested || docCancelRequested;
+  const progress = analysisDoc?.progress != null && Number.isFinite(Number(analysisDoc.progress)) ? Math.max(0, Math.min(100, Number(analysisDoc.progress))) : null;
+  const progressStep = safeText(analysisDoc?.progressStep);
   const meta = analysisDoc?.meta && typeof analysisDoc.meta === 'object' ? analysisDoc.meta : null;
   const analyzedAt = analysisDoc?.analyzedAt || null;
   const model = safeText(analysisDoc?.model);
@@ -90,23 +95,31 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
     }
   }, [analyzedAt]);
 
-  const statusLabel = isAnalyzing
-    ? 'Analyseras'
-    : effectiveStatus === 'error'
-      ? 'Misslyckad'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
-        ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
-        : 'Ej analyserad';
+  const statusLabel = cancelRequestedOrDoc
+    ? 'Avbruten'
+    : isAnalyzing
+      ? 'Analyseras'
+      : effectiveStatus === 'cancelled'
+        ? 'Avbruten'
+        : effectiveStatus === 'error'
+          ? 'Misslyckad'
+          : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
+            ? (effectiveStatus === 'partial' ? 'Analyserad*' : 'Analyserad')
+            : 'Ej analyserad';
 
-  const statusTone = isAnalyzing
-    ? 'warning'
-    : effectiveStatus === 'error'
+  const statusTone = cancelRequestedOrDoc || effectiveStatus === 'cancelled'
+    ? 'neutral'
+    : isAnalyzing
       ? 'warning'
-      : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
-        ? 'success'
-        : 'neutral';
+      : effectiveStatus === 'error'
+        ? 'warning'
+        : (effectiveStatus === 'success' || effectiveStatus === 'partial' || hasSavedAnalysis)
+          ? 'success'
+          : 'neutral';
 
-  const canRun = Boolean(cid && pid && !isAnalyzing && !snapshotLoading && !rerunConfirm?.busy);
+  const showAnalyzingBlock = isAnalyzing && !cancelRequestedOrDoc;
+
+  const canRun = Boolean(cid && pid && !snapshotLoading && !rerunConfirm?.busy && (!isAnalyzing || cancelRequestedOrDoc));
 
   useEffect(() => {
     if (!cid || !pid) {
@@ -127,6 +140,8 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
         setAnalysisDoc(exists ? (data || {}) : null);
         setSnapshotLoading(false);
         setAnalysisTriggered((prev) => (prev ? false : prev));
+        const status = (data && typeof data === 'object' ? String(data.status || '').trim() : '');
+        if (status === 'cancelled' || (status !== '' && status !== 'analyzing')) setCancelRequested(false);
       },
       onError: (err) => {
         if (subKeyRef.current !== subKey) return;
@@ -177,6 +192,13 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
     setRerunConfirm({ visible: false, busy: false, error: '' });
     runAnalysisAndPersist().catch(() => {});
   }, [canRun, runAnalysisAndPersist]);
+
+  const onCancelAnalysis = useCallback(() => {
+    if (!cid || !pid) return;
+    setCancelRequested(true);
+    setAnalysisTriggered(false);
+    setKalkylAnalysisCancelRequested(cid, pid).catch(() => {});
+  }, [cid, pid]);
 
   const summary = safeText(analysisDoc?.summary);
   const gaps = Array.isArray(analysisDoc?.gaps) ? analysisDoc.gaps : [];
@@ -229,21 +251,51 @@ export default function AIKalkylAnalysView({ projectId, companyId, project }) {
                 <Text style={styles.hintText}>Laddar sparad analys…</Text>
               </View>
             ) : null}
-            {isAnalyzing ? (
-              <View style={{ flexDirection: 'column', gap: 4 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {showAnalyzingBlock ? (
+              <View style={styles.analyzingBlock}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                   <ActivityIndicator size="small" color="#64748b" />
-                  <Text style={styles.hintText}>AI analyserar kalkylen i bakgrunden…</Text>
+                  <Text style={styles.hintText}>
+                    {progress != null ? `${progress}% – ${progressStep || 'Analyserar…'}` : 'AI analyserar kalkylen i bakgrunden…'}
+                  </Text>
                 </View>
+                {progress != null ? (
+                  <View style={styles.progressBarTrack}>
+                    <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+                  </View>
+                ) : (
+                  <Text style={[styles.hintText, { marginLeft: 0, fontStyle: 'italic' }]}>
+                    Procent visas när servern svarar. Saknas det – kör om: firebase deploy --only functions
+                  </Text>
+                )}
                 <Text style={[styles.hintText, { marginLeft: 0 }]}>Du kan byta sektion – analysen fortsätter.</Text>
+                <Pressable
+                  onPress={onCancelAnalysis}
+                  style={({ pressed }) => [styles.cancelButton, pressed ? { opacity: 0.8 } : null]}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.cancelButtonText}>Avbryt analys</Text>
+                </Pressable>
               </View>
+            ) : null}
+            {cancelRequestedOrDoc && (isAnalyzing || effectiveStatus === 'analyzing') ? (
+              <Text style={[styles.hintText, { marginLeft: 0, marginTop: 8 }]}>
+                Avbryt begärd. Analysen stoppar när backend hinner – du kan köra en ny analys nedan när du vill.
+              </Text>
             ) : null}
           </View>
 
-          {runError ? (
-            <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={4}>
-              {runError}
-            </Text>
+          {(runError || (effectiveStatus === 'error' && safeText(analysisDoc?.errorMessage))) ? (
+            <View style={{ marginTop: 4 }}>
+              <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={6}>
+                {runError || safeText(analysisDoc?.errorMessage)}
+              </Text>
+              {(runError || analysisDoc?.errorMessage || '').toLowerCase().includes('sharepoint base path') ? (
+                <Text style={[styles.hintText, { color: '#64748b', marginTop: 4, fontStyle: 'italic' }]}>
+                  Kontrollera att projektet har en SharePoint-rotmapp kopplad (t.ex. under projektets inställningar eller etablering).
+                </Text>
+              ) : null}
+            </View>
           ) : null}
 
           {sectionsAnalyzed ? (
@@ -345,6 +397,11 @@ const styles = StyleSheet.create({
   primaryButtonDisabled: { backgroundColor: '#CBD5E1' },
   primaryButtonText: { color: '#fff', fontSize: 14, fontWeight: '500' },
   hintText: { marginLeft: 10, marginTop: 8, fontSize: 12, fontWeight: '400', color: '#64748b', lineHeight: 16 },
+  analyzingBlock: { flexDirection: 'column', gap: 8, marginTop: 4 },
+  progressBarTrack: { height: 6, backgroundColor: '#E2E8F0', borderRadius: 3, overflow: 'hidden', marginTop: 4 },
+  progressBarFill: { height: '100%', backgroundColor: '#1976D2', borderRadius: 3 },
+  cancelButton: { alignSelf: 'flex-start', marginTop: 6, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#F1F5F9', borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' },
+  cancelButtonText: { fontSize: 13, fontWeight: '500', color: '#64748b' },
   metaText: { marginTop: 10, fontSize: 12, fontWeight: '400', color: '#94a3b8' },
 
   grid: { gap: 12 },

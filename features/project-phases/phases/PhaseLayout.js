@@ -211,13 +211,15 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     const unsubFfu = subscribeLatestProjectFFUAnalysis(cid, pid, {
       onNext: (data) => {
         const status = data?.status;
-        setFfuAiAnalyzing(String(status || '').toLowerCase() === 'analyzing');
+        const cancelRequested = data?.cancelRequested === true;
+        setFfuAiAnalyzing(String(status || '').toLowerCase() === 'analyzing' && !cancelRequested);
       },
     });
     const unsubKalkyl = subscribeLatestProjectKalkylAnalysis(cid, pid, {
       onNext: (data) => {
         const status = data?.status;
-        setKalkylAiAnalyzing(String(status || '').toLowerCase() === 'analyzing');
+        const cancelRequested = data?.cancelRequested === true;
+        setKalkylAiAnalyzing(String(status || '').toLowerCase() === 'analyzing' && !cancelRequested);
       },
     });
     return () => {

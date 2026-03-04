@@ -5,6 +5,7 @@
  */
 
 import { getAccessToken } from './authService';
+import { normalizeSiteIdForGraph } from './graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -67,6 +68,7 @@ export async function getDriveItems(siteId, itemPath = '') {
   if (!siteId) {
     throw new Error('Site ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) {
@@ -192,14 +194,16 @@ export async function getDriveItems(siteId, itemPath = '') {
     
     // Log final endpoint for debugging (truncate siteId for readability)
     const logSiteId = siteId ? (siteId.length > 50 ? siteId.substring(0, 50) + '...' : siteId) : 'null';
-    console.log('[hierarchyService] getDriveItems', {
-      siteId: logSiteId,
-      itemPath: itemPath || '(empty)',
-      normalizedPath: normalizedPath || '(empty)',
-      isValidPath: isValidPath === true ? 'true' : 'false', // Ensure boolean is logged as string for clarity
-      isValidPathType: typeof isValidPath,
-      endpoint: endpoint.replace(siteId || '', 'SITE_ID')
-    });
+    // Last-second fix: if endpoint still has wrong siteId format (dots), normalize and rebuild (handles cache/bundling edge cases)
+    const siteIdInUrl = endpoint.match(/\/sites\/([^/]+)\//);
+    if (siteIdInUrl && siteIdInUrl[1]) {
+      const raw = siteIdInUrl[1];
+      const hasWrongFormat = raw.includes('.sharepoint.com.') || /[0-9a-f-]+\.[0-9a-f]{8}/i.test(raw);
+      if (hasWrongFormat) {
+        const fixedSiteId = normalizeSiteIdForGraph(raw);
+        endpoint = endpoint.replace(raw, fixedSiteId);
+      }
+    }
 
     const response = await fetch(endpoint, {
       method: 'GET',
@@ -896,6 +900,7 @@ export async function deleteItem(companyId, itemPath) {
  */
 export async function getDriveItemByPath(siteId, itemPath = '') {
   if (!siteId) throw new Error('Site ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
@@ -925,6 +930,7 @@ export async function renameDriveItemById(siteId, itemId, newName) {
   if (!itemId) throw new Error('Item ID is required');
   const name = String(newName || '').trim();
   if (!name) throw new Error('New name is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
@@ -950,6 +956,7 @@ export async function renameDriveItemById(siteId, itemId, newName) {
 export async function deleteDriveItemById(siteId, itemId) {
   if (!siteId) throw new Error('Site ID is required');
   if (!itemId) throw new Error('Item ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
@@ -975,6 +982,7 @@ export async function moveDriveItemById(siteId, itemId, newParentItemId) {
   if (newParentItemId === undefined || newParentItemId === null) {
     throw new Error('New parent item ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
@@ -1034,6 +1042,7 @@ export async function downloadDriveFileContent(siteId, itemPath) {
  */
 export async function getDriveItemPreviewUrl(siteId, itemId) {
   if (!siteId || !itemId) return null;
+  siteId = normalizeSiteIdForGraph(siteId);
   const accessToken = await getAccessToken();
   if (!accessToken) return null;
   const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${encodeURIComponent(itemId)}/preview`;
@@ -1061,6 +1070,7 @@ export async function moveDriveItemByPath(siteId, itemPath, newParentPath) {
 
 async function getSiteDriveId(siteId) {
   if (!siteId) throw new Error('Site ID is required');
+  siteId = normalizeSiteIdForGraph(siteId);
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 

@@ -19,7 +19,7 @@ import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from 'fire
 import { Alert, Platform } from 'react-native';
 import { formatOrganizationNumber } from '../utils/formatOrganizationNumber';
 import { buildKalkylskedeLockedStructure, KALKYLSKEDE_STRUCTURE_VERSIONS } from '../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition';
-import { uploadFile as uploadFileToAzure } from '../services/azure/fileService';
+import { getFileUrl as getFileUrlFromAzure, uploadFile as uploadFileToAzure } from '../services/azure/fileService';
 
 // Firebase-konfiguration för DigitalKontroll
 const firebaseConfig = {
@@ -34,6 +34,10 @@ const firebaseConfig = {
 
 // Initiera Firebase
 const app = initializeApp(firebaseConfig);
+// Viktigt: anrop till Cloud Functions går till detta projekt. Vid CORS/403/404 – kontrollera att det här är samma projekt som där du deployat functions och lagt till localhost i Authorized domains (se docs/ANALYS-FEL-ETABLERING-SHAREPOINT.md).
+if (typeof window !== 'undefined' && (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1') && typeof console !== 'undefined' && console.info) {
+  console.info('[Firebase] projectId =', app?.options?.projectId || firebaseConfig?.projectId, '→ Functions: us-central1-' + (app?.options?.projectId || firebaseConfig?.projectId) + '.cloudfunctions.net');
+}
 
 // Storage (for branding assets like company logos)
 export const storage = getStorage(app);
@@ -304,6 +308,18 @@ function getLatestFFUAnalysisDocRefs(companyId, projectId) {
   };
 }
 
+/** Begär avbrytande av pågående FFU AI-analys. Backend kollar detta mellan stegen. */
+export async function setFFUAnalysisCancelRequested(companyId, projectId) {
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid || !pid) return;
+  const { canonical, legacy } = getLatestFFUAnalysisDocRefs(cid, pid);
+  await setDoc(canonical, { cancelRequested: true }, { merge: true });
+  try {
+    await setDoc(legacy, { cancelRequested: true }, { merge: true });
+  } catch (_e) {}
+}
+
 export function subscribeLatestProjectFFUAnalysis(companyId, projectId, { onNext, onError } = {}) {
   const { canonical, legacy } = getLatestFFUAnalysisDocRefs(companyId, projectId);
 
@@ -367,6 +383,15 @@ function getLatestKalkylAnalysisDocRef(companyId, projectId) {
   if (!cid) throw new Error('Kalkyl analysis: companyId is required');
   if (!pid) throw new Error('Kalkyl analysis: projectId is required');
   return doc(db, 'companies', cid, 'projects', pid, 'ai_kalkyl_analysis', 'latest');
+}
+
+/** Begär avbrytande av pågående Kalkyl AI-analys. Backend kollar detta mellan stegen. */
+export async function setKalkylAnalysisCancelRequested(companyId, projectId) {
+  const cid = companyId != null ? String(companyId).trim() : '';
+  const pid = projectId != null ? String(projectId).trim() : '';
+  if (!cid || !pid) return;
+  const ref = getLatestKalkylAnalysisDocRef(cid, pid);
+  await setDoc(ref, { cancelRequested: true }, { merge: true });
 }
 
 export function subscribeLatestProjectKalkylAnalysis(companyId, projectId, { onNext, onError } = {}) {
@@ -658,7 +683,7 @@ export async function uploadCompanyLogo({ companyId, file }) {
       siteRole: 'system',
     });
     console.log('[uploadCompanyLogo] ✅ Uploaded to Azure (DK Bas/system site):', url);
-    return url;
+    return { url, path: azurePath };
   } catch (error) {
     // Check if error is related to authentication/popup blocking
     const isAuthError = error?.message && (
@@ -677,7 +702,8 @@ export async function uploadCompanyLogo({ companyId, file }) {
     const path = `company-logos/${encodeURIComponent(safeCompanyId)}/${fileName}`;
     const ref = storageRef(storage, path);
     await uploadBytes(ref, file);
-    return await getDownloadURL(ref);
+    const url = await getDownloadURL(ref);
+    return { url, path: null };
   }
 }
 
@@ -688,10 +714,21 @@ export async function adminFetchCompanyMembers(companyId) {
   return res && res.data ? res.data : res;
 }
 
+/** Timeout för etablering (Site + Bas) – kan ta 2–3 minuter. Måste vara längre än functions timeout (180s). */
+const PROVISION_CALLABLE_TIMEOUT_MS = 300000;
+
 export async function provisionCompanyRemote({ companyId, companyName }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
-  const fn = httpsCallable(functionsClient, 'provisionCompany');
+  const fn = httpsCallable(functionsClient, 'provisionCompany', { timeout: PROVISION_CALLABLE_TIMEOUT_MS });
   const res = await fn({ companyId, companyName });
+  return res && res.data ? res.data : res;
+}
+
+/** Etablera SharePoint (Site + Bas) för ett befintligt företag som har 0 siter. Anropas från SharePoint Nav. */
+export async function provisionCompanySharePointRemote({ companyId, companyName }) {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'provisionCompanySharePoint', { timeout: PROVISION_CALLABLE_TIMEOUT_MS });
+  const res = await fn({ companyId, companyName: companyName || companyId });
   return res && res.data ? res.data : res;
 }
 
@@ -740,6 +777,14 @@ export async function purgeCompanyRemote({ companyId }) {
   const fn = httpsCallable(functionsClient, 'purgeCompany');
   const payload = { companyId };
   const res = await fn(payload);
+  return res && res.data ? res.data : res;
+}
+
+/** Superadmin only: remove ALL companies from Firebase except MS Byggsystem. */
+export async function purgeAllCompaniesExceptMSByggsystemRemote() {
+  if (!functionsClient) throw new Error('Functions client not initialized');
+  const fn = httpsCallable(functionsClient, 'purgeAllCompaniesExceptMSByggsystem');
+  const res = await fn({});
   return res && res.data ? res.data : res;
 }
 
@@ -1300,11 +1345,23 @@ export async function fetchCompanies() {
   }
 }
 
-// Resolve the company logo URL from profile.public.logoUrl.
-// Supports both https(s) URLs and gs:// storage URLs.
+// Resolve the company logo URL from profile.public.logoUrl (and optional logoPath for SharePoint).
+// Supports both https(s) URLs and gs:// storage URLs. If logoPath is set, fetches a fresh download URL from SharePoint.
 export async function resolveCompanyLogoUrl(companyId) {
   if (!companyId) return null;
   const profile = await fetchCompanyProfile(companyId);
+  const logoPath = profile?.logoPath || null;
+  if (logoPath) {
+    try {
+      const systemSiteId = await getCompanySharePointSiteIdByRole(companyId, 'system', { syncIfMissing: false });
+      if (systemSiteId) {
+        const downloadUrl = await getFileUrlFromAzure(logoPath, companyId, systemSiteId);
+        if (downloadUrl) return downloadUrl;
+      }
+    } catch (_e) {
+      // fall through to logoUrl / gs:// handling
+    }
+  }
   const logoUrl = profile?.logoUrl || null;
   if (!logoUrl) return null;
 
@@ -4252,7 +4309,11 @@ export async function updateSharePointProjectPropertiesFromFirestoreProject(comp
   if (!companyId) throw new Error('Company ID is required');
 
   const safeText = (v) => String(v || '').trim();
-  const siteId = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
+  let siteId = safeText(project?.sharePointSiteId || project?.siteId || project?.siteID);
+  try {
+    const { normalizeSiteIdForGraph } = await import('../services/azure/graphSiteId');
+    if (siteId) siteId = normalizeSiteIdForGraph(siteId);
+  } catch (_e) { /* best-effort */ }
   let projectPath = safeText(project?.rootFolderPath || project?.sharePointRootPath || project?.projectPath || project?.path);
   const pn = safeText(project?.projectNumber || project?.number || project?.id);
   const pnm = safeText(project?.projectName || project?.name);
@@ -4280,8 +4341,21 @@ export async function updateSharePointProjectPropertiesFromFirestoreProject(comp
     [SHAREPOINT_PROJECT_PROPERTIES_FIELDS.ProjectName]: pnm || null,
   };
 
-  const { patchDriveItemListItemFieldsByPath } = await import('../services/azure/fileService');
-  return await patchDriveItemListItemFieldsByPath({ siteId, path: projectPath, fields });
+  try {
+    const { patchDriveItemListItemFieldsByPath } = await import('../services/azure/fileService');
+    return await patchDriveItemListItemFieldsByPath({ siteId, path: projectPath, fields });
+  } catch (e) {
+    // Best-effort: many document libraries don't have ProjectNumber/ProjectName columns.
+    // Graph returns 400 "Field 'ProjectNumber' is not recognized" – don't fail the caller (e.g. move project).
+    const msg = (e && e.message) ? String(e.message) : '';
+    if (msg.includes('not recognized') || msg.includes('invalidRequest') || (e && e.status === 400)) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[updateSharePointProjectProperties] Skipped metadata update (library may not have ProjectNumber/ProjectName):', msg || e);
+      }
+      return;
+    }
+    throw e;
+  }
 }
 
 /**

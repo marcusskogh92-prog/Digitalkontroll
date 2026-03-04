@@ -21,7 +21,7 @@ async function createSharePointSiteImpl(data, context) {
   const callerIsCompanyAdmin = !!(token.admin === true || token.role === 'admin');
   const companyId = (data && data.companyId) ? String(data.companyId).trim() : null;
   const companyName = (data && data.companyName) ? String(data.companyName).trim() : (companyId || '');
-  const siteNamePart = (data && data.siteNamePart) ? String(data.siteNamePart).trim() : null;
+  const siteNamePart = (data && (data.siteNamePart ?? data.siteName)) ? String(data.siteNamePart ?? data.siteName).trim() : null;
   if (!companyId) {
     throw new functions.https.HttpsError('invalid-argument', 'companyId saknas');
   }
@@ -34,7 +34,7 @@ async function createSharePointSiteImpl(data, context) {
   }
 
   const baseName = companyName || companyId;
-  const displayName = `${baseName} – DK ${siteNamePart}`;
+  const displayName = `${baseName} – ${siteNamePart}`;
   const slug = normalizeSharePointSiteSlug(displayName);
   if (!slug || slug.length < 2) {
     throw new functions.https.HttpsError('invalid-argument', 'Namnet gav en ogiltig site-URL. Använd minst två bokstaver eller siffror.');
@@ -95,16 +95,40 @@ async function createSharePointSiteImpl(data, context) {
   }
 }
 
+const CREATE_SITE_RETRY_ATTEMPTS = 3;
+const CREATE_SITE_RETRY_DELAY_MS = 4000;
+
 async function ensureSharePointSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail }) {
   const existing = await graphGetSiteByUrl({ hostname, siteSlug, accessToken });
   if (existing) return existing;
 
-  const created = await graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail });
-  if (created) return created;
-  throw new Error('SharePoint accepterade inte skapandet (site finns kanske redan eller ogiltigt namn). Kontrollera konfiguration och Graph-behörigheter.');
+  let lastErr;
+  for (let attempt = 1; attempt <= CREATE_SITE_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const created = await graphCreateTeamSite({ hostname, siteSlug, displayName, description, accessToken, ownerEmail });
+      if (created) return created;
+    } catch (e) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      const isRetryable = (attempt < CREATE_SITE_RETRY_ATTEMPTS) && (msg.includes('500') || msg.includes('429') || msg.includes('internal') || msg.includes('timeout'));
+      if (isRetryable) {
+        console.warn(`[ensureSharePointSite] attempt ${attempt}/${CREATE_SITE_RETRY_ATTEMPTS} failed, retrying in ${CREATE_SITE_RETRY_DELAY_MS}ms:`, msg.substring(0, 120));
+        await sleep(CREATE_SITE_RETRY_DELAY_MS);
+      } else {
+        throw e;
+      }
+    }
+  }
+  throw lastErr || new Error('SharePoint accepterade inte skapandet (site finns kanske redan eller ogiltigt namn). Kontrollera konfiguration och Graph-behörigheter.');
 }
 
 async function ensureCompanySharePointSites({ companyId, companyName, actorUid, actorEmail }) {
+  const cid = String(companyId || '').trim();
+  if (!cid) {
+    throw new functions.https.HttpsError('invalid-argument', 'companyId is required for SharePoint provisioning');
+  }
+  console.log('[ensureCompanySharePointSites] start', { companyId: cid, companyName: String(companyName || '').substring(0, 50) });
+
   const hostname = getSharePointHostname();
   if (!hostname) {
     throw new functions.https.HttpsError(
@@ -130,10 +154,10 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
   }
   const ownerEmail = getSharePointProvisioningOwnerEmail(actorEmail);
 
-  const cfgRef = db.doc(`foretag/${companyId}/sharepoint_system/config`);
-  const navRef = db.doc(`foretag/${companyId}/sharepoint_navigation/config`);
-  const profRef = db.doc(`foretag/${companyId}/profil/public`);
-  const metaCol = db.collection(`foretag/${companyId}/sharepoint_sites`);
+  const cfgRef = db.doc(`foretag/${cid}/sharepoint_system/config`);
+  const navRef = db.doc(`foretag/${cid}/sharepoint_navigation/config`);
+  const profRef = db.doc(`foretag/${cid}/profil/public`);
+  const metaCol = db.collection(`foretag/${cid}/sharepoint_sites`);
 
   const lockId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
   await db.runTransaction(async (tx) => {
@@ -172,8 +196,8 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
   const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
   const spCfg = cfg.sharepoint && typeof cfg.sharepoint === 'object' ? cfg.sharepoint : {};
 
-  const baseDisplayName = `${companyName}-bas`;
-  const workspaceDisplayName = `${companyName}`;
+  const baseDisplayName = `${companyName}-Bas`;
+  const workspaceDisplayName = `${companyName}-Site`;
   const baseSlug = normalizeSharePointSiteSlug(baseDisplayName);
   const workspaceSlug = normalizeSharePointSiteSlug(workspaceDisplayName);
   if (!baseSlug || !workspaceSlug) {
@@ -184,25 +208,7 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
   let workspaceSite = spCfg.workspaceSite && spCfg.workspaceSite.siteId ? spCfg.workspaceSite : null;
 
   try {
-    if (!baseSite) {
-      const created = await ensureSharePointSite({
-        hostname,
-        siteSlug: baseSlug,
-        displayName: baseDisplayName,
-        description: `Digitalkontroll system site for ${companyName}`,
-        accessToken,
-        ownerEmail,
-      });
-      baseSite = {
-        siteId: created.siteId,
-        webUrl: created.webUrl,
-        type: 'base',
-        visibility: 'hidden',
-        siteName: baseDisplayName,
-        siteSlug: baseSlug,
-      };
-    }
-
+    // Skapa Site först (arbetsyta), sedan Bas – så båda kopplas direkt till företaget
     if (!workspaceSite) {
       const created = await ensureSharePointSite({
         hostname,
@@ -220,6 +226,111 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
         siteName: workspaceDisplayName,
         siteSlug: workspaceSlug,
       };
+      // Koppla Site direkt till företaget så den inte hamnar under "Digitalkontroll"
+      await metaCol.doc(workspaceSite.siteId).set({
+        siteId: workspaceSite.siteId,
+        siteUrl: workspaceSite.webUrl || null,
+        siteName: workspaceSite.siteName || companyName,
+        role: 'projects',
+        visibleInLeftPanel: true,
+        systemManaged: true,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid || null,
+      }, { merge: true });
+      await cfgRef.set({
+        sharepoint: {
+          ...(spCfg || {}),
+          baseSite: baseSite || null,
+          workspaceSite,
+          provisioning: {
+            state: 'in_progress',
+            lockId,
+            startedAt: FieldValue.serverTimestamp(),
+            startedAtMs: Date.now(),
+            startedBy: actorUid || null,
+          },
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid || null,
+      }, { merge: true });
+      // Koppla Site direkt till företaget: profil + nav så användare har tillgång direkt vid inloggning
+      await profRef.set({
+        sharePointSiteId: workspaceSite.siteId,
+        sharePointSiteWebUrl: workspaceSite.webUrl || null,
+        primarySharePointSite: {
+          siteId: workspaceSite.siteId,
+          siteUrl: workspaceSite.webUrl || null,
+          linkedAt: FieldValue.serverTimestamp(),
+          linkedBy: actorUid || null,
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      const navSnapEarly = await navRef.get();
+      const navEarly = navSnapEarly.exists ? (navSnapEarly.data() || {}) : {};
+      const existingEnabledEarly = Array.isArray(navEarly.enabledSites) ? navEarly.enabledSites.map((x) => String(x || '').trim()).filter(Boolean) : [];
+      const enabledSitesEarly = existingEnabledEarly.length === 0 ? [workspaceSite.siteId] : (existingEnabledEarly.includes(workspaceSite.siteId) ? existingEnabledEarly : [...existingEnabledEarly, workspaceSite.siteId]);
+      const siteConfigsEarly = (navEarly.siteConfigs && typeof navEarly.siteConfigs === 'object') ? navEarly.siteConfigs : {};
+      await navRef.set({
+        enabledSites: enabledSitesEarly,
+        siteConfigs: {
+          ...siteConfigsEarly,
+          [workspaceSite.siteId]: {
+            ...(siteConfigsEarly[workspaceSite.siteId] || {}),
+            siteId: workspaceSite.siteId,
+            webUrl: workspaceSite.webUrl || null,
+            siteName: workspaceSite.siteName || companyName,
+          },
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: actorUid || null,
+      }, { merge: true });
+      await sleep(500);
+    }
+
+    if (!baseSite) {
+      try {
+        console.log('[ensureCompanySharePointSites] Creating Bas site', { companyId: cid, baseSlug, baseDisplayName });
+        const created = await ensureSharePointSite({
+          hostname,
+          siteSlug: baseSlug,
+          displayName: baseDisplayName,
+          description: `Digitalkontroll system site for ${companyName}`,
+          accessToken,
+          ownerEmail,
+        });
+        baseSite = {
+          siteId: created.siteId,
+          webUrl: created.webUrl,
+          type: 'base',
+          visibility: 'hidden',
+          siteName: baseDisplayName,
+          siteSlug: baseSlug,
+        };
+        // Koppla Bas direkt till företaget – skriv omedelbart med retry så att den inte hamnar under Digitalkontroll vid timeout
+        const baseMeta = {
+          siteId: baseSite.siteId,
+          siteUrl: baseSite.webUrl || null,
+          siteName: baseSite.siteName || baseDisplayName,
+          role: 'system',
+          visibleInLeftPanel: false,
+          systemManaged: true,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: actorUid || null,
+        };
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await metaCol.doc(baseSite.siteId).set(baseMeta, { merge: true });
+            break;
+          } catch (writeErr) {
+            console.warn('[ensureCompanySharePointSites] Bas metaCol write attempt', attempt, 'failed:', writeErr?.message || writeErr);
+            if (attempt === 3) throw writeErr;
+            await sleep(1000 * attempt);
+          }
+        }
+      } catch (baseErr) {
+        console.error('[ensureCompanySharePointSites] Bas site creation failed (company still has Site):', baseErr?.message || baseErr);
+        baseSite = null;
+      }
     }
 
     // Skapa mappstruktur i DK Bas (Company/, Projects/, Företagsmallar/ med fas-mappar)
@@ -227,7 +338,7 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
       try {
         await ensureCompanyBaseSiteStructureAdmin({
           siteId: baseSite.siteId,
-          companyId,
+          companyId: cid,
           accessToken,
         });
       } catch (structureErr) {
@@ -259,7 +370,7 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
     if (enabledSites.length === 0) {
       enabledSites = [workspaceSite.siteId];
     } else {
-      enabledSites = enabledSites.filter((sid) => sid !== baseSite.siteId);
+      if (baseSite && baseSite.siteId) enabledSites = enabledSites.filter((sid) => sid !== baseSite.siteId);
       if (!enabledSites.includes(workspaceSite.siteId)) enabledSites = [...enabledSites, workspaceSite.siteId];
     }
 
@@ -330,6 +441,8 @@ async function ensureCompanySharePointSites({ companyId, companyName, actorUid, 
     await cfgRef.set({
       sharepoint: {
         ...(spCfg || {}),
+        baseSite: baseSite || spCfg.baseSite || null,
+        workspaceSite: workspaceSite || spCfg.workspaceSite || null,
         provisioning: {
           state: 'error',
           lockId,

@@ -2,7 +2,7 @@ import { Inter_400Regular, Inter_600SemiBold, Inter_700Bold, useFonts } from '@e
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import React, { useEffect } from 'react';
+import React, { useContext, useEffect } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 import { applyGlobalBodyBackground } from './constants/backgroundTheme';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -14,7 +14,7 @@ import { CompanyHeaderLogo, DigitalKontrollHeaderLogo, HomeHeaderSearch } from '
 import { GLOBAL_HEADER_HEIGHT } from './components/common/layoutConstants';
 import { ICON_RAIL } from './constants/iconRailTheme';
 import { BackgroundTasksIndicator } from './components/common/BackgroundTasksIndicator';
-import { AdminModalProvider } from './components/common/AdminModalContext';
+import { AdminModalContext, AdminModalProvider } from './components/common/AdminModalContext';
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
 import { BackgroundTasksProvider } from './contexts/BackgroundTasksContext';
@@ -28,7 +28,22 @@ import ControlDetails from './Screens/ControlDetails';
 import ControlForm from './Screens/ControlForm';
 import HomeScreen from './Screens/HomeScreen';
 import LoginScreen from './Screens/LoginScreen';
-import ManageCompany from './Screens/ManageCompany';
+// ManageCompany fasas ut: redirect till Företagsinställningar-modalen
+function ManageCompanyRedirect({ navigation, route }) {
+  const { openCompanyModal, openCreateCompanyModal } = useContext(AdminModalContext) || {};
+  useEffect(() => {
+    const params = route?.params || {};
+    if (params.createNew && typeof openCreateCompanyModal === 'function') {
+      openCreateCompanyModal();
+    } else {
+      const companyId = params.companyId != null ? String(params.companyId).trim() : '';
+      const focus = params.focus || undefined;
+      if (typeof openCompanyModal === 'function') openCompanyModal(companyId, focus);
+    }
+    if (navigation?.goBack) navigation.goBack();
+  }, [navigation, route?.params, openCompanyModal, openCreateCompanyModal]);
+  return null;
+}
 import ManageControlTypes from './Screens/ManageControlTypes';
 import ManageSharePointNavigation from './Screens/ManageSharePointNavigation';
 import ManageUsers from './Screens/ManageUsers';
@@ -485,7 +500,7 @@ export default function App() {
               });
             }} />
             <Stack.Screen name="ProjectDetails" component={ProjectDetails} options={{ title: 'Projekt' }} />
-            <Stack.Screen name="ManageCompany" component={ManageCompany} options={({ navigation }) => {
+            <Stack.Screen name="ManageCompany" component={ManageCompanyRedirect} options={({ navigation }) => {
               const isWeb = Platform.OS === 'web';
               if (isWeb) {
                 return ({

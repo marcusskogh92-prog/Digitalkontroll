@@ -15,6 +15,13 @@ const GRID = 8;
 const SECTION_HEADER_PADDING_VERTICAL = 12;
 const SECTION_HEADER_PADDING_HORIZONTAL = LEFT_NAV.rowPaddingHorizontal;
 
+/** Företag som alltid ska ligga överst i Superadmin och markeras som superadmin-företag. */
+const SUPERADMIN_COMPANY_IDS = ['MS Byggsystem', 'ms-byggsystem'];
+function isSuperadminCompany(id) {
+  const s = String(id || '').trim();
+  return SUPERADMIN_COMPANY_IDS.some((x) => s === x || s.toLowerCase() === x.toLowerCase());
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -250,6 +257,7 @@ function CompanyRow({ company, onPress, onContextMenu, onHoverIn, onHoverOut, is
   const label = deleted ? `${name} (dolt)` : name;
   const iconColor = getCompanyIconColor(company);
   const displayColor = isHovered ? LEFT_NAV.hoverIcon : iconColor;
+  const showSuperadminBadge = isSuperadminCompany(company?.id);
   return (
     <View style={styles.itemWrapper}>
       <SidebarItem
@@ -272,6 +280,11 @@ function CompanyRow({ company, onPress, onContextMenu, onHoverIn, onHoverOut, is
             style={{ marginRight: 4 }}
           />
         )}
+        right={showSuperadminBadge ? () => (
+          <View style={{ paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: 'rgba(21, 101, 192, 0.12)' }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: '#1565C0' }}>Superadmin</Text>
+          </View>
+        ) : undefined}
         style={{
           minHeight: LEFT_NAV.rowMinHeight,
           paddingVertical: LEFT_NAV.rowPaddingVertical,
@@ -454,7 +467,17 @@ function SuperadminSection({
                       </View>
                     ) : null}
                     {Array.isArray(superadminCompanies) && superadminCompanies.length > 0
-                      ? superadminCompanies.map((company) => (
+                      ? [...superadminCompanies]
+                          .sort((a, b) => {
+                            const aFirst = isSuperadminCompany(a?.id);
+                            const bFirst = isSuperadminCompany(b?.id);
+                            if (aFirst && !bFirst) return -1;
+                            if (!aFirst && bFirst) return 1;
+                            const aName = String((a?.profile && (a.profile.companyName || a.profile.name)) || a?.id || '').trim();
+                            const bName = String((b?.profile && (b.profile.companyName || b.profile.name)) || b?.id || '').trim();
+                            return aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+                          })
+                          .map((company) => (
                           <CompanyRow
                             key={company?.id || ''}
                             company={company}

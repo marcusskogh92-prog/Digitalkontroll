@@ -1,6 +1,6 @@
 /**
- * useDraggableResizableModal – för webb: gör modal draggable (drag i bannern) och resizable (dra i kant/hörn).
- * Steglös flytt och storleksändring som ett Windows-fönster.
+ * useDraggableResizableModal – för webb: draggable (drag i bannern) och resizable (osynliga zoner vid kanter/hörn).
+ * Windows-liknande: inga synliga handtag; vid hover nära kant visas cursor + subtil kantmarkering.
  * På native returnerar hooken neutrala värden (ingen drag/resize).
  */
 
@@ -11,6 +11,8 @@ const MIN_W = 400;
 const MIN_H = 300;
 const DEFAULT_W = 900;
 const DEFAULT_H = 600;
+const RESIZE_ZONE_PX = 8;
+const HOVER_BORDER = '1px solid rgba(0,0,0,0.12)';
 
 function getInitialPositionAndSize(winW, winH, defaultWidth, defaultHeight) {
   const w = typeof defaultWidth === 'number' ? defaultWidth : Math.min(DEFAULT_W, Math.floor(winW * 0.9));
@@ -19,6 +21,17 @@ function getInitialPositionAndSize(winW, winH, defaultWidth, defaultHeight) {
   const y = Math.max(0, Math.floor((winH - h) / 2));
   return { x, y, w, h };
 }
+
+const CURSORS = {
+  e: 'ew-resize',
+  w: 'ew-resize',
+  n: 'ns-resize',
+  s: 'ns-resize',
+  ne: 'nesw-resize',
+  sw: 'nesw-resize',
+  nw: 'nwse-resize',
+  se: 'nwse-resize',
+};
 
 export function useDraggableResizableModal(visible, options = {}) {
   const isWeb = Platform.OS === 'web';
@@ -33,10 +46,10 @@ export function useDraggableResizableModal(visible, options = {}) {
   const [size, setSize] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [hoverResizeZone, setHoverResizeZone] = useState(null);
   const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 });
-  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0, direction: '' });
+  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0, left: 0, top: 0, direction: '' });
 
-  // Vid öppning: centrera och sätt standardstorlek
   useEffect(() => {
     if (!isWeb || !visible) return;
     const winW = typeof window !== 'undefined' ? window.innerWidth : 800;
@@ -100,6 +113,7 @@ export function useDraggableResizableModal(visible, options = {}) {
         let newW = start.w;
         let newH = start.h;
         let newLeft = start.left;
+        let newTop = start.top;
         if (start.direction.includes('e')) newW = Math.max(minWidth, start.w + (clientX - start.x));
         if (start.direction.includes('w')) {
           const dw = start.x - clientX;
@@ -107,9 +121,17 @@ export function useDraggableResizableModal(visible, options = {}) {
           newLeft = start.left + (start.w - newW);
         }
         if (start.direction.includes('s')) newH = Math.max(minHeight, start.h + (clientY - start.y));
+        if (start.direction.includes('n')) {
+          newH = Math.max(minHeight, start.h + (start.y - clientY));
+          newTop = start.top + start.h - newH;
+        }
         setSize({ w: newW, h: newH });
-        if (start.direction.includes('w')) setPosition((prev) => ({ ...prev, x: newLeft }));
-        resizeStart.current = { ...start, w: newW, h: newH, left: newLeft, x: clientX, y: clientY };
+        setPosition((prev) => ({
+          ...prev,
+          ...(start.direction.includes('w') ? { x: newLeft } : {}),
+          ...(start.direction.includes('n') ? { y: newTop } : {}),
+        }));
+        resizeStart.current = { ...start, w: newW, h: newH, left: newLeft, top: newTop, x: clientX, y: clientY };
       }
     };
 
@@ -120,7 +142,8 @@ export function useDraggableResizableModal(visible, options = {}) {
       }
       if (isResizing) {
         setIsResizing(false);
-        resizeStart.current = { x: 0, y: 0, w: 0, h: 0, direction: '' };
+        setHoverResizeZone(null);
+        resizeStart.current = { x: 0, y: 0, w: 0, h: 0, left: 0, top: 0, direction: '' };
       }
     };
 
@@ -166,58 +189,50 @@ export function useDraggableResizableModal(visible, options = {}) {
 
   const headerProps = {
     onMouseDown: startDrag,
-    ...(isWeb ? { style: [{ cursor: isDragging ? 'grabbing' : 'move' }] } : {}),
+    ...(isWeb ? { style: { cursor: isDragging ? 'grabbing' : 'move' } } : {}),
   };
 
-  /* Synlig "grip" i nedre hörnen: liten markering så användaren ser att man kan dra för att ändra storlek */
-  const cornerGripSize = 14;
-  const cornerGripBase = {
-    position: 'absolute',
-    width: cornerGripSize,
-    height: cornerGripSize,
-    backgroundColor: 'rgba(100, 116, 139, 0.2)',
-    borderTopLeftRadius: 4,
+  const zone = RESIZE_ZONE_PX;
+  const isHover = (d) => hoverResizeZone === d;
+  const getHoverBorder = (d) => {
+    if (!isWeb || !isHover(d)) return {};
+    if (d === 'e') return { borderRight: HOVER_BORDER };
+    if (d === 'w') return { borderLeft: HOVER_BORDER };
+    if (d === 's') return { borderBottom: HOVER_BORDER };
+    if (d === 'n') return { borderTop: HOVER_BORDER };
+    const o = {};
+    if (d.startsWith('n')) o.borderTop = HOVER_BORDER;
+    if (d.startsWith('s')) o.borderBottom = HOVER_BORDER;
+    if (d.endsWith('w')) o.borderLeft = HOVER_BORDER;
+    if (d.endsWith('e')) o.borderRight = HOVER_BORDER;
+    return o;
   };
 
-  /* Resize-handles: högerkant, nederkant, nedre vänster hörn, nedre höger hörn. Synlig grip i båda nedre hörnen. */
+  const ResizeZone = ({ direction, style }) => (
+    <View
+      role="presentation"
+      style={[
+        { position: 'absolute', zIndex: 10 },
+        style,
+        isWeb && { cursor: CURSORS[direction] },
+        getHoverBorder(direction),
+      ]}
+      onMouseDown={isWeb ? (e) => startResize(e, direction) : undefined}
+      onMouseEnter={isWeb ? () => setHoverResizeZone(direction) : undefined}
+      onMouseLeave={isWeb ? () => setHoverResizeZone(null) : undefined}
+    />
+  );
+
   const resizeHandles = hasPosition ? (
     <>
-      <View
-        role="presentation"
-        style={[
-          { position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, zIndex: 10 },
-          isWeb && { cursor: 'ew-resize' },
-        ]}
-        {...(isWeb ? { onMouseDown: (e) => startResize(e, 'e') } : {})}
-      />
-      <View
-        role="presentation"
-        style={[
-          { position: 'absolute', left: 0, right: 0, bottom: 0, height: 8, zIndex: 10 },
-          isWeb && { cursor: 'ns-resize' },
-        ]}
-        {...(isWeb ? { onMouseDown: (e) => startResize(e, 's') } : {})}
-      />
-      <View
-        role="presentation"
-        style={[
-          { position: 'absolute', left: 0, bottom: 0, width: 20, height: 20, zIndex: 11 },
-          isWeb && { cursor: 'nesw-resize' },
-        ]}
-        {...(isWeb ? { onMouseDown: (e) => startResize(e, 'sw') } : {})}
-      >
-        <View style={[cornerGripBase, { left: 0, bottom: 0, borderTopLeftRadius: 0, borderTopRightRadius: 4 }]} />
-      </View>
-      <View
-        role="presentation"
-        style={[
-          { position: 'absolute', right: 0, bottom: 0, width: 20, height: 20, zIndex: 11 },
-          isWeb && { cursor: 'nwse-resize' },
-        ]}
-        {...(isWeb ? { onMouseDown: (e) => startResize(e, 'se') } : {})}
-      >
-        <View style={[cornerGripBase, { right: 0, bottom: 0, left: undefined }]} />
-      </View>
+      <ResizeZone direction="e" style={{ right: 0, top: zone, bottom: zone, width: zone }} />
+      <ResizeZone direction="w" style={{ left: 0, top: zone, bottom: zone, width: zone }} />
+      <ResizeZone direction="s" style={{ left: zone, right: zone, bottom: 0, height: zone }} />
+      <ResizeZone direction="n" style={{ left: zone, right: zone, top: 0, height: zone }} />
+      <ResizeZone direction="ne" style={{ right: 0, top: 0, width: zone, height: zone, zIndex: 11 }} />
+      <ResizeZone direction="nw" style={{ left: 0, top: 0, width: zone, height: zone, zIndex: 11 }} />
+      <ResizeZone direction="se" style={{ right: 0, bottom: 0, width: zone, height: zone, zIndex: 11 }} />
+      <ResizeZone direction="sw" style={{ left: 0, bottom: 0, width: zone, height: zone, zIndex: 11 }} />
     </>
   ) : null;
 

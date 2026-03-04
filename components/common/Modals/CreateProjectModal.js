@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Modal,
@@ -12,43 +12,41 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { MODAL_THEME } from '../../../constants/modalTheme';
-import { PROJECT_PHASES } from '../../../features/projects/constants';
+import { MODAL_DESIGN_2026 } from '../../../constants/modalDesign2026';
+import { getPhaseConfig, PROJECT_PHASES } from '../../../features/projects/constants';
 import { useDraggableResizableModal } from '../../../hooks/useDraggableResizableModal';
 import { useModalKeyboard } from '../../../hooks/useModalKeyboard';
 import { getSharePointNavigationConfig } from '../../firebase';
 import { isProjectFolder } from '../../../utils/isProjectFolder';
 import { createFolderInSite, renameDriveItemByPath, deleteDriveItemByPath } from '../../../services/azure/hierarchyService';
+import { normalizeSiteIdForGraph } from '../../../services/azure/graphSiteId';
 
-// Säker referens så att StyleSheet och JSX inte kraschar om MODAL_THEME inte laddas
-const BANNER_THEME = (MODAL_THEME && MODAL_THEME.banner) ? MODAL_THEME.banner : {
-  paddingVertical: 7,
-  paddingHorizontal: 14,
-  backgroundColor: '#1e293b',
-  borderBottomColor: 'rgba(255,255,255,0.06)',
-  iconSize: 28,
-  iconBgRadius: 8,
-  iconBg: 'rgba(255,255,255,0.1)',
-  titleFontSize: 14,
-  titleFontWeight: '600',
-  titleColor: '#f1f5f9',
-  subtitleFontSize: 12,
-  subtitleColor: '#94a3b8',
-  closeBtnPadding: 5,
-  closeIconSize: 20,
+// Golden rule 2026: docs/MODAL_GOLDEN_RULE.md + constants/modalDesign2026.js
+const BANNER = MODAL_DESIGN_2026?.headerNeutralCompact ?? {
+  paddingVertical: 4,
+  paddingHorizontal: 12,
+  minHeight: 28,
+  maxHeight: 28,
 };
-const FOOTER_THEME = (MODAL_THEME && MODAL_THEME.footer) ? MODAL_THEME.footer : {
-  backgroundColor: '#f8fafc',
-  borderTopColor: '#e2e8f0',
-  btnPaddingVertical: 10,
-  btnPaddingHorizontal: 20,
-  btnBorderRadius: 8,
-  btnBackground: '#1e293b',
-  btnBorderColor: '#1e293b',
-  btnTextColor: '#fff',
-  btnFontSize: 14,
-  btnFontWeight: '600',
-};
+const BANNER_BG = MODAL_DESIGN_2026?.headerNeutral?.backgroundColor ?? '#1E2A38';
+const BANNER_BORDER = MODAL_DESIGN_2026?.headerNeutral?.borderBottomColor ?? 'rgba(255,255,255,0.1)';
+const BANNER_TITLE_FONT = MODAL_DESIGN_2026?.headerNeutralCompactTitleFontSize ?? 12;
+const BANNER_TITLE_WEIGHT = MODAL_DESIGN_2026?.headerNeutralCompactTitleFontWeight ?? '400';
+const BANNER_SUBTITLE_FONT = MODAL_DESIGN_2026?.headerNeutralSubtitleFontSize ?? 12;
+const BANNER_ICON_PX = MODAL_DESIGN_2026?.headerNeutralCompactIconPx ?? 14;
+const BANNER_CLOSE_PX = MODAL_DESIGN_2026?.headerNeutralCompactCloseIconPx ?? 18;
+const FOOTER_BG = '#fff';
+const FOOTER_BORDER = '#eee';
+const BTN_AVBRYT_BG = '#fef2f2';
+const BTN_AVBRYT_BORDER = '#fecaca';
+const BTN_AVBRYT_TEXT = '#b91c1c';
+const BTN_PRIM_BG = MODAL_DESIGN_2026?.buttonPrimaryBg ?? '#2D3A4B';
+const BTN_PRIM_TEXT = MODAL_DESIGN_2026?.buttonPrimaryColor ?? '#fff';
+const BTN_RADIUS = MODAL_DESIGN_2026?.buttonRadius ?? 6;
+const BTN_AVBRYT_PAD = { v: 4, h: 10 };
+const BTN_PRIM_PAD = { v: 4, h: 12 };
+const BTN_FONT_SIZE = 12;
+const BTN_FONT_WEIGHT = '500';
 
 // STRUCTURES removed - projects are no longer phase-based
 
@@ -64,14 +62,31 @@ export default function CreateProjectModal({
   initialProject = null,
 }) {
   const isEditMode = !!initialProject;
-  const [projectNumber, setProjectNumber] = useState('');
-  const [projectName, setProjectName] = useState('');
-  const [selectedProjectRoot, setSelectedProjectRoot] = useState(null); // { siteId, siteName, folderPath, folderName }
+  const initialNum = initialProject ? String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? initialProject.number ?? '').trim() : '';
+  const initialName = initialProject ? (() => {
+    const n = String(initialProject.projectName ?? initialProject.name ?? initialProject.fullName ?? '').trim();
+    const num = String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? '').trim();
+    return n || num;
+  })() : '';
+  const [projectNumber, setProjectNumber] = useState(initialNum);
+  const [projectName, setProjectName] = useState(initialName);
+  const [selectedProjectRoot, setSelectedProjectRoot] = useState(() => {
+    if (!initialProject) return null;
+    const siteId = String(initialProject.sharePointSiteId || initialProject.siteId || '').trim();
+    const path = String(initialProject.rootFolderPath || initialProject.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    const folderName = path ? path.split('/').pop() : 'Root';
+    return siteId ? { siteId, siteName: 'Site', folderPath: path, folderName: folderName || 'Root' } : null;
+  });
 
   // Project structure/phase selection (default: Kalkylskede)
-  const [selectedStructureKey, setSelectedStructureKey] = useState('kalkylskede');
+  const [selectedStructureKey, setSelectedStructureKey] = useState(() => {
+    if (!initialProject) return 'kalkylskede';
+    const phase = String(initialProject.phase || 'kalkylskede').trim().toLowerCase();
+    return phase === 'kalkyl' ? 'kalkylskede' : phase || 'kalkylskede';
+  });
   const initialProjectFilledRef = useRef(null);
-  
+  const [userHasEditedProjectFields, setUserHasEditedProjectFields] = useState(false);
+
   // State for location picker
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [locationPickerStep, setLocationPickerStep] = useState('sites'); // 'sites' or 'folders'
@@ -98,26 +113,42 @@ export default function CreateProjectModal({
   const locationPickerRef = useRef(null);
   const [locationPickerPosition, setLocationPickerPosition] = useState({ top: 0, left: 0, width: 0 });
 
-  // Pre-fill form when opening in edit mode
-  useEffect(() => {
-    if (!visible || !initialProject) {
-      if (!visible) initialProjectFilledRef.current = null;
-      return;
-    }
-    const pid = String(initialProject?.projectId || initialProject?.projectNumber || '').trim();
-    if (initialProjectFilledRef.current === pid) return;
-    initialProjectFilledRef.current = pid;
-    setProjectNumber(String(initialProject?.projectNumber || initialProject?.id || '').trim());
-    setProjectName(String(initialProject?.projectName || initialProject?.name || '').trim());
-    const siteId = String(initialProject?.sharePointSiteId || initialProject?.siteId || '').trim();
-    const path = String(initialProject?.rootFolderPath || initialProject?.path || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+  // Pre-fill form when opening in edit mode – run synchronously (layout) and again (effect) so we never show empty
+  const syncFormFromInitialProject = useCallback(() => {
+    if (!initialProject) return;
+    setUserHasEditedProjectFields(false);
+    const num = String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? initialProject.number ?? '').trim();
+    const name = String(initialProject.projectName ?? initialProject.name ?? initialProject.fullName ?? '').trim();
+    setProjectNumber(num);
+    setProjectName(name || num);
+    const siteId = String(initialProject.sharePointSiteId ?? initialProject.siteId ?? '').trim();
+    const path = String(initialProject.rootFolderPath ?? initialProject.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
     const folderName = path ? path.split('/').pop() : 'Root';
     const site = (availableSites || []).find((s) => String(s?.id || '').trim() === siteId);
     const siteName = site ? (site.name || (site.webUrl || '').split('/').filter(Boolean).pop() || '') : (initialProject?.siteName || '');
     setSelectedProjectRoot(siteId ? { siteId, siteName: siteName || 'Site', folderPath: path, folderName: folderName || 'Root' } : null);
-    const phase = String(initialProject?.phase || 'kalkylskede').trim().toLowerCase();
+    const phase = String(initialProject.phase || 'kalkylskede').trim().toLowerCase();
     setSelectedStructureKey(phase === 'kalkyl' ? 'kalkylskede' : phase || 'kalkylskede');
-  }, [visible, initialProject, availableSites]);
+  }, [initialProject, availableSites]);
+
+  useLayoutEffect(() => {
+    if (!visible || !initialProject) {
+      if (!visible) initialProjectFilledRef.current = null;
+      return;
+    }
+    const projectKey = String(initialProject?.projectId || initialProject?.projectNumber || initialProject?.id || '').trim() || 'filled';
+    if (initialProjectFilledRef.current === projectKey) return;
+    initialProjectFilledRef.current = projectKey;
+    syncFormFromInitialProject();
+  }, [visible, initialProject, syncFormFromInitialProject]);
+
+  useEffect(() => {
+    if (!visible || !initialProject) return;
+    const projectKey = String(initialProject?.projectId || initialProject?.projectNumber || initialProject?.id || '').trim() || 'filled';
+    if (initialProjectFilledRef.current === projectKey) return;
+    initialProjectFilledRef.current = projectKey;
+    syncFormFromInitialProject();
+  }, [visible, initialProject, syncFormFromInitialProject]);
 
   // Load folders when in folders step and path changes
   useEffect(() => {
@@ -158,8 +189,7 @@ export default function CreateProjectModal({
                   path = base ? `${base}/${name}` : name;
                 }
                 return { name, path };
-              })
-              .filter((item) => !isProjectFolder({ name: item.name }));
+              });
 
             setLocationFolders(folders);
             return;
@@ -179,8 +209,7 @@ export default function CreateProjectModal({
                   path = base ? `${base}/${name}` : name;
                 }
                 return { name, path };
-              })
-              .filter((item) => !isProjectFolder({ name: item.name }));
+              });
 
             setLocationFolders(folders);
             return;
@@ -189,7 +218,8 @@ export default function CreateProjectModal({
 
         // Undermappar: använd getDriveItems med vald site så att rätt site + nya mappar syns
         const { getDriveItems } = await import('../../../services/azure/hierarchyService');
-        const items = await getDriveItems(activeSite.id, currentPath || '');
+        const siteIdForGraph = normalizeSiteIdForGraph(activeSite?.id || '');
+        const items = await getDriveItems(siteIdForGraph, currentPath || '');
         if (cancelled) return;
 
         const folders = (items || [])
@@ -199,8 +229,7 @@ export default function CreateProjectModal({
             const base = String(currentPath || '').replace(/\/+$/, '');
             const path = base ? `${base}/${name}` : name;
             return { name, path };
-          })
-          .filter((item) => !isProjectFolder({ name: item.name }));
+          });
 
         setLocationFolders(folders);
       } catch (error) {
@@ -236,16 +265,16 @@ export default function CreateProjectModal({
     return () => { mounted = false; };
   }, [visible, companyId]);
 
-  // Reset all form fields when modal opens
+  // Reset all form fields when modal opens (endast i skapa-läge; i redigeringsläge fylls fälten av syncFormFromInitialProject)
   useEffect(() => {
     if (visible) {
-      // Reset all form fields
-      setProjectNumber('');
-      setProjectName('');
-      setSelectedProjectRoot(null);
-
-      // Default structure when opening modal
-      setSelectedStructureKey('');
+      setUserHasEditedProjectFields(false);
+      if (!initialProject) {
+        setProjectNumber('');
+        setProjectName('');
+        setSelectedProjectRoot(null);
+        setSelectedStructureKey('');
+      }
       
       // Reset location picker state
       setLocationPickerOpen(false);
@@ -263,16 +292,48 @@ export default function CreateProjectModal({
 
   // Location picker state initieras via openLocationPicker
 
-  // Derived booleans for status + validering
+  // Derived booleans for status + validering (i redigeringsläge räknas alla som klara om vi har initialProject)
   const hasProjectNumber = projectNumber.trim().length > 0;
   const hasProjectName = projectName.trim().length > 0;
-  const isProjectSectionComplete = hasProjectNumber && hasProjectName;
+  const editModeHasProject = isEditMode && initialProject && (initialProject.projectNumber || initialProject.projectName || initialProject.fullName || initialProject.id);
+  const isProjectSectionComplete = (hasProjectNumber && hasProjectName) || !!editModeHasProject;
 
   const hasProjectRoot = !!selectedProjectRoot;
-  const isStorageSectionComplete = hasProjectRoot;
+  const editModeHasStorage = isEditMode && initialProject && (initialProject.rootFolderPath || initialProject.sharePointSiteId || initialProject.path || initialProject.siteId);
+  const isStorageSectionComplete = hasProjectRoot || !!editModeHasStorage;
 
   const hasStructure = !!selectedStructureKey;
-  const isStructureSectionComplete = hasStructure;
+  const editModeHasStructure = isEditMode && initialProject && (initialProject.phase || selectedStructureKey);
+  const isStructureSectionComplete = hasStructure || !!editModeHasStructure;
+
+  // Initial värden från öppnat projekt (för att upptäcka osparade ändringar)
+  const initialProjectNum = initialProject
+    ? String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? initialProject.number ?? '').trim()
+    : '';
+  const initialProjectName = initialProject
+    ? String(initialProject.projectName ?? initialProject.name ?? initialProject.fullName ?? '').trim()
+    : '';
+  const initialStoragePath = initialProject ? String(initialProject.rootFolderPath ?? initialProject.path ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '') : '';
+  const initialSiteId = initialProject ? String(initialProject.sharePointSiteId ?? initialProject.siteId ?? '').trim() : '';
+  const currentStoragePath = selectedProjectRoot ? String(selectedProjectRoot.folderPath ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '') : '';
+  const currentSiteId = selectedProjectRoot ? String(selectedProjectRoot.siteId ?? '').trim() : '';
+  const storageChanged = Boolean(
+    isEditMode && initialProject && (
+      currentSiteId !== initialSiteId ||
+      currentStoragePath !== initialStoragePath
+    )
+  );
+  const hasUnsavedChanges = Boolean(
+    isEditMode &&
+    initialProject &&
+    (
+      (userHasEditedProjectFields && (
+        projectNumber.trim() !== initialProjectNum ||
+        projectName.trim() !== (initialProjectName || initialProjectNum)
+      )) ||
+      storageChanged
+    )
+  );
 
   const selectedStructureLabel = (() => {
     try {
@@ -442,19 +503,19 @@ export default function CreateProjectModal({
   const handleCreate = () => {
     if (!canCreate || !selectedProjectRoot) return;
     if (isEditMode) {
-      if (!onSave) return;
+      if (!onSave || !selectedProjectRoot) return;
       onSave({
-        projectId: initialProject?.projectId || initialProject?.projectNumber,
+        projectId: initialProject?.projectId || initialProject?.projectNumber || initialProject?.id,
         projectNumber,
         projectName,
-        siteId: selectedProjectRoot.siteId,
+        siteId: normalizeSiteIdForGraph(selectedProjectRoot.siteId),
+        sharePointSiteId: normalizeSiteIdForGraph(initialProject?.sharePointSiteId || selectedProjectRoot.siteId),
         rootFolderPath: selectedProjectRoot.folderPath,
         initialRootFolderPath: initialProject?.rootFolderPath || initialProject?.path,
         parentFolderPath: selectedProjectRoot.folderPath,
         parentFolderName: selectedProjectRoot.folderName,
         structureKey: String(selectedStructureKey || '').trim(),
       });
-      onClose();
       return;
     }
     if (!onCreateProject) return;
@@ -481,14 +542,14 @@ export default function CreateProjectModal({
     });
   };
 
-  const canSave = canCreate && (isEditMode ? !isSaving : !isCreating);
+  const canSave = canCreate && (isEditMode ? hasUnsavedChanges && !isSaving : !isCreating);
   useModalKeyboard(visible, onClose, handleCreate, { canSave });
 
   const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!visible, {
     defaultWidth: 1120,
-    defaultHeight: 780,
+    defaultHeight: 640,
     minWidth: 520,
-    minHeight: 480,
+    minHeight: 400,
   });
 
   const locModal = useDraggableResizableModal(!!locationPickerOpen, {
@@ -509,7 +570,7 @@ export default function CreateProjectModal({
           >
             <View style={styles.bannerLeft}>
               <View style={styles.bannerIcon}>
-                <Ionicons name={isEditMode ? 'pencil-outline' : 'add-circle-outline'} size={20} color={BANNER_THEME.titleColor} />
+                <Ionicons name={isEditMode ? 'pencil-outline' : 'add-circle-outline'} size={BANNER_ICON_PX} color="#fff" />
               </View>
               <Text style={styles.bannerTitle} numberOfLines={1}>
                 {isEditMode ? 'Ändra projekt' : 'Skapa nytt projekt'}
@@ -517,7 +578,7 @@ export default function CreateProjectModal({
               </Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.bannerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
-              <Ionicons name="close" size={BANNER_THEME.closeIconSize} color={BANNER_THEME.titleColor} />
+              <Ionicons name="close" size={BANNER_CLOSE_PX} color="#fff" />
             </TouchableOpacity>
           </View>
 
@@ -629,8 +690,8 @@ export default function CreateProjectModal({
               <View style={[styles.section, styles.sectionAfterTitle]}>
                 <Text style={styles.label}>Projektnummer *</Text>
                 <TextInput
-                  value={projectNumber}
-                  onChangeText={setProjectNumber}
+                  value={projectNumber || (isEditMode && initialProject ? String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? initialProject.fullName ?? '').trim() : '')}
+                  onChangeText={(v) => { setUserHasEditedProjectFields(true); setProjectNumber(v); }}
                   placeholder="Projektnummer"
                   placeholderTextColor="#9CA3AF"
                   style={styles.input}
@@ -640,8 +701,8 @@ export default function CreateProjectModal({
               <View style={styles.section}>
                 <Text style={styles.label}>Projektnamn *</Text>
                 <TextInput
-                  value={projectName}
-                  onChangeText={setProjectName}
+                  value={projectName || (isEditMode && initialProject ? (() => { const n = String(initialProject.projectName ?? initialProject.name ?? initialProject.fullName ?? '').trim(); const num = String(initialProject.projectNumber ?? initialProject.projectId ?? initialProject.id ?? '').trim(); return n || num; })() : '')}
+                  onChangeText={(v) => { setUserHasEditedProjectFields(true); setProjectName(v); }}
                   placeholder="Projektnamn"
                   placeholderTextColor="#9CA3AF"
                   style={styles.input}
@@ -669,16 +730,18 @@ export default function CreateProjectModal({
                           ? (selectedProjectRoot.folderPath
                               ? `${selectedProjectRoot.siteName} / ${selectedProjectRoot.folderPath}`
                               : selectedProjectRoot.siteName)
-                          : 'Välj lagringsplats'}
+                          : (isEditMode && initialProject?.rootFolderPath) ? initialProject.rootFolderPath : 'Välj lagringsplats'}
                       </Text>
                       <Ionicons name="chevron-forward" size={16} color="#64748b" />
                     </TouchableOpacity>
-                    {selectedProjectRoot && (
+                    {(selectedProjectRoot || (isEditMode && initialProject?.rootFolderPath)) && (
                       <View style={styles.locationBreadcrumbWrap}>
                         <Text style={styles.locationBreadcrumbText} numberOfLines={1}>
-                          {selectedProjectRoot.folderPath
-                            ? `${selectedProjectRoot.siteName} / ${selectedProjectRoot.folderPath}`
-                            : selectedProjectRoot.siteName}
+                          {selectedProjectRoot
+                            ? (selectedProjectRoot.folderPath
+                                ? `${selectedProjectRoot.siteName} / ${selectedProjectRoot.folderPath}`
+                                : selectedProjectRoot.siteName)
+                            : initialProject?.rootFolderPath || ''}
                         </Text>
                       </View>
                     )}
@@ -686,14 +749,24 @@ export default function CreateProjectModal({
                 )}
               </View>
 
-              {/* Mappstruktur */}
+              {/* Mappstruktur – vid redigering låst (kan inte bytas) */}
               <View style={[styles.sectionHeaderRow, { marginTop: 6 }]}> 
                 <Ionicons name="albums-outline" size={18} color="#1976D2" style={styles.sectionHeaderIcon} />
                 <Text style={styles.sectionHeaderTitle}>Mappstruktur</Text>
+                {isEditMode ? (
+                  <Text style={[styles.label, { marginLeft: 8, color: '#64748b', fontWeight: '400', fontSize: 12 }]}>
+                    (låst vid redigering)
+                  </Text>
+                ) : null}
               </View>
 
               <View style={[styles.section, styles.sectionAfterTitle]}>
                 <Text style={styles.label}>Välj struktur *</Text>
+                {isEditMode ? (
+                  <Text style={[styles.helperText, { marginBottom: 8 }]}>
+                    Mappstrukturen kan inte ändras när du redigerar projektet.
+                  </Text>
+                ) : null}
 
                 {(() => {
                   const STRUCTURE_CARDS = [
@@ -744,29 +817,36 @@ export default function CreateProjectModal({
                     },
                   ];
 
-                  const selectedCard = STRUCTURE_CARDS.find((c) => String(selectedStructureKey) === String(c.key));
+                  // I redigeringsläge: visa alltid rätt kort som valt (från initialProject.phase) så hänglåset syns
+                  const effectiveStructureKey = isEditMode && initialProject?.phase
+                    ? (String(initialProject.phase).trim().toLowerCase() === 'kalkyl' ? 'kalkylskede' : String(initialProject.phase).trim().toLowerCase() || selectedStructureKey)
+                    : selectedStructureKey;
+                  const selectedCard = STRUCTURE_CARDS.find((c) => String(effectiveStructureKey) === String(c.key));
 
                   return (
                     <>
                       <View style={styles.structureCardsGrid}>
                         {STRUCTURE_CARDS.map((card) => {
-                          const selected = String(selectedStructureKey) === String(card.key);
+                          const selected = String(effectiveStructureKey) === String(card.key);
+                          const dimmed = card.disabled || (isEditMode && !selected);
+                          const dimmedStrong = isEditMode && !selected;
                           return (
                             <TouchableOpacity
                               key={card.key}
                               onPress={() => {
-                                if (card.disabled) return;
+                                if (isEditMode || card.disabled) return;
                                 setSelectedStructureKey(card.key);
                               }}
-                              activeOpacity={0.85}
+                              activeOpacity={isEditMode ? 1 : 0.85}
                               style={[
                                 styles.structureCard,
                                 { borderColor: card.color },
                                 selected && styles.structureCardSelected,
                                 selected && { borderColor: card.color },
-                                card.disabled && styles.structureCardDisabled,
+                                dimmed && styles.structureCardDisabled,
+                                dimmedStrong && styles.structureCardDimmedEdit,
                               ]}
-                              {...(Platform.OS === 'web' ? { cursor: card.disabled ? 'not-allowed' : 'pointer' } : {})}
+                              {...(Platform.OS === 'web' ? { cursor: (isEditMode || card.disabled) ? 'default' : 'pointer' } : {})}
                             >
                               <View style={styles.structureCardHeader}>
                                 {card.disabled ? (
@@ -803,8 +883,22 @@ export default function CreateProjectModal({
                                 {card.description}
                               </Text>
                               {selected && !card.disabled && (
-                                <View style={[styles.structureCardCheck, { borderColor: card.color }]}>
-                                  <Ionicons name="checkmark-circle" size={20} color={card.color} />
+                                <View
+                                  style={[
+                                    styles.structureCardCheck,
+                                    styles.structureCardCheckBadge,
+                                    isEditMode && styles.structureCardCheckBadgeOpaque,
+                                    { borderColor: card.color, backgroundColor: isEditMode ? '#fff' : 'transparent' },
+                                  ]}
+                                >
+                                  {isEditMode ? (
+                                    <>
+                                      <Ionicons name="lock-closed" size={18} color={card.color} />
+                                      <Text style={[styles.structureCardLockLabel, { color: card.color }]}>Låst</Text>
+                                    </>
+                                  ) : (
+                                    <Ionicons name="checkmark-circle" size={20} color={card.color} />
+                                  )}
                                 </View>
                               )}
                             </TouchableOpacity>
@@ -821,6 +915,14 @@ export default function CreateProjectModal({
                 })()}
               </View>
 
+
+              {/* Osparade ändringar – visuell markering i redigeringsläge */}
+              {isEditMode && hasUnsavedChanges && (
+                <View style={styles.unsavedChangesBanner}>
+                  <Ionicons name="pencil" size={16} color="#B45309" />
+                  <Text style={styles.unsavedChangesBannerText}>Osparade ändringar – klicka Spara för att uppdatera projektnummer/namn i SharePoint och Digitalkontroll</Text>
+                </View>
+              )}
 
               {/* Footer – golden rule: Avbryt dimmad röd, Spara/Skapa projekt mörk */}
               <View style={styles.footerRow}>
@@ -842,7 +944,9 @@ export default function CreateProjectModal({
                       <Text style={styles.footerBtnText}>{isEditMode ? 'Sparar...' : 'Skapar...'}</Text>
                     </View>
                   ) : (
-                    <Text style={styles.footerBtnText}>{isEditMode ? 'Spara' : 'Skapa projekt'}</Text>
+                    <Text style={styles.footerBtnText}>
+                      {isEditMode ? (hasUnsavedChanges ? 'Spara ändringar' : 'Spara') : 'Skapa projekt'}
+                    </Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -877,7 +981,7 @@ export default function CreateProjectModal({
                   >
                     <Text style={styles.locationExplorerBannerTitle}>Välj lagringsplats</Text>
                     <TouchableOpacity onPress={() => setLocationPickerOpen(false)} style={styles.locationExplorerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
-                      <Ionicons name="close" size={20} color="#f1f5f9" />
+                      <Ionicons name="close" size={BANNER_CLOSE_PX} color="#fff" />
                     </TouchableOpacity>
                   </View>
                   <View style={styles.locationExplorerBody}>
@@ -905,14 +1009,20 @@ export default function CreateProjectModal({
                       </ScrollView>
                     </View>
                     <View style={styles.locationExplorerRight}>
-                      <Text style={styles.locationExplorerPanelTitle}>
-                        {activeSite ? getSiteDisplayName(activeSite) : 'Välj en site till vänster'}
-                      </Text>
-                      {!activeSite && (
-                        <Text style={styles.helperText}>Välj en site i listan till vänster för att se mappar.</Text>
-                      )}
-                      {activeSite && (
+                      {!activeSite ? (
                         <>
+                          <Text style={styles.locationExplorerPanelTitle}>Innehåll</Text>
+                          <Text style={styles.helperText}>Välj en SharePoint-site till vänster för att se dess innehåll och välja plats.</Text>
+                        </>
+                      ) : (
+                        <>
+                          <View style={styles.locationExplorerRightHeader}>
+                            <Text style={styles.locationExplorerPanelTitle}>Innehåll i</Text>
+                            <Text style={styles.locationExplorerSiteNameLabel}>{getSiteDisplayName(activeSite)}</Text>
+                            {!currentPath && locationPathHistory.length === 0 && (
+                              <Text style={styles.locationExplorerLocationBadge}>Sitens rot</Text>
+                            )}
+                          </View>
                           {locationPathHistory.length > 0 && (
                             <View style={styles.locationExplorerBreadcrumb}>
                               <Pressable onPress={handleNavigateBack} style={({ hovered, pressed }) => [styles.breadcrumbBack, (hovered || pressed) && styles.locationBreadcrumbBackHover]}>
@@ -993,55 +1103,82 @@ export default function CreateProjectModal({
                           <ScrollView style={styles.locationExplorerFolders} nestedScrollEnabled>
                             {loadingLocationFolders ? (
                               <Text style={styles.helperText}>Laddar mappar...</Text>
-                            ) : locationFolders.length === 0 ? (
-                              <>
-                                {!currentPath && (
-                                  <Pressable
-                                    onPress={() => handleSelectLocation(activeSite, '', 'Root')}
-                                    style={({ hovered, pressed }) => [styles.folderRow, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
-                                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                                  >
-                                    <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                                    <Text style={styles.folderName}>{getSiteDisplayName(activeSite)}</Text>
-                                  </Pressable>
-                                )}
-                                <Text style={styles.helperText}>Inga mappar hittades</Text>
-                              </>
                             ) : (
                               <>
                                 {!currentPath && (
                                   <Pressable
                                     onPress={() => handleSelectLocation(activeSite, '', 'Root')}
-                                    style={({ hovered, pressed }) => [styles.folderRow, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
+                                    style={({ hovered, pressed }) => [styles.locationExplorerSiteRootCard, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
                                     {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                                   >
-                                    <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                                    <Text style={styles.folderName}>{getSiteDisplayName(activeSite)}</Text>
+                                    <Ionicons name="business-outline" size={20} color="#1976D2" style={{ marginRight: 10 }} />
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={styles.locationExplorerSiteRootTitle}>Sitens rot</Text>
+                                      <Text style={styles.locationExplorerSiteRootSubtitle}>Lägg projektet direkt i {getSiteDisplayName(activeSite)}</Text>
+                                    </View>
                                   </Pressable>
                                 )}
-                                {locationFolders.map((folder) => (
-                                  <Pressable
-                                    key={folder.path}
-                                    onPress={() => handleNavigateToFolder(folder)}
-                                    onContextMenu={Platform.OS === 'web' ? (e) => handleLocationFolderContextMenu(e, folder) : undefined}
-                                    style={({ hovered, pressed }) => [styles.folderRow, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
-                                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                                  >
-                                    <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                                    <Text style={styles.folderName}>{folder.name}</Text>
-                                  </Pressable>
-                                ))}
-                                {currentPath && (
-                                  <Pressable
-                                    onPress={() => handleSelectLocation(activeSite, currentPath, currentPath.split('/').pop())}
-                                    style={({ hovered, pressed }) => [styles.selectLocationButton, { marginTop: 8 }, (hovered || pressed) && styles.locationExplorerSelectBtnHover]}
-                                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                                  >
-                                    <Text style={styles.selectLocationButtonText}>
-                                      Välj "{currentPath.split('/').pop()}"
-                                    </Text>
-                                  </Pressable>
-                                )}
+                                {(() => {
+                                  const projectFolders = locationFolders.filter((f) => isProjectFolder({ name: f.name }));
+                                  const regularFolders = locationFolders.filter((f) => !isProjectFolder({ name: f.name }));
+                                  const phaseConfig = getPhaseConfig('kalkylskede');
+                                  return (
+                                    <>
+                                      {projectFolders.length > 0 && (
+                                        <>
+                                          <Text style={styles.locationExplorerMapparLabel}>Projekt</Text>
+                                          {projectFolders.map((folder) => (
+                                            <View key={folder.path} style={styles.locationExplorerProjectRow}>
+                                              <View style={[styles.locationExplorerProjectDot, { backgroundColor: phaseConfig?.color || '#1976D2' }]} />
+                                              <Text style={styles.locationExplorerProjectName} numberOfLines={1}>{folder.name}</Text>
+                                              <Text style={[styles.locationExplorerProjectPhase, { color: phaseConfig?.color || '#1976D2' }]}>{phaseConfig?.name || 'Kalkylskede'}</Text>
+                                            </View>
+                                          ))}
+                                        </>
+                                      )}
+                                      {regularFolders.length > 0 && (
+                                        <Text style={styles.locationExplorerMapparLabel}>Mappar</Text>
+                                      )}
+                                      {locationFolders.length === 0 && !currentPath ? (
+                                        <Text style={styles.helperText}>Inga mappar i sitens rot. Välj "Sitens rot" ovan eller skapa en ny mapp.</Text>
+                                      ) : null}
+                                      {regularFolders.map((folder) => (
+                                        <Pressable
+                                          key={folder.path}
+                                          onPress={() => handleNavigateToFolder(folder)}
+                                          onContextMenu={Platform.OS === 'web' ? (e) => handleLocationFolderContextMenu(e, folder) : undefined}
+                                          style={({ hovered, pressed }) => [styles.folderRow, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
+                                          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                        >
+                                          <Ionicons name="folder-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+                                          <Text style={styles.folderName}>{folder.name}</Text>
+                                        </Pressable>
+                                      ))}
+                                    </>
+                                  );
+                                })()}
+                                {currentPath && (() => {
+                                  const currentFolderName = currentPath.split('/').pop() || '';
+                                  const currentIsProject = isProjectFolder({ name: currentFolderName });
+                                  if (currentIsProject) {
+                                    return (
+                                      <View style={styles.locationExplorerProjectBlocked}>
+                                        <Text style={styles.locationExplorerProjectBlockedText}>Denna mapp är ett befintligt projekt. Välj sitens rot eller en vanlig mapp.</Text>
+                                      </View>
+                                    );
+                                  }
+                                  return (
+                                    <Pressable
+                                      onPress={() => handleSelectLocation(activeSite, currentPath, currentFolderName)}
+                                      style={({ hovered, pressed }) => [styles.selectLocationButton, (hovered || pressed) && styles.locationExplorerSelectBtnHover]}
+                                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                    >
+                                      <Text style={styles.selectLocationButtonText}>
+                                        Välj "{currentFolderName}"
+                                      </Text>
+                                    </Pressable>
+                                  );
+                                })()}
                               </>
                             )}
                           </ScrollView>
@@ -1131,11 +1268,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: BANNER_THEME.paddingVertical,
-    paddingHorizontal: BANNER_THEME.paddingHorizontal,
-    backgroundColor: BANNER_THEME.backgroundColor,
+    paddingVertical: BANNER.paddingVertical,
+    paddingHorizontal: BANNER.paddingHorizontal,
+    minHeight: BANNER.minHeight,
+    maxHeight: BANNER.maxHeight,
+    backgroundColor: BANNER_BG,
     borderBottomWidth: 1,
-    borderBottomColor: BANNER_THEME.borderBottomColor,
+    borderBottomColor: BANNER_BORDER,
   },
   bannerLeft: {
     flexDirection: 'row',
@@ -1145,32 +1284,32 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   bannerIcon: {
-    width: BANNER_THEME.iconSize,
-    height: BANNER_THEME.iconSize,
-    borderRadius: BANNER_THEME.iconBgRadius,
-    backgroundColor: BANNER_THEME.iconBg,
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   bannerTitle: {
-    fontSize: BANNER_THEME.titleFontSize,
-    fontWeight: BANNER_THEME.titleFontWeight,
-    color: BANNER_THEME.titleColor,
+    fontSize: BANNER_TITLE_FONT,
+    fontWeight: BANNER_TITLE_WEIGHT,
+    color: '#fff',
   },
   bannerSubtitle: {
-    fontSize: BANNER_THEME.subtitleFontSize,
-    color: BANNER_THEME.subtitleColor,
+    fontSize: BANNER_SUBTITLE_FONT,
+    color: 'rgba(255,255,255,0.85)',
     marginTop: 2,
   },
   bannerSubtitleInline: {
-    fontSize: BANNER_THEME.subtitleFontSize,
+    fontSize: BANNER_SUBTITLE_FONT,
     fontWeight: '400',
-    color: BANNER_THEME.subtitleColor,
+    color: 'rgba(255,255,255,0.85)',
   },
   bannerClose: {
-    padding: BANNER_THEME.closeBtnPadding,
-    borderRadius: BANNER_THEME.iconBgRadius,
-    backgroundColor: BANNER_THEME.iconBg,
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: 'transparent',
   },
   modalBody: {
     flex: 1,
@@ -1535,6 +1674,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     flexWrap: 'nowrap',
+    overflow: 'visible',
   },
   structureCard: {
     flex: 1,
@@ -1545,6 +1685,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: '#ffffff',
     position: 'relative',
+    overflow: 'visible',
     ...(Platform.OS === 'web' ? { boxSizing: 'border-box' } : {}),
   },
   structureCardSelected: {
@@ -1552,6 +1693,9 @@ const styles = StyleSheet.create({
   },
   structureCardDisabled: {
     opacity: 0.7,
+  },
+  structureCardDimmedEdit: {
+    opacity: 0.45,
   },
   structureCardHeader: {
     flexDirection: 'row',
@@ -1580,6 +1724,24 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  structureCardCheckBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.12)' } : { elevation: 2 }),
+  },
+  structureCardCheckBadgeOpaque: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(0,0,0,0.15)' } : { elevation: 3 }),
+  },
+  structureCardLockLabel: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   structureCardInactiveIcon: {
     width: 18,
@@ -1620,6 +1782,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
   },
+  unsavedChangesBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    marginHorizontal: 24,
+    marginTop: 8,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  unsavedChangesBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#B45309',
+    fontWeight: '500',
+  },
   footerRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -1628,41 +1809,44 @@ const styles = StyleSheet.create({
     marginTop: 12,
     position: 'relative',
     zIndex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
     borderTopWidth: 1,
-    borderTopColor: FOOTER_THEME.borderTopColor,
-    backgroundColor: FOOTER_THEME.backgroundColor,
+    borderTopColor: FOOTER_BORDER,
+    backgroundColor: FOOTER_BG,
   },
   footerBtnAvbryt: {
-    paddingVertical: FOOTER_THEME.btnPaddingVertical,
-    paddingHorizontal: FOOTER_THEME.btnPaddingHorizontal,
-    borderRadius: FOOTER_THEME.btnBorderRadius,
+    paddingVertical: BTN_AVBRYT_PAD.v,
+    paddingHorizontal: BTN_AVBRYT_PAD.h,
+    borderRadius: BTN_RADIUS,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fef2f2',
+    borderColor: BTN_AVBRYT_BORDER,
+    backgroundColor: BTN_AVBRYT_BG,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   footerBtnAvbrytText: {
-    fontSize: FOOTER_THEME.btnFontSize,
-    fontWeight: FOOTER_THEME.btnFontWeight,
-    color: '#b91c1c',
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
+    color: BTN_AVBRYT_TEXT,
   },
   footerBtnDark: {
-    paddingVertical: FOOTER_THEME.btnPaddingVertical,
-    paddingHorizontal: FOOTER_THEME.btnPaddingHorizontal,
-    borderRadius: FOOTER_THEME.btnBorderRadius,
-    borderWidth: 1,
-    borderColor: FOOTER_THEME.btnBorderColor,
-    backgroundColor: FOOTER_THEME.btnBackground,
+    paddingVertical: BTN_PRIM_PAD.v,
+    paddingHorizontal: BTN_PRIM_PAD.h,
+    borderRadius: BTN_RADIUS,
+    minWidth: 96,
+    backgroundColor: BTN_PRIM_BG,
+    alignItems: 'center',
+    justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   footerBtnDisabled: {
     opacity: 0.6,
   },
   footerBtnText: {
-    fontSize: FOOTER_THEME.btnFontSize,
-    fontWeight: FOOTER_THEME.btnFontWeight,
-    color: FOOTER_THEME.btnTextColor,
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
+    color: BTN_PRIM_TEXT,
   },
   cancelBtn: {
     paddingHorizontal: 16,
@@ -1757,20 +1941,22 @@ const styles = StyleSheet.create({
     maxHeight: 250,
   },
   selectLocationButton: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#1976D2',
-    borderRadius: 8,
+    marginTop: 12,
+    paddingVertical: BTN_PRIM_PAD.v,
+    paddingHorizontal: BTN_PRIM_PAD.h,
+    borderRadius: BTN_RADIUS,
+    backgroundColor: BTN_PRIM_BG,
     alignItems: 'center',
+    alignSelf: 'flex-start',
+    minWidth: 120,
   },
   selectLocationButtonSelected: {
-    backgroundColor: '#22c55e',
+    opacity: 0.9,
   },
   selectLocationButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
+    color: BTN_PRIM_TEXT,
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
   },
   locationExplorerOverlay: {
     flex: 1,
@@ -1793,16 +1979,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: 4,
     paddingHorizontal: 12,
-    backgroundColor: '#1e293b',
+    minHeight: 28,
+    maxHeight: 28,
+    backgroundColor: BANNER_BG,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    borderBottomColor: BANNER_BORDER,
   },
   locationExplorerBannerTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#f1f5f9',
+    fontSize: BANNER_TITLE_FONT,
+    fontWeight: BANNER_TITLE_WEIGHT,
+    color: '#fff',
   },
   locationExplorerClose: {
     padding: 4,
@@ -1855,6 +2043,90 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     minWidth: 0,
+  },
+  locationExplorerRightHeader: {
+    marginBottom: 10,
+  },
+  locationExplorerSiteNameLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginTop: 2,
+  },
+  locationExplorerLocationBadge: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748b',
+    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  locationExplorerSiteRootCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 12,
+    backgroundColor: '#f8fafc',
+  },
+  locationExplorerSiteRootTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  locationExplorerSiteRootSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  locationExplorerMapparLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 6,
+  },
+  locationExplorerProjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginBottom: 4,
+    borderRadius: 6,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  locationExplorerProjectDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 10,
+  },
+  locationExplorerProjectName: {
+    flex: 1,
+    fontSize: 13,
+    color: '#334155',
+  },
+  locationExplorerProjectPhase: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginLeft: 8,
+  },
+  locationExplorerProjectBlocked: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  locationExplorerProjectBlockedText: {
+    fontSize: 12,
+    color: '#b91c1c',
   },
   locationExplorerBreadcrumb: {
     flexDirection: 'row',
@@ -1989,20 +2261,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   locationExplorerCloseBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
+    paddingVertical: BTN_PRIM_PAD.v,
+    paddingHorizontal: BTN_PRIM_PAD.h,
+    borderRadius: BTN_RADIUS,
+    backgroundColor: BTN_PRIM_BG,
   },
   locationExplorerCloseBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#b91c1c',
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
+    color: BTN_PRIM_TEXT,
   },
   locationExplorerCloseBtnHover: {
-    ...(Platform.OS === 'web' ? { backgroundColor: '#fee2e2' } : {}),
+    ...(Platform.OS === 'web' ? { opacity: 0.9 } : {}),
   },
   locationExplorerFolderRowHover: {
     ...(Platform.OS === 'web' ? { backgroundColor: '#f8fafc', borderColor: '#e2e8f0' } : {}),
@@ -2011,7 +2281,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { backgroundColor: '#e2e8f0', borderRadius: 4 } : {}),
   },
   locationExplorerSelectBtnHover: {
-    ...(Platform.OS === 'web' ? { backgroundColor: '#1565c0', opacity: 0.95 } : {}),
+    ...(Platform.OS === 'web' ? { opacity: 0.9 } : {}),
   },
   // Loading overlay styles
   loadingOverlay: {

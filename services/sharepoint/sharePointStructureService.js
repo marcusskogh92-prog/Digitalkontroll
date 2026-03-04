@@ -8,6 +8,7 @@
 
 import { getSharePointSiteForPhase } from '../../components/firebase';
 import { getAccessToken } from '../azure/authService';
+import { normalizeSiteIdForGraph } from '../azure/graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
@@ -39,6 +40,7 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
   if (!siteId) {
     throw new Error('SharePoint Site ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) {
@@ -47,7 +49,7 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
 
   // Normalize path – för root använd /drive/root/children, inte root:/:/children
   const isRoot = folderPath === '/' || !String(folderPath || '').trim();
-  const endpoint = isRoot
+  let endpoint = isRoot
     ? `${GRAPH_API_BASE}/sites/${siteId}/drive/root/children`
     : (() => {
         // Path utan inledande snedstreck – Graph API kan ge 404 med leading slash
@@ -56,6 +58,17 @@ export async function getSharePointFolderItems(siteId, folderPath = '/') {
         const encoded = encodeGraphPathSegments(path);
         return `${GRAPH_API_BASE}/sites/${siteId}/drive/root:/${encoded}:/children`;
       })();
+
+  // Last-second fix: if URL still has wrong siteId format (dots), normalize
+  const siteIdInUrl = endpoint.match(/\/sites\/([^/]+)\//);
+  if (siteIdInUrl && siteIdInUrl[1]) {
+    const raw = siteIdInUrl[1];
+    const hasWrongFormat = raw.includes('.sharepoint.com.') || /[0-9a-f-]+\.[0-9a-f]{8}/i.test(raw);
+    if (hasWrongFormat) {
+      const fixedSiteId = normalizeSiteIdForGraph(raw);
+      endpoint = endpoint.replace(raw, fixedSiteId);
+    }
+  }
 
   try {
     const response = await fetch(endpoint, {
@@ -104,6 +117,7 @@ export async function getSharePointFolderTree(siteId, rootPath = '/', maxDepth =
   if (!siteId) {
     throw new Error('SharePoint Site ID is required');
   }
+  siteId = normalizeSiteIdForGraph(siteId);
 
   const accessToken = await getAccessToken();
   if (!accessToken) {

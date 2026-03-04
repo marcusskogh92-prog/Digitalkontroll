@@ -9,13 +9,13 @@ const { extractTextByMimeType } = require('./services/fileTextExtractor');
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
 const { syncSharePointSiteVisibility, upsertCompanySharePointSiteMeta } = require('./sharepointVisibility');
-const { provisionCompanyImpl } = require('./companyProvisioning');
+const { provisionCompanyImpl, provisionCompanySharePointImpl } = require('./companyProvisioning');
 const { createSharePointSiteImpl } = require('./sharepointProvisioning');
 const { createUser, deleteUser, updateUser } = require('./userAdmin');
 const { requestSubscriptionUpgrade } = require('./billing');
 const { setSuperadmin } = require('./superadmin');
 const { adminFetchCompanyMembers, setCompanyStatus, setCompanyUserLimit, setCompanyName } = require('./companyAdmin');
-const { purgeCompany } = require('./companyPurge');
+const { purgeCompany, purgeAllCompaniesExceptMSByggsystem } = require('./companyPurge');
 const { devResetAdmin } = require('./devReset');
 const { deleteProject, deleteFolder } = require('./deleteOperations');
 const {
@@ -27,9 +27,12 @@ const {
 exports.syncSharePointSiteVisibility = functions.https.onCall(syncSharePointSiteVisibility);
 exports.upsertCompanySharePointSiteMeta = functions.https.onCall(upsertCompanySharePointSiteMeta);
 
-exports.provisionCompany = functions.https.onCall(provisionCompanyImpl);
+// SharePoint-etablering (Site + Bas) kan ta 1–2 minuter – 180s så att Bas hinner skapas även vid långsamma svar från Graph.
+exports.provisionCompany = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(provisionCompanyImpl);
 exports.provisionCompanyImpl = provisionCompanyImpl;
-exports.createSharePointSite = functions.https.onCall(createSharePointSiteImpl);
+exports.provisionCompanySharePoint = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(provisionCompanySharePointImpl);
+// Skapande av en SharePoint-site via Graph kan ta 1–2 minuter – 180s timeout som provisionCompany.
+exports.createSharePointSite = functions.runWith({ timeoutSeconds: 180, memory: '256MB' }).https.onCall(createSharePointSiteImpl);
 
 exports.createUser = functions.https.onCall(createUser);
 exports.requestSubscriptionUpgrade = functions.https.onCall(requestSubscriptionUpgrade);
@@ -42,6 +45,7 @@ exports.setCompanyStatus = functions.https.onCall(setCompanyStatus);
 exports.setCompanyUserLimit = functions.https.onCall(setCompanyUserLimit);
 exports.setCompanyName = functions.https.onCall(setCompanyName);
 exports.purgeCompany = functions.https.onCall(purgeCompany);
+exports.purgeAllCompaniesExceptMSByggsystem = functions.runWith({ timeoutSeconds: 300, memory: '256MB' }).https.onCall(purgeAllCompaniesExceptMSByggsystem);
 
 exports.devResetAdmin = functions.https.onCall(devResetAdmin);
 
@@ -975,10 +979,50 @@ async function logAiAnalysisActivity({ companyId, projectId, kind, status, uid }
   }
 }
 
+async function updateFFUAnalysisProgress(companyId, projectId, { progress, progressStep }) {
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const payload = { progress: Math.max(0, Math.min(100, Number(progress) || 0)), progressStep: String(progressStep || '').trim() || null };
+  await canonicalRef.set(payload, { merge: true });
+  await legacyRef.set(payload, { merge: true }).catch(() => null);
+}
+
+async function checkFFUCancelRequested(companyId, projectId) {
+  const snap = await db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`).get();
+  const d = (snap && snap.exists && snap.data()) || {};
+  return d.cancelRequested === true;
+}
+
+async function updateKalkylAnalysisProgress(companyId, projectId, { progress, progressStep }) {
+  const ref = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+  const payload = { progress: Math.max(0, Math.min(100, Number(progress) || 0)), progressStep: String(progressStep || '').trim() || null };
+  await ref.set(payload, { merge: true });
+}
+
+async function checkKalkylCancelRequested(companyId, projectId) {
+  const snap = await db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`).get();
+  const d = (snap && snap.exists && snap.data()) || {};
+  return d.cancelRequested === true;
+}
+
+/** Sätt Kalkyl-analys till fel så att klienten slutar visa "Analyseras" vid tidiga fel. */
+async function setKalkylAnalysisError(companyId, projectId, errorMessage) {
+  const ref = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
+  await ref.set({ status: 'error', errorMessage: String(errorMessage || '').trim() || 'Analysen misslyckades.', analyzedAt: FieldValue.serverTimestamp() }, { merge: true });
+}
+
+/** Sätt FFU-analys till fel så att klienten slutar visa "Analyseras" vid tidiga fel (t.ex. saknad SharePoint base path). */
+async function setFFUAnalysisError(companyId, projectId, errorMessage) {
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const payload = { status: 'error', errorMessage: String(errorMessage || '').trim() || 'Analysen misslyckades.', analyzedAt: FieldValue.serverTimestamp() };
+  await canonicalRef.set(payload, { merge: true });
+  await legacyRef.set(payload, { merge: true }).catch(() => null);
+}
+
 async function persistFFUAnalysisLatest({ companyId, projectId, doc, uid }) {
   const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
   const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
-
   await canonicalRef.set(doc, { merge: false });
   // Mirror write for older clients/paths (best-effort).
   await legacyRef.set(doc, { merge: false }).catch(() => null);
@@ -1017,15 +1061,31 @@ exports.analyzeFFUFromFiles = functions
 
   assertAnalyzeFFUPermission({ companyId, context });
 
-  // Mark analysis as running in Firestore (merge to preserve any previous content).
+  const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+
   try {
-    const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
-    const legacyRef = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
-    const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
-    await canonicalRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true });
-    await legacyRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+    await canonicalRef.set({
+      status: 'analyzing',
+      model,
+      analyzingAt: FieldValue.serverTimestamp(),
+      progress: 0,
+      progressStep: 'Förbereder',
+      cancelRequested: FieldValue.delete(),
+    }, { merge: true });
+    await legacyRef.set({ status: 'analyzing', model, analyzingAt: FieldValue.serverTimestamp(), progress: 0, progressStep: 'Förbereder', cancelRequested: FieldValue.delete() }, { merge: true }).catch(() => null);
   } catch (e) {
     console.warn('[FFU] Failed to set analyzing status', { message: String(e && e.message ? e.message : e) });
+  }
+
+  async function maybeCancel() {
+    if (await checkFFUCancelRequested(companyId, projectId)) {
+      await canonicalRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true });
+      await legacyRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => null);
+      return true;
+    }
+    return false;
   }
 
   // Debug (temporary): verify what SharePoint config is visible in runtime.
@@ -1042,8 +1102,11 @@ exports.analyzeFFUFromFiles = functions
     });
   } catch (_e) {}
 
+  try {
   const hasClientFiles = Array.isArray(files) && files.length > 0;
   const useSharePoint = !hasClientFiles;
+
+  if (await maybeCancel()) return { status: 'cancelled' };
 
   if (!useSharePoint && IS_EMULATOR && !isStorageEmulated()) {
     throw new functions.https.HttpsError(
@@ -1060,6 +1123,8 @@ exports.analyzeFFUFromFiles = functions
     if (!seed.ok) {
       throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
     }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 5, progressStep: 'Konfigurerar SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     let accessToken = null;
     try {
@@ -1070,6 +1135,8 @@ exports.analyzeFFUFromFiles = functions
         `SharePoint Graph access token is not configured (or could not be minted): ${String(e && e.message ? e.message : e)}`
       );
     }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 8, progressStep: 'Ansluter till SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
     if (!siteId) {
@@ -1080,6 +1147,8 @@ exports.analyzeFFUFromFiles = functions
     if (!basePath) {
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
     }
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 10, progressStep: 'Hämtar mappstruktur' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     const FORFRAGNINGSUNDERLAG_FOLDER = '02 - Förfrågningsunderlag';
     const ffuRootPath = `${basePath}/${FORFRAGNINGSUNDERLAG_FOLDER}`.replace(/^\/+/, '').replace(/\/+/, '/');
@@ -1087,6 +1156,9 @@ exports.analyzeFFUFromFiles = functions
     const maxFiles = Number(process.env.FFU_SP_MAX_FILES || 10);
     const maxDepth = Number(process.env.FFU_SP_MAX_DEPTH || 8);
     const spFiles = await graphListFilesRecursive({ siteId, rootPath: ffuRootPath, accessToken, maxDepth, maxFiles });
+
+    await updateFFUAnalysisProgress(companyId, projectId, { progress: 15, progressStep: 'Listar filer i SharePoint' });
+    if (await maybeCancel()) return { status: 'cancelled' };
 
     console.log('analyzeFFUFromFiles: sharepoint list summary', {
       companyId,
@@ -1104,7 +1176,13 @@ exports.analyzeFFUFromFiles = functions
     }
 
     const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
-    for (let i = 0; i < spFiles.length; i += 1) {
+    const spLen = spFiles.length;
+    for (let i = 0; i < spLen; i += 1) {
+      if (i % 2 === 0) {
+        const p = 15 + Math.round(35 * (i + 1) / spLen);
+        await updateFFUAnalysisProgress(companyId, projectId, { progress: p, progressStep: 'Läser underlag' });
+        if (i % 4 === 2 && (await maybeCancel())) return { status: 'cancelled' };
+      }
       const f = spFiles[i] || {};
       const name = String(f.name || '').trim();
       const mimeType = guessMimeTypeFromName(name);
@@ -1206,6 +1284,9 @@ exports.analyzeFFUFromFiles = functions
 
   console.log('[FFU] Step 2: PDF extraction done', { ms: Date.now() - startedAtMs, totalChars });
 
+  await updateFFUAnalysisProgress(companyId, projectId, { progress: 50, progressStep: 'Förbereder text till AI' });
+  if (await maybeCancel()) return { status: 'cancelled' };
+
   const defaultCap = 120_000;
   const capFromEnv = Number(process.env.FFU_MAX_TOTAL_CHARS || defaultCap);
   const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
@@ -1225,7 +1306,6 @@ exports.analyzeFFUFromFiles = functions
     });
   }
 
-  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
   console.log('[FFU] Step 3: Calling OpenAI', { ms: Date.now() - startedAtMs, model, status });
 
   let customInstruction = '';
@@ -1236,6 +1316,9 @@ exports.analyzeFFUFromFiles = functions
       customInstruction = String(data.instruction || data.customInstruction || '').trim();
     }
   } catch (_e) {}
+
+  await updateFFUAnalysisProgress(companyId, projectId, { progress: 55, progressStep: 'Anropar AI (kan ta 1–2 min)' });
+  if (await maybeCancel()) return { status: 'cancelled' };
 
   let analysis;
   try {
@@ -1290,6 +1373,11 @@ exports.analyzeFFUFromFiles = functions
   const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
   console.log('[FFU] Analysis saved', { companyId, projectId, status });
   return saved;
+  } catch (e) {
+    const msg = (e && (e.message || (e.details != null ? String(e.details) : ''))) ? String(e.message || e.details) : String(e);
+    await setFFUAnalysisError(companyId, projectId, msg).catch(() => null);
+    throw e;
+  }
 });
 
 // --- AI: Kalkyl analysis from SharePoint ---
@@ -1390,15 +1478,34 @@ exports.analyzeKalkylFromSharePoint = functions
 
     const canonicalRef = db.doc(`companies/${companyId}/projects/${projectId}/ai_kalkyl_analysis/latest`);
     try {
-      await canonicalRef.set({ status: 'analyzing', analyzingAt: FieldValue.serverTimestamp() }, { merge: true });
+      await canonicalRef.set({
+        status: 'analyzing',
+        analyzingAt: FieldValue.serverTimestamp(),
+        progress: 0,
+        progressStep: 'Förbereder',
+        cancelRequested: FieldValue.delete(),
+      }, { merge: true });
     } catch (e) {
       console.warn('[Kalkyl AI] Failed to set analyzing status', String(e && e.message ? e.message : e));
     }
+
+    async function maybeCancelKalkyl() {
+      if (await checkKalkylCancelRequested(companyId, projectId)) {
+        await canonicalRef.set({ status: 'cancelled', canceledAt: FieldValue.serverTimestamp() }, { merge: true });
+        return true;
+      }
+      return false;
+    }
+
+    try {
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
     const seed = await ensureCompany5555SharePointSeedIfMissing(companyId);
     if (!seed.ok) {
       throw new functions.https.HttpsError('failed-precondition', `SharePoint site config missing for company ${companyId}: ${seed.reason || 'unknown'}`);
     }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 10, progressStep: 'Konfigurerar SharePoint' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
     let accessToken;
     try {
@@ -1406,6 +1513,8 @@ exports.analyzeKalkylFromSharePoint = functions
     } catch (e) {
       throw new functions.https.HttpsError('failed-precondition', `SharePoint Graph access token not configured: ${String(e && e.message ? e.message : e)}`);
     }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 15, progressStep: 'Ansluter till SharePoint' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
     const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
     if (!siteId) {
@@ -1416,13 +1525,17 @@ exports.analyzeKalkylFromSharePoint = functions
     if (!basePath) {
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
     }
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 20, progressStep: 'Hämtar mappstruktur' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
     const maxFilesPerFolder = Number(process.env.KALKYL_AI_MAX_FILES_PER_FOLDER || 40);
     const maxDepth = Number(process.env.KALKYL_AI_MAX_DEPTH || 8);
     const seenIds = new Set();
     const allSpFiles = [];
 
-    for (const folder of KALKYL_ANALYSIS_FOLDERS_V2) {
+    const folderList = KALKYL_ANALYSIS_FOLDERS_V2;
+    for (let fi = 0; fi < folderList.length; fi += 1) {
+      const folder = folderList[fi];
       const rootPath = `${basePath}/${folder}`.replace(/^\/+/, '').replace(/\/+/g, '/');
       const files = await graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth, maxFiles: maxFilesPerFolder });
       for (const f of files || []) {
@@ -1431,17 +1544,29 @@ exports.analyzeKalkylFromSharePoint = functions
           allSpFiles.push({ ...f, sourcePath: rootPath });
         }
       }
+      const listP = 20 + Math.round(30 * (fi + 1) / folderList.length);
+      await updateKalkylAnalysisProgress(companyId, projectId, { progress: listP, progressStep: 'Listar filer' });
+      if (await maybeCancelKalkyl()) return { status: 'cancelled' };
     }
 
     if (allSpFiles.length === 0) {
       throw new functions.https.HttpsError('failed-precondition', 'Inga filer hittades i de konfigurerade mapparna (Förfrågningsunderlag, Inköp och offerter, Risk och möjligheter, Möten, Kalkyl).');
     }
 
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 50, progressStep: 'Läser underlag' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
+
     const minChars = Number(process.env.FFU_EXTRACT_MIN_CHARS || 30);
     const maxBytes = Number(process.env.FFU_EXTRACT_MAX_BYTES || 20 * 1024 * 1024);
     const extractedFiles = [];
+    const totalSp = allSpFiles.length;
 
     for (let i = 0; i < allSpFiles.length; i += 1) {
+      if (i % 3 === 0 && totalSp > 0) {
+        const p = 50 + Math.round(30 * (i + 1) / totalSp);
+        await updateKalkylAnalysisProgress(companyId, projectId, { progress: p, progressStep: 'Läser underlag' });
+        if (i % 6 === 3 && (await maybeCancelKalkyl())) return { status: 'cancelled' };
+      }
       const f = allSpFiles[i] || {};
       const name = String(f.name || '').trim();
       const mimeType = guessMimeTypeFromName(name);
@@ -1474,6 +1599,9 @@ exports.analyzeKalkylFromSharePoint = functions
     const trunc = truncateExtractedFilesToMaxChars(extractedFiles, maxTotalChars);
     const status = trunc.truncated ? 'partial' : 'success';
     const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+
+    await updateKalkylAnalysisProgress(companyId, projectId, { progress: 85, progressStep: 'Anropar AI (kan ta 1–2 min)' });
+    if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
     const { system, user } = buildKalkylAnalysisPrompt(trunc.files);
     const apiKey = getOpenAIKey();
@@ -1527,6 +1655,11 @@ exports.analyzeKalkylFromSharePoint = functions
     await canonicalRef.set(doc, { merge: true });
     await logAiAnalysisActivity({ companyId, projectId, kind: 'kalkyl', status, uid: context.auth?.uid });
     return doc;
+    } catch (e) {
+      const msg = (e && (e.message || (e.details != null ? String(e.details) : ''))) ? String(e.message || e.details) : String(e);
+      await setKalkylAnalysisError(companyId, projectId, msg).catch(() => null);
+      throw e;
+    }
   });
 
 function encodeGraphPath(path) {

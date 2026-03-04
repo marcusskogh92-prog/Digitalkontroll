@@ -1,157 +1,129 @@
-# Golden rule: Modaler (SaaS 2026 B2B)
+# Golden rule: Modaler (en standard)
 
-**Från och med nu ska varje ny modal som skapas se ut och bete sig enligt denna standard.** Referens är **Kontaktregister** (AdminContactRegistryModal) och **Redigera kontakt** (underlagen i samma modal). Designen är stram, professionell och affärssystemlik – SaaS 2026 B2B.
+**Alla modaler ska följa denna standard.** Referens för **banner och text** är **Leverantörer** (AdminSuppliersModal) och **Företagsinställningar** (AdminCompanyModal) – kompakt mörk banner, 28px höjd, titel 12px. Övrig design: mörk banner, primärknapp i bannerns färg (dimmad), ingen ljusblå.
 
-**Referensmodaler:**  
-- Huvudmodal med tabell: `components/common/AdminContactRegistryModal.js`  
-- Formulärmodal (redigera): samma fil, Redigera kontakt-modalen  
-
-**Komponent:** `components/common/ModalBase.js`  
-**Design-tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026)
+**Referensmodaler (banner/header):** `AdminSuppliersModal.js` (Leverantörer), `AdminCompanyModal.js` (Företagsinställningar)  
+**Design-tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026) – använd **headerNeutralCompact** för banner.  
+**ModalBase:** `headerVariant="neutralCompact"` ger denna banner.  
+**Hook:** `hooks/useDraggableResizableModal.js`
 
 ---
 
-## 1. Modal-container (MODAL_DESIGN_2026)
+## 1. Modal-container
 
-- **Border-radius:** 8px (inga 12px eller större, inga pill-former).
-- **Skugga:** `box-shadow: 0 10px 30px rgba(0,0,0,0.08)` – subtil, ingen glow.
-- **Overlay:** `background: rgba(0,0,0,0.35)`, subtil `backdrop-blur` max 4px.
+- **Border-radius:** 8px (inga pill-former).
+- **Skugga:** `box-shadow: 0 10px 30px rgba(0,0,0,0.08)` – subtil.
+- **Overlay:** `rgba(0,0,0,0.35)`, `backdrop-filter: blur(4px)`.
+
+Tokens: `MODAL_DESIGN_2026.radius`, `shadow`, `overlayBg`, `overlayBlur`.
 
 ---
 
-## 2. Header
+## 2. Header (banner)
 
-Nya modaler ska använda **neutral header** (samma som Kontaktregister) om inte särskild anledning finns.
+**Samma som Leverantörer och Företagsinställningar.** Använd `ModalBase` med `headerVariant="neutralCompact"` eller tokens från `headerNeutralCompact` + `headerNeutral` (bakgrund/kant).
 
-### Neutral header (rekommenderad standard)
-
-- **Bakgrund:** `#1E2A38` (rail-färg).
+- **Bakgrund:** `#1E2A38` (bannerns färg).
 - **Kant:** `border-bottom: 1px solid rgba(255,255,255,0.1)`.
-- **Padding:** 8px vertikalt, 14px horisontellt. Min-height 40px, max-height 44px.
-- **Titel:** vit text (#fff), font-size 15px, font-weight 600, line-height 18px. Ikon (t.ex. 17px) + titel på samma rad.
-- **Undertitel (valfritt):** separator "—" + undertitel i vit text, opacity 0.85, font-size 12px.
-- **Stäng-knapp (X):** Vit ikon, padding 6px, borderRadius 6px, transparent bakgrund, hover `rgba(255,255,255,0.12)`. Ikon 20px.
+- **Höjd:** 28px (min/max). Padding 4px vertikalt, 12px horisontellt.  
+  Tokens: `MODAL_DESIGN_2026.headerNeutralCompact`.
+- **Titel:** vit text (#fff), **12px**, **font-weight 400** (normal, inte fet), line-height 16px. Ikon + titel (och ev. undertitel) på samma rad.  
+  Tokens: `headerNeutralCompactTitleFontSize`, `headerNeutralCompactTitleFontWeight`, `headerNeutralCompactTitleLineHeight`.
+- **Ikon:** 14px. Ikonruta (om egen): 22×22px, borderRadius 6px, bakgrund `rgba(255,255,255,0.1)`.  
+  Tokens: `headerNeutralCompactIconPx` (14), `headerNeutralCompactIconSize` (22).
+- **Stäng-knapp (X):** Vit ikon **18px**, padding 6px, borderRadius 6px, transparent bakgrund. Hover (webb): `rgba(255,255,255,0.12)`.  
+  Token: `headerNeutralCompactCloseIconPx` (18).
 
-I ModalBase: `headerVariant="neutral"`, `titleIcon={<Ionicons … />}`.
-
-### Ljus header (alternativ)
-
-- Bakgrund `#fff`, border-bottom `#eee`, titel `#0f172a`, undertitel `#64748b`. Stäng-ikon `#64748b`.  
-- Använd `headerVariant="light"` (eller utelämna för default).
+**Undertitel (valfritt):** separator "—" + text 12px, opacity 0.9. Samma storlek som titel.
 
 ---
 
 ## 3. Innehåll (body)
 
-- **Padding:** 24px (`contentPadding`). Sektioner: 16px mellanrum (`sectionGap`).
-- För full-bleed (t.ex. toolbar + tabell): `contentStyle={{ padding: 0 }}`.
+- **Padding:** 20px. Sektioner: 10–12px mellanrum.
+- **Sektionstitel (t.ex. "Grunduppgifter"):** 12px, font-weight 500, färg `#334155`, margin-bottom 10px.
+- **Etiketter:** 12px, färg `#64748b`, margin-bottom 4px.
+- **Hint-text:** 10px, färg `#94a3b8`.
+
+För full-bleed (t.ex. tabell): `contentStyle={{ padding: 0 }}`.
 
 ---
 
 ## 4. Footer och knappar
 
-### Stäng-knapp (huvudåtgärd att stänga modalen)
+### Formulärmodaler (Avbryt + Spara/Skapa)
 
-- **Utseende:** Dimmad blå/mörk – bakgrund `#475569`, vit text, ingen kant. Border-radius 6px, padding 10px 20px.
-- Samma stil som Spara i formulärmodaler (enhetlig “primär” avslutningskänsla).
+- **Avbryt:** Dimmad röd – bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c`. Border-radius 6px. **Padding 4px 10px.** Text **12px, font-weight 500**.
+- **Spara / Primär action (t.ex. "Skapa företag"):** **Bannerns färg, dimmad** – bakgrund `#2D3A4B`, vit text. Border-radius 6px. **Padding 4px 12px.** Text **12px, font-weight 500**. Min-width t.ex. 96px. Ingen ljusblå (#1976D2 eller #475569).
 
-### Formulärmodaler (t.ex. Redigera / Lägg till)
+### Enkel Stäng-knapp (ingen Avbryt)
 
-- **Avbryt:** Dimmad röd – bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c`. Border-radius 6px.
-- **Spara / Primär action:** Dimmad bannerfärg – bakgrund `#475569`, vit text, border-radius 8px, padding 10px 20px.
+- Samma stil som primär: mörk, bannerns färg (eller dimmad `#2D3A4B`), vit text, 6px radius, kompakt padding.
 
 ### Övriga knappar
 
-- Border-radius 6px, inga pill. Primär: mörk bakgrund. Sekundär: outline eller ljus bakgrund.
+- Border-radius 6px, inga pill. Primär: mörk bakgrund (bannerns färg / dimmad). Sekundär: outline eller ljus bakgrund.
 
 ---
 
-## 5. Tabeller inuti modalen
+## 5. Inputfält
 
-- **Border-radius:** 0 (tabellens yttre följer content, ingen rundning på tabellkanten).
-- **Radhöjd:** 24px (`tableRowHeight`). Cell-padding: 4px vertikalt, 12px horisontellt.
-- **Resizable kolumner (webb):** Dra i headern mellan kolumner. Synlig resize-line (2px, `#cbd5e1`) mellan kolumnerna.
-- **Inline-fält i tabell (t.ex. “Lägg till snabbt”):** Kantiga – `borderRadius: 0` på input, inte 6px.
-
----
-
-## 6. Inputfält och checkboxar
-
-- **Vanliga inputfält (formulär):** Border-radius 6px, border 1px solid #ddd, subtil focus.
-- **Checkbox / toggle (t.ex. “Lägg till snabbt”):**  
-  - **Av:** Tom ruta – ikon `square-outline`, färg `#94a3b8`.  
-  - **På:** Ikon `checkbox`, färg `#0ea5e9`.
+- **Border-radius:** 6px. Border 1px solid `#ddd`. Focus: subtil (t.ex. `#1976D2` för fokusring om behov).
+- **Padding:** 8px vertikalt, 10px horisontellt. Font 13px, färg `#1e293b`. Margin mellan fält 12px.
+- **Disabled/read-only:** Bakgrund `#f8fafc`, text `#64748b`.
 
 ---
 
-## 7. Formulärmodaler (typ Redigera / Lägg till)
+## 6. Tabeller inuti modalen
 
-När modalen är en “enkel” formulärmodal (ett formulär + Avbryt/Spara):
-
-- **Storlek:** Tillräckligt stor så att all info syns utan scroll (t.ex. bredd 520px, minHeight 520px).
-- **Stängning med osparade ändringar:** Vid stäng (X, Avbryt, klick utanför, ESC) – om något fält har ändrats, visa dialog: “Osparade ändringar” / “Vill du spara ändringarna innan du stänger?” med Avbryt (stanna), Kasta ändringar, Spara.
-- **Tangentbord:**  
-  - **ESC:** Samma som stäng – om dirty, fråga först.  
-  - **Enter:** Sparar (samma som Spara) när Namn/obligatoriskt fält är ifyllt; använd `preventDefault` så att formuläret inte submit:ar på fel ställe.
-- **Efter spara:** Visa bekräftelse (t.ex. `showNotice('… uppdaterad')`), stäng modal, uppdatera data.
+- **Border-radius:** 0 på tabellkanten. Radhöjd 24px. Cell-padding: 4px vertikalt, 12px horisontellt.
+- Inline-fält i tabell: `borderRadius: 0`.
 
 ---
 
-## 8. ModalBase – återanvändbar komponent
+## 7. Beteende
 
-Alla nya modaler ska använda **ModalBase** för:
+- **Tangentbord:** Esc stänger (vid formulärmodal med osparade ändringar: fråga först). Enter sparar/utför primär åtgärd i formulärmodaler när fokus inte är i input/textarea.
+- **Flytta (webb):** Dra i headern. Använd `useDraggableResizableModal`; skicka `headerProps.onMouseDown` på bannern. Stäng-knappen: `onMouseDown: (e) => e.stopPropagation()`.
+- **Storleksändring (webb):** Windows-liknande resize – implementeras av `useDraggableResizableModal`. Se §7.1.
 
-- Standard radius (8px), shadow, overlay
-- Header (neutral eller ljus) med titel, valfri undertitel, diskret stäng (X)
-- Standard content-padding (24px) – kan överstyras med `contentStyle` för full-bleed
-- Footer-plats för Stäng / Avbryt / Spara
+### 7.1 Resize (webb) – Windows-liknande
 
-**Drag och resize (webb):** Använd `useDraggableResizableModal` och skicka `boxStyle`, `overlayStyle`, `headerProps` och `resizeHandles` till ModalBase. Kontaktregister-modalen är referensimplementation.
-
----
-
-## 9. Beteende
-
-- **Tangentbord:** Esc stänger modalen (eller vid formulärmodal med dirty: fråga först). Enter sparar/utför primär åtgärd i formulärmodaler; i övriga modaler endast när fokus inte är i input/textarea.
-- **Flytta (webb):** Dra i headern; använd `useDraggableResizableModal` och `headerProps.onMouseDown`. Stäng-knappen ska ha `onMouseDown: (e) => e.stopPropagation()`.
-- **Storleksändring (webb):** Dra i höger kant, nederkant eller nedre hörn. Hooken ger synliga grip-markeringar.
+- **Inga synliga handtag:** Ta bort alla synliga resize-ikoner, trianglar eller grip-markeringar i kanter och hörn. Modalen ska inte se "dragbar" ut förrän användaren hovrar nära en kant.
+- **Osynliga resize-zoner:** 6–8px breda zoner längs alla fyra kanter (höger, vänster, nederkant, överkant) och i alla fyra hörn. Zonerna är rent hit-test; ingen permanent visuell indikator.
+- **Vid hover över resize-zon:**
+  - **Cursor:** `ew-resize` (vänster/höger), `ns-resize` (överkant/nederkant), `nwse-resize` (hörn nw/se), `nesw-resize` (hörn ne/sw).
+  - **Subtil markering:** En 1px linje längs aktuell kant (t.ex. `rgba(0,0,0,0.12)`). I hörn: de två mötande kanterna. Markeringen ska vara diskret och försvinna direkt när musen lämnar zonen.
+- **Resize-funktionalitet:** Oförändrad – ingen layout shift, inga glitchar. Alla fyra kanter och alla fyra hörn ska kunna användas för storleksändring.
+- **Implementering:** Hooken `useDraggableResizableModal` returnerar `resizeHandles`; rendera dessa i modalen (t.ex. sist i modal-boxen). Ingen egen resize-UI behövs – hooken levererar zoner, cursor och hover-styling.
 
 ---
 
-## 10. Snabbreferens – färger och värden
+## 8. Snabbreferens – färger och mått
 
 | Element | Värde |
 |--------|--------|
-| Header neutral (banner) | `#1E2A38` |
-| Stäng / Spara (dimmad) | Bakgrund `#475569`, text vit |
-| Avbryt (formulärmodal) | Bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c` |
-| Inline-fält i tabell | `borderRadius: 0` |
-| Checkbox av | Ikon `square-outline`, färg `#94a3b8` |
-| Checkbox på | Ikon `checkbox`, färg `#0ea5e9` |
-| Tabell radhöjd | 24px |
-| Tabell cell-padding | 4px vertikalt, 12px horisontellt |
+| Banner (header) | Bakgrund `#1E2A38` |
+| Primärknapp (Spara/Skapa/Stäng) | Bakgrund `#2D3A4B`, text vit (bannerns färg, dimmad) |
+| Avbryt | Bakgrund `#fef2f2`, kant `#fecaca`, text `#b91c1c` |
+| Banner höjd | 28px |
+| Banner titel | 12px, font-weight 400 |
+| Knappar | Padding 4/10–12, text 12px, 500 |
+| Content padding | 20px |
+| Input | 13px, padding 8/10, radius 6px |
 | Modal radius | 8px |
-| Overlay | `rgba(0,0,0,0.35)` |
+| Overlay | `rgba(0,0,0,0.35)` + blur 4px |
+| Resize (webb) | Osynliga zoner 8px, cursor + 1px kant vid hover |
 
 ---
 
-## 11. Modaler som ska uppdateras till denna standard
+## 9. Referenser
 
-- AdminContactRegistryModal ✅ (referens)
-- AdminCustomersModal
-- AdminSuppliersModal
-- AdminKontoplanModal
-- AdminByggdelModal
-- AdminKategoriModal
-- AdminCompanyModal
-- Skapa projekt, Skapa inköpsplan, Förfrågningsmall
-- Övriga systemmodaler
-
----
-
-## 12. Referenser
-
-- **Komponent:** `components/common/ModalBase.js`
-- **Tokens:** `constants/modalDesign2026.js`
-- **Referensmodal:** `components/common/AdminContactRegistryModal.js` (huvudmodal + Redigera kontakt)
+- **Banner/header (referens):** `components/common/AdminSuppliersModal.js` (Leverantörer), `components/common/AdminCompanyModal.js` (Företagsinställningar). Båda använder kompakt banner – 28px, titel 12px.
+- **ModalBase:** `components/common/ModalBase.js` – använd `headerVariant="neutralCompact"` för samma banner som Leverantörer/Företagsinställningar.
+- **Tokens:** `constants/modalDesign2026.js` (MODAL_DESIGN_2026) – `headerNeutralCompact`, `headerNeutral` (bakgrund/kant).
 - **Hook:** `hooks/useDraggableResizableModal.js`
+- **Tabeller i modaler:** Se `docs/TABLE_GOLDEN_RULE.md` för enhetligt tabellutseende och beteende.
+- **Bekräftelsemodal (radera/ersätta):** `components/common/Modals/ConfirmModal.js` – samma design för alla “Radera X?” / “Uppdatera analys?”: röd cirkel med “!”, titel, brödtext, Avbryt (dimmad röd) + Bekräfta (mörk #2D3A4B). Används för radera leverantör, kund, kontakt, byggdel, konto, kategori, uppdatera AI-analys m.m. Ingen ESC/ENTER-text under knapparna (tangenterna fungerar fortfarande).
+
+**Viktigt:** Primärknapp är **mörk = bannerns färg** (dimmad `#2D3A4B`), **inte** ljusblå (#1976D2 eller #475569).
