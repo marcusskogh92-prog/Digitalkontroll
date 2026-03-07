@@ -139,13 +139,26 @@ function buildFFUPrompt({ companyId, projectId, files, customInstruction }) {
     '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
     '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
     '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '- projectInfo: VIKTIGT – fyll i alla fält som du hittar i dokumenten. Sök efter:',
+    '  * upphandlingsform/entreprenadform: "offentlig upphandling", "privat upphandling", "totalentreprenad", "utförandeentreprenad" m.m.',
+    '  * customerCompany: beställare, upphandlare, kund, företagsnamn.',
+    '  * customerOrganizationNumber: organisationsnummer, org.nr (siffror med eventuellt bindestreck).',
+    '  * contactPerson/contactPhone/contactEmail: kontaktperson, telefon, e-post, e-postadress.',
+    '  * addressStreet/addressCity/addressMunicipality: projektadress, byggadress, plats, gatuadress, ort, kommun, postnummer.',
+    '  * fastighetsbeteckning: fastighet, fastighetsbeteckning.',
+    '  * lastQuestionDate: "sista dag för frågor", "sista dag att ställa frågor" – skriv som ISO YYYY-MM-DD.',
+    '  * tenderSubmissionDate: "anbudsinlämning", "anbudstid", "sista dag för anbud" – ISO YYYY-MM-DD.',
+    '  * plannedConstructionStart: "byggstart", "planerad byggstart", "start byggnad" – ISO YYYY-MM-DD.',
+    '  * readyForInspectionDate: "klart för besiktning", "färdigställning", "slutbesiktning" – ISO YYYY-MM-DD.',
+    '  Om ett datum står som t.ex. 2026-03-15 eller 15/3 2026, skriv alltid ISO-format YYYY-MM-DD. Lämna tom sträng endast om informationen verkligen saknas.',
     '',
     'Returnera JSON i exakt detta format:',
     '{',
     '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
     '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
     '  "risks": [ { "issue": "", "reason": "" } ],',
-    '  "openQuestions": [ { "question": "", "reason": "" } ]',
+    '  "openQuestions": [ { "question": "", "reason": "" } ],',
+    '  "projectInfo": { "upphandlingsform": "", "entreprenadform": "", "customerCompany": "", "customerOrganizationNumber": "", "contactPerson": "", "contactPhone": "", "contactEmail": "", "addressStreet": "", "addressCity": "", "addressMunicipality": "", "fastighetsbeteckning": "", "lastQuestionDate": "", "tenderSubmissionDate": "", "plannedConstructionStart": "", "readyForInspectionDate": "" }',
     '}',
     customBlock,
   ].join('\n');
@@ -180,17 +193,52 @@ function getDefaultFFUPromptForDisplay() {
     '- requirements.should: endast utvärderande/meriterande BÖR-krav.',
     '- risks: endast oklarheter, saknad info eller flertydighet baserat på texten (inga gissningar).',
     '- openQuestions: frågor som bör ställas baserat på brister/oklarheter i texten.',
+    '- projectInfo: upphandlingsform, entreprenadform, beställare/kund (företag, org.nr, kontaktperson, telefon, e-post), adress (gata, ort, kommun, fastighet), viktiga datum (ISO YYYY-MM-DD). Endast om uttryckligen i texten, annars tomma strängar.',
     '',
     'Returnera JSON i exakt detta format:',
     '{',
     '  "summary": { "description": "", "projectType": "", "procurementForm": "" },',
     '  "requirements": { "must": [ { "text": "", "source": "" } ], "should": [ { "text": "", "source": "" } ] },',
     '  "risks": [ { "issue": "", "reason": "" } ],',
-    '  "openQuestions": [ { "question": "", "reason": "" } ]',
+    '  "openQuestions": [ { "question": "", "reason": "" } ],',
+    '  "projectInfo": { "upphandlingsform": "", "entreprenadform": "", "customerCompany": "", "customerOrganizationNumber": "", "contactPerson": "", "contactPhone": "", "contactEmail": "", "addressStreet": "", "addressCity": "", "addressMunicipality": "", "fastighetsbeteckning": "", "lastQuestionDate": "", "tenderSubmissionDate": "", "plannedConstructionStart": "", "readyForInspectionDate": "" }',
     '}',
   ].join('\n');
 
   return { system, userTemplate };
+}
+
+/** Parse common Swedish/generic date string to Date; returns null if invalid. Handles YYYY-MM-DD, DD/MM/YYYY, DD.MM.YYYY, etc. */
+function parseSwedishOrCommonDate(s) {
+  const raw = String(s || '').trim();
+  if (!raw) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (iso) return new Date(parseInt(iso[1], 10), parseInt(iso[2], 10) - 1, parseInt(iso[3], 10));
+  const dmy = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(raw);
+  if (dmy) return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) return new Date(parsed);
+  return null;
+}
+
+function emptyFFUProjectInfo() {
+  return {
+    upphandlingsform: '',
+    entreprenadform: '',
+    customerCompany: '',
+    customerOrganizationNumber: '',
+    contactPerson: '',
+    contactPhone: '',
+    contactEmail: '',
+    addressStreet: '',
+    addressCity: '',
+    addressMunicipality: '',
+    fastighetsbeteckning: '',
+    lastQuestionDate: '',
+    tenderSubmissionDate: '',
+    plannedConstructionStart: '',
+    readyForInspectionDate: '',
+  };
 }
 
 function emptyFFUAnalysisResult(message) {
@@ -207,6 +255,7 @@ function emptyFFUAnalysisResult(message) {
     },
     risks: [],
     openQuestions: [],
+    projectInfo: emptyFFUProjectInfo(),
   };
 }
 
@@ -232,6 +281,40 @@ function normalizeFFUAnalysisResult(raw) {
     reason: q && q.reason != null ? String(q.reason) : '',
   });
 
+  const pi = obj && obj.projectInfo && typeof obj.projectInfo === 'object' ? obj.projectInfo : {};
+  const get = (o, ...keys) => {
+    for (const k of keys) {
+      const v = o && o[k];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  };
+  const str = (v) => (v != null && v !== '' ? String(v).trim() : '');
+  const toIsoDate = (v) => {
+    const s = str(v);
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = parseSwedishOrCommonDate(s);
+    return d ? d.toISOString().slice(0, 10) : '';
+  };
+  const projectInfo = {
+    upphandlingsform: get(pi, 'upphandlingsform') || get(summary, 'procurementForm', 'upphandlingsform'),
+    entreprenadform: get(pi, 'entreprenadform'),
+    customerCompany: get(pi, 'customerCompany', 'kund', 'beställare'),
+    customerOrganizationNumber: get(pi, 'customerOrganizationNumber', 'organisationsnummer'),
+    contactPerson: get(pi, 'contactPerson', 'kontaktperson'),
+    contactPhone: get(pi, 'contactPhone', 'telefon'),
+    contactEmail: get(pi, 'contactEmail', 'epost', 'email'),
+    addressStreet: get(pi, 'addressStreet', 'adress', 'gatuadress'),
+    addressCity: get(pi, 'addressCity', 'ort', 'stad'),
+    addressMunicipality: get(pi, 'addressMunicipality', 'kommun'),
+    fastighetsbeteckning: get(pi, 'fastighetsbeteckning', 'fastighet'),
+    lastQuestionDate: toIsoDate(pi.lastQuestionDate || pi.sistaDagForFragor),
+    tenderSubmissionDate: toIsoDate(pi.tenderSubmissionDate || pi.anbudsinlamning),
+    plannedConstructionStart: toIsoDate(pi.plannedConstructionStart || pi.planeradByggstart || pi.byggstart),
+    readyForInspectionDate: toIsoDate(pi.readyForInspectionDate || pi.klartForBesiktning || pi.fardigstallning),
+  };
+
   return {
     summary: {
       description: summary.description != null ? String(summary.description) : '',
@@ -244,6 +327,7 @@ function normalizeFFUAnalysisResult(raw) {
     },
     risks: risksArr.map(normalizeRisk).filter((x) => x.issue.trim()),
     openQuestions: openArr.map(normalizeQ).filter((x) => x.question.trim()),
+    projectInfo,
   };
 }
 
@@ -1079,6 +1163,7 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
 
   const safeSummary = summary || String(fallbackSummary || 'AI kunde inte skapa en sammanfattning, men analysen kördes.').trim();
   const m = String(model || '').trim();
+  const projectInfo = a && a.projectInfo && typeof a.projectInfo === 'object' ? a.projectInfo : emptyFFUProjectInfo();
 
   return {
     status: status || 'success',
@@ -1089,6 +1174,7 @@ function buildPersistedFFUAnalysisDoc({ status, analysis, meta, fallbackSummary,
     },
     risks,
     questions,
+    projectInfo,
     meta: {
       totalChars: Number(meta?.totalChars) || 0,
       filesUsed: Number(meta?.filesUsed) || 0,
@@ -1178,6 +1264,53 @@ async function setFFUAnalysisError(companyId, projectId, errorMessage) {
   const payload = { status: 'error', errorMessage: String(errorMessage || '').trim() || 'Analysen misslyckades.', analyzedAt: FieldValue.serverTimestamp() };
   await canonicalRef.set(payload, { merge: true });
   await legacyRef.set(payload, { merge: true }).catch(() => null);
+}
+
+/** Build Firestore project patch from AI-extracted projectInfo. Only non-empty values to avoid overwriting with blanks. */
+function buildProjectPatchFromFFUProjectInfo(projectInfo) {
+  if (!projectInfo || typeof projectInfo !== 'object') return {};
+  const s = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null);
+  const patch = {};
+  if (s(projectInfo.upphandlingsform)) patch.upphandlingsform = s(projectInfo.upphandlingsform);
+  if (s(projectInfo.entreprenadform)) patch.entreprenadform = s(projectInfo.entreprenadform);
+  if (s(projectInfo.customerCompany)) patch.kund = s(projectInfo.customerCompany);
+  if (s(projectInfo.customerOrganizationNumber)) patch.organisationsnummer = s(projectInfo.customerOrganizationNumber);
+  if (s(projectInfo.contactPerson)) patch.kontaktperson = { name: s(projectInfo.contactPerson) };
+  if (s(projectInfo.contactPhone)) patch.telefon = s(projectInfo.contactPhone);
+  if (s(projectInfo.contactEmail)) patch.epost = s(projectInfo.contactEmail);
+  if (s(projectInfo.addressStreet)) patch.adress = s(projectInfo.addressStreet);
+  if (s(projectInfo.addressCity)) patch.kommun = s(projectInfo.addressCity);
+  if (s(projectInfo.addressMunicipality)) patch.region = s(projectInfo.addressMunicipality);
+  if (s(projectInfo.fastighetsbeteckning)) patch.fastighetsbeteckning = s(projectInfo.fastighetsbeteckning);
+  if (s(projectInfo.lastQuestionDate)) {
+    patch.sistaDagForFragor = s(projectInfo.lastQuestionDate);
+    patch.lastQuestionDate = s(projectInfo.lastQuestionDate);
+  }
+  if (s(projectInfo.tenderSubmissionDate)) {
+    patch.anbudsinlamning = s(projectInfo.tenderSubmissionDate);
+    patch.tenderSubmissionDate = s(projectInfo.tenderSubmissionDate);
+  }
+  if (s(projectInfo.plannedConstructionStart)) {
+    patch.planeradByggstart = s(projectInfo.plannedConstructionStart);
+    patch.plannedConstructionStart = s(projectInfo.plannedConstructionStart);
+  }
+  if (s(projectInfo.readyForInspectionDate)) {
+    patch.klartForBesiktning = s(projectInfo.readyForInspectionDate);
+    patch.readyForInspectionDate = s(projectInfo.readyForInspectionDate);
+  }
+  return patch;
+}
+
+/** Apply AI-extracted projectInfo to the project document (Projektinformation). Only updates non-empty fields. */
+async function applyFFUProjectInfoToProject(companyId, projectId, projectInfo) {
+  const patch = buildProjectPatchFromFFUProjectInfo(projectInfo);
+  if (Object.keys(patch).length === 0) {
+    console.log('[FFU] Project info patch empty – AI returned no projectInfo or all fields empty', { companyId, projectId });
+    return;
+  }
+  const projectRef = db.doc(`foretag/${companyId}/projects/${projectId}`);
+  await projectRef.set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  console.log('[FFU] Project info updated from AI analysis', { companyId, projectId, keys: Object.keys(patch) });
 }
 
 async function persistFFUAnalysisLatest({ companyId, projectId, doc, uid }) {
@@ -1532,6 +1665,13 @@ exports.analyzeFFUFromFiles = functions
   });
   const saved = await persistFFUAnalysisLatest({ companyId, projectId, doc: docToSave, uid: context.auth?.uid });
   console.log('[FFU] Analysis saved', { companyId, projectId, status });
+  if (status === 'success' && analysis && analysis.projectInfo && typeof analysis.projectInfo === 'object') {
+    try {
+      await applyFFUProjectInfoToProject(companyId, projectId, analysis.projectInfo);
+    } catch (e) {
+      console.warn('[FFU] Failed to apply projectInfo to project (non-fatal)', String(e && e.message ? e.message : e));
+    }
+  }
   return saved;
   } catch (e) {
     const msg = (e && (e.message || (e.details != null ? String(e.details) : ''))) ? String(e.message || e.details) : String(e);

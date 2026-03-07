@@ -7,6 +7,7 @@ import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../constants
 import { addManualRow } from '../inkopsplanService';
 import { useInkopsplanUserPrefs } from '../useInkopsplanUserPrefs';
 import InkopsplanRow from './InkopsplanRow';
+import InkopsplanRowExpanded from './InkopsplanRowExpanded';
 
 const TABLE = MODAL_DESIGN_2026;
 const MIN_COLUMN_WIDTH = 60;
@@ -15,6 +16,7 @@ const RESIZE_HANDLE_WIDTH = 6;
 const RESIZE_HANDLE_HIT_WIDTH = 14;
 const CHARS_TO_WIDTH = 8;
 const CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12;
+const COL_EXPAND_WIDTH = 36;
 const DEFAULT_INKOP_WIDTHS = { bd: 72, name: 160, konto: 88, kategori: 100, status: 76, ansvarig: 90, request: 100 };
 
 function safeText(v) {
@@ -87,6 +89,11 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
   onRowsChanged,
   selectedRowId = null,
   onSelectRow,
+  expandedRowId = null,
+  onToggleRowExpand,
+  selectedSupplierKey = null,
+  onSelectSupplier,
+  onSupplierContextMenu,
   onRowContextMenu,
   onOpenInquiryModal,
 }, ref) {
@@ -212,6 +219,7 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
     rowSelected: styles.tableRowSelected,
     cell: styles.tableCell,
     cellMuted: styles.tableCellMuted,
+    colExpand: { width: COL_EXPAND_WIDTH, minWidth: COL_EXPAND_WIDTH, flexShrink: 0 },
     colBd: col('bd'),
     colName: col('name'),
     colKonto: col('konto'),
@@ -294,8 +302,8 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
   }, [filteredSorted]);
 
   const totalTableWidth = useMemo(() => {
-    const sum = (w.bd || 0) + (w.name || 0) + (w.konto || 0) + (w.kategori || 0) + (w.status || 0) + (w.ansvarig || 0) + (w.request || 0);
-    return sum + 6 * RESIZE_HANDLE_HIT_WIDTH;
+    const sum = COL_EXPAND_WIDTH + (w.bd || 0) + (w.name || 0) + (w.konto || 0) + (w.kategori || 0) + (w.status || 0) + (w.ansvarig || 0) + (w.request || 0);
+    return sum + 7 * RESIZE_HANDLE_HIT_WIDTH;
   }, [w]);
 
   const handleSort = useCallback((columnId) => {
@@ -314,6 +322,8 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
     <View style={[styles.wrap, isWeb() && { minWidth: totalTableWidth }]}>
       <View style={styles.tableWrap}>
         <View style={[styles.tableHeader, isWeb() && styles.tableHeaderGapWeb]}>
+          <View style={[styles.headerCell, tableStyles.colExpand]} />
+          {isWeb() && <View style={styles.resizeHandle}><View style={styles.resizeHandleLine} /></View>}
           <View style={[styles.headerCell, col('bd')]}>
             <Pressable onPress={() => handleSort('bd')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
               <Text style={[styles.headerText, isSorted('bd') && styles.headerTextSorted]} numberOfLines={1}>BD</Text>
@@ -376,21 +386,37 @@ const InkopsplanTable = forwardRef(function InkopsplanTable({
           {filteredSorted.map((r, idx) => {
             const id = safeText(r?.id);
             const isSelected = selectedRowId != null && String(selectedRowId) === id;
+            const isExpanded = expandedRowId != null && String(expandedRowId) === id;
             return (
-              <InkopsplanRow
-                key={id || `row-${idx}`}
-                row={r}
-                isSelected={isSelected}
-                onSelectRow={onSelectRow}
-                onRowContextMenu={onRowContextMenu}
-                tableStyles={tableStyles}
-                isAlt={idx % 2 === 1}
-                companyId={companyId}
-                projectId={projectId}
-                projectMembers={projectMembers}
-                onRowsChanged={onRowsChanged}
-                onOpenInquiryModal={onOpenInquiryModal}
-              />
+              <View key={id || `row-${idx}`} style={styles.rowBlock}>
+                <InkopsplanRow
+                  row={r}
+                  isSelected={isSelected}
+                  isExpanded={isExpanded}
+                  onSelectRow={onSelectRow}
+                  onToggleExpand={onToggleRowExpand}
+                  onRowContextMenu={onRowContextMenu}
+                  tableStyles={tableStyles}
+                  isAlt={idx % 2 === 1}
+                  companyId={companyId}
+                  projectId={projectId}
+                  projectMembers={projectMembers}
+                  onRowsChanged={onRowsChanged}
+                  onOpenInquiryModal={onOpenInquiryModal}
+                />
+                {isExpanded ? (
+                  <View style={styles.expandedWrap}>
+                    <InkopsplanRowExpanded
+                      row={r}
+                      companyId={companyId}
+                      projectId={projectId}
+                      selectedSupplierKey={selectedSupplierKey}
+                      onSelectSupplier={onSelectSupplier}
+                      onSupplierContextMenu={onSupplierContextMenu}
+                    />
+                  </View>
+                ) : null}
+              </View>
             );
           })}
         </View>
@@ -462,6 +488,17 @@ const styles = StyleSheet.create({
   },
   tableBody: {
     minHeight: 0,
+  },
+  rowBlock: {
+    minHeight: 0,
+  },
+  expandedWrap: {
+    paddingLeft: COL_EXPAND_WIDTH + 8,
+    paddingRight: TABLE.tableCellPaddingHorizontal,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: TABLE.tableRowBorderColor,
+    backgroundColor: '#FAFAFA',
   },
   tableHeaderGapWeb: { gap: 0 },
   tableRowBase: {

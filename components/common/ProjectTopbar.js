@@ -17,7 +17,7 @@ function calcSortKey(section) {
 }
 
 /** Sektioner markerade som klara under uppbyggnad – radera när alla är klara. */
-const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl', 'konstruktion-berakningar'];
+const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl'];
 
 function sortSections(sections) {
   return [...(sections || [])].sort((a, b) => {

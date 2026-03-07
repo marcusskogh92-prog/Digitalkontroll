@@ -292,7 +292,8 @@ export const KUNDER_EXCEL = {
 
 /**
  * Kontaktregister: Id, Namn, Företag, Roll, Telefon, Arbete, E-post.
- * Id = Firestore-dokumentid; tomt vid ny rad. Nyckel = Id för ersättande synk.
+ * Id = Firestore-dokumentid; tomt vid ny rad → ny kontakt skapas med auto-genererat id.
+ * Import är alltid merge: rader utan Id (eller med okänt Id) skapas som nya, befintliga uppdateras, inget raderas.
  */
 export const KONTAKTER_EXCEL = {
   sheetName: 'Kontakter',
@@ -324,3 +325,30 @@ export const KONTAKTER_EXCEL = {
     ];
   },
 };
+
+/**
+ * Merge-plan för kontaktregister: rader utan Id (eller med Id som inte finns) → skapa ny (Firebase ger id).
+ * Rader med befintligt Id → uppdatera. Inget raderas vid import (lägg till utöver befintliga).
+ * @param {Record<string,string>[]} excelRows
+ * @param {Array<{ id: string }>} existingContacts
+ * @returns {{ toCreate: Record<string,string>[], toUpdate: { id: string, item: any, row: Record<string,string> }[], toDelete: any[] }}
+ */
+export function computeContactMergePlan(excelRows, existingContacts) {
+  const existingById = new Map();
+  (existingContacts || []).forEach((item) => {
+    const id = (item.id ?? '').trim();
+    if (id) existingById.set(id, item);
+  });
+  const toCreate = [];
+  const toUpdate = [];
+  (excelRows || []).forEach((row) => {
+    const idStr = String((row['Id'] ?? '').trim());
+    const existing = idStr ? existingById.get(idStr) : null;
+    if (existing) {
+      toUpdate.push({ id: existing.id, item: existing, row });
+    } else {
+      toCreate.push(row);
+    }
+  });
+  return { toCreate, toUpdate, toDelete: [] };
+}

@@ -117,7 +117,9 @@ function capitalizeFirst(str) {
 export default function InkopsplanRow({
   row,
   isSelected,
+  isExpanded,
   onSelectRow,
+  onToggleExpand,
   onRowContextMenu,
   tableStyles,
   isAlt,
@@ -125,6 +127,7 @@ export default function InkopsplanRow({
   projectId,
   projectMembers = [],
   onRowsChanged,
+  onOpenInquiryModal,
 }) {
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -224,9 +227,10 @@ export default function InkopsplanRow({
       startEdit(cell, valueForEdit);
     } else {
       onSelectRow?.(row);
+      onToggleExpand?.(row);
       lastTapRef.current = { cell, time: now };
     }
-  }, [canEdit, row, onSelectRow, startEdit]);
+  }, [canEdit, row, onSelectRow, onToggleExpand, startEdit]);
 
   const saveAndClose = useCallback(
     async (cell, value) => {
@@ -339,6 +343,21 @@ export default function InkopsplanRow({
 
   return (
     <View style={rowStyle} {...rowProps}>
+      <Pressable
+        style={[ts.cell, ts.colExpand]}
+        onPress={() => {
+          onSelectRow?.(row);
+          onToggleExpand?.(row);
+        }}
+      >
+        <View style={styles.chevronWrap}>
+          <Ionicons
+            name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+            size={18}
+            color="#64748B"
+          />
+        </View>
+      </Pressable>
       <View style={[ts.cell, ts.colBd]}>
         {canEdit && editingCell === 'bd' ? (
           <TextInput
@@ -554,6 +573,11 @@ export default function InkopsplanRow({
 }
 
 const styles = StyleSheet.create({
+  chevronWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+  },
   cellText: {
     fontSize: 13,
     fontWeight: '500',

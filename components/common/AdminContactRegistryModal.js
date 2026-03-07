@@ -23,7 +23,7 @@ import ModalBase from './ModalBase';
 import { formatMobileDisplay, mobileDigitsOnly } from '../../utils/formatPhone';
 import {
     buildAndDownloadExcel,
-    computeSyncPlan,
+    computeContactMergePlan,
     KONTAKTER_EXCEL,
     parseExcelFromBuffer,
     validateHeaders,
@@ -52,13 +52,13 @@ const styles = StyleSheet.create({
   statusBoxError: { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
   toolbarSection: { flexShrink: 0, paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: 12, backgroundColor: '#fff' },
   toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  toolbarDivider: { height: 1, backgroundColor: '#eee', marginTop: 12, marginHorizontal: -D.contentPadding },
+  toolbarDivider: { height: 1, backgroundColor: D.tableBorderColor, marginTop: 12, marginHorizontal: -D.contentPadding },
   tableScroll: { flex: 1, minHeight: 0, overflow: 'hidden' },
   tableScrollContent: { paddingHorizontal: D.contentPadding, paddingTop: D.sectionGap, paddingBottom: D.contentPadding },
   tableScrollHorizontal: { flex: 1, minHeight: 0, alignSelf: 'stretch' },
-  searchWrap: { flex: 1, maxWidth: 400, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10 },
-  searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
-  iconBtn: { minWidth: 28, height: 28, paddingHorizontal: 8, borderRadius: D.buttonRadius, backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  searchWrap: { flex: 1, maxWidth: 400, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: D.tableBorderColor, borderRadius: D.inputRadius, backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10 },
+  searchInput: { flex: 1, fontSize: 13, color: D.tableCellColor, padding: 0, marginLeft: 8 },
+  iconBtn: { minWidth: 28, height: 28, paddingHorizontal: 8, borderRadius: D.buttonRadius, backgroundColor: '#fff', borderWidth: 1, borderColor: D.tableBorderColor, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   iconBtnPrimary: { backgroundColor: D.buttonPrimaryBg, borderColor: D.buttonPrimaryBg },
   excelBtn: {
     flexDirection: 'row',
@@ -67,17 +67,17 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: 8,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#ecfdf5',
+    backgroundColor: D.tableRowAltBackgroundColor,
     borderWidth: 1,
-    borderColor: '#a7f3d0',
+    borderColor: D.tableBorderColor,
   },
   tableWrap: {},
-  emptyState: { padding: 32, alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: D.radius, borderWidth: 1, borderColor: '#eee' },
-  emptyTitle: { fontSize: 15, fontWeight: '500', color: '#475569', marginBottom: 6 },
+  emptyState: { padding: 32, alignItems: 'center', backgroundColor: D.tableRowAltBackgroundColor, borderRadius: D.radius, borderWidth: 1, borderColor: D.tableBorderColor },
+  emptyTitle: { fontSize: 15, fontWeight: '500', color: D.tableHeaderColor, marginBottom: 6 },
   selectCompany: { padding: 32, alignItems: 'center' },
-  selectCompanyText: { fontSize: 15, fontWeight: '500', color: '#475569' },
-  footerBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#ddd', backgroundColor: '#fff' },
-  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  selectCompanyText: { fontSize: 15, fontWeight: '500', color: D.tableHeaderColor },
+  footerBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: D.tableBorderColor, backgroundColor: '#fff' },
+  mainModalStangBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg, borderWidth: 0 },
   addModalBack: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: D.overlayBg },
   addModalBox: { backgroundColor: '#fff', borderRadius: D.radius, width: Platform.OS === 'web' ? 440 : '90%', maxWidth: 440, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 30, elevation: 8 },
   addModalHeader: {
@@ -97,13 +97,13 @@ const styles = StyleSheet.create({
   addModalBody: { padding: D.contentPadding },
   addModalField: { marginBottom: 14 },
   addModalLabel: { fontSize: 12, fontWeight: '500', color: '#475569', marginBottom: 4 },
-  addModalInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: '#111', backgroundColor: '#fff' },
+  addModalInput: { borderWidth: 1, borderColor: D.tableBorderColor, borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 10, fontSize: 13, color: D.tableCellColor, backgroundColor: '#fff' },
   addModalDropdown: { position: 'relative', zIndex: 1000 },
   addModalDropdownList: { position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 2, maxHeight: 220, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: D.inputRadius, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6 },
   addModalDropdownItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   addModalDropdownItemHighlight: { backgroundColor: '#eef6ff' },
   addModalDropdownItemName: { fontSize: 13, color: '#1e293b', fontWeight: '500', flex: 1 },
-  addModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingTop: D.sectionGap, borderTopWidth: 1, borderTopColor: '#eee', marginTop: 8 },
+  addModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingTop: D.sectionGap, borderTopWidth: 1, borderTopColor: D.tableBorderColor, marginTop: 8 },
   editModalBox: {
     width: Platform.OS === 'web' ? 520 : '92%',
     maxWidth: 520,
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
   },
   editModalContent: { padding: D.contentPadding, paddingBottom: 24 },
   editModalAvbrytBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' },
-  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#475569', borderWidth: 0 },
+  editModalSparaBtn: { paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg, borderWidth: 0 },
 });
 
 export default function AdminContactRegistryModal({ visible, companyId, onClose }) {
@@ -672,16 +672,13 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         setError(errors[0]);
         return;
       }
-      const { valid, missing } = validateHeaders(headers, KONTAKTER_EXCEL.headers);
+      const requiredContactHeaders = ['Namn', 'Företag', 'Roll', 'Telefon', 'Arbete', 'E-post'];
+      const { valid, missing } = validateHeaders(headers, requiredContactHeaders);
       if (!valid) {
-        setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Använd Excel-mallen.`);
+        setError(`Ogiltiga kolumnrubriker. Saknas: ${(missing || []).join(', ')}. Kolumnen Id är valfri (nya rader får auto-id vid import).`);
         return;
       }
-      const plan = computeSyncPlan(rows, contacts, {
-        keyField: KONTAKTER_EXCEL.keyField,
-        getKeyFromRow: (row) => String((row[KONTAKTER_EXCEL.keyField] ?? '').trim()),
-        getKeyFromItem: (item) => KONTAKTER_EXCEL.itemToKey(item),
-      });
+      const plan = computeContactMergePlan(rows, contacts);
       setImportPlan(plan);
       setImportConfirmVisible(true);
     };
@@ -843,8 +840,8 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
       onClose={onClose}
       title="Kontaktregister"
       subtitle="Administrera kontakter"
-      headerVariant="neutral"
-      titleIcon={<Ionicons name="book-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="book-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
       boxStyle={[defaultBoxStyle, boxStyle]}
       overlayStyle={overlayStyle}
       headerProps={headerProps}
@@ -891,7 +888,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                   </TouchableOpacity>
                   {Platform.OS === 'web' && (
                     <>
-                      <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
+                      <View style={{ width: 1, height: 20, backgroundColor: D.tableBorderColor }} />
                     <TouchableOpacity
                       style={styles.excelBtn}
                       onPress={(ev) => {
@@ -908,12 +905,12 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
                       accessibilityLabel="Importera / exportera Excel"
                       {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                     >
-                      <Ionicons name="document-outline" size={14} color="#167534" />
-                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                      <Ionicons name="document-outline" size={14} color={D.tableHeaderColor} />
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: D.tableHeaderColor }}>Excel</Text>
                     </TouchableOpacity>
                     </>
                   )}
-                  <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
+                  <View style={{ width: 1, height: 20, backgroundColor: D.tableBorderColor }} />
                   <TouchableOpacity style={[styles.iconBtn, styles.iconBtnPrimary]} onPress={() => setAddModalVisible(true)} accessibilityLabel="Lägg till kontakt" {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}>
                     <Ionicons name="add" size={16} color="#fff" />
                   </TouchableOpacity>
@@ -1111,8 +1108,8 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         visible={!!editModalContact}
         onClose={requestCloseEditModal}
         title="Redigera kontakt"
-        headerVariant="neutral"
-        titleIcon={<Ionicons name="create-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+        headerVariant="neutralCompact"
+        titleIcon={<Ionicons name="create-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
         boxStyle={styles.editModalBox}
         contentStyle={styles.editModalContent}
         footer={
@@ -1245,7 +1242,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         visible={importConfirmVisible}
         message={
           importPlan
-            ? `Importen ersätter hela registret.\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}, Raderas: ${importPlan.toDelete.length}`
+            ? `Importen lägger till och uppdaterar (befintliga kontakter behålls).\nSkapas: ${importPlan.toCreate.length}, Uppdateras: ${importPlan.toUpdate.length}`
             : ''
         }
         cancelLabel="Avbryt"

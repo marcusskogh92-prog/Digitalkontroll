@@ -19,6 +19,7 @@ import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
 import { enqueueFsExcelSync } from '../../services/fragaSvarExcelSyncQueue';
 import { formatOrganizationNumber } from '../../../../../../utils/formatOrganizationNumber';
+import ProjectAddressMap from '../../../../../../components/common/ProjectAddressMap';
 
 function isValidIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
@@ -214,6 +215,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       kommun: project.kommun,
       region: project.region,
       fastighetsbeteckning: project.fastighetsbeteckning,
+      latitude: project.latitude,
+      longitude: project.longitude,
       // Canonical important dates (required fields)
       lastQuestionDate: project.lastQuestionDate,
       tenderSubmissionDate: project.tenderSubmissionDate,
@@ -270,6 +273,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
       kommun: project?.kommun || '',
       region: project?.region || '',
       fastighetsbeteckning: project?.fastighetsbeteckning || '',
+      latitude: project?.latitude ?? null,
+      longitude: project?.longitude ?? null,
       // Hydrate from canonical fields first, then fall back to legacy mirrors.
       sistaDagForFragor: project?.lastQuestionDate || project?.sistaDagForFragor || '',
       anbudsinlamning: project?.tenderSubmissionDate || project?.anbudsinlamning || project?.anbudstid || '',
@@ -296,6 +301,8 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setKommun(newValues.kommun);
     setRegion(newValues.region);
     setFastighetsbeteckning(newValues.fastighetsbeteckning);
+    setLatitude(newValues.latitude ?? null);
+    setLongitude(newValues.longitude ?? null);
     setSistaDagForFragor(newValues.sistaDagForFragor);
     setAnbudsinlamning(newValues.anbudsinlamning);
     setPlaneradByggstart(newValues.planeradByggstart);
@@ -332,6 +339,9 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   const [kommun, setKommun] = useState(project?.kommun || '');
   const [region, setRegion] = useState(project?.region || '');
   const [fastighetsbeteckning, setFastighetsbeteckning] = useState(project?.fastighetsbeteckning || '');
+  const [latitude, setLatitude] = useState(project?.latitude != null ? project.latitude : null);
+  const [longitude, setLongitude] = useState(project?.longitude != null ? project.longitude : null);
+  const [addressMode, setAddressMode] = useState('manual'); // 'manual' | 'map'
 
   // Viktiga datum state (4 fixed fields)
   const [sistaDagForFragor, setSistaDagForFragor] = useState(project?.sistaDagForFragor || '');
@@ -504,11 +514,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
   // Helper function to check if adress info has changes
   const checkAdressChanges = () => {
+    const latEq = (latitude == null && (originalValues.latitude == null || originalValues.latitude === '')) ||
+      (latitude != null && Number(latitude) === Number(originalValues.latitude));
+    const lngEq = (longitude == null && (originalValues.longitude == null || originalValues.longitude === '')) ||
+      (longitude != null && Number(longitude) === Number(originalValues.longitude));
     return (
       adress.trim() !== (originalValues.adress || '') ||
       kommun.trim() !== (originalValues.kommun || '') ||
       region.trim() !== (originalValues.region || '') ||
-      fastighetsbeteckning.trim() !== (originalValues.fastighetsbeteckning || '')
+      fastighetsbeteckning.trim() !== (originalValues.fastighetsbeteckning || '') ||
+      !latEq ||
+      !lngEq
     );
   };
 
@@ -530,7 +546,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
   // Memoize originalValues string to prevent unnecessary recalculations
   const originalValuesKey = React.useMemo(() => {
     return JSON.stringify(originalValues);
-  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.sistaDagForFragor, originalValues.anbudsinlamning, originalValues.planeradByggstart, originalValues.klartForBesiktning, originalValues.anteckningar]);
+  }, [originalValues.projectNumber, originalValues.projectName, originalValues.phaseKey, originalValues.projectType, originalValues.upphandlingsform, originalValues.status, originalValues.kund, originalValues.organisationsnummer, JSON.stringify(originalValues.kontaktperson), originalValues.telefon, originalValues.epost, originalValues.adress, originalValues.kommun, originalValues.region, originalValues.fastighetsbeteckning, originalValues.latitude, originalValues.longitude, originalValues.sistaDagForFragor, originalValues.anbudsinlamning, originalValues.planeradByggstart, originalValues.klartForBesiktning, originalValues.anteckningar]);
 
   // Calculate changes directly in render instead of useEffect to avoid re-renders during typing
   // These are computed values, not state, to prevent blocking input
@@ -540,7 +556,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     if (kundJustSavedRef.current) return false;
     return checkKundChanges();
   }, [kund, organisationsnummer, JSON.stringify(kontaktperson), telefon, epost, originalValuesKey]);
-  const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, originalValuesKey]);
+  const hasChangesAdressComputed = React.useMemo(() => checkAdressChanges(), [adress, kommun, region, fastighetsbeteckning, latitude, longitude, originalValuesKey]);
   const hasChangesTiderComputed = React.useMemo(() => checkTiderChanges(), [sistaDagForFragor, anbudsinlamning, planeradByggstart, klartForBesiktning, originalValuesKey]);
   const hasChangesAnteckningarComputed = React.useMemo(() => checkAnteckningarChanges(), [anteckningar, originalValuesKey]);
 
@@ -625,12 +641,16 @@ export default function OversiktSummary({ projectId, companyId, project }) {
     setKommun(originalValues.kommun || '');
     setRegion(originalValues.region || '');
     setFastighetsbeteckning(originalValues.fastighetsbeteckning || '');
+    setLatitude(originalValues.latitude ?? null);
+    setLongitude(originalValues.longitude ?? null);
     setHasChangesAdress(false);
   }, [
     originalValues.adress,
     originalValues.kommun,
     originalValues.region,
     originalValues.fastighetsbeteckning,
+    originalValues.latitude,
+    originalValues.longitude,
   ]);
 
   const resetTiderCardState = React.useCallback(() => {
@@ -850,6 +870,17 @@ export default function OversiktSummary({ projectId, companyId, project }) {
 
   const handleFastighetsbeteckningChange = useCallback((val) => {
     setFastighetsbeteckning(val);
+  }, []);
+
+  const handleAddressFromMap = useCallback(({ latitude: lat, longitude: lng, adress: a, kommun: k, region: r }) => {
+    if (lat != null && lng != null) {
+      setLatitude(lat);
+      setLongitude(lng);
+    }
+    if (a !== undefined) setAdress(a);
+    if (k !== undefined) setKommun(k);
+    if (r !== undefined) setRegion(r);
+    setHasChangesAdress(true);
   }, []);
 
   const handleSistaDagForFragorChange = useCallback((val) => {
@@ -1429,18 +1460,22 @@ export default function OversiktSummary({ projectId, companyId, project }) {
                 adress: adress.trim(),
                 kommun: kommun.trim(),
                 region: region.trim(),
-                fastighetsbeteckning: fastighetsbeteckning.trim()
+                fastighetsbeteckning: fastighetsbeteckning.trim(),
+                latitude: latitude ?? null,
+                longitude: longitude ?? null,
               };
 
               const updatedProject = await updateProjectInHierarchy(updates);
               emitProjectUpdated(updatedProject);
-              
+
               setOriginalValues(prev => ({
                 ...prev,
                 adress: adress.trim(),
                 kommun: kommun.trim(),
                 region: region.trim(),
-                fastighetsbeteckning: fastighetsbeteckning.trim()
+                fastighetsbeteckning: fastighetsbeteckning.trim(),
+                latitude: latitude ?? null,
+                longitude: longitude ?? null,
               }));
               setHasChangesAdress(false);
               showSaveSuccessFeedback('Adressinformation har uppdaterats');
@@ -1454,38 +1489,68 @@ export default function OversiktSummary({ projectId, companyId, project }) {
           }}
           onCancel={resetAdressCardState}
         >
-          <InfoRow
-            key="adress"
-            label="Adress"
-            value={adress}
-            onChange={handleAdressChange}
-            placeholder="Gatuadress"
-            originalValue={originalValues.adress || ''}
-          />
-          <InfoRow
-            key="kommun"
-            label="Ort"
-            value={kommun}
-            onChange={handleKommunChange}
-            placeholder="Ort"
-            originalValue={originalValues.kommun || ''}
-          />
-          <InfoRow
-            key="region"
-            label="Kommun"
-            value={region}
-            onChange={handleRegionChange}
-            placeholder="Kommun"
-            originalValue={originalValues.region || ''}
-          />
-          <InfoRow
-            key="fastighetsbeteckning"
-            label="Fastighet"
-            value={fastighetsbeteckning}
-            onChange={handleFastighetsbeteckningChange}
-            placeholder="Fastighetsbeteckning"
-            originalValue={originalValues.fastighetsbeteckning || ''}
-          />
+          {Platform.OS === 'web' ? (
+            <View style={styles.addressModeRow}>
+              <TouchableOpacity
+                style={[styles.addressModeTab, addressMode === 'manual' && styles.addressModeTabActive]}
+                onPress={() => setAddressMode('manual')}
+              >
+                <Ionicons name="create-outline" size={16} color={addressMode === 'manual' ? '#1976D2' : '#64748B'} />
+                <Text style={[styles.addressModeTabText, addressMode === 'manual' && styles.addressModeTabTextActive]}>Manuell inskrivning</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.addressModeTab, addressMode === 'map' && styles.addressModeTabActive]}
+                onPress={() => setAddressMode('map')}
+              >
+                <Ionicons name="map-outline" size={16} color={addressMode === 'map' ? '#1976D2' : '#64748B'} />
+                <Text style={[styles.addressModeTabText, addressMode === 'map' && styles.addressModeTabTextActive]}>Google Maps</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {(addressMode === 'manual' || Platform.OS !== 'web') ? (
+            <>
+              <InfoRow
+                key="adress"
+                label="Adress"
+                value={adress}
+                onChange={handleAdressChange}
+                placeholder="Gatuadress"
+                originalValue={originalValues.adress || ''}
+              />
+              <InfoRow
+                key="kommun"
+                label="Ort"
+                value={kommun}
+                onChange={handleKommunChange}
+                placeholder="Ort"
+                originalValue={originalValues.kommun || ''}
+              />
+              <InfoRow
+                key="region"
+                label="Kommun"
+                value={region}
+                onChange={handleRegionChange}
+                placeholder="Kommun"
+                originalValue={originalValues.region || ''}
+              />
+              <InfoRow
+                key="fastighetsbeteckning"
+                label="Fastighet"
+                value={fastighetsbeteckning}
+                onChange={handleFastighetsbeteckningChange}
+                placeholder="Fastighetsbeteckning"
+                originalValue={originalValues.fastighetsbeteckning || ''}
+              />
+            </>
+          ) : (
+            <ProjectAddressMap
+              latitude={latitude}
+              longitude={longitude}
+              onAddressFromMap={handleAddressFromMap}
+              height={280}
+              placeholder="Sök adress eller plats..."
+            />
+          )}
         </InfoCard>
           </View>
 
@@ -2030,6 +2095,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#999',
     flex: 1
+  },
+  addressModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  addressModeTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  addressModeTabActive: {
+    borderColor: '#1976D2',
+    backgroundColor: '#E3F2FD',
+  },
+  addressModeTabText: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  addressModeTabTextActive: {
+    color: '#1976D2',
+    fontWeight: '500',
   },
   // Dropdown styles – aligned with leftNavTheme/topbar (accent #2563EB, hover/active backgrounds)
   dropdownList: {

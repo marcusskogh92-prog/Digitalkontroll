@@ -52,20 +52,6 @@ const SECTION_DEFS = {
     icon: 'document-outline',
     items: ['01 - Förfrågningar', '02 - Offerter'],
   },
-  'konstruktion-berakningar': {
-    title: 'Konstruktion och beräkningar',
-    icon: 'build-outline',
-    items: [
-      '01 - Konstruktionsritningar',
-      '02 - Statik och hållfasthet',
-      '03 - Brandskydd',
-      '04 - Tillgänglighet',
-      '05 - Akustik',
-      '06 - Energiberäkningar',
-      '07 - Geoteknik',
-      '08 - Teknisk samordning',
-    ],
-  },
   'risk-mojligheter': {
     title: 'Risk och möjligheter',
     icon: 'warning-outline',
@@ -102,21 +88,18 @@ const ORDER_BY_VERSION = {
     'forfragningsunderlag',
     'kalkyl',
     'offerter',
-    'konstruktion-berakningar',
-    'fragaSvar',   // 05 - FrågaSvar, direkt före Risk och möjligheter (06) i SharePoint
+    'fragaSvar',
     'risk-mojligheter',
     'bilder',
     'moten',
     'anbud',
   ],
 
-  // New order: Kalkyl is late (between Möten and Anbud); FrågaSvar = 05 före Risk = 06
   [KALKYLSKEDE_STRUCTURE_VERSIONS.V2]: [
     'oversikt',
     'forfragningsunderlag',
     'offerter',
-    'konstruktion-berakningar',
-    'fragaSvar',   // 05 - FrågaSvar, direkt före Risk och möjligheter (06) i SharePoint
+    'fragaSvar',
     'risk-mojligheter',
     'bilder',
     'moten',
@@ -193,18 +176,6 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
           section.items = [
             { id: 'forfragningar', name: '01 - Förfrågningar', component: 'ForfragningarView', order: 1, enabled: true },
             { id: 'offerter', name: '02 - Offerter', component: 'OfferterView', order: 2, enabled: true },
-          ];
-        } else if (id === 'konstruktion-berakningar') {
-          // Flikar använder DigitalkontrollsUtforskare (samma mönster som Anbud/Kalkyl).
-          section.items = [
-            { id: 'konstruktionsritningar', name: '01 - Konstruktionsritningar', component: 'DigitalkontrollsUtforskare', order: 1, enabled: true },
-            { id: 'statik-hallfasthet', name: '02 - Statik och hållfasthet', component: 'DigitalkontrollsUtforskare', order: 2, enabled: true },
-            { id: 'brandskydd', name: '03 - Brandskydd', component: 'DigitalkontrollsUtforskare', order: 3, enabled: true },
-            { id: 'tillganglighet', name: '04 - Tillgänglighet', component: 'DigitalkontrollsUtforskare', order: 4, enabled: true },
-            { id: 'akustik', name: '05 - Akustik', component: 'DigitalkontrollsUtforskare', order: 5, enabled: true },
-            { id: 'energiberakningar', name: '06 - Energiberäkningar', component: 'DigitalkontrollsUtforskare', order: 6, enabled: true },
-            { id: 'geoteknik', name: '07 - Geoteknik', component: 'DigitalkontrollsUtforskare', order: 7, enabled: true },
-            { id: 'teknisk-samordning', name: '08 - Teknisk samordning', component: 'DigitalkontrollsUtforskare', order: 8, enabled: true },
           ];
         } else if (id === 'risk-mojligheter') {
           section.items = [

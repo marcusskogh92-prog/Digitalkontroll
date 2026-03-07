@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -14,6 +15,7 @@ import {
     setInkopsplanRowSupplierPersonalizedInquiry,
 } from '../inkopsplanService';
 import AddInkopsplanSupplierModal from './AddInkopsplanSupplierModal';
+import InkopsplanDocumentsModal from './InkopsplanDocumentsModal';
 
 const TABLE = MODAL_DESIGN_2026;
 const MIN_COLUMN_WIDTH = 60;
@@ -96,6 +98,7 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
   const suppliers = Array.isArray(row?.suppliers) ? row.suppliers : [];
 
   const [addSupplierOpen, setAddSupplierOpen] = useState(false);
+  const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
   const [supplierBusyKey, setSupplierBusyKey] = useState('');
   const [generatingAiKey, setGeneratingAiKey] = useState('');
   const [columnWidths, setColumnWidths] = useState(DEFAULT_LEV_WIDTHS);
@@ -120,10 +123,10 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
   const widenColumn = useCallback((column) => {
     if (Platform.OS !== 'web') return;
     const headerLabel = LEV_HEADERS[column] || '';
-    const extra = column === 'offert' ? '+ Lägg till leverantör' : '';
     const list = sortedSuppliersRef.current || [];
     const cellTexts = list.map((s) => getLevDisplayText(s, column));
-    const allTexts = [headerLabel, extra, ...cellTexts];
+    if (column === 'foretag') cellTexts.push('+ Lägg till leverantör');
+    const allTexts = [headerLabel, ...cellTexts];
     const newWidth = contentWidthForColumn(headerLabel, allTexts);
     setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
   }, []);
@@ -144,10 +147,10 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
       const { column, didMove } = resizeRef.current;
       if (column != null && !didMove) {
         const headerLabel = LEV_HEADERS[column] || '';
-        const extra = column === 'offert' ? '+ Lägg till leverantör' : '';
         const list = sortedSuppliersRef.current || [];
         const cellTexts = list.map((s) => getLevDisplayText(s, column));
-        const allTexts = [headerLabel, extra, ...cellTexts];
+        if (column === 'foretag') cellTexts.push('+ Lägg till leverantör');
+        const allTexts = [headerLabel, ...cellTexts];
         const newWidth = contentWidthForColumn(headerLabel, allTexts);
         setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
       }
@@ -168,6 +171,7 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
     if (!key) return;
     try {
       await removeInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey: key });
+      onSelectSupplier?.(null);
     } catch (e) {
       Alert.alert('Kunde inte ta bort', e?.message || 'Okänt fel');
     }
@@ -300,8 +304,45 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
 
   const isSorted = (key) => sortKey === key;
 
+  const canDeleteSupplier = Boolean(selectedSupplierKey && hasRow && companyId && projectId);
+  const deleteBusy = canDeleteSupplier && supplierBusyKey === selectedSupplierKey;
+
   return (
     <View style={[styles.wrap, isWeb() && { minWidth: totalTableWidth }]}>
+      <View style={styles.levToolbar}>
+        <Pressable
+          onPress={() => setAddSupplierOpen(true)}
+          disabled={!hasRow || !companyId || !projectId}
+          style={({ hovered, pressed }) => [
+            styles.levToolbarBtn,
+            (hovered || pressed) && styles.levToolbarBtnHover,
+            (!hasRow || !companyId || !projectId) && { opacity: 0.6 },
+          ]}
+        >
+          <Ionicons name="add-circle-outline" size={18} color="#2563EB" />
+          <Text style={styles.levToolbarBtnText}>Lägg till leverantör</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => selectedSupplierKey && handleRemoveSupplier(selectedSupplierKey)}
+          disabled={!canDeleteSupplier || deleteBusy}
+          style={({ hovered, pressed }) => [
+            styles.levToolbarBtn,
+            styles.levToolbarBtnDanger,
+            (hovered || pressed) && canDeleteSupplier && styles.levToolbarBtnDangerHover,
+            (!canDeleteSupplier || deleteBusy) && { opacity: 0.6 },
+          ]}
+        >
+          <Ionicons name="trash-outline" size={18} color="#DC2626" />
+          <Text style={[styles.levToolbarBtnText, styles.levToolbarBtnTextDanger]}>Radera leverantör</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setDocumentsModalOpen(true)}
+          style={({ hovered, pressed }) => [styles.levToolbarBtn, (hovered || pressed) && styles.levToolbarBtnHover]}
+        >
+          <Ionicons name="document-attach-outline" size={18} color="#475569" />
+          <Text style={styles.levToolbarBtnText}>Dokument</Text>
+        </Pressable>
+      </View>
       <View style={styles.tableWrap}>
         <View style={[styles.tableHeader, isWeb() && styles.tableHeaderGapWeb]}>
           <View style={[styles.headerCell, col('foretag')]}>
@@ -354,35 +395,29 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
           </View>
           {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('status', e)} onDoubleClick={() => widenColumn('status')}><View style={styles.resizeHandleLine} /></View>}
           <View style={[styles.headerCell, col('offert')]}>
-            <View style={[styles.columnContent, styles.headerActionsWrap]}>
-              <Pressable onPress={() => handleSort('offert')} style={({ hovered }) => [styles.headerSortable, hovered && styles.headerSortableHover]}>
-                <Text style={[styles.headerText, isSorted('offert') && styles.headerTextSorted]} numberOfLines={1}>Offert</Text>
-                {isSorted('offert') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
-              </Pressable>
-              <Pressable
-                onPress={() => setAddSupplierOpen(true)}
-                disabled={!hasRow || !companyId || !projectId}
-                style={({ hovered, pressed }) => [
-                  styles.addLinkWrap,
-                  (hovered || pressed) && styles.addLinkHover,
-                  (!hasRow || !companyId || !projectId) && { opacity: 0.6 },
-                ]}
-              >
-                <Text style={styles.addLink}>+ Lägg till leverantör</Text>
-              </Pressable>
-            </View>
+            <Pressable onPress={() => handleSort('offert')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('offert') && styles.headerTextSorted]} numberOfLines={1}>Offert</Text>
+              {isSorted('offert') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
           </View>
           <View style={styles.cellSpacer} />
         </View>
 
         {sortedSuppliers.length === 0 ? (
-          <View style={styles.tableEmpty}>
-            <Text style={styles.muted}>
-              {hasRow ? 'Inga leverantörer kopplade ännu.' : 'Välj en rad i inköpsstrukturen ovan för att lägga in och hantera leverantörer.'}
-            </Text>
+          <View style={[styles.tableRow, isWeb() && styles.tableRowGapWeb]}>
+            <View style={[styles.cell, col('foretag')]}><Text style={styles.muted} numberOfLines={1}>{hasRow ? 'Inga leverantörer kopplade ännu.' : 'Välj en rad i inköpsstrukturen ovan.'}</Text></View>
+            <View style={[styles.cell, col('kontaktperson')]} />
+            <View style={[styles.cell, col('roll')]} />
+            <View style={[styles.cell, col('mobilnr')]} />
+            <View style={[styles.cell, col('arbete')]} />
+            <View style={[styles.cell, col('mejladress')]} />
+            <View style={[styles.cell, col('status')]} />
+            <View style={[styles.cell, col('offert')]} />
+            <View style={styles.cellSpacer} />
           </View>
         ) : (
-          sortedSuppliers.map((s, idx) => {
+          <>
+          {sortedSuppliers.map((s, idx) => {
             const label = safeText(s?.companyName || s?.name || s?.id || s);
             const supplierKey = normalizeSupplierKeyLocal(s);
             const key = supplierKey || `${label}-${idx}`;
@@ -477,7 +512,8 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
                 </View>
               </Pressable>
             );
-          })
+          })}
+          </>
         )}
       </View>
 
@@ -486,6 +522,11 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId, selec
         onClose={() => setAddSupplierOpen(false)}
         companyId={companyId}
         projectId={projectId}
+        row={row}
+      />
+      <InkopsplanDocumentsModal
+        visible={documentsModalOpen}
+        onClose={() => setDocumentsModalOpen(false)}
         row={row}
       />
     </View>
@@ -497,6 +538,43 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 8,
     backgroundColor: 'transparent',
+  },
+  levToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  levToolbarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  levToolbarBtnHover: {
+    backgroundColor: '#E2E8F0',
+  },
+  levToolbarBtnDanger: {
+    backgroundColor: '#FEF2F2',
+  },
+  levToolbarBtnDangerHover: {
+    backgroundColor: '#FECACA',
+  },
+  levToolbarBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
+  levToolbarBtnTextDanger: {
+    color: '#DC2626',
   },
   tableWrap: {
     borderWidth: 1,
@@ -584,6 +662,9 @@ const styles = StyleSheet.create({
   tableRowSelected: {
     backgroundColor: '#EFF6FF',
     borderBottomColor: '#BFDBFE',
+  },
+  addSupplierRow: {
+    backgroundColor: TABLE.tableRowAltBackgroundColor,
   },
   cell: {
     paddingLeft: COLUMN_PADDING_LEFT,

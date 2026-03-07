@@ -5,9 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ContextMenu from '../../../components/ContextMenu';
 import CreateInkopsplanModal from './components/CreateInkopsplanModal';
 import InkopsplanTable from './components/InkopsplanTable';
-import InkopsplanRowExpanded from './components/InkopsplanRowExpanded';
 import InquiryDraftModal from './components/InquiryDraftModal';
-import ResizableVerticalSplit from './components/ResizableVerticalSplit';
 import { useProjectOrganisation } from '../../../hooks/useProjectOrganisation';
 import { generateInquiryDraft } from '../../../components/firebase';
 import { deleteInkopsplanRow, listenInkopsplanDoc, listenInkopsplanRows, removeInkopsplanRowSupplier, updateInkopsplanRowFields } from './inkopsplanService';
@@ -46,6 +44,7 @@ export default function InkopsplanView({ companyId, projectId }) {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [expandedRowId, setExpandedRowId] = useState(null);
   const [selectedSupplierKey, setSelectedSupplierKey] = useState(null);
   const [deleteRowBusy, setDeleteRowBusy] = useState(false);
   const [deleteSupplierBusy, setDeleteSupplierBusy] = useState(false);
@@ -151,11 +150,11 @@ export default function InkopsplanView({ companyId, projectId }) {
     setSelectedSupplierKey(null);
   }, [selectedRowId]);
 
-  const selectedRowFresh = useMemo(() => {
-    if (!selectedRowId || !Array.isArray(rows)) return selectedRow;
-    const found = rows.find((r) => String(r?.id ?? '') === String(selectedRowId));
-    return found ?? selectedRow;
-  }, [rows, selectedRowId, selectedRow]);
+  const toggleRowExpanded = useCallback((row) => {
+    const id = row?.id ?? null;
+    setExpandedRowId((prev) => (prev === id ? null : id));
+    if (id) setSelectedRow(rows.find((r) => String(r?.id) === String(id)) || row);
+  }, [rows]);
 
   const existingRowKeySet = useMemo(() => {
     const set = {};
@@ -279,140 +278,109 @@ export default function InkopsplanView({ companyId, projectId }) {
           <ActivityIndicator />
         </View>
       ) : (
-        <ResizableVerticalSplit
-          initialTopRatio={0.55}
-          minTopRatio={0.25}
-          minBottomRatio={0.2}
-          containerStyle={styles.splitContainer}
-          topChild={
-            <View style={styles.upperPanel}>
-              <View style={styles.upperPanelToolbar}>
-                <View style={styles.upperPanelToolbarLeft}>
-                  <Text style={styles.upperPanelToolbarTitle}>Inköp</Text>
-                  <Pressable
-                    onPress={addNewManualRow}
-                    style={({ hovered, pressed }) => [
-                      styles.toolbarIconBtn,
-                      styles.toolbarIconBtnRound,
-                      (hovered || pressed) && styles.toolbarIconBtnHover,
-                    ]}
-                    accessibilityLabel="Lägg till rad"
-                  >
-                    <Text style={styles.toolbarIconBtnText}>+</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={saveManualRow}
-                    style={({ hovered, pressed }) => [
-                      styles.toolbarIconBtn,
-                      styles.toolbarIconBtnRound,
-                      (hovered || pressed) && styles.toolbarIconBtnHover,
-                    ]}
-                    accessibilityLabel="Spara"
-                  >
-                    <Ionicons name="save-outline" size={18} color="#0F172A" />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      const rowToOpen = selectedRow?.id ? selectedRow : (rows?.length > 0 ? rows[0] : null);
-                      if (rowToOpen?.id) {
-                        if (!selectedRow?.id) setSelectedRow(rowToOpen);
-                        setInquiryModalRowId(rowToOpen.id);
-                      } else {
-                        Alert.alert('Ingen rad', 'Lägg till först en rad i inköpsplanen.');
-                      }
-                    }}
-                    style={({ hovered, pressed }) => [
-                      styles.toolbarGenerellBtn,
-                      (hovered || pressed) && styles.toolbarGenerellBtnHover,
-                    ]}
-                    accessibilityLabel="Generell förfrågan"
-                  >
-                    <Ionicons name="sparkles" size={16} color="#166534" style={{ marginRight: 4 }} />
-                    <Text style={styles.toolbarGenerellBtnText}>Generell förfrågan</Text>
-                  </Pressable>
-                </View>
-              </View>
-              {isWeb() ? (
-                <View ref={upperScrollRef} style={[styles.scroll, styles.scrollOverflowAuto]}>
-                  <View style={styles.scrollContent}>
-                    {error ? (
-                      <View style={{ padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', borderRadius: 10 }}>
-                        <Text style={{ color: '#b91c1c', fontSize: 12, fontWeight: '700' }}>Inköpsplan kunde inte laddas</Text>
-                        <Text style={{ color: '#7f1d1d', fontSize: 12, marginTop: 4 }}>{error}</Text>
-                      </View>
-                    ) : null}
-                    <InkopsplanTable
-                      ref={inkopsplanTableRef}
-                      companyId={companyId}
-                      projectId={projectId}
-                      rows={rows}
-                      projectMembers={projectMembers}
-                      onRowsChanged={triggerRefresh}
-                      selectedRowId={selectedRowId}
-                      onSelectRow={setSelectedRow}
-                      onRowContextMenu={handleInkopRowContextMenu}
-                      onOpenInquiryModal={openInquiryModalForRow}
-                    />
-                  </View>
-                </View>
-              ) : (
-                <ScrollView ref={upperScrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-                  {error ? (
-                    <View style={{ padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', borderRadius: 10 }}>
-                      <Text style={{ color: '#b91c1c', fontSize: 12, fontWeight: '700' }}>Inköpsplan kunde inte laddas</Text>
-                      <Text style={{ color: '#7f1d1d', fontSize: 12, marginTop: 4 }}>{error}</Text>
-                    </View>
-                  ) : null}
-                  <InkopsplanTable
-                    ref={inkopsplanTableRef}
-                    companyId={companyId}
-                    projectId={projectId}
-                    rows={rows}
-                    projectMembers={projectMembers}
-                    onRowsChanged={triggerRefresh}
-                    selectedRowId={selectedRowId}
-                    onSelectRow={setSelectedRow}
-                    onRowContextMenu={handleInkopRowContextMenu}
-                    onOpenInquiryModal={openInquiryModalForRow}
-                  />
-                </ScrollView>
-              )}
+        <View style={styles.singlePanel}>
+          <View style={styles.upperPanelToolbar}>
+            <View style={styles.upperPanelToolbarLeft}>
+              <Text style={styles.upperPanelToolbarTitle}>Inköp</Text>
+              <Pressable
+                onPress={addNewManualRow}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarIconBtn,
+                  styles.toolbarIconBtnRound,
+                  (hovered || pressed) && styles.toolbarIconBtnHover,
+                ]}
+                accessibilityLabel="Lägg till rad"
+              >
+                <Text style={styles.toolbarIconBtnText}>+</Text>
+              </Pressable>
+              <Pressable
+                onPress={saveManualRow}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarIconBtn,
+                  styles.toolbarIconBtnRound,
+                  (hovered || pressed) && styles.toolbarIconBtnHover,
+                ]}
+                accessibilityLabel="Spara"
+              >
+                <Ionicons name="save-outline" size={18} color="#0F172A" />
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  const rowToOpen = selectedRow?.id ? selectedRow : (rows?.length > 0 ? rows[0] : null);
+                  if (rowToOpen?.id) {
+                    if (!selectedRow?.id) setSelectedRow(rowToOpen);
+                    setInquiryModalRowId(rowToOpen.id);
+                  } else {
+                    Alert.alert('Ingen rad', 'Lägg till först en rad i inköpsplanen.');
+                  }
+                }}
+                style={({ hovered, pressed }) => [
+                  styles.toolbarGenerellBtn,
+                  (hovered || pressed) && styles.toolbarGenerellBtnHover,
+                ]}
+                accessibilityLabel="Generell förfrågan"
+              >
+                <Ionicons name="sparkles" size={16} color="#166534" style={{ marginRight: 4 }} />
+                <Text style={styles.toolbarGenerellBtnText}>Generell förfrågan</Text>
+              </Pressable>
             </View>
-          }
-          bottomChild={
-            <View style={styles.lowerPanel}>
-              <View style={styles.lowerPanelToolbar}>
-                <Text style={styles.lowerPanelToolbarTitle}>Leverantörer</Text>
-                <View style={styles.lowerPanelToolbarActions} />
-              </View>
-              {isWeb() ? (
-                <View style={[styles.lowerPanelScroll, styles.scrollOverflowAuto]}>
-                  <View style={styles.lowerPanelScrollContent}>
-                    <InkopsplanRowExpanded
-                      row={selectedRowFresh}
-                      companyId={companyId}
-                      projectId={projectId}
-                      selectedSupplierKey={selectedSupplierKey}
-                      onSelectSupplier={setSelectedSupplierKey}
-                      onSupplierContextMenu={handleLevRowContextMenu}
-                    />
+          </View>
+          {isWeb() ? (
+            <View ref={upperScrollRef} style={[styles.scroll, styles.scrollOverflowAuto]}>
+              <View style={styles.scrollContent}>
+                {error ? (
+                  <View style={{ padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', borderRadius: 10 }}>
+                    <Text style={{ color: '#b91c1c', fontSize: 12, fontWeight: '700' }}>Inköpsplan kunde inte laddas</Text>
+                    <Text style={{ color: '#7f1d1d', fontSize: 12, marginTop: 4 }}>{error}</Text>
                   </View>
-                </View>
-              ) : (
-                <ScrollView style={styles.lowerPanelScroll} contentContainerStyle={styles.lowerPanelScrollContent}>
-                  <InkopsplanRowExpanded
-                    row={selectedRowFresh}
-                    companyId={companyId}
-                    projectId={projectId}
-                    selectedSupplierKey={selectedSupplierKey}
-                    onSelectSupplier={setSelectedSupplierKey}
-                    onSupplierContextMenu={handleLevRowContextMenu}
-                  />
-                </ScrollView>
-              )}
+                ) : null}
+                <InkopsplanTable
+                  ref={inkopsplanTableRef}
+                  companyId={companyId}
+                  projectId={projectId}
+                  rows={rows}
+                  projectMembers={projectMembers}
+                  onRowsChanged={triggerRefresh}
+                  selectedRowId={selectedRowId}
+                  onSelectRow={setSelectedRow}
+                  expandedRowId={expandedRowId}
+                  onToggleRowExpand={toggleRowExpanded}
+                  selectedSupplierKey={selectedSupplierKey}
+                  onSelectSupplier={setSelectedSupplierKey}
+                  onSupplierContextMenu={handleLevRowContextMenu}
+                  onRowContextMenu={handleInkopRowContextMenu}
+                  onOpenInquiryModal={openInquiryModalForRow}
+                />
+              </View>
             </View>
-          }
-        />
+          ) : (
+            <ScrollView ref={upperScrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+              {error ? (
+                <View style={{ padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2', borderRadius: 10 }}>
+                  <Text style={{ color: '#b91c1c', fontSize: 12, fontWeight: '700' }}>Inköpsplan kunde inte laddas</Text>
+                  <Text style={{ color: '#7f1d1d', fontSize: 12, marginTop: 4 }}>{error}</Text>
+                </View>
+              ) : null}
+              <InkopsplanTable
+                ref={inkopsplanTableRef}
+                companyId={companyId}
+                projectId={projectId}
+                rows={rows}
+                projectMembers={projectMembers}
+                onRowsChanged={triggerRefresh}
+                selectedRowId={selectedRowId}
+                onSelectRow={setSelectedRow}
+                expandedRowId={expandedRowId}
+                onToggleRowExpand={toggleRowExpanded}
+                selectedSupplierKey={selectedSupplierKey}
+                onSelectSupplier={setSelectedSupplierKey}
+                onSupplierContextMenu={handleLevRowContextMenu}
+                onRowContextMenu={handleInkopRowContextMenu}
+                onOpenInquiryModal={openInquiryModalForRow}
+              />
+            </ScrollView>
+          )}
+        </View>
       )}
 
       <CreateInkopsplanModal
@@ -589,6 +557,11 @@ const styles = StyleSheet.create({
   },
   splitContainer: {
     minHeight: 200,
+  },
+  singlePanel: {
+    flex: 1,
+    minHeight: 0,
+    flexDirection: 'column',
   },
   upperPanel: {
     flex: 1,

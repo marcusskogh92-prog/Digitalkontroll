@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ConfirmModal } from '../components/common/Modals';
-import { functionsClient, setFFUAnalysisCancelRequested, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
+import { fetchCompanyProject, functionsClient, setFFUAnalysisCancelRequested, subscribeLatestProjectFFUAnalysis } from '../components/firebase';
+import { emitProjectUpdated } from '../components/projectBus';
 import { useBackgroundTasks } from '../contexts/BackgroundTasksContext';
 
 function safeText(v) {
@@ -85,6 +86,7 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const [rerunConfirm, setRerunConfirm] = useState({ visible: false, busy: false, error: '' });
   const subKeyRef = useRef('');
   const aiAnalysisTaskTimeoutRef = useRef(null);
+  const wasAnalyzingRef = useRef(false);
 
   const hasSavedAnalysis = snapshotExists;
 
@@ -154,6 +156,9 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
       onNext: (data, snap) => {
         if (subKeyRef.current !== subKey) return;
         const status = data?.status;
+        if (status === 'analyzing') {
+          wasAnalyzingRef.current = true;
+        }
         if (status && status !== 'analyzing') {
           if (aiAnalysisTaskTimeoutRef.current) {
             clearTimeout(aiAnalysisTaskTimeoutRef.current);
@@ -169,6 +174,14 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
         setAnalysisTriggered((prev) => (prev ? false : prev));
         if (safeText(data?.status) === 'cancelled' || (safeText(data?.status) !== 'analyzing' && safeText(data?.status) !== '')) {
           setCancelRequested(false);
+        }
+        if (status === 'success' && cid && pid && wasAnalyzingRef.current) {
+          wasAnalyzingRef.current = false;
+          fetchCompanyProject(cid, pid).then((updated) => {
+            if (updated) emitProjectUpdated(updated);
+          }).catch(() => {});
+        } else if (status && status !== 'analyzing') {
+          wasAnalyzingRef.current = false;
         }
       },
       onError: (err) => {

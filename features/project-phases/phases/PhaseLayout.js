@@ -28,7 +28,6 @@ import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
 import FragaSvarSection from './kalkylskede/sections/fragaSvar/FragaSvarSection';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
-import KonstruktionSection from './kalkylskede/sections/konstruktion/KonstruktionSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
 import OfferterSection from './kalkylskede/sections/offerter/OfferterSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
@@ -41,7 +40,6 @@ const SECTION_COMPONENTS = {
   offerter: OfferterSection,
   bilder: BilderSection,
   kalkyl: KalkylSection,
-  'konstruktion-berakningar': KonstruktionSection,
   anteckningar: AnteckningarSection,
   moten: MotenSection,
   anbud: AnbudSection
@@ -454,7 +452,7 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
-  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl', 'konstruktion-berakningar', 'offerter'].includes(String(activeSection || ''));
+  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl', 'offerter'].includes(String(activeSection || ''));
 
   const renderContent = () => {
     if (navLoading || !navigation) {

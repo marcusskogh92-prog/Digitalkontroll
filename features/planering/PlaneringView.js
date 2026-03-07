@@ -268,7 +268,6 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   const [delaUnderUppbyggnadVisible, setDelaUnderUppbyggnadVisible] = useState(false);
   const [searchFilter, setSearchFilter] = useState(''); // Sök resurser eller projekt
   const [viewWeeksMode, setViewWeeksMode] = useState(6); // 1 = Dag, 6 | 12 | 32 = antal veckor
-  const [inlanadCollapsed, setInlanadCollapsed] = useState(true);
   const [hoveredCell, setHoveredCell] = useState(null); // { rowIndex, dateKey }
   const [hoveredCornerRow, setHoveredCornerRow] = useState(null); // rowIndex
   const [hoveredProjectId, setHoveredProjectId] = useState(null); // projektrad i kundkolumn
@@ -658,10 +657,8 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
     const personRows = isServiceMode
       ? leftPanelRows
       : filteredResources.map((r) => ({ id: r.id, type: 'resource', name: r.name, role: r.role, personId: r.id }));
-    const inlanadHeader = { type: 'inlanadHeader', id: 'inlanad-header', collapsed: inlanadCollapsed };
-    const inlanadItems = inlanadCollapsed ? [] : [1, 2, 3, 4, 5, 6].map((i) => ({ type: 'inlanadItem', id: `inlanad-${i}`, label: `Inlånad ${i}` }));
-    return [...personRows, inlanadHeader, ...inlanadItems];
-  }, [isServiceMode, leftPanelRows, filteredResources, inlanadCollapsed]);
+    return personRows;
+  }, [isServiceMode, leftPanelRows, filteredResources]);
 
   /* Min bredd för scroll-innehållet: endast tidslinjen (inga kundkolumner) */
   const scrollContentMinWidth = totalGridWidth;
@@ -1219,7 +1216,6 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
         {/* Gantt: vänsterkolumn = Resurser/Projekt + lista, höger = kalender */}
         <View style={styles.ganttPanel}>
           <View style={styles.ganttToolbar}>
-            <Text style={styles.planeringCompanyLogo}>Wilzéns</Text>
             <Pressable style={styles.ganttToolbarBtn} onPress={() => setWeekOffset((o) => o - 1)}>
               <Ionicons name="chevron-back" size={20} color="#475569" />
             </Pressable>
@@ -1458,19 +1454,6 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           <View style={styles.ganttCornerNameRow} />
                         ) : isDivider ? (
                           <View style={styles.ganttCornerNameRow} />
-                        ) : isInlanadHeader ? (
-                          <Pressable
-                            style={styles.ganttCornerNameRow}
-                            onPress={() => setInlanadCollapsed((c) => !c)}
-                          >
-                            <Ionicons name={item.collapsed ? 'chevron-forward' : 'chevron-down'} size={16} color="#64748b" style={{ marginRight: 6 }} />
-                            <Text style={styles.ganttGroupHeaderText} numberOfLines={1}>Inlånad</Text>
-                          </Pressable>
-                        ) : isInlanadItem ? (
-                          <View style={styles.ganttCornerNameRow}>
-                            <View style={styles.ganttCornerAvatarPlaceholder} />
-                            <Text style={styles.listRowName} numberOfLines={1}>{item.label}</Text>
-                          </View>
                         ) : isGroupRow ? (
                           <Pressable
                             style={styles.ganttCornerNameRow}
@@ -2843,13 +2826,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     minHeight: 0,
     backgroundColor: '#fff',
-  },
-  planeringCompanyLogo: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#b91c1c',
-    marginRight: 16,
-    ...(Platform.OS === 'web' ? { fontFamily: 'Georgia, serif' } : {}),
   },
   ganttToolbar: {
     flexDirection: 'row',
