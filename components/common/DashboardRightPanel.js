@@ -201,8 +201,16 @@ function UpcomingDeadlinesCard({ upcomingItems = [], upcomingTimelineItems = [],
                 if (item.type === 'timeline') {
                   const project = item?.project || {};
                   const config = getProjectPhase(project) || getPhaseConfig('kalkylskede');
-                  const projectLabel = item?.projectName || project?.fullName || project?.name || project?.projectNumber || project?.id || 'Projekt';
-                  const what = item?.title || 'Datum';
+                  const projectNumber = String(project?.projectNumber || project?.number || item?.projectId || '').trim();
+                  let projectName = String(project?.name || item?.projectName || '').trim();
+                  if (!projectName && project?.fullName) {
+                    const full = String(project.fullName).trim();
+                    const num = projectNumber;
+                    projectName = num && full.startsWith(num) ? full.slice(num.length).replace(/^\s*[-–]\s*/, '').trim() : full;
+                  }
+                  if (!projectName) projectName = String(project?.fullName || '').trim();
+                  const line1 = projectNumber + (projectName ? ' ' + projectName : '') || 'Projekt';
+                  const line2 = item?.title || 'Datum';
                   return (
                     <TouchableOpacity
                       key={`tl-${item.projectId}-${item.date}-${idx}`}
@@ -214,9 +222,14 @@ function UpcomingDeadlinesCard({ upcomingItems = [], upcomingTimelineItems = [],
                       <View style={[styles.upcomingStageIcon, { backgroundColor: config?.color || '#2563EB' }]}>
                         <Ionicons name={config?.icon || 'calendar-outline'} size={12} color="#fff" />
                       </View>
-                      <Text style={styles.upcomingRowText} numberOfLines={1} ellipsizeMode="tail">
-                        {projectLabel} – {what}
-                      </Text>
+                      <View style={styles.upcomingRowTextWrap}>
+                        <Text style={styles.upcomingRowTitle} numberOfLines={1} ellipsizeMode="tail">
+                          {line1}
+                        </Text>
+                        <Text style={styles.upcomingRowSubtext} numberOfLines={1} ellipsizeMode="tail">
+                          {line2}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 }
@@ -377,11 +390,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  upcomingRowTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  upcomingRowTitle: {
+    fontSize: 13,
+    color: '#1e293b',
+    fontWeight: '500',
+  },
   upcomingRowText: {
     flex: 1,
     fontSize: 13,
     color: '#475569',
     minWidth: 0,
+  },
+  upcomingRowSubtext: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
   },
 });
 

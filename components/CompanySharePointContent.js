@@ -19,6 +19,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import ContextMenu from './ContextMenu';
 import {
@@ -368,7 +369,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
   if (!cid) {
     return (
       <View style={{ padding: 24 }}>
-        <Text style={{ fontSize: 13, color: '#64748b' }}>Välj ett företag.</Text>
+        <Text style={{ fontSize: 12, color: '#64748b' }}>Välj ett företag.</Text>
       </View>
     );
   }
@@ -379,10 +380,10 @@ export default function CompanySharePointContent({ companyId, companyName }) {
       <Modal visible={showCreateSiteModal} transparent animationType="fade">
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setShowCreateSiteModal(false)}>
           <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, width: '100%', maxWidth: 400 }} onPress={(e) => e?.stopPropagation?.()}>
-            <Text style={{ fontSize: 16, fontWeight: '600', color: '#1e293b', marginBottom: 16 }}>Ny SharePoint-site</Text>
-            <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>Namn på siten (t.ex. "Projekt" eller "Site 2"). Siten får visningsnamn: {companyName || cid} – [namn].</Text>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 10 }}>Ny SharePoint-site</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>Namn på siten (t.ex. "Projekt" eller "Site 2"). Siten får visningsnamn: {companyName || cid} – [namn].</Text>
             <TextInput
-              style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: '#1e293b', marginBottom: 20 }}
+              style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: D.inputRadius, paddingVertical: 8, paddingHorizontal: 12, fontSize: 13, color: '#1e293b', marginBottom: 20 }}
               placeholder="t.ex. Projekt"
               placeholderTextColor="#94a3b8"
               value={newSiteNameDraft}
@@ -393,11 +394,11 @@ export default function CompanySharePointContent({ companyId, companyName }) {
               returnKeyType="done"
             />
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-              <TouchableOpacity onPress={() => setShowCreateSiteModal(false)} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#f1f5f9' }}>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>Avbryt</Text>
+              <TouchableOpacity onPress={() => setShowCreateSiteModal(false)} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleCreateSiteSubmit} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#1e293b' }}>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Skapa site</Text>
+              <TouchableOpacity onPress={handleCreateSiteSubmit} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B' }}>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>Skapa site</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -408,12 +409,12 @@ export default function CompanySharePointContent({ companyId, companyName }) {
       {creating ? (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 10, borderRadius: 12 }}>
           <ActivityIndicator size="large" color="#1e293b" />
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1e293b', marginTop: 12 }}>Skapar site – {creatingSiteName || '…'}</Text>
-          <Text style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>Det kan ta en halv minut. Stäng inte modalen.</Text>
+          <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginTop: 12 }}>Skapar site – {creatingSiteName || '…'}</Text>
+          <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Det kan ta en halv minut. Stäng inte modalen.</Text>
         </View>
       ) : null}
 
-      <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
         Siter som företaget har tillgång till. DK Bas och DK Site är låsta och kan inte tas bort.
       </Text>
 
@@ -431,7 +432,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
         }}
       >
         <Ionicons name="information-circle-outline" size={20} color="#0369a1" style={{ marginTop: 1 }} />
-        <Text style={{ fontSize: 13, color: '#0c4a6e', flex: 1, lineHeight: 20 }}>
+        <Text style={{ fontSize: 12, color: '#0c4a6e', flex: 1, lineHeight: 20 }}>
           Kopplingar mot externa SharePoint-siter är under utveckling. Det kommer möjliggöra att koppla Digitalkontroll mot er organisations befintliga SharePoint-miljö.
         </Text>
       </View>
@@ -445,15 +446,15 @@ export default function CompanySharePointContent({ companyId, companyName }) {
               flexDirection: 'row',
               alignItems: 'center',
               gap: 6,
-              paddingVertical: 8,
-              paddingHorizontal: 14,
-              borderRadius: 8,
-              backgroundColor: (creating || loading) ? '#e2e8f0' : '#1e293b',
+              paddingVertical: D.buttonPaddingVertical,
+              paddingHorizontal: D.buttonPaddingHorizontal,
+              borderRadius: D.buttonRadius,
+              backgroundColor: (creating || loading) ? '#e2e8f0' : (D.buttonPrimaryBg ?? '#2D3A4B'),
               ...(Platform.OS === 'web' ? { cursor: (creating || loading) ? 'not-allowed' : 'pointer' } : {}),
             }}
           >
-            {creating ? <ActivityIndicator size="small" color="#64748b" /> : <Ionicons name="add" size={18} color="#fff" />}
-            <Text style={{ fontSize: 13, fontWeight: '600', color: (creating || loading) ? '#64748b' : '#fff' }}>{creating ? 'Skapar…' : 'Ny site'}</Text>
+            {creating ? <ActivityIndicator size="small" color="#64748b" /> : <Ionicons name="add" size={16} color="#fff" />}
+            <Text style={{ fontSize: 12, fontWeight: '500', color: (creating || loading) ? '#64748b' : '#fff' }}>{creating ? 'Skapar…' : 'Ny site'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setRefreshSpin((n) => n + 1); reload(false); }}
@@ -485,7 +486,7 @@ export default function CompanySharePointContent({ companyId, companyName }) {
           borderRadius: 8,
         }}
       >
-        <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 4 }}>DK Bas-mappstruktur</Text>
+        <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 4 }}>DK Bas-mappstruktur</Text>
         <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 18 }}>
           {'Skapar standardmappar endast i DK Bas (inte i DK Site): Company/[företag]/Logos och Users, Projects (Kalkylskede, Produktion, Avslut, Eftermarknad), Företagsmallar (01–04 med Arkiv under varje). Kräver att en site är kopplad som DK Bas ovan.'}
         </Text>
@@ -497,40 +498,40 @@ export default function CompanySharePointContent({ companyId, companyName }) {
             alignItems: 'center',
             alignSelf: 'flex-start',
             gap: 6,
-            paddingVertical: 8,
-            paddingHorizontal: 14,
-            borderRadius: 8,
-            backgroundColor: (ensuringStructure || loading || !dkBasSiteId) ? '#e2e8f0' : '#1e293b',
+            paddingVertical: D.buttonPaddingVertical,
+            paddingHorizontal: D.buttonPaddingHorizontal,
+            borderRadius: D.buttonRadius,
+            backgroundColor: (ensuringStructure || loading || !dkBasSiteId) ? '#e2e8f0' : (D.buttonPrimaryBg ?? '#2D3A4B'),
             ...(Platform.OS === 'web' ? { cursor: (ensuringStructure || loading || !dkBasSiteId) ? 'not-allowed' : 'pointer' } : {}),
           }}
         >
           {ensuringStructure ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Ionicons name="folder-open-outline" size={18} color="#fff" />
+            <Ionicons name="folder-open-outline" size={16} color="#fff" />
           )}
-          <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>
+          <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>
             {ensuringStructure ? 'Skapar mappar…' : 'Skapa mappstruktur i DK Bas'}
           </Text>
         </TouchableOpacity>
       </View>
 
       <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#F8FAFC', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', flex: 1 }}>Site</Text>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', width: 120 }}>Typ</Text>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', width: STATUS_COLUMN_WIDTH }}>Status</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, backgroundColor: D.tableHeaderBackgroundColor ?? '#f8fafc', borderBottomWidth: 1, borderBottomColor: D.tableHeaderBorderColor ?? '#e2e8f0' }}>
+          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', flex: 1 }}>Site</Text>
+          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: 120 }}>Typ</Text>
+          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: STATUS_COLUMN_WIDTH }}>Status</Text>
           <View style={{ width: 48, flexShrink: 0 }} />
         </View>
 
         {loading ? (
           <View style={{ padding: 32, alignItems: 'center' }}>
             <ActivityIndicator size="small" color="#1e293b" />
-            <Text style={{ fontSize: 13, color: '#64748b', marginTop: 8 }}>Laddar siter…</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Laddar siter…</Text>
           </View>
         ) : entries.length === 0 ? (
           <View style={{ padding: 24 }}>
-            <Text style={{ fontSize: 13, color: '#64748b' }}>Inga siter ännu. Klicka på &quot;Ny site&quot; för att lägga till.</Text>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>Inga siter ännu. Klicka på &quot;Ny site&quot; för att lägga till.</Text>
           </View>
         ) : (
           <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ paddingBottom: 8 }}>
@@ -546,15 +547,15 @@ export default function CompanySharePointContent({ companyId, companyName }) {
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
-                    paddingVertical: 10,
-                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
                     borderBottomWidth: 1,
                     borderBottomColor: '#f1f5f9',
                     gap: 12,
                   }}
                 >
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#1e293b' }} numberOfLines={1}>{siteName}</Text>
+                    <Text style={{ fontSize: D.tableCellFontSize ?? 13, fontWeight: '500', color: D.tableCellColor ?? '#1e293b' }} numberOfLines={1}>{siteName}</Text>
                     <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{sid}</Text>
                   </View>
                   <Text style={{ fontSize: 12, color: '#475569', width: 120 }} numberOfLines={1}>{typLabel(entry)}</Text>
@@ -607,19 +608,19 @@ export default function CompanySharePointContent({ companyId, companyName }) {
 
       {renameSiteId ? (
         <View style={{ marginTop: 16, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, backgroundColor: '#f8fafc' }}>
-          <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 8 }}>Byt namn på site</Text>
+          <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 8 }}>Byt namn på site</Text>
           <TextInput
             value={renameDraft}
             onChangeText={setRenameDraft}
             placeholder="Sitenamn"
-            style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, color: '#1e293b', backgroundColor: '#fff', marginBottom: 12 }}
+            style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: D.inputRadius, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13, color: '#1e293b', backgroundColor: '#fff', marginBottom: 12 }}
           />
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity onPress={() => { setRenameSiteId(''); setRenameDraft(''); }} style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#fff' }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569' }}>Avbryt</Text>
+            <TouchableOpacity onPress={() => { setRenameSiteId(''); setRenameDraft(''); }} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, borderWidth: 1, borderColor: '#fecaca', backgroundColor: '#fef2f2' }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleRenameSave} style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, backgroundColor: '#1e293b' }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Spara</Text>
+            <TouchableOpacity onPress={handleRenameSave} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B' }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>Spara</Text>
             </TouchableOpacity>
           </View>
         </View>

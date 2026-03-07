@@ -1,17 +1,20 @@
 /**
  * OrganisationRollerView
  * (Översikt 02) – project-specific dynamic organisation groups + members.
+ * Tabellerna följer TABLE_GOLDEN_RULE (docs/TABLE_GOLDEN_RULE.md): justerbara kolumner på webb, tableLayout-tokens.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DK_MIDDLE_PANE_BOTTOM_GUTTER } from '../../../../../../../../components/common/layoutConstants';
 import AddParticipantModal from '../../../../../../../../components/common/ProjectOrganisation/AddParticipantModal';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import ContextMenu from '../../../../../../../../components/ContextMenu';
+import { MODAL_DESIGN_2026 } from '../../../../../../../../constants/modalDesign2026';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../../../../../constants/tableLayout';
 import {
   ensureDefaultProjectOrganisationGroup,
   fetchCompanyCustomers,
@@ -34,6 +37,92 @@ const ROLE_QUICK = [
 const ROLE_ADVANCED = ['BAS-P', 'BAS-U', 'Ombud', 'Offertintag'];
 
 const ROLE_ALL_PRESETS = [...ROLE_QUICK, ...ROLE_ADVANCED];
+
+/** Tabell golden rule: justerbara kolumner (TABLE_GOLDEN_RULE.md). */
+const TABLE = MODAL_DESIGN_2026;
+const ORG_TABLE_DEFAULT_WIDTHS = { roll: 140, namn: 160, foretag: 130, epost: 180, telefon: 110 };
+const ORG_TABLE_MIN_WIDTH = 60;
+const ORG_TABLE_RESIZE_HANDLE = 8;
+/** Bredd för kolumnen "Ta bort" – tillräcklig så att texten inte radbryts. */
+const ORG_TABLE_REMOVE_WIDTH = 52;
+
+/** Kolumner som i kontaktregistret för övriga grupper (Namn, Företag, Roll, Mobil, Arbete, E-post). */
+const ORG_TABLE_CONTACT_KEYS = ['namn', 'foretag', 'roll', 'mobil', 'arbete', 'epost'];
+const ORG_TABLE_CONTACT_DEFAULT_WIDTHS = { namn: 140, foretag: 130, roll: 100, mobil: 110, arbete: 100, epost: 180 };
+
+const orgTableStyles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingLeft: 10,
+    paddingRight: 10,
+    backgroundColor: TABLE.tableHeaderBackgroundColor,
+    borderBottomWidth: 1,
+    borderBottomColor: TABLE.tableHeaderBorderColor,
+  },
+  headerRowWeb: { gap: 0 },
+  headerCell: {
+    flexShrink: 0,
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    justifyContent: 'center',
+  },
+  headerText: {
+    fontSize: TABLE.tableHeaderFontSize,
+    fontWeight: TABLE.tableHeaderFontWeight,
+    color: TABLE.tableHeaderColor,
+  },
+  resizeHandle: {
+    width: ORG_TABLE_RESIZE_HANDLE,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+    alignSelf: 'stretch',
+    minHeight: 16,
+  },
+  dataRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: TABLE.tableRowHeight,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingLeft: 10,
+    paddingRight: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: TABLE.tableRowBorderColor,
+    backgroundColor: TABLE.tableRowBackgroundColor,
+  },
+  dataRowWeb: { gap: ORG_TABLE_RESIZE_HANDLE },
+  dataCell: {
+    flexShrink: 0,
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    minWidth: 0,
+  },
+  removeCell: { width: ORG_TABLE_REMOVE_WIDTH, alignItems: 'flex-end', flexShrink: 0 },
+  /** "Ta bort"-rubrik på en rad (ingen radbrytning). */
+  removeHeaderText: {
+    ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
+  },
+});
+
+/** Formatera mobil (siffror) till xxx xxx xx xx – samma som i kontaktregistret. */
+function formatMobileDisplay(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  const p1 = digits.slice(0, 3);
+  const p2 = digits.slice(3, 6);
+  const p3 = digits.slice(6, 8);
+  const p4 = digits.slice(8, 10);
+  const parts = [p1, p2, p3, p4].filter(Boolean);
+  return parts.join(' ').trim();
+}
 
 function isPresetCompanyRole(role) {
   const r = String(role || '').trim();
@@ -190,15 +279,160 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const [savingGroupId, setSavingGroupId] = useState(null);
   const [savedFlashByGroup, setSavedFlashByGroup] = useState(() => ({}));
 
+  /** Justerbara kolumnbredder (golden rule §7) – delas mellan alla grupptabeller. */
+  const [orgTableColumnWidths, setOrgTableColumnWidths] = useState(() => ({ ...ORG_TABLE_DEFAULT_WIDTHS }));
+  const orgTableResizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+  /** Kolumnbredder för övriga grupper (samma kolumner som kontaktregistret). */
+  const [orgTableContactColumnWidths, setOrgTableContactColumnWidths] = useState(() => ({ ...ORG_TABLE_CONTACT_DEFAULT_WIDTHS }));
+  const orgTableContactResizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+
+  /** Sortering: klick på kolumnrubrik växlar stigande/fallande (bokstavsordning eller siffror). */
+  const [sortOrgColumn, setSortOrgColumn] = useState(null);       // 'roll' | 'namn' | 'foretag' | 'epost' | 'telefon'
+  const [sortOrgDirection, setSortOrgDirection] = useState('asc'); // 'asc' | 'desc'
+  const [sortContactColumn, setSortContactColumn] = useState(null); // ORG_TABLE_CONTACT_KEYS
+  const [sortContactDirection, setSortContactDirection] = useState('asc');
+
   const dirtyRef = useRef(false);
   const pendingAny = useMemo(() => {
     const map = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup : {};
     return Object.keys(map).some((gid) => pendingHasChanges(map[gid]));
   }, [pendingByGroup]);
 
+  const startOrgTableResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    orgTableResizeRef.current = { column, startX: clientX, startWidth: orgTableColumnWidths[column] };
+  }, [orgTableColumnWidths]);
+
+  const orgTableTotalWidth = useMemo(() => {
+    const sum = (orgTableColumnWidths.roll ?? ORG_TABLE_DEFAULT_WIDTHS.roll) +
+      (orgTableColumnWidths.namn ?? ORG_TABLE_DEFAULT_WIDTHS.namn) +
+      (orgTableColumnWidths.foretag ?? ORG_TABLE_DEFAULT_WIDTHS.foretag) +
+      (orgTableColumnWidths.epost ?? ORG_TABLE_DEFAULT_WIDTHS.epost) +
+      (orgTableColumnWidths.telefon ?? ORG_TABLE_DEFAULT_WIDTHS.telefon);
+    const handles = Platform.OS === 'web' ? 5 * ORG_TABLE_RESIZE_HANDLE : 0;
+    return sum + handles + ORG_TABLE_REMOVE_WIDTH;
+  }, [orgTableColumnWidths]);
+
+  const startOrgTableContactResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    orgTableContactResizeRef.current = { column, startX: clientX, startWidth: orgTableContactColumnWidths[column] };
+  }, [orgTableContactColumnWidths]);
+
+  const orgTableContactTotalWidth = useMemo(() => {
+    const sum = ORG_TABLE_CONTACT_KEYS.reduce(
+      (acc, key) => acc + (orgTableContactColumnWidths[key] ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS[key]),
+      0
+    );
+    const handles = Platform.OS === 'web' ? ORG_TABLE_CONTACT_KEYS.length * ORG_TABLE_RESIZE_HANDLE : 0;
+    return sum + handles + ORG_TABLE_REMOVE_WIDTH;
+  }, [orgTableContactColumnWidths]);
+
   useEffect(() => {
     dirtyRef.current = !!pendingAny;
   }, [pendingAny]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = orgTableResizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(ORG_TABLE_MIN_WIDTH, startWidth + delta);
+      setOrgTableColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      orgTableResizeRef.current = { ...orgTableResizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      orgTableResizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = orgTableContactResizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(ORG_TABLE_MIN_WIDTH, startWidth + delta);
+      setOrgTableContactColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      orgTableContactResizeRef.current = { ...orgTableContactResizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      orgTableContactResizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+  const handleSortOrg = useCallback((column) => {
+    setSortOrgColumn((prev) => {
+      if (prev === column) {
+        setSortOrgDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return column;
+      }
+      setSortOrgDirection('asc');
+      return column;
+    });
+  }, []);
+
+  const handleSortContact = useCallback((column) => {
+    setSortContactColumn((prev) => {
+      if (prev === column) {
+        setSortContactDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return column;
+      }
+      setSortContactDirection('asc');
+      return column;
+    });
+  }, []);
+
+  const getSortedMembers = useCallback((members, isLocked) => {
+    const col = isLocked ? sortOrgColumn : sortContactColumn;
+    const dir = isLocked ? sortOrgDirection : sortContactDirection;
+    if (!col || !dir || !Array.isArray(members) || members.length === 0) return members;
+    return [...members].sort((a, b) => {
+      let va = '';
+      let vb = '';
+      if (col === 'roll') {
+        va = (Array.isArray(a?.roles) ? a.roles : (a?.role != null ? [String(a.role)] : [])).filter(Boolean).join(', ');
+        vb = (Array.isArray(b?.roles) ? b.roles : (b?.role != null ? [String(b.role)] : [])).filter(Boolean).join(', ');
+      } else if (col === 'namn') {
+        va = String(a?.name ?? '').trim();
+        vb = String(b?.name ?? '').trim();
+      } else if (col === 'foretag') {
+        va = String(a?.company ?? '').trim();
+        vb = String(b?.company ?? '').trim();
+      } else if (col === 'epost') {
+        va = String(a?.email ?? '').trim();
+        vb = String(b?.email ?? '').trim();
+      } else if (col === 'telefon' || col === 'mobil') {
+        va = String(a?.phone ?? '').trim();
+        vb = String(b?.phone ?? '').trim();
+      } else if (col === 'arbete') {
+        va = String(a?.workPhone ?? '').trim();
+        vb = String(b?.workPhone ?? '').trim();
+      }
+      const c = va.localeCompare(vb, 'sv');
+      return dir === 'asc' ? c : -c;
+    });
+  }, [sortOrgColumn, sortOrgDirection, sortContactColumn, sortContactDirection]);
+
   const activeGroup = useMemo(
     () => (groups || []).find((g) => String(g?.id || '') === String(activeModalGroupId || '')) || null,
     [groups, activeModalGroupId]
@@ -839,6 +1073,7 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
 
         const pending = getPendingForGroup(gid);
         const displayMembers = computeDisplayMembers(baseMembers, pending);
+        const sortedDisplayMembers = getSortedMembers(displayMembers, isLockedGroup);
 
         const participantCount = displayMembers.length;
         const groupHasPending = pendingHasChanges(pending);
@@ -1035,21 +1270,57 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                     </View>
                   ) : null}
 
-                  <View style={{ paddingVertical: 8, paddingHorizontal: 10, flexDirection: 'row', gap: 10, backgroundColor: COLORS.bgMuted, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder }}>
-                    <Text style={{ flex: 0.9, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Roll</Text>
-                    <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Namn</Text>
-                    <Text style={{ flex: 1.1, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Företag</Text>
-                    <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>E-post</Text>
-                    <Text style={{ flex: 0.95, flexBasis: 0, minWidth: 0, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText }}>Telefon</Text>
-                    <Text style={{ width: 40, fontSize: 11, fontWeight: '600', color: COLORS.tableHeaderText, textAlign: 'right' }}>Ta bort</Text>
+                  <View
+                    style={{
+                      minWidth: isLockedGroup ? orgTableTotalWidth : orgTableContactTotalWidth,
+                      ...(Platform.OS === 'web' ? { overflow: 'auto' } : {}),
+                    }}
+                  >
+                  {isLockedGroup ? (
+                    <>
+                  <View
+                    style={[
+                      orgTableStyles.headerRow,
+                      Platform.OS === 'web' && orgTableStyles.headerRowWeb,
+                    ]}
+                  >
+                    {(['roll', 'namn', 'foretag', 'epost', 'telefon']).map((key) => {
+                      const w = orgTableColumnWidths[key] ?? ORG_TABLE_DEFAULT_WIDTHS[key];
+                      const label = key === 'roll' ? 'Roll' : key === 'namn' ? 'Namn' : key === 'foretag' ? 'Företag' : key === 'epost' ? 'E-post' : 'Telefon';
+                      const isActive = sortOrgColumn === key;
+                      return (
+                        <React.Fragment key={key}>
+                          <Pressable
+                            onPress={() => handleSortOrg(key)}
+                            style={[orgTableStyles.headerCell, { width: w, minWidth: w, maxWidth: w, flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={orgTableStyles.headerText} numberOfLines={1}>{label}</Text>
+                            {isActive ? (
+                              <Ionicons name={sortOrgDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color={COLORS.blue} />
+                            ) : (
+                              <Ionicons name="swap-vertical-outline" size={14} color={COLORS.textSubtle} />
+                            )}
+                          </Pressable>
+                          {Platform.OS === 'web' && (
+                            <View style={orgTableStyles.resizeHandle} onMouseDown={(e) => startOrgTableResize(key, e)}>
+                              <View style={orgTableStyles.resizeHandleLine} />
+                            </View>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                    <View style={[orgTableStyles.removeCell, { justifyContent: 'center' }]}>
+                      <Text style={[orgTableStyles.headerText, orgTableStyles.removeHeaderText, { textAlign: 'right' }]} numberOfLines={1}>Ta bort</Text>
+                    </View>
                   </View>
 
-                  {displayMembers.length === 0 ? (
+                  {sortedDisplayMembers.length === 0 ? (
                     <View style={{ paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, backgroundColor: '#fff' }}>
                       <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga deltagare i gruppen.</Text>
                     </View>
                   ) : (
-                    displayMembers.map((m, memberIndex) => {
+                    sortedDisplayMembers.map((m, memberIndex) => {
                       const mid = String(m?.id || '');
                       const currentRoles = Array.isArray(m?.roles) ? m.roles : [];
                       const isEditingRole =
@@ -1059,8 +1330,27 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                       const roleDirty = !!m?._pendingRole;
                       const rowBg = memberIndex % 2 === 0 ? '#fff' : '#FAFAFA';
                       return (
-                        <View key={mid} style={{ paddingVertical: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, backgroundColor: rowBg, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                          <View style={{ flex: 0.9, flexBasis: 0, flexShrink: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                        <View
+                          key={mid}
+                          style={[
+                            orgTableStyles.dataRow,
+                            Platform.OS === 'web' && orgTableStyles.dataRowWeb,
+                            { backgroundColor: rowBg },
+                          ]}
+                        >
+                          <View
+                            style={[
+                              orgTableStyles.dataCell,
+                              {
+                                width: orgTableColumnWidths.roll ?? ORG_TABLE_DEFAULT_WIDTHS.roll,
+                                minWidth: orgTableColumnWidths.roll ?? ORG_TABLE_DEFAULT_WIDTHS.roll,
+                                maxWidth: orgTableColumnWidths.roll ?? ORG_TABLE_DEFAULT_WIDTHS.roll,
+                                flexDirection: 'row',
+                                alignItems: 'flex-start',
+                                gap: 8,
+                              },
+                            ]}
+                          >
                             <Pressable
                               onPress={(e) => openRolePicker(e, { groupId: gid, memberId: mid, currentRoles })}
                               title={Platform.OS === 'web' ? 'Lägg till roll' : undefined}
@@ -1141,19 +1431,27 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                               ) : null}
                             </View>
                           </View>
-                          <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.text }} numberOfLines={1}>
-                            {String(m?.name || '—')}
-                          </Text>
-                          <Text style={{ flex: 1.1, flexBasis: 0, minWidth: 0, fontSize: 13, color: COLORS.textMuted }} numberOfLines={1}>
-                            {String(m?.company || '—')}
-                          </Text>
-                          <Text style={{ flex: 1.25, flexBasis: 0, minWidth: 0, fontSize: 13, color: COLORS.textMuted }} numberOfLines={1}>
-                            {String(m?.email || '—')}
-                          </Text>
-                          <Text style={{ flex: 0.95, flexBasis: 0, minWidth: 0, fontSize: 13, color: COLORS.textMuted }} numberOfLines={1}>
-                            {String(m?.phone || '—')}
-                          </Text>
-                          <View style={{ width: 40, alignItems: 'flex-end' }}>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableColumnWidths.namn ?? ORG_TABLE_DEFAULT_WIDTHS.namn, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, fontWeight: '400', color: TABLE.tableCellColor }} numberOfLines={1}>
+                              {String(m?.name || '—')}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableColumnWidths.foretag ?? ORG_TABLE_DEFAULT_WIDTHS.foretag, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {String(m?.company || '—')}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableColumnWidths.epost ?? ORG_TABLE_DEFAULT_WIDTHS.epost, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {String(m?.email || '—')}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableColumnWidths.telefon ?? ORG_TABLE_DEFAULT_WIDTHS.telefon, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {String(m?.phone || '—')}
+                            </Text>
+                          </View>
+                          <View style={orgTableStyles.removeCell}>
                             <Pressable
                               onPress={() => stageRemoveMember(gid, mid)}
                               title={Platform.OS === 'web' ? 'Ta bort deltagare' : undefined}
@@ -1174,6 +1472,106 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
                       );
                     })
                   )}
+                  </>
+                  ) : (
+                  <>
+                  <View style={[orgTableStyles.headerRow, Platform.OS === 'web' && orgTableStyles.headerRowWeb]}>
+                    {ORG_TABLE_CONTACT_KEYS.map((key) => {
+                      const w = orgTableContactColumnWidths[key] ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS[key];
+                      const label = key === 'namn' ? 'Namn' : key === 'foretag' ? 'Företag' : key === 'roll' ? 'Roll' : key === 'mobil' ? 'Mobil' : key === 'arbete' ? 'Arbete' : 'E-post';
+                      const isActive = sortContactColumn === key;
+                      return (
+                        <React.Fragment key={key}>
+                          <Pressable
+                            onPress={() => handleSortContact(key)}
+                            style={[orgTableStyles.headerCell, { width: w, minWidth: w, maxWidth: w, flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={orgTableStyles.headerText} numberOfLines={1}>{label}</Text>
+                            {isActive ? (
+                              <Ionicons name={sortContactDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color={COLORS.blue} />
+                            ) : (
+                              <Ionicons name="swap-vertical-outline" size={14} color={COLORS.textSubtle} />
+                            )}
+                          </Pressable>
+                          {Platform.OS === 'web' && (
+                            <View style={orgTableStyles.resizeHandle} onMouseDown={(e) => startOrgTableContactResize(key, e)}>
+                              <View style={orgTableStyles.resizeHandleLine} />
+                            </View>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                    <View style={[orgTableStyles.removeCell, { justifyContent: 'center' }]}>
+                      <Text style={[orgTableStyles.headerText, orgTableStyles.removeHeaderText, { textAlign: 'right' }]} numberOfLines={1}>Ta bort</Text>
+                    </View>
+                  </View>
+                  {sortedDisplayMembers.length === 0 ? (
+                    <View style={{ paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: COLORS.tableBorder, backgroundColor: '#fff' }}>
+                      <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga deltagare i gruppen.</Text>
+                    </View>
+                  ) : (
+                    sortedDisplayMembers.map((m, memberIndex) => {
+                      const mid = String(m?.id || '');
+                      const currentRoles = Array.isArray(m?.roles) ? m.roles : [];
+                      const rowBg = memberIndex % 2 === 0 ? '#fff' : '#FAFAFA';
+                      return (
+                        <View
+                          key={mid}
+                          style={[
+                            orgTableStyles.dataRow,
+                            Platform.OS === 'web' && orgTableStyles.dataRowWeb,
+                            { backgroundColor: rowBg },
+                          ]}
+                        >
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.namn ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.namn, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellColor }} numberOfLines={1}>{String(m?.name || '—')}</Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.foretag ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.foretag, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>{String(m?.company || '—')}</Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.roll ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.roll, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {currentRoles.length ? currentRoles.join(', ') : '—'}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.mobil ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.mobil, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {formatMobileDisplay(m?.phone) || '—'}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.arbete ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.arbete, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>
+                              {String(m?.workPhone || '—')}
+                            </Text>
+                          </View>
+                          <View style={[orgTableStyles.dataCell, { width: orgTableContactColumnWidths.epost ?? ORG_TABLE_CONTACT_DEFAULT_WIDTHS.epost, minWidth: 0 }]}>
+                            <Text style={{ fontSize: TABLE.tableCellFontSize, color: TABLE.tableCellMutedColor }} numberOfLines={1}>{String(m?.email || '—')}</Text>
+                          </View>
+                          <View style={orgTableStyles.removeCell}>
+                            <Pressable
+                              onPress={() => stageRemoveMember(gid, mid)}
+                              title={Platform.OS === 'web' ? 'Ta bort deltagare' : undefined}
+                              style={({ hovered, pressed }) => ({
+                                paddingVertical: 4,
+                                paddingHorizontal: 4,
+                                borderRadius: 8,
+                                backgroundColor: (hovered || pressed) ? 'rgba(220, 38, 38, 0.12)' : 'transparent',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                              })}
+                            >
+                              {({ hovered, pressed }) => (
+                                <Ionicons name="trash-outline" size={16} color={(hovered || pressed) ? COLORS.danger : COLORS.textSubtle} />
+                              )}
+                            </Pressable>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
+                  </>
+                  )}
+                  </View>
                 </View>
               </View>
             )}

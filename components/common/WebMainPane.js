@@ -285,6 +285,7 @@ export default function WebMainPane(props) {
           companyName={companyProfile?.companyName || companyProfile?.name || companyId || null}
           companyId={companyId || routeCompanyId}
           currentUserId={auth?.currentUser?.uid || null}
+          currentUserEmail={auth?.currentUser?.email || null}
           onCreateProject={onOpenCreateProjectModal}
         />
       </View>

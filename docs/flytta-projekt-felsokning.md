@@ -1,6 +1,21 @@
-# Felsökning: Flytta projekt (404/400)
+# Flytta projekt (DigitalKontroll ↔ SharePoint)
 
-## Orsak till felen
+## Så flyttar du ett projekt
+
+1. I vänsterpanelen (Kalkylskede): högerklicka på projektet → **Ändra**.
+2. I modalen: klicka på **Projektplats** (eller den nuvarande sökvägen) för att öppna platsväljaren.
+3. Platsväljaren öppnas på **parent-mappen** till projektet (du ser projektmappen och syskonmappar). Navigera till den **mål-mapp** som projektet ska flyttas till (klicka på en mapp för att gå in, använd **← En nivå upp** om du är inne i en mapp) → **Välj denna plats/mapp**.
+4. Klicka **Spara**.
+
+Projektmappen flyttas då i SharePoint till den valda platsen, och projektet uppdateras i DigitalKontroll (Firestore). Du får meddelandet *"Projektet har flyttats i SharePoint och sparats."* vid lyckad flytt.
+
+**Flytta till en annan site:** Om företaget har flera SharePoint-siter kopplade kan du flytta projektet till en annan site: öppna platsväljaren, klicka på den andra siten i listan till vänster, navigera till önskad mapp på den siten och klicka "Välj denna plats/mapp". Vid Spara kopieras projektmappen till den nya siten och tas bort från den gamla (flytt mellan siter).
+
+---
+
+## Felsökning (404/400)
+
+### Orsak till felen
 
 1. **404 på `/drive/root/children`**  
    URL:en till Graph innehöll **siteId med punkt** (t.ex. `...sharepoint.com.ebca13b3-...cc73.55d0881c-...`).  

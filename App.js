@@ -293,21 +293,33 @@ function ensureWebTitle() {
 export default function App() {
   const [currentRoute, setCurrentRoute] = React.useState(null);
   const navigationRef = React.useRef(null);
+  const [fontTimeout, setFontTimeout] = React.useState(false);
 
   useEffect(() => {
     if (Platform.OS === 'web') applyGlobalBodyBackground();
   }, []);
 
-  let [fontsLoaded] = useFonts({
+  // På web: visa appen även om typsnitt hänger sig (useFonts kan aldrig resolva)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const t = setTimeout(() => setFontTimeout(true), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_700Bold,
     Inter_600SemiBold,
     ...(Ionicons?.font || {}),
   });
-  if (!fontsLoaded) {
+
+  const showApp = fontsLoaded || fontError || (Platform.OS === 'web' && fontTimeout);
+  if (!showApp) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
-        <Text style={{ fontSize: 18, color: '#222' }}>Laddar typsnitt...</Text>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' }}>
+        <Text style={{ fontSize: 18, color: '#0f172a', fontFamily: Platform.OS === 'web' ? 'system-ui, sans-serif' : undefined }}>
+          Laddar typsnitt...
+        </Text>
       </View>
     );
   }
@@ -324,7 +336,12 @@ export default function App() {
   const showToolbar = false; // Disabled - phase selector is now in left sidebar
   // const showToolbar = currentRoute && currentRoute !== 'Login';
   
+  const rootStyle = {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { minHeight: '100vh', width: '100%' } : {}),
+  };
   return (
+    <View style={rootStyle}>
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         {showToolbar && (
@@ -761,5 +778,6 @@ export default function App() {
         </AdminModalProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
+    </View>
   );
 }

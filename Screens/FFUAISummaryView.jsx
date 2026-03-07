@@ -62,7 +62,16 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
   const cid = safeText(companyId);
   const { addTask, removeTask } = useBackgroundTasks();
 
-  void project;
+  const projectHasPath = Boolean(
+    project && (
+      safeText(project.rootFolderPath) ||
+      safeText(project.sharePointRootPath) ||
+      safeText(project.rootPath) ||
+      safeText(project.sharePointPath) ||
+      safeText(project.path) ||
+      safeText(project.projectPath)
+    )
+  );
 
   // Single source of truth: render ONLY from Firestore snapshot.
   const [analysisDoc, setAnalysisDoc] = useState(null);
@@ -289,6 +298,17 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
           </Text>
         ) : null}
 
+        {!projectHasPath && pid ? (
+          <View style={{ marginTop: 10, padding: 12, backgroundColor: '#FFF8E1', borderRadius: 8, borderWidth: 1, borderColor: '#FFE7A3' }}>
+            <Text style={[styles.hintText, { color: '#7A4F00', fontWeight: '600', marginBottom: 4 }]}>
+              Projektet har ingen SharePoint-lagringsplats kopplad
+            </Text>
+            <Text style={[styles.hintText, { color: '#92400e', marginLeft: 0 }]}>
+              Gå till Kalkylskede → högerklick på projektet i sidomenyn → Ändra. Välj lagringsplats (SharePoint-mapp) och spara. Därefter fungerar AI-analysen.
+            </Text>
+          </View>
+        ) : null}
+
         {/* Zon 2 – Åtgärd / Trigger */}
         <View style={styles.actionZone}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -349,9 +369,9 @@ export default function FFUAISummaryView({ projectId, companyId, project }) {
               <Text style={[styles.hintText, { color: '#7A4F00' }]} numberOfLines={6}>
                 {runError || safeText(analysisDoc?.errorMessage)}
               </Text>
-              {(runError || analysisDoc?.errorMessage || '').toLowerCase().includes('sharepoint base path') ? (
-                <Text style={[styles.hintText, { color: '#64748b', marginTop: 4, fontStyle: 'italic' }]}>
-                  Kontrollera att projektet har en SharePoint-rotmapp kopplad (t.ex. under projektets inställningar eller etablering).
+              {(runError || analysisDoc?.errorMessage || '').toLowerCase().includes('sharepoint base path') || (runError || analysisDoc?.errorMessage || '').toLowerCase().includes('missing path') ? (
+                <Text style={[styles.hintText, { color: '#334155', marginTop: 6 }]}>
+                  Projektet saknar SharePoint-rotmapp. Gå till Kalkylskede → högerklick på projektet i sidomenyn → Ändra, och välj lagringsplats (SharePoint-mapp). Spara. Kör sedan analysen igen.
                 </Text>
               ) : null}
             </View>

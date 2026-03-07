@@ -455,6 +455,34 @@ export async function getDefaultAIPrompt(promptKey) {
   };
 }
 
+/** Generera generellt förfrågningsutkast från projektets AI-analys (förfrågningsunderlag). */
+export async function generateInquiryDraft(companyId, projectId, options = {}) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) throw new Error('companyId och projectId krävs');
+  const fn = httpsCallable(functionsClient, 'generateInquiryDraft');
+  const res = await fn({ companyId: cid, projectId: pid, rowName: options.rowName ?? '' });
+  const data = res?.data || {};
+  return { text: String(data.text || '').trim() };
+}
+
+/** Generera personlig förfrågan till en leverantörskontakt (baserat på radens utkast). */
+export async function generatePersonalizedInquiry(companyId, projectId, { inquiryDraftText, contactName, supplierCompanyName }) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) throw new Error('companyId och projectId krävs');
+  const fn = httpsCallable(functionsClient, 'generatePersonalizedInquiry');
+  const res = await fn({
+    companyId: cid,
+    projectId: pid,
+    inquiryDraftText: inquiryDraftText ?? '',
+    contactName: contactName ?? '',
+    supplierCompanyName: supplierCompanyName ?? '',
+  });
+  const data = res?.data || {};
+  return { text: String(data.text || '').trim() };
+}
+
 /** Multi-prompt manager: hämta alla prompt-mallar för en kategori. */
 export async function fetchCompanyAIPromptTemplates(companyId, category) {
   const cid = String(companyId || '').trim();

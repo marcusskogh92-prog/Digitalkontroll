@@ -8,6 +8,7 @@ import { HomeHeader } from '../components/common/HomeHeader';
 import { adminFetchCompanyMembers, auth, fetchAdminAuditForCompany, fetchCompanyMembers, fetchCompanyProfile, fetchCompanySharePointSiteMetas, functionsClient, getAllPhaseSharePointConfigs, getAvailableSharePointSites, getCompanySharePointSiteId, getCompanySharePointSiteIdByRole, getSharePointNavigationConfig, removeSharePointSiteForPhase, resolveCompanyLogoUrl, saveCompanyProfile, saveCompanySharePointSiteId, saveSharePointNavigationConfig, setCompanyNameRemote, setCompanyStatusRemote, setCompanyUserLimitRemote, setSharePointSiteForPhase, syncSharePointSiteVisibilityRemote, uploadCompanyLogo, upsertCompanySharePointSiteMeta } from '../components/firebase';
 import ContextMenu from '../components/ContextMenu';
 import MainLayout from '../components/MainLayout';
+import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
 import { PROJECT_PHASES } from '../features/projects/constants';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
@@ -2089,29 +2090,28 @@ export default function ManageCompany({ navigation, route }) {
                 <TouchableOpacity
                   onPress={() => setEditModalVisible(false)}
                   style={{
-                    paddingVertical: 10,
-                    paddingHorizontal: 16,
-                    borderRadius: 8,
-                    backgroundColor: '#eee',
+                    paddingVertical: D.buttonPaddingVertical,
+                    paddingHorizontal: D.buttonPaddingHorizontal,
+                    borderRadius: D.buttonRadius,
+                    backgroundColor: D.buttonSecondaryBg ?? '#fff',
+                    borderWidth: 1,
+                    borderColor: '#fecaca',
                   }}
                 >
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>
-                    Avbryt
-                  </Text>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#b91c1c' }}>Stäng</Text>
                 </TouchableOpacity>
-                
                 <TouchableOpacity
                   onPress={handleSaveEditModal}
                   disabled={busyCount > 0}
                   style={{
-                    paddingVertical: 10,
-                    paddingHorizontal: 16,
-                    borderRadius: 8,
-                    backgroundColor: '#3f7f3f',
+                    paddingVertical: D.buttonPaddingVertical,
+                    paddingHorizontal: D.buttonPaddingHorizontal,
+                    borderRadius: D.buttonRadius,
+                    backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
                     opacity: busyCount > 0 ? 0.6 : 1,
                   }}
                 >
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>
                     {busyCount > 0 ? 'Sparar...' : 'Spara ändringar'}
                   </Text>
                 </TouchableOpacity>
@@ -2131,21 +2131,21 @@ export default function ManageCompany({ navigation, route }) {
             style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.45)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
             onPress={() => { setSharePointRenameSiteId(''); setSharePointRenameCurrentName(''); setSharePointRenameDraft(''); }}
           >
-            <Pressable style={{ backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 400, padding: 20 }} onPress={(e) => e.stopPropagation()}>
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>Byt namn på site</Text>
-              <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 6 }}>Nuvarande namn: {sharePointRenameCurrentName}</Text>
+            <Pressable style={{ backgroundColor: '#fff', borderRadius: D.radius, width: '100%', maxWidth: 400, padding: D.contentPadding }} onPress={(e) => e.stopPropagation()}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>Byt namn på site</Text>
+              <Text style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>Nuvarande namn: {sharePointRenameCurrentName}</Text>
               <TextInput
                 value={sharePointRenameDraft}
                 onChangeText={setSharePointRenameDraft}
                 placeholder="Nytt namn"
-                style={{ marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 }}
+                style={{ marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: D.inputRadius, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 }}
               />
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
-                <TouchableOpacity onPress={() => { setSharePointRenameSiteId(''); setSharePointRenameCurrentName(''); setSharePointRenameDraft(''); }} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#F3F4F6' }}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151' }}>Avbryt</Text>
+                <TouchableOpacity onPress={() => { setSharePointRenameSiteId(''); setSharePointRenameCurrentName(''); setSharePointRenameDraft(''); }} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#b91c1c' }}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={handleRenameCustomSite} disabled={!String(sharePointRenameDraft || '').trim()} style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8, backgroundColor: String(sharePointRenameDraft || '').trim() ? '#1976D2' : '#9CA3AF' }}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Spara</Text>
+                <TouchableOpacity onPress={handleRenameCustomSite} disabled={!String(sharePointRenameDraft || '').trim()} style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: String(sharePointRenameDraft || '').trim() ? (D.buttonPrimaryBg ?? '#2D3A4B') : '#9CA3AF', opacity: !String(sharePointRenameDraft || '').trim() ? 0.6 : 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>Spara</Text>
                 </TouchableOpacity>
               </View>
             </Pressable>
@@ -2478,12 +2478,12 @@ export default function ManageCompany({ navigation, route }) {
                   </View>
                 ) : null}
 
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#eee' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#eee' }}>
                   <TouchableOpacity
                     onPress={() => setSharePointSitePickerVisible(false)}
-                    style={{ paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#eee' }}
+                    style={{ paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B' }}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#222' }}>Stäng</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>Stäng</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2788,15 +2788,13 @@ export default function ManageCompany({ navigation, route }) {
                       setExternalSiteNameInput('');
                     }}
                     style={{
-                      paddingVertical: 10,
-                      paddingHorizontal: 20,
-                      borderRadius: 8,
-                      backgroundColor: '#1976D2',
+                      paddingVertical: D.buttonPaddingVertical,
+                      paddingHorizontal: D.buttonPaddingHorizontal,
+                      borderRadius: D.buttonRadius,
+                      backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
                     }}
                   >
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff' }}>
-                      Stäng
-                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>Stäng</Text>
                   </TouchableOpacity>
                 </View>
               </View>

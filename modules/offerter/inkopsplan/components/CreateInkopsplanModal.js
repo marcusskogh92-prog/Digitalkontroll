@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-import StandardModal from '../../../../components/common/StandardModal';
+import ModalBase from '../../../../components/common/ModalBase';
+import { MODAL_DESIGN_2026 as D } from '../../../../constants/modalDesign2026';
+import { useDraggableResizableModal } from '../../../../hooks/useDraggableResizableModal';
+import { useModalKeyboard } from '../../../../hooks/useModalKeyboard';
 import { fetchByggdelar, fetchCategories, fetchKontoplan } from '../../../../components/firebase';
 import { addRowsFromRegister, INKOPSPLAN_ROW_TYPE } from '../inkopsplanService';
 
@@ -163,8 +167,6 @@ export default function CreateInkopsplanModal({
     }).length;
   }, [selectedItems, displayItems, mode, selectedRegisterType, effectiveExistingSet]);
 
-  const canSave = Boolean(companyId && projectId && selectedRegisterType && selectedCount > 0 && !saving);
-
   const toggleItem = (id) => {
     const sid = safeText(id);
     if (!sid) return;
@@ -217,38 +219,69 @@ export default function CreateInkopsplanModal({
 
   const title = mode === 'add' ? 'Lägg till från register' : 'Skapa inköpsplan';
   const saveLabel = mode === 'add' ? 'Lägg till' : 'Skapa';
+  const canSave = Boolean(companyId && projectId && selectedRegisterType && selectedCount > 0 && !saving);
+
+  useModalKeyboard(visible, onClose, handleSave, { canSave, saving, disabled: !visible });
+
+  const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
+    defaultWidth: 920,
+    defaultHeight: 680,
+    minWidth: 520,
+    minHeight: 420,
+  });
+
+  const footer = (
+    <View style={styles.footerRow}>
+      <View style={styles.footerLeft}>
+        <Pressable
+          onPress={markAll}
+          style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
+        >
+          <Text style={styles.footerLinkText}>Markera alla</Text>
+        </Pressable>
+        <Pressable
+          onPress={clearAll}
+          style={({ hovered, pressed }) => [styles.footerLink, (hovered || pressed) && styles.footerLinkHover]}
+        >
+          <Text style={styles.footerLinkText}>Avmarkera alla</Text>
+        </Pressable>
+      </View>
+      <View style={styles.footerRight}>
+        <TouchableOpacity
+          style={styles.footerBtnSecondary}
+          onPress={onClose}
+          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+        >
+          <Text style={styles.footerBtnSecondaryText}>Stäng</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.footerBtnPrimary, (!canSave || saving) && { opacity: 0.5 }]}
+          onPress={handleSave}
+          disabled={!canSave || saving}
+          {...(Platform.OS === 'web' ? { cursor: !canSave || saving ? 'default' : 'pointer' } : {})}
+        >
+          <Text style={styles.footerBtnPrimaryText}>
+            {saving ? 'Sparar…' : saveLabel}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
   return (
-    <StandardModal
+    <ModalBase
       visible={visible}
       onClose={onClose}
       title={title}
       subtitle="Välj hur inköpsdiscipliner ska genereras"
-      iconName="list-outline"
-      saveLabel={saveLabel}
-      onSave={handleSave}
-      saving={saving}
-      saveDisabled={!canSave}
-      defaultWidth={920}
-      defaultHeight={680}
-      minWidth={520}
-      minHeight={420}
-      footerExtra={
-        <View style={styles.footerExtra}>
-          <Pressable
-            onPress={markAll}
-            style={({ hovered, pressed }) => [styles.linkBtn, (hovered || pressed) && styles.linkBtnHover]}
-          >
-            <Text style={styles.linkBtnText}>Markera alla</Text>
-          </Pressable>
-          <Pressable
-            onPress={clearAll}
-            style={({ hovered, pressed }) => [styles.linkBtn, (hovered || pressed) && styles.linkBtnHover]}
-          >
-            <Text style={styles.linkBtnText}>Avmarkera alla</Text>
-          </Pressable>
-        </View>
-      }
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="list-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
+      boxStyle={boxStyle}
+      overlayStyle={overlayStyle}
+      headerProps={headerProps}
+      resizeHandles={resizeHandles}
+      footer={footer}
+      contentStyle={styles.contentWrap}
     >
       <View style={styles.content}>
         {error ? (
@@ -256,7 +289,7 @@ export default function CreateInkopsplanModal({
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
-        <Text style={styles.stepTitle}>Steg 1</Text>
+        <Text style={styles.stepTitle}>STEG 1</Text>
         <Text style={styles.stepText}>Välj registertyp</Text>
 
         <View style={styles.radioRow}>
@@ -281,7 +314,7 @@ export default function CreateInkopsplanModal({
 
         <View style={styles.stepHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Steg 2</Text>
+            <Text style={styles.stepTitle}>STEG 2</Text>
             <Text style={styles.stepText}>Välj poster ({selectedCount} valda)</Text>
           </View>
         </View>
@@ -289,7 +322,7 @@ export default function CreateInkopsplanModal({
         <View style={styles.listBox}>
           {loading ? (
             <View style={styles.center}>
-              <ActivityIndicator />
+              <ActivityIndicator color={D.titleColor} />
             </View>
           ) : !selectedRegisterType ? (
             <View style={styles.center}>
@@ -300,7 +333,10 @@ export default function CreateInkopsplanModal({
               <Text style={styles.muted}>Inga poster i registret.</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.listContent}>
+            <ScrollView
+              style={isWeb() ? styles.listScrollWeb : styles.listScroll}
+              contentContainerStyle={styles.listContent}
+            >
               {displayItems.map((it) => {
                 const id = safeText(it?.id);
                 const label = formatRegisterItem(selectedRegisterType, it);
@@ -329,16 +365,20 @@ export default function CreateInkopsplanModal({
           </Text>
         </View>
       </View>
-    </StandardModal>
+    </ModalBase>
   );
 }
 
 const styles = StyleSheet.create({
+  contentWrap: {
+    flex: 1,
+    minHeight: 0,
+    padding: D.contentPadding,
+  },
   content: {
     flex: 1,
     minHeight: 0,
-    padding: 14,
-    gap: 10,
+    gap: D.sectionGap,
   },
   stepHeader: {
     flexDirection: 'row',
@@ -351,7 +391,7 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
     paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: D.buttonRadius,
     marginBottom: 12,
   },
   errorText: {
@@ -361,7 +401,7 @@ const styles = StyleSheet.create({
   },
   stepTitle: {
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '500',
     color: '#334155',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
@@ -370,7 +410,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
     fontWeight: '600',
-    color: '#0F172A',
+    color: D.titleColor,
   },
   radioRow: {
     flexDirection: 'row',
@@ -382,19 +422,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderColor: D.tableBorderColor,
+    backgroundColor: '#fff',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 12,
+    borderRadius: D.buttonRadius,
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
   radioHover: {
-    borderColor: '#D1D5DB',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
   },
   radioSelected: {
-    borderColor: '#0F172A',
+    borderColor: D.titleColor,
   },
   radioDot: {
     width: 14,
@@ -404,47 +444,56 @@ const styles = StyleSheet.create({
     borderColor: '#94A3B8',
   },
   radioDotSelected: {
-    borderColor: '#0F172A',
-    backgroundColor: '#0F172A',
+    borderColor: D.titleColor,
+    backgroundColor: D.titleColor,
   },
   radioLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#0F172A',
+    color: D.titleColor,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: D.tableBorderColor,
     marginVertical: 6,
   },
   listBox: {
     flex: 1,
     minHeight: 0,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    borderColor: D.tableBorderColor,
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#fff',
     overflow: 'hidden',
+  },
+  listScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  listScrollWeb: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'scroll',
   },
   listContent: {
     padding: 10,
     gap: 6,
   },
   checkRow: {
-    height: 40,
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
+    borderColor: D.tableBorderColor,
+    borderRadius: D.buttonRadius,
     paddingHorizontal: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
   checkRowHover: {
-    borderColor: '#D1D5DB',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
   },
   checkRowDisabled: {
     opacity: 0.65,
@@ -453,20 +502,20 @@ const styles = StyleSheet.create({
   checkBox: {
     width: 16,
     height: 16,
-    borderRadius: 6,
+    borderRadius: D.buttonRadius,
     borderWidth: 2,
     borderColor: '#94A3B8',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
   checkBoxChecked: {
-    borderColor: '#0F172A',
-    backgroundColor: '#0F172A',
+    borderColor: D.titleColor,
+    backgroundColor: D.titleColor,
   },
   checkLabel: {
     flex: 1,
     fontSize: 13,
     fontWeight: '500',
-    color: '#0F172A',
+    color: D.titleColor,
   },
   center: {
     flex: 1,
@@ -477,39 +526,80 @@ const styles = StyleSheet.create({
   },
   muted: {
     fontSize: 13,
-    color: '#64748B',
+    color: D.subtitleColor,
     textAlign: 'center',
   },
   hintBox: {
     marginTop: 8,
     padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
+    borderRadius: D.buttonRadius,
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: D.tableBorderColor,
   },
   hintText: {
     fontSize: 12,
     color: '#475569',
   },
-  footerExtra: {
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  footerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginRight: 12,
   },
-  linkBtn: {
-    paddingVertical: 6,
+  footerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  footerLink: {
+    paddingVertical: D.buttonPaddingVertical,
     paddingHorizontal: 8,
-    borderRadius: 8,
+    borderRadius: D.buttonRadius,
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
-  linkBtnHover: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  footerLinkHover: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
   },
-  linkBtnText: {
+  footerLinkText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontWeight: '500',
+    color: D.buttonSecondaryColor,
+  },
+  footerBtnSecondary: {
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: 18,
+    borderRadius: D.buttonRadius,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  footerBtnSecondaryText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#b91c1c',
+  },
+  footerBtnPrimary: {
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: 18,
+    borderRadius: D.buttonRadius,
+    backgroundColor: D.buttonPrimaryBg,
+    minWidth: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(isWeb() ? { cursor: 'pointer' } : {}),
+  },
+  footerBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: D.buttonPrimaryFontWeight,
+    color: D.buttonPrimaryColor,
   },
 });

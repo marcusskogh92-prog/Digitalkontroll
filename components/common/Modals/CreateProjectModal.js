@@ -412,6 +412,32 @@ export default function CreateProjectModal({
     }
   };
 
+  /** En nivå upp – används när användaren är inne i en mapp (t.ex. projektmappen i redigeringsläge) så att man kan nå parent och välja annan lagringsplats. */
+  const handleNavigateUp = () => {
+    if (locationPathHistory.length > 0) {
+      const previous = locationPathHistory[locationPathHistory.length - 1];
+      setLocationPathHistory(locationPathHistory.slice(0, -1));
+      setCurrentPath(previous.path);
+      return;
+    }
+    const path = String(currentPath || '').trim().replace(/\/+$/, '');
+    if (!path) {
+      setLocationPickerStep('sites');
+      setActiveSite(null);
+      setLocationPathHistory([]);
+      return;
+    }
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length <= 1) {
+      setCurrentPath('');
+      setLocationPathHistory([]);
+      return;
+    }
+    const parentPath = parts.slice(0, -1).join('/');
+    setCurrentPath(parentPath);
+    setLocationPathHistory([]);
+  };
+
   const handleCreateFolderInLocation = useCallback(async () => {
     const name = String(locationNewFolderName || '').trim();
     if (!name || !activeSite?.id) return;
@@ -486,7 +512,15 @@ export default function CreateProjectModal({
       const site = availableSites.find((s) => String(s.id) === String(selectedProjectRoot.siteId));
       setActiveSite(site || null);
       setLocationPickerStep('folders');
-      setCurrentPath(selectedProjectRoot.folderPath || '');
+      let startPath = String(selectedProjectRoot.folderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      // I redigeringsläge: om sökvägen är projektets egen mapp (full path), öppna på parent så användaren ser syskon och kan välja annan plats
+      if (isEditMode && startPath && startPath.includes('/')) {
+        const parts = startPath.split('/').filter(Boolean);
+        if (parts.length > 1) {
+          startPath = parts.slice(0, -1).join('/');
+        }
+      }
+      setCurrentPath(startPath);
       setLocationPathHistory([]);
     } else {
       setLocationPickerStep('sites');
@@ -509,7 +543,8 @@ export default function CreateProjectModal({
         projectNumber,
         projectName,
         siteId: normalizeSiteIdForGraph(selectedProjectRoot.siteId),
-        sharePointSiteId: normalizeSiteIdForGraph(initialProject?.sharePointSiteId || selectedProjectRoot.siteId),
+        sharePointSiteId: normalizeSiteIdForGraph(selectedProjectRoot.siteId),
+        initialSharePointSiteId: initialProject ? normalizeSiteIdForGraph(initialProject.sharePointSiteId || initialProject.siteId || '') : '',
         rootFolderPath: selectedProjectRoot.folderPath,
         initialRootFolderPath: initialProject?.rootFolderPath || initialProject?.path,
         parentFolderPath: selectedProjectRoot.folderPath,
@@ -718,6 +753,11 @@ export default function CreateProjectModal({
                 )}
                 {availableSites && availableSites.length > 0 && (
                   <>
+                    {isEditMode && availableSites.length > 1 ? (
+                      <Text style={[styles.helperText, { marginBottom: 6 }]}>
+                        Du kan flytta till en annan mapp på samma site eller välja en annan site i listan i platsväljaren.
+                      </Text>
+                    ) : null}
                     <TouchableOpacity
                       onPress={() => openLocationPicker(selectedProjectRoot?.siteId ? 'folders' : 'sites')}
                       style={styles.locationHeaderButton}
@@ -1023,14 +1063,21 @@ export default function CreateProjectModal({
                               <Text style={styles.locationExplorerLocationBadge}>Sitens rot</Text>
                             )}
                           </View>
-                          {locationPathHistory.length > 0 && (
+                          {(locationPathHistory.length > 0 || (currentPath && currentPath.trim().length > 0)) && (
                             <View style={styles.locationExplorerBreadcrumb}>
-                              <Pressable onPress={handleNavigateBack} style={({ hovered, pressed }) => [styles.breadcrumbBack, (hovered || pressed) && styles.locationBreadcrumbBackHover]}>
-                                <Text style={styles.breadcrumbText}>← Tillbaka</Text>
+                              <Pressable
+                                onPress={locationPathHistory.length > 0 ? handleNavigateBack : handleNavigateUp}
+                                style={({ hovered, pressed }) => [styles.breadcrumbBack, (hovered || pressed) && styles.locationBreadcrumbBackHover]}
+                                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                              >
+                                <Text style={styles.breadcrumbText}>
+                                  {locationPathHistory.length > 0 ? '← Tillbaka' : '← En nivå upp'}
+                                </Text>
                               </Pressable>
                               <Text style={styles.locationExplorerBreadcrumbPath} numberOfLines={1}>
-                                {locationPathHistory.map(h => h.name).join(' / ')}
-                                {currentPath ? ` / ${currentPath.split('/').pop()}` : ''}
+                                {locationPathHistory.length > 0
+                                  ? `${locationPathHistory.map(h => h.name).join(' / ')}${currentPath ? ` / ${currentPath.split('/').pop()}` : ''}`
+                                  : (currentPath ? currentPath.split('/').map(p => p).join(' / ') : '')}
                               </Text>
                             </View>
                           )}

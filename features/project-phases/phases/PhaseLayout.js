@@ -26,19 +26,20 @@ import AnbudSection from './kalkylskede/sections/anbud/AnbudSection';
 import AnteckningarSection from './kalkylskede/sections/anteckningar/AnteckningarSection';
 import BilderSection from './kalkylskede/sections/bilder/BilderSection';
 import ForfragningsunderlagSection from './kalkylskede/sections/forfragningsunderlag/ForfragningsunderlagSection';
+import FragaSvarSection from './kalkylskede/sections/fragaSvar/FragaSvarSection';
 import KalkylSection from './kalkylskede/sections/kalkyl/KalkylSection';
 import KonstruktionSection from './kalkylskede/sections/konstruktion/KonstruktionSection';
 import MotenSection from './kalkylskede/sections/moten/MotenSection';
-import MyndigheterSection from './kalkylskede/sections/myndigheter/MyndigheterSection';
 import OfferterSection from './kalkylskede/sections/offerter/OfferterSection';
 import OversiktSection from './kalkylskede/sections/oversikt/OversiktSection';
+import FragaSvarView from './kalkylskede/sections/oversikt/items/FragaSvar/FragaSvarView';
 
 const SECTION_COMPONENTS = {
   oversikt: OversiktSection,
+  fragaSvar: FragaSvarSection,
   forfragningsunderlag: ForfragningsunderlagSection,
   offerter: OfferterSection,
   bilder: BilderSection,
-  myndigheter: MyndigheterSection,
   kalkyl: KalkylSection,
   'konstruktion-berakningar': KonstruktionSection,
   anteckningar: AnteckningarSection,
@@ -141,8 +142,9 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     if (navigation && Array.isArray(sections) && sections.length > 0 && !activeSection) {
       const firstSection = sections[0];
       setActiveSection(firstSection.id);
-      // Don't auto-select first item - show section summary instead
-      setActiveItem(firstSection.id, null, { activeNode: null });
+      // Förfrågningsunderlag / FrågaSvar: välj första fliken så att innehållet visas och fliken är markerad
+      const firstItemId = (firstSection.id === 'forfragningsunderlag' || firstSection.id === 'fragaSvar') ? (firstSection.items?.[0]?.id ?? null) : null;
+      setActiveItem(firstSection.id, firstItemId ?? null, { activeNode: null });
     }
   }, [navigation, activeSection]);
 
@@ -162,8 +164,10 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
   const handleSelectSection = (sectionId) => {
     attemptNavigate(() => {
       setActiveSection(sectionId);
-      // Don't auto-select first item - show section summary instead
-      setActiveItem(sectionId, null, { activeNode: null });
+      // Förfrågningsunderlag / FrågaSvar: välj första fliken så att innehållet visas och fliken är markerad
+      const section = navigation?.sections?.find((s) => s.id === sectionId);
+      const firstItemId = (sectionId === 'forfragningsunderlag' || sectionId === 'fragaSvar') ? (section?.items?.[0]?.id ?? null) : null;
+      setActiveItem(sectionId, firstItemId ?? null, { activeNode: null });
     });
   };
 
@@ -444,14 +448,13 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     'projektinfo',
     'organisation-roller',
     'tidsplan-viktiga-datum',
-    'status-beslut',
   ]);
 
   const shouldUseProjectBackground =
     String(activeSection || '') === 'oversikt' &&
     (!activeItem || bgEnabledItemIds.has(String(activeItem || '')));
 
-  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'myndigheter', 'anbud', 'kalkyl', 'konstruktion-berakningar', 'offerter'].includes(String(activeSection || ''));
+  const lockViewportForSection = Platform.OS === 'web' && ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl', 'konstruktion-berakningar', 'offerter'].includes(String(activeSection || ''));
 
   const renderContent = () => {
     if (navLoading || !navigation) {
@@ -483,6 +486,16 @@ export default function PhaseLayout({ companyId, projectId, project, phaseKey, h
     if (activeItemConfig?.component === 'FFUAISummaryView') {
       return (
         <FFUAISummaryView
+          projectId={projectId}
+          companyId={companyId}
+          project={project}
+        />
+      );
+    }
+
+    if (activeItemConfig?.component === 'StatusBeslutView') {
+      return (
+        <FragaSvarView
           projectId={projectId}
           companyId={companyId}
           project={project}

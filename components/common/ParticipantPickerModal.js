@@ -1,7 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+
+const RESIZE_HANDLE_WIDTH = 6;
+const DEFAULT_COLUMN_WIDTHS = [200, 150, 220, 130, 86]; // Namn, Företag, E-post, Telefon, Källa
+const MIN_COLUMN_WIDTHS = [80, 80, 100, 90, 60];
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -108,6 +112,59 @@ export default function ParticipantPickerModal({
   const [showExternal, setShowExternal] = React.useState(true);
 
   const [selectedByKey, setSelectedByKey] = React.useState(() => ({}));
+
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+
+  const startResize = useCallback((columnIndex, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof document !== 'undefined') document.body.style.cursor = 'col-resize';
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = {
+      column: columnIndex,
+      startX: clientX,
+      startWidth: columnWidths[columnIndex],
+    };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const minW = MIN_COLUMN_WIDTHS[column] ?? 60;
+      const newWidth = Math.max(minW, startWidth + delta);
+      setColumnWidths((prev) => {
+        const next = [...prev];
+        next[column] = newWidth;
+        return next;
+      });
+      resizeRef.current = { column, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      if (resizeRef.current.column != null && typeof document !== 'undefined') {
+        document.body.style.cursor = '';
+      }
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if (typeof document !== 'undefined') document.body.style.cursor = '';
+    };
+  }, []);
+
+  const tableGap = 10;
+  const totalTableWidth =
+    columnWidths.reduce((a, b) => a + b, 0) +
+    (Platform.OS === 'web' ? 4 * RESIZE_HANDLE_WIDTH + 8 * tableGap : 4 * tableGap);
+  const col = (i) => ({ width: columnWidths[i], minWidth: columnWidths[i], flexShrink: 0 });
 
   React.useEffect(() => {
     setSelectedByKey((prev) => {
@@ -271,16 +328,14 @@ export default function ParticipantPickerModal({
     <View style={Platform.OS === 'web' ? styles.webOuter : null}>
       <View style={[styles.card, styles.cardFixed]}>
         <View style={styles.header}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="person-add-outline" size={16} color={COLORS.blue} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <View style={styles.headerIconWrap}>
+              <Ionicons name="person-add-outline" size={D.headerNeutralCompactIconPx || 14} color="#fff" />
             </View>
-            <View style={{ minWidth: 0 }}>
+            <View style={{ minWidth: 0, flex: 1 }}>
               <Text style={styles.title} numberOfLines={1}>
                 {title}
-              </Text>
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {subtitle}
+                {subtitle ? ` — ${subtitle}` : ''}
               </Text>
             </View>
           </View>
@@ -288,15 +343,12 @@ export default function ParticipantPickerModal({
             onPress={requestClose}
             title={Platform.OS === 'web' ? 'Stäng' : undefined}
             style={({ hovered, pressed }) => [
-              styles.secondaryButton,
-              hovered || pressed ? styles.secondaryButtonHot : null,
+              styles.headerCloseBtn,
+              (hovered || pressed) ? styles.headerCloseBtnHover : null,
               Platform.OS === 'web' ? { cursor: 'pointer' } : null,
             ]}
           >
-            {({ hovered, pressed }) => {
-              const hot = hovered || pressed;
-              return <Text style={[styles.secondaryButtonLabel, { color: hot ? COLORS.blue : COLORS.neutral }]}>Stäng</Text>;
-            }}
+            <Ionicons name="close" size={D.headerNeutralCompactCloseIconPx || 18} color="#fff" />
           </Pressable>
         </View>
 
@@ -379,13 +431,13 @@ export default function ParticipantPickerModal({
             </Pressable>
           ) : null}
 
-          <View style={styles.tableWrap}>
-            <View style={[styles.tableHeader, { backgroundColor: COLORS.bgMuted, borderBottomColor: COLORS.tableBorder }]}>
+          <View style={[styles.tableWrap, Platform.OS === 'web' ? { minWidth: totalTableWidth, overflowX: 'auto' } : null]}>
+            <View style={[styles.tableHeader, styles.tableHeaderRow, { backgroundColor: COLORS.bgMuted, borderBottomColor: COLORS.tableBorder, width: Platform.OS === 'web' ? totalTableWidth : undefined }]}>
               <Pressable
                 onPress={() => toggleSort('name')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.5 },
+                  col(0),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -394,12 +446,13 @@ export default function ParticipantPickerModal({
                   Namn <Text style={styles.sortIcon}>{getSortIndicator('name')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(0, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('company')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.2 },
+                  col(1),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -408,12 +461,13 @@ export default function ParticipantPickerModal({
                   Företag <Text style={styles.sortIcon}>{getSortIndicator('company')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(1, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('email')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.35 },
+                  col(2),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -422,12 +476,13 @@ export default function ParticipantPickerModal({
                   E-post <Text style={styles.sortIcon}>{getSortIndicator('email')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(2, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('phone')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { flex: 1.0 },
+                  col(3),
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -436,12 +491,14 @@ export default function ParticipantPickerModal({
                   Telefon <Text style={styles.sortIcon}>{getSortIndicator('phone')}</Text>
                 </Text>
               </Pressable>
+              {Platform.OS === 'web' && <View style={styles.resizeHandle} onMouseDown={(e) => startResize(3, e)}><View style={styles.resizeHandleLine} /></View>}
 
               <Pressable
                 onPress={() => toggleSort('source')}
                 style={({ hovered, pressed }) => [
                   styles.thPressable,
-                  { width: 86, alignItems: 'flex-end' },
+                  col(4),
+                  { alignItems: 'flex-end' },
                   (hovered || pressed) ? styles.thPressableHot : null,
                   Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                 ]}
@@ -465,7 +522,13 @@ export default function ParticipantPickerModal({
                 <Text style={{ color: '#666', fontSize: 13 }}>Inga träffar.</Text>
               </View>
             ) : (
-              <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={[
+                  { flex: 1 },
+                  Platform.OS === 'web' ? { overflowY: 'scroll' } : null,
+                ]}
+                keyboardShouldPersistTaps="handled"
+              >
                 {filtered.slice(0, 250).map((c) => {
                   const isSelected = !!(c && c._key && selectedByKey && selectedByKey[c._key]);
                   const sourceLabel = sourceLabelFromCandidate(c);
@@ -511,11 +574,11 @@ export default function ParticipantPickerModal({
                             borderLeftWidth: (isSelected || isLocked) ? 4 : 0,
                             borderLeftColor: isLocked ? '#93C5FD' : (isSelected ? COLORS.blue : 'transparent'),
                           },
-                          Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+                          Platform.OS === 'web' ? { width: totalTableWidth, cursor: 'pointer' } : null,
                         ];
                       }}
                     >
-                      <View style={{ flex: 1.5, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={[col(0), { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }]}>
                         {isLocked ? (
                           <Ionicons name="lock-closed" size={16} color={COLORS.blue} />
                         ) : isSelected ? (
@@ -532,16 +595,16 @@ export default function ParticipantPickerModal({
                         </Text>
                       </View>
 
-                      <Text style={[styles.td, { flex: 1.2, color: COLORS.text }]} numberOfLines={1}>
+                      <Text style={[styles.td, col(1), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.company || '—')}
                       </Text>
-                      <Text style={[styles.td, { flex: 1.35, color: COLORS.text }]} numberOfLines={1}>
+                      <Text style={[styles.td, col(2), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.email || '—')}
                       </Text>
-                      <Text style={[styles.td, { flex: 1.0, color: COLORS.text }]} numberOfLines={1}>
+                      <Text style={[styles.td, col(3), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.phone || '—')}
                       </Text>
-                      <Text style={[styles.td, { width: 86, fontSize: 12, color: COLORS.textMuted, textAlign: 'right' }]} numberOfLines={1}>
+                      <Text style={[styles.td, col(4), { fontSize: 12, color: COLORS.textMuted, textAlign: 'right' }]} numberOfLines={1}>
                         {sourceLabel}
                       </Text>
                     </Pressable>
@@ -581,7 +644,7 @@ export default function ParticipantPickerModal({
             disabled={!canConfirm}
             style={({ hovered, pressed }) => {
               const disabled = !canConfirm;
-              const bg = disabled ? '#9CA3AF' : (hovered || pressed ? COLORS.blueHover : COLORS.blue);
+              const bg = disabled ? '#9CA3AF' : (hovered || pressed ? '#3d4d5f' : (D.buttonPrimaryBg ?? '#2D3A4B'));
               return [
                 styles.primaryButton,
                 { backgroundColor: bg },
@@ -589,7 +652,7 @@ export default function ParticipantPickerModal({
               ];
             }}
           >
-            <Ionicons name="add-outline" size={16} color="#fff" />
+            <Ionicons name="add-outline" size={16} color={D.buttonPrimaryColor ?? '#fff'} />
             <Text style={styles.primaryButtonLabel}>
               {selectedCount > 0 ? `${confirmLabel} (${selectedCount})` : confirmLabel}
             </Text>
@@ -610,11 +673,11 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     backgroundColor: '#fff',
-    borderRadius: 14,
+    borderRadius: D.radius ?? 8,
     borderWidth: 1,
     borderColor: '#E6E8EC',
     overflow: 'hidden',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : { elevation: 6 }),
+    ...(Platform.OS === 'web' ? { boxShadow: D.shadow ?? '0 10px 30px rgba(0,0,0,0.08)' } : { ...D.shadowNative, elevation: 8 }),
   },
   cardFixed: {
     width: Platform.OS === 'web' ? 980 : '100%',
@@ -623,19 +686,32 @@ const styles = StyleSheet.create({
     maxHeight: Platform.OS === 'web' ? '92vh' : '92%',
   },
   header: {
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E6E8EC',
+    ...D.headerNeutral,
+    ...D.headerNeutralCompact,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
   },
+  headerIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCloseBtn: {
+    ...D.closeBtn,
+  },
+  headerCloseBtnHover: {
+    backgroundColor: D.headerNeutralCloseBtnHover,
+  },
   title: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111',
+    fontSize: D.headerNeutralCompactTitleFontSize ?? 12,
+    fontWeight: D.headerNeutralCompactTitleFontWeight ?? '400',
+    lineHeight: D.headerNeutralCompactTitleLineHeight ?? 16,
+    color: D.headerNeutralTextColor ?? '#fff',
   },
   subtitle: {
     fontSize: 12,
@@ -716,6 +792,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  tableHeaderRow: {
+    alignItems: 'center',
+  },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
   thPressable: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -780,8 +876,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButtonLabel: {
-    color: '#fff',
+    color: D.buttonPrimaryColor ?? '#fff',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: D.buttonPrimaryFontWeight ?? '600',
   },
 });

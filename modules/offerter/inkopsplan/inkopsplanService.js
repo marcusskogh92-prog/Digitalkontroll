@@ -1,6 +1,7 @@
 import {
     addDoc,
     collection,
+    deleteDoc,
     doc,
     getDoc,
     getDocs,
@@ -529,6 +530,19 @@ export async function resetInkopsplanRowSupplierRequest({ companyId, projectId, 
   });
 }
 
+/** Sätter personlig AI-förfrågetext för en leverantör på en rad. */
+export async function setInkopsplanRowSupplierPersonalizedInquiry({ companyId, projectId, rowId, supplierKey, personalizedInquiryText }) {
+  await patchInkopsplanRowSupplier({
+    companyId,
+    projectId,
+    rowId,
+    supplierKey,
+    patch: {
+      personalizedInquiryText: personalizedInquiryText != null ? String(personalizedInquiryText) : null,
+    },
+  });
+}
+
 export async function removeInkopsplanRowSupplier({ companyId, projectId, rowId, supplierKey }) {
   const { cid, pid } = requireIds(companyId, projectId);
   const rid = safeText(rowId);
@@ -574,6 +588,21 @@ export function getInkopsplanDocRef(companyId, projectId) {
 export function getInkopsplanRowsCollectionRef(companyId, projectId) {
   const ref = getInkopsplanDocRef(companyId, projectId);
   return collection(ref, 'rows');
+}
+
+export async function deleteInkopsplanRow({ companyId, projectId, rowId }) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const rid = safeText(rowId);
+  if (!rid) throw new Error('rowId is required');
+
+  const rowsCol = getInkopsplanRowsCollectionRef(cid, pid);
+  const rowRef = doc(rowsCol, rid);
+
+  try {
+    await deleteDoc(rowRef);
+  } catch (e) {
+    throw withFsContext('Kunde inte radera inköpsrad', e, { path: rowRef?.path, companyId: cid, projectId: pid, rowId: rid });
+  }
 }
 
 export function listenInkopsplanDoc(companyId, projectId, onDoc, onError) {
@@ -793,5 +822,69 @@ export async function addManualRow({ companyId, projectId, nr, name, manualTypeL
     });
   } catch (e) {
     throw withFsContext('Inköpsplan: misslyckades att spara manuell rad', e, { companyId: cid, projectId: pid, rowsPath: colRef?.path });
+  }
+}
+
+/**
+ * Uppdaterar fält på en inköpsplanrad (t.ex. nr, name). Merge med befintlig rad.
+ */
+export async function updateInkopsplanRowFields(companyId, projectId, rowId, patch) {
+  const { cid, pid } = requireIds(companyId, projectId);
+  const rid = safeText(rowId);
+  if (!rid) throw new Error('rowId är obligatoriskt');
+
+  const rowsCol = getInkopsplanRowsCollectionRef(cid, pid);
+  const rowRef = doc(rowsCol, rid);
+  const { uid, name: userName } = nowUserMeta();
+
+  const payload = { updatedAt: serverTimestamp(), updatedByUid: uid, updatedByName: userName };
+  if (patch && typeof patch === 'object') {
+    if (Object.prototype.hasOwnProperty.call(patch, 'nr')) {
+      payload.nr = safeText(patch.nr) || null;
+      payload.nrNumeric = toNrNumeric(patch.nr);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
+      payload.name = safeText(patch.name) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedAccountId')) {
+      payload.linkedAccountId = safeText(patch.linkedAccountId) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedAccountKonto')) {
+      payload.linkedAccountKonto = safeText(patch.linkedAccountKonto) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedAccountBenamning')) {
+      payload.linkedAccountBenamning = safeText(patch.linkedAccountBenamning) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedCategoryId')) {
+      payload.linkedCategoryId = safeText(patch.linkedCategoryId) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedCategoryName')) {
+      payload.linkedCategoryName = safeText(patch.linkedCategoryName) || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedCategoryIds')) {
+      const arr = Array.isArray(patch.linkedCategoryIds) ? patch.linkedCategoryIds.map((id) => safeText(id)).filter(Boolean) : [];
+      payload.linkedCategoryIds = arr;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'linkedCategoryNames')) {
+      const arr = Array.isArray(patch.linkedCategoryNames) ? patch.linkedCategoryNames.map((n) => safeText(n)).filter(Boolean) : [];
+      payload.linkedCategoryNames = arr;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'responsibleId')) {
+      payload.responsibleId = patch.responsibleId != null ? safeText(patch.responsibleId) || null : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'responsibleName')) {
+      payload.responsibleName = patch.responsibleName != null ? safeText(patch.responsibleName) || null : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'inquiryDraftText')) {
+      payload.inquiryDraftText = patch.inquiryDraftText != null ? String(patch.inquiryDraftText) : null;
+    }
+  }
+
+  if (Object.keys(payload).length <= 3) return;
+
+  try {
+    await setDoc(rowRef, payload, { merge: true });
+  } catch (e) {
+    throw withFsContext('Inköpsplan: kunde inte uppdatera rad', e, { companyId: cid, projectId: pid, rowId: rid });
   }
 }

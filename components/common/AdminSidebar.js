@@ -7,10 +7,19 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useCallback, useContext, useEffect, useState } from 'react';
-import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
-import { auth, fetchCompanies } from '../firebase';
+import { auth, fetchCompanies, getCompanyMember } from '../firebase';
 import { AdminModalContext } from './AdminModalContext';
+
+/** Menypost → behörighet. Saknas = kräver inte specifik behörighet (synlig för alla admins). */
+const MENU_ITEM_PERMISSIONS = {
+  manage_control_types: 'manage_templates',
+  manage_users: 'manage_users',
+  kategorier: 'manage_categories',
+  sharepoint_sites: 'manage_sharepoint',
+  ai_prompts: 'manage_ai_settings',
+};
 
 const dispatchWindowEvent = (name, detail) => {
   try {
@@ -48,6 +57,8 @@ export default function AdminSidebar({
   const [expandedCompanies, setExpandedCompanies] = useState({});
   const [spinCompanyChevrons, setSpinCompanyChevrons] = useState({});
   const [storedCompanyId, setStoredCompanyId] = useState('');
+  /** Behörigheter för inloggad användare i valt företag (endast för admin-roll). Används för att dimma och blockera menyposter. */
+  const [adminPermissions, setAdminPermissions] = useState([]);
 
   const normalizeCompanyId = (value) => {
     try {
@@ -88,6 +99,30 @@ export default function AdminSidebar({
     })();
     return () => { mounted = false; };
   }, []);
+
+  // Ladda användarens behörigheter för valt företag (för att dimma/blockera menyposter)
+  useEffect(() => {
+    let mounted = true;
+    const cid = normalizeCompanyId(expandedCompanyId);
+    const uid = auth?.currentUser?.uid;
+    if (!cid || !uid || isSuperadmin) {
+      setAdminPermissions([]);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const member = await getCompanyMember(cid, uid);
+        if (!mounted) return;
+        const role = String(member?.role || '').trim();
+        const isAdmin = role === 'admin' || role === 'superadmin';
+        const perms = isAdmin && Array.isArray(member?.permissions) ? member.permissions : [];
+        setAdminPermissions(perms);
+      } catch (_e) {
+        if (mounted) setAdminPermissions([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [expandedCompanyId, isSuperadmin, auth?.currentUser?.uid]);
 
   // Load last selected company id (for company-admins who don't see all companies)
   useEffect(() => {
@@ -215,8 +250,19 @@ export default function AdminSidebar({
     }
   };
 
+  const hasPermissionForItem = useCallback((item) => {
+    if (isSuperadmin) return true;
+    const required = MENU_ITEM_PERMISSIONS[item.key];
+    if (!required) return true;
+    return Array.isArray(adminPermissions) && adminPermissions.includes(required);
+  }, [isSuperadmin, adminPermissions]);
+
   const handleCompanyMenuClick = async (company, item) => {
     try {
+      if (!hasPermissionForItem(item)) {
+        Alert.alert('Behörighet krävs', `Du har inte behörighet för "${item.label}".`);
+        return;
+      }
       setSpinAdminIcons((prev) => ({
         ...prev,
         [item.key]: (prev[item.key] || 0) + 1,
@@ -491,6 +537,7 @@ export default function AdminSidebar({
                               const subHoverKey = `company|${cid}|item|${item.key}`;
                               const isHoveredSub = hoveredKey === subHoverKey;
                               const spinCount = spinAdminIcons[item.key] || 0;
+                              const hasPerm = hasPermissionForItem(item);
 
                               return (
                                 <div
@@ -507,7 +554,8 @@ export default function AdminSidebar({
                                     padding: '8px 10px',
                                     marginBottom: 4,
                                     borderRadius: 8,
-                                    cursor: 'pointer',
+                                    cursor: hasPerm ? 'pointer' : 'not-allowed',
+                                    opacity: hasPerm ? 1 : 0.5,
                                     backgroundColor: isActive ? LEFT_NAV.activeBg : (isHoveredSub ? LEFT_NAV.hoverBg : 'transparent'),
                                     borderLeft: isActive ? `3px solid ${LEFT_NAV.activeBorder}` : '3px solid transparent',
                                     transition: 'background-color 0.15s',
@@ -518,7 +566,7 @@ export default function AdminSidebar({
                                   <Ionicons
                                     name={item.icon}
                                     size={16}
-                                    color={item.color || (isActive ? LEFT_NAV.iconDefault : isHoveredSub ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)}
+                                    color={hasPerm ? (item.color || (isActive ? LEFT_NAV.iconDefault : isHoveredSub ? LEFT_NAV.hoverIcon : LEFT_NAV.iconMuted)) : LEFT_NAV.iconMuted}
                                     style={{
                                       marginRight: 10,
                                       transform: `rotate(${spinCount * 360}deg)`,
@@ -528,7 +576,7 @@ export default function AdminSidebar({
                                   <span style={{
                                     fontSize: 14,
                                     fontWeight: isActive ? '700' : '400',
-                                    color: isHoveredSub ? LEFT_NAV.hoverText : LEFT_NAV.textDefault,
+                                    color: hasPerm ? (isHoveredSub ? LEFT_NAV.hoverText : LEFT_NAV.textDefault) : LEFT_NAV.iconMuted,
                                   }}>
                                     {item.label}
                                   </span>
@@ -710,6 +758,7 @@ export default function AdminSidebar({
                               {companyMenuItems.map((item) => {
                                 const isActive = isSelected && currentScreen === item.key;
                                 const spinCount = spinAdminIcons[item.key] || 0;
+                                const hasPerm = hasPermissionForItem(item);
                                 return (
                                   <TouchableOpacity
                                     key={item.key}
@@ -720,6 +769,7 @@ export default function AdminSidebar({
                                       padding: 10,
                                       marginBottom: 4,
                                       borderRadius: 8,
+                                      opacity: hasPerm ? 1 : 0.5,
                                       backgroundColor: isActive ? LEFT_NAV.activeBg : 'transparent',
                                       borderLeftWidth: 3,
                                       borderLeftColor: isActive ? LEFT_NAV.activeBorder : 'transparent',
@@ -728,10 +778,10 @@ export default function AdminSidebar({
                                     <Ionicons
                                       name={item.icon}
                                       size={16}
-                                      color={item.color || LEFT_NAV.iconMuted}
+                                      color={hasPerm ? (item.color || LEFT_NAV.iconMuted) : LEFT_NAV.iconMuted}
                                       style={{ marginRight: 10, transform: [{ rotate: `${spinCount * 360}deg` }] }}
                                     />
-                                    <Text style={{ fontSize: 14, fontWeight: isActive ? '700' : '400', color: LEFT_NAV.textDefault }}>
+                                    <Text style={{ fontSize: 14, fontWeight: isActive ? '700' : '400', color: hasPerm ? LEFT_NAV.textDefault : LEFT_NAV.iconMuted }}>
                                       {item.label}
                                     </Text>
                                   </TouchableOpacity>

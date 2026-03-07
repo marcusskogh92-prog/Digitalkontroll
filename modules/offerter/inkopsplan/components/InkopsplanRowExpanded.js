@@ -1,14 +1,35 @@
-import { useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { MODAL_DESIGN_2026 } from '../../../../constants/modalDesign2026';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../constants/tableLayout';
+
+import { generatePersonalizedInquiry } from '../../../../components/firebase';
 import {
     INKOPSPLAN_SUPPLIER_REQUEST_STATUS,
     markInkopsplanRowSupplierQuoteReceived,
     markInkopsplanRowSupplierRequestSent,
     removeInkopsplanRowSupplier,
     resetInkopsplanRowSupplierRequest,
+    setInkopsplanRowSupplierPersonalizedInquiry,
 } from '../inkopsplanService';
 import AddInkopsplanSupplierModal from './AddInkopsplanSupplierModal';
+
+const TABLE = MODAL_DESIGN_2026;
+const MIN_COLUMN_WIDTH = 60;
+const MAX_COLUMN_WIDTH = 600;
+const RESIZE_HANDLE_WIDTH = 6;
+const RESIZE_HANDLE_HIT_WIDTH = 14;
+const CHARS_TO_WIDTH = 8;
+const CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12;
+const DEFAULT_LEV_WIDTHS = {
+  foretag: 140, kontaktperson: 110, roll: 90, mobilnr: 100, arbete: 100,
+  mejladress: 140, status: 200, offert: 90,
+};
+const LEV_HEADERS = {
+  foretag: 'Företag', kontaktperson: 'Kontaktperson', roll: 'Roll', mobilnr: 'Mobilnr',
+  arbete: 'Arbete', mejladress: 'Mejladress', status: 'Status', offert: 'Offert',
+};
 
 function safeText(v) {
   const s = String(v ?? '').trim();
@@ -41,11 +62,104 @@ function isWeb() {
   return Platform.OS === 'web';
 }
 
-export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
+function getLevDisplayText(supplier, columnKey) {
+  if (!supplier) return '—';
+  if (columnKey === 'foretag') return safeText(supplier?.companyName || supplier?.name || supplier?.id || supplier) || '—';
+  if (columnKey === 'kontaktperson') return safeText(supplier?.contactName) || '—';
+  if (columnKey === 'roll') return safeText(supplier?.role) || '—';
+  if (columnKey === 'mobilnr') return safeText(supplier?.mobile) || '—';
+  if (columnKey === 'arbete') return safeText(supplier?.phone) || '—';
+  if (columnKey === 'mejladress') return safeText(supplier?.email) || '—';
+  if (columnKey === 'offert') return '—';
+  if (columnKey === 'status') {
+    const s = safeText(supplier?.requestStatus);
+    if (s === 'svar_mottaget') return 'Svar mottaget';
+    if (s === 'skickad') return 'Skickad';
+    if (supplier?.quoteReceivedAt) return 'Svar mottaget';
+    if (supplier?.requestSentAt) return 'Skickad';
+    return 'Ej skickad';
+  }
+  return '—';
+}
+
+function contentWidthForColumn(headerLabel, cellTexts) {
+  let maxLen = String(headerLabel ?? '').length;
+  (cellTexts || []).forEach((t) => {
+    const len = String(t ?? '').length;
+    if (len > maxLen) maxLen = len;
+  });
+  return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, maxLen * CHARS_TO_WIDTH + CELL_PADDING));
+}
+
+export default function InkopsplanRowExpanded({ row, companyId, projectId, selectedSupplierKey, onSelectSupplier, onSupplierContextMenu }) {
+  const hasRow = row != null;
   const suppliers = Array.isArray(row?.suppliers) ? row.suppliers : [];
 
   const [addSupplierOpen, setAddSupplierOpen] = useState(false);
   const [supplierBusyKey, setSupplierBusyKey] = useState('');
+  const [generatingAiKey, setGeneratingAiKey] = useState('');
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_LEV_WIDTHS);
+  const [sort, setSort] = useState({ sortKey: 'foretag', sortDir: 'asc' });
+  const sortKey = sort.sortKey;
+  const sortDir = sort.sortDir;
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+
+  const w = columnWidths;
+  const col = useCallback((key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 }), [w]);
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column], didMove: false };
+  }, [columnWidths]);
+
+  const sortedSuppliersRef = useRef([]);
+
+  const widenColumn = useCallback((column) => {
+    if (Platform.OS !== 'web') return;
+    const headerLabel = LEV_HEADERS[column] || '';
+    const extra = column === 'offert' ? '+ Lägg till leverantör' : '';
+    const list = sortedSuppliersRef.current || [];
+    const cellTexts = list.map((s) => getLevDisplayText(s, column));
+    const allTexts = [headerLabel, extra, ...cellTexts];
+    const newWidth = contentWidthForColumn(headerLabel, allTexts);
+    setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      resizeRef.current.didMove = true;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      const { column, didMove } = resizeRef.current;
+      if (column != null && !didMove) {
+        const headerLabel = LEV_HEADERS[column] || '';
+        const extra = column === 'offert' ? '+ Lägg till leverantör' : '';
+        const list = sortedSuppliersRef.current || [];
+        const cellTexts = list.map((s) => getLevDisplayText(s, column));
+        const allTexts = [headerLabel, extra, ...cellTexts];
+        const newWidth = contentWidthForColumn(headerLabel, allTexts);
+        setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      }
+      resizeRef.current = { column: null, startX: 0, startWidth: 0, didMove: false };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   const handleRemoveSupplier = async (supplierKey) => {
     const rowId = safeText(row?.id);
@@ -103,39 +217,172 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
     }
   };
 
+  const inquiryDraftText = safeText(row?.inquiryDraftText) || '';
+
+  const handleGenerateAiInquiry = async (supplierKey, supplier) => {
+    const rowId = safeText(row?.id);
+    const key = safeText(supplierKey);
+    if (!companyId || !projectId || !rowId || !key || !inquiryDraftText) {
+      Alert.alert('Saknas', 'Skapa först en generell förfrågan på inköpsraden (knappen Generell förfrågan).');
+      return;
+    }
+    setGeneratingAiKey(key);
+    try {
+      const { text } = await generatePersonalizedInquiry(companyId, projectId, {
+        inquiryDraftText,
+        contactName: safeText(supplier?.contactName),
+        supplierCompanyName: safeText(supplier?.companyName || supplier?.name),
+      });
+      if (text) {
+        await setInkopsplanRowSupplierPersonalizedInquiry({ companyId, projectId, rowId, supplierKey: key, personalizedInquiryText: text });
+      }
+    } catch (e) {
+      Alert.alert('Kunde inte anpassa förfrågan', e?.message || 'Okänt fel');
+    } finally {
+      setGeneratingAiKey('');
+    }
+  };
+
+  const handleSendInquiry = (supplier) => {
+    const email = safeText(supplier?.email);
+    if (!email) {
+      Alert.alert('Saknas', 'Leverantören har ingen mejladress.');
+      return;
+    }
+    const body = safeText(supplier?.personalizedInquiryText) || inquiryDraftText;
+    const subject = `Förfrågan ${safeText(row?.name) || 'inköp'}`;
+    const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    Linking.openURL(mailto).catch(() => Alert.alert('Kunde inte öppna e-post', 'Öppna din e-postklient manuellt.'));
+  };
+
+  const getSupplierSortValue = useCallback((s, key) => {
+    if (key === 'foretag') return safeText(s?.companyName || s?.name || s?.id || s);
+    if (key === 'kontaktperson') return safeText(s?.contactName);
+    if (key === 'roll') return safeText(s?.role);
+    if (key === 'mobilnr') return safeText(s?.mobile);
+    if (key === 'arbete') return safeText(s?.phone);
+    if (key === 'mejladress') return safeText(s?.email);
+    if (key === 'status') {
+      const st = safeText(s?.requestStatus);
+      if (st === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET || s?.quoteReceivedAt) return 'svar_mottaget';
+      if (st === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD || s?.requestSentAt) return 'skickad';
+      return 'ej_skickad';
+    }
+    return '';
+  }, []);
+
+  const sortedSuppliers = useMemo(() => {
+    const dirMul = sortDir === 'desc' ? -1 : 1;
+    return suppliers.slice().sort((a, b) => {
+      const va = getSupplierSortValue(a, sortKey);
+      const vb = getSupplierSortValue(b, sortKey);
+      const c = String(va ?? '').localeCompare(String(vb ?? ''), 'sv');
+      return c * dirMul;
+    });
+  }, [suppliers, sortKey, sortDir, getSupplierSortValue]);
+
+  useEffect(() => {
+    sortedSuppliersRef.current = sortedSuppliers;
+  }, [sortedSuppliers]);
+
+  const totalTableWidth = useMemo(() => {
+    const keys = ['foretag', 'kontaktperson', 'roll', 'mobilnr', 'arbete', 'mejladress', 'status', 'offert'];
+    const sum = keys.reduce((acc, k) => acc + (columnWidths[k] || 0), 0);
+    return sum + 7 * RESIZE_HANDLE_HIT_WIDTH;
+  }, [columnWidths]);
+
+  const handleSort = useCallback((key) => {
+    setSort((prev) => ({
+      sortKey: key,
+      sortDir: prev.sortKey === key ? (prev.sortDir === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+  }, []);
+
+  const isSorted = (key) => sortKey === key;
+
   return (
-    <View style={styles.wrap}>
-      <View style={styles.childTable}>
-        <View style={styles.childHeader}>
-          <Text style={[styles.childHCell, styles.colCompany]}>Företag</Text>
-          <Text style={[styles.childHCell, styles.colContact]}>Kontakt</Text>
-          <Text style={[styles.childHCell, styles.colMobile]}>Mobil</Text>
-          <Text style={[styles.childHCell, styles.colPhone]}>Telefon</Text>
-          <Text style={[styles.childHCell, styles.colEmail]}>Email</Text>
-          <Text style={[styles.childHCell, styles.colRequest]}>Förfrågan</Text>
-          <View style={[styles.colStatus, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }]}
-          >
-            <Text style={styles.childHCell}>Status</Text>
-            <Pressable
-              onPress={() => setAddSupplierOpen(true)}
-              disabled={!companyId || !projectId}
-              style={({ hovered, pressed }) => [
-                styles.addLinkWrap,
-                (hovered || pressed) && styles.addLinkHover,
-                (!companyId || !projectId) && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={styles.addLink}>+ Lägg till leverantör</Text>
+    <View style={[styles.wrap, isWeb() && { minWidth: totalTableWidth }]}>
+      <View style={styles.tableWrap}>
+        <View style={[styles.tableHeader, isWeb() && styles.tableHeaderGapWeb]}>
+          <View style={[styles.headerCell, col('foretag')]}>
+            <Pressable onPress={() => handleSort('foretag')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('foretag') && styles.headerTextSorted]} numberOfLines={1}>Företag</Text>
+              {isSorted('foretag') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
             </Pressable>
           </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('foretag', e)} onDoubleClick={() => widenColumn('foretag')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('kontaktperson')]}>
+            <Pressable onPress={() => handleSort('kontaktperson')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('kontaktperson') && styles.headerTextSorted]} numberOfLines={1}>Kontaktperson</Text>
+              {isSorted('kontaktperson') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('kontaktperson', e)} onDoubleClick={() => widenColumn('kontaktperson')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('roll')]}>
+            <Pressable onPress={() => handleSort('roll')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('roll') && styles.headerTextSorted]} numberOfLines={1}>Roll</Text>
+              {isSorted('roll') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('roll', e)} onDoubleClick={() => widenColumn('roll')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('mobilnr')]}>
+            <Pressable onPress={() => handleSort('mobilnr')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('mobilnr') && styles.headerTextSorted]} numberOfLines={1}>Mobilnr</Text>
+              {isSorted('mobilnr') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('mobilnr', e)} onDoubleClick={() => widenColumn('mobilnr')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('arbete')]}>
+            <Pressable onPress={() => handleSort('arbete')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('arbete') && styles.headerTextSorted]} numberOfLines={1}>Arbete</Text>
+              {isSorted('arbete') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('arbete', e)} onDoubleClick={() => widenColumn('arbete')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('mejladress')]}>
+            <Pressable onPress={() => handleSort('mejladress')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('mejladress') && styles.headerTextSorted]} numberOfLines={1}>Mejladress</Text>
+              {isSorted('mejladress') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('mejladress', e)} onDoubleClick={() => widenColumn('mejladress')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('status')]}>
+            <Pressable onPress={() => handleSort('status')} style={({ hovered }) => [styles.columnContent, styles.headerSortable, hovered && styles.headerSortableHover]}>
+              <Text style={[styles.headerText, isSorted('status') && styles.headerTextSorted]} numberOfLines={1}>Status</Text>
+              {isSorted('status') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+            </Pressable>
+          </View>
+          {isWeb() && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('status', e)} onDoubleClick={() => widenColumn('status')}><View style={styles.resizeHandleLine} /></View>}
+          <View style={[styles.headerCell, col('offert')]}>
+            <View style={[styles.columnContent, styles.headerActionsWrap]}>
+              <Pressable onPress={() => handleSort('offert')} style={({ hovered }) => [styles.headerSortable, hovered && styles.headerSortableHover]}>
+                <Text style={[styles.headerText, isSorted('offert') && styles.headerTextSorted]} numberOfLines={1}>Offert</Text>
+                {isSorted('offert') ? <Text style={styles.sortArrow}>{sortDir === 'asc' ? ' ▲' : ' ▼'}</Text> : null}
+              </Pressable>
+              <Pressable
+                onPress={() => setAddSupplierOpen(true)}
+                disabled={!hasRow || !companyId || !projectId}
+                style={({ hovered, pressed }) => [
+                  styles.addLinkWrap,
+                  (hovered || pressed) && styles.addLinkHover,
+                  (!hasRow || !companyId || !projectId) && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={styles.addLink}>+ Lägg till leverantör</Text>
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.cellSpacer} />
         </View>
 
-        {suppliers.length === 0 ? (
-          <View style={styles.childEmpty}>
-            <Text style={styles.muted}>Inga leverantörer kopplade ännu.</Text>
+        {sortedSuppliers.length === 0 ? (
+          <View style={styles.tableEmpty}>
+            <Text style={styles.muted}>
+              {hasRow ? 'Inga leverantörer kopplade ännu.' : 'Välj en rad i inköpsstrukturen ovan för att lägga in och hantera leverantörer.'}
+            </Text>
           </View>
         ) : (
-          suppliers.map((s, idx) => {
+          sortedSuppliers.map((s, idx) => {
             const label = safeText(s?.companyName || s?.name || s?.id || s);
             const supplierKey = normalizeSupplierKeyLocal(s);
             const key = supplierKey || `${label}-${idx}`;
@@ -146,11 +393,6 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
             else if (explicitStatus === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
             else if (s?.quoteReceivedAt) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET;
             else if (s?.requestSentAt) status = INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
-
-            const sentDate = formatYYYYMMDD(s?.requestSentAt);
-            const requestText = status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD
-              ? 'Ej skickad'
-              : (sentDate ? `Skickad ${sentDate}` : 'Skickad');
 
             const statusText = status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SVAR_MOTTAGET
               ? 'Svar mottaget'
@@ -163,68 +405,77 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
             const canMarkQuoteReceived = !busy && supplierKey && status === INKOPSPLAN_SUPPLIER_REQUEST_STATUS.SKICKAD;
             const canReset = !busy && supplierKey && status !== INKOPSPLAN_SUPPLIER_REQUEST_STATUS.EJ_SKICKAD;
 
+            const isSelected = selectedSupplierKey != null && selectedSupplierKey === supplierKey;
+
             return (
-              <View key={key} style={styles.childRow}>
-                <Text style={[styles.childCellText, styles.colCompany]} numberOfLines={1}>{label || '—'}</Text>
-                <Text style={[styles.childCellText, styles.colContact]} numberOfLines={1}>{safeText(s?.contactName) || '—'}</Text>
-                <Text style={[styles.childCellText, styles.colMobile]} numberOfLines={1}>{safeText(s?.mobile) || '—'}</Text>
-                <Text style={[styles.childCellText, styles.colPhone]} numberOfLines={1}>{safeText(s?.phone) || '—'}</Text>
-                <Text style={[styles.childCellText, styles.colEmail]} numberOfLines={1}>{safeText(s?.email) || '—'}</Text>
-                <Text style={[styles.childCellText, styles.colRequest]} numberOfLines={1}>{requestText}</Text>
-                <View style={[styles.colStatus, styles.childStatusCell]}>
-                  <Text style={styles.childCellText} numberOfLines={1}>{statusText}</Text>
-                  <View style={styles.childActions}>
+              <Pressable
+                key={key}
+                onPress={() => onSelectSupplier?.(supplierKey)}
+                onContextMenu={isWeb() ? (e) => {
+                  try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+                  onSupplierContextMenu?.(supplierKey, e);
+                } : undefined}
+                style={({ hovered }) => [
+                  styles.tableRow,
+                  isWeb() && styles.tableRowGapWeb,
+                  idx % 2 === 1 && styles.tableRowAlt,
+                  hovered && styles.tableRowHover,
+                  isSelected && styles.tableRowSelected,
+                ]}
+              >
+                <View style={[styles.cell, col('foretag')]}><Text style={styles.cellText} numberOfLines={1}>{label || '—'}</Text></View>
+                <View style={[styles.cell, col('kontaktperson')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.contactName) || '—'}</Text></View>
+                <View style={[styles.cell, col('roll')]}><Text style={[styles.cellText, styles.cellMuted]} numberOfLines={1}>{safeText(s?.role) || '—'}</Text></View>
+                <View style={[styles.cell, col('mobilnr')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.mobile) || '—'}</Text></View>
+                <View style={[styles.cell, col('arbete')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.phone) || '—'}</Text></View>
+                <View style={[styles.cell, col('mejladress')]}><Text style={styles.cellText} numberOfLines={1}>{safeText(s?.email) || '—'}</Text></View>
+                <View style={[styles.cell, col('status')]}>
+                  <Text style={styles.cellText} numberOfLines={1}>{statusText}</Text>
+                  <View style={styles.cellActions}>
                     {canMarkSent ? (
-                      <Pressable
-                        onPress={() => handleMarkSent(supplierKey)}
-                        disabled={!canMarkSent}
-                        style={({ hovered, pressed }) => [
-                          styles.actionLinkWrap,
-                          (hovered || pressed) && styles.actionLinkHover,
-                        ]}
-                      >
+                      <Pressable onPress={(e) => { e?.stopPropagation?.(); handleMarkSent(supplierKey); }} disabled={!canMarkSent} style={({ hovered, pressed }) => [styles.actionLinkWrap, (hovered || pressed) && styles.actionLinkHover]}>
                         <Text style={styles.actionLink}>Skickad</Text>
                       </Pressable>
                     ) : null}
                     {canMarkQuoteReceived ? (
-                      <Pressable
-                        onPress={() => handleMarkQuoteReceived(supplierKey)}
-                        disabled={!canMarkQuoteReceived}
-                        style={({ hovered, pressed }) => [
-                          styles.actionLinkWrap,
-                          (hovered || pressed) && styles.actionLinkHover,
-                        ]}
-                      >
+                      <Pressable onPress={(e) => { e?.stopPropagation?.(); handleMarkQuoteReceived(supplierKey); }} disabled={!canMarkQuoteReceived} style={({ hovered, pressed }) => [styles.actionLinkWrap, (hovered || pressed) && styles.actionLinkHover]}>
                         <Text style={styles.actionLink}>Svar</Text>
                       </Pressable>
                     ) : null}
                     {canReset ? (
-                      <Pressable
-                        onPress={() => handleResetRequest(supplierKey)}
-                        disabled={!canReset}
-                        style={({ hovered, pressed }) => [
-                          styles.actionLinkWrap,
-                          (hovered || pressed) && styles.actionLinkHover,
-                        ]}
-                      >
+                      <Pressable onPress={(e) => { e?.stopPropagation?.(); handleResetRequest(supplierKey); }} disabled={!canReset} style={({ hovered, pressed }) => [styles.actionLinkWrap, (hovered || pressed) && styles.actionLinkHover]}>
                         <Text style={styles.actionLinkMuted}>Ångra</Text>
                       </Pressable>
                     ) : null}
-
-                    <Pressable
-                      onPress={() => handleRemoveSupplier(supplierKey)}
-                      disabled={busy}
-                      style={({ hovered, pressed }) => [
-                        styles.removeLinkWrap,
-                        (hovered || pressed) && styles.removeLinkHover,
-                        busy && { opacity: 0.6 },
-                      ]}
-                    >
+                    <Pressable onPress={(e) => { e?.stopPropagation?.(); handleRemoveSupplier(supplierKey); }} disabled={busy} style={({ hovered, pressed }) => [styles.removeLinkWrap, (hovered || pressed) && styles.removeLinkHover, busy && { opacity: 0.6 }]}>
                       <Text style={styles.removeLink}>Ta bort</Text>
                     </Pressable>
                   </View>
                 </View>
-              </View>
+                <View style={[styles.cell, col('offert'), styles.offertCellWrap]}>
+                  <Pressable
+                    onPress={(e) => { e?.stopPropagation?.(); handleGenerateAiInquiry(supplierKey, s); }}
+                    disabled={!!generatingAiKey || !inquiryDraftText}
+                    style={({ hovered, pressed }) => [
+                      styles.aiForfraganBtn,
+                      (hovered || pressed) && styles.aiForfraganBtnHover,
+                      (!inquiryDraftText || generatingAiKey) && { opacity: 0.6 },
+                    ]}
+                  >
+                    {generatingAiKey === supplierKey ? (
+                      <ActivityIndicator size="small" color="#475569" />
+                    ) : (
+                      <Text style={styles.aiForfraganBtnText}>Anpassa förfrågan</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    onPress={(e) => { e?.stopPropagation?.(); handleSendInquiry(s); }}
+                    style={({ hovered, pressed }) => [styles.sendForfraganBtn, (hovered || pressed) && styles.sendForfraganBtnHover]}
+                  >
+                    <Text style={styles.sendForfraganBtnText}>Skicka förfrågan</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
             );
           })
         )}
@@ -243,97 +494,137 @@ export default function InkopsplanRowExpanded({ row, companyId, projectId }) {
 
 const styles = StyleSheet.create({
   wrap: {
-    paddingVertical: 8,
-    backgroundColor: '#FAFAFA',
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-  },
-  topRowLabel: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '700',
-    width: 44,
-  },
-  templateSelect: {
-    height: 32,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  templateSelectHover: { backgroundColor: '#F8FAFC' },
-  templateSelectText: { fontSize: 13, color: '#0F172A', fontWeight: '600', flex: 1, minWidth: 0 },
-  templateSelectChevron: { color: '#64748B', fontWeight: '800' },
-
-  childTable: {
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    paddingTop: 0,
+    paddingBottom: 8,
     backgroundColor: 'transparent',
   },
-  childHeader: {
+  tableWrap: {
+    borderWidth: 1,
+    borderColor: TABLE.tableBorderColor,
+    borderRadius: TABLE.tableRadius,
+    overflow: 'hidden',
+    backgroundColor: TABLE.tableRowBackgroundColor,
+  },
+  tableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 44,
-    paddingHorizontal: 12,
-    backgroundColor: '#FAFAFA',
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
+    backgroundColor: TABLE.tableHeaderBackgroundColor,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: TABLE.tableHeaderBorderColor,
   },
-  childHCell: {
-    fontSize: 12,
+  tableHeaderGapWeb: { gap: 0 },
+  headerCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+    minWidth: 0,
+  },
+  columnContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  headerSortable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  headerSortableHover: {
+    backgroundColor: 'rgba(0,0,0,0.04)',
+  },
+  headerTextSorted: {
     fontWeight: '700',
-    color: '#475569',
-    minWidth: 0,
   },
-  childRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 44,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+  sortArrow: {
+    fontSize: 10,
+    color: TABLE.tableHeaderColor,
+    marginLeft: 2,
   },
-  childEmpty: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  childCellText: {
-    fontSize: 13,
-    color: '#0F172A',
-    fontWeight: '600',
-    minWidth: 0,
-  },
-  colCompany: { flex: 1.2 },
-  colContact: { flex: 1.1 },
-  colMobile: { width: 110 },
-  colPhone: { width: 110 },
-  colEmail: { flex: 1.5 },
-  colRequest: { width: 110 },
-  colStatus: { width: 220, minWidth: 220, flexShrink: 0 },
-
-  childStatusCell: {
+  headerActionsWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
-  childActions: {
+  headerText: {
+    fontSize: TABLE.tableHeaderFontSize,
+    fontWeight: TABLE.tableHeaderFontWeight,
+    color: TABLE.tableHeaderColor,
+  },
+  tableEmpty: {
+    minHeight: 140,
+    paddingVertical: 24,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
+    justifyContent: 'center',
+  },
+  tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    minHeight: TABLE.tableRowHeight,
+    paddingVertical: TABLE.tableCellPaddingVertical,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
+    borderBottomWidth: 1,
+    borderBottomColor: TABLE.tableRowBorderColor,
+    backgroundColor: TABLE.tableRowBackgroundColor,
+  },
+  tableRowGapWeb: { gap: RESIZE_HANDLE_HIT_WIDTH },
+  tableRowAlt: {
+    backgroundColor: TABLE.tableRowAltBackgroundColor,
+  },
+  tableRowHover: {
+    backgroundColor: TABLE.tableRowHoverBackgroundColor,
+  },
+  tableRowSelected: {
+    backgroundColor: '#EFF6FF',
+    borderBottomColor: '#BFDBFE',
+  },
+  cell: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    justifyContent: 'center',
+    minWidth: 0,
+  },
+  cellText: {
+    fontSize: TABLE.tableCellFontSize,
+    fontWeight: '500',
+    color: TABLE.tableCellColor,
+    minWidth: 0,
+  },
+  cellMuted: {
+    color: TABLE.tableCellMutedColor,
+  },
+  cellActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     flexShrink: 0,
   },
+  resizeHandle: {
+    width: RESIZE_HANDLE_HIT_WIDTH,
+    minWidth: RESIZE_HANDLE_HIT_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(isWeb() ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_HIT_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
+  cellSpacer: { flex: 1, minWidth: 0 },
 
   actionLinkWrap: {
     paddingVertical: 6,
@@ -498,6 +789,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#991B1B',
+  },
+  offertCellWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  aiForfraganBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  aiForfraganBtnHover: {
+    backgroundColor: '#CBD5E1',
+  },
+  aiForfraganBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  sendForfraganBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#2563EB',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  sendForfraganBtnHover: {
+    backgroundColor: '#1D4ED8',
+  },
+  sendForfraganBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
   },
 
   addSupplierBox: {

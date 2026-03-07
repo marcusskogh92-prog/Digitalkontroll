@@ -52,7 +52,7 @@ import { useProjectCreation } from '../hooks/useProjectCreation';
 import { useSharePointHierarchy } from '../hooks/useSharePointHierarchy';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import { useTreeContextMenu } from '../hooks/useTreeContextMenu';
-import { moveDriveItemByPath, renameDriveItemByPath } from '../services/azure/hierarchyService';
+import { moveDriveItemByPath, moveDriveItemAcrossSitesByPath, renameDriveItemByPath } from '../services/azure/hierarchyService';
 import { normalizeSiteIdForGraph } from '../services/azure/graphSiteId';
 import { extractProjectMetadata, isProjectFolder } from '../utils/isProjectFolder';
 import ManageSharePointNavigation from './ManageSharePointNavigation';
@@ -1396,12 +1396,13 @@ export default function HomeScreen({ navigation, route }) {
     }).start();
   }, [dashboardRightPanelCollapsed, dashboardRightPanelWidthAnim, rightWidth]);
 
-  // Close dashboard dropdowns when navigating into a project (avoid leaving overlays open)
+  // Close dashboard dropdowns and right panel when navigating into a project (avoid leaving overlays/panel open)
   React.useEffect(() => {
     try {
       setDashboardFocus(null);
       setDashboardDropdownTop(null);
       setDashboardHoveredStatKey(null);
+      if (selectedProject) setDashboardRightPanelCollapsed(true);
     } catch (e) {}
   }, [selectedProject]);
 
@@ -1613,27 +1614,52 @@ export default function HomeScreen({ navigation, route }) {
       const newNumber = String(payload.projectNumber || '').trim();
       const newName = String(payload.projectName || '').trim();
       const rawNewRoot = String(payload.rootFolderPath || payload.parentFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
-      const siteId = normalizeSiteIdForGraph(String(payload.siteId || payload.sharePointSiteId || '').trim());
+      const destSiteId = normalizeSiteIdForGraph(String(payload.siteId || payload.sharePointSiteId || '').trim());
+      const sourceSiteId = normalizeSiteIdForGraph(String(payload.initialSharePointSiteId || '').trim());
+      const siteId = destSiteId; // används nedan för Firestore/SharePoint-metadata
       const oldRootPath = String(payload.initialRootFolderPath || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
       const newFolderName = formatSharePointProjectFolderName(newNumber, newName);
       const oldFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
+      const oldParentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
       let finalRootPath = oldRootPath;
+      let didMove = false;
+      const crossSiteMove = sourceSiteId && destSiteId && sourceSiteId !== destSiteId;
 
-      const storagePathChanged = rawNewRoot && oldRootPath && rawNewRoot !== oldRootPath;
+      // rawNewRoot = målmappen (parent) där projektet ska ligga; oldRootPath = nuvarande full sökväg till projektmappen
+      const storagePathChanged = (rawNewRoot != null || crossSiteMove) && oldRootPath &&
+        (crossSiteMove || (
+          rawNewRoot.trim() !== oldRootPath.trim() &&
+          rawNewRoot.trim() !== oldParentPath
+        )); // samma site + samma parent = ingen flytt
 
-      if (storagePathChanged && siteId && oldRootPath) {
+      if (storagePathChanged && oldRootPath) {
         try {
-          await moveDriveItemByPath(siteId, oldRootPath, rawNewRoot);
-          finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + oldFolderName).replace(/\/+/g, '/');
-          if (oldFolderName !== newFolderName) {
-            await renameDriveItemByPath(siteId, finalRootPath, newFolderName);
-            finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/');
+          if (crossSiteMove) {
+            await moveDriveItemAcrossSitesByPath({
+              sourceSiteId,
+              sourcePath: oldRootPath,
+              destSiteId,
+              destParentPath: rawNewRoot || '',
+              destName: newFolderName,
+            });
+            finalRootPath = rawNewRoot ? (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/') : newFolderName;
+          } else if (destSiteId) {
+            await moveDriveItemByPath(destSiteId, oldRootPath, rawNewRoot);
+            finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + oldFolderName).replace(/\/+/g, '/');
+            if (oldFolderName !== newFolderName) {
+              await renameDriveItemByPath(destSiteId, finalRootPath, newFolderName);
+              finalRootPath = (rawNewRoot.replace(/\/+$/, '') + '/' + newFolderName).replace(/\/+/g, '/');
+            }
           }
         } catch (e) {
-          console.warn('[HomeScreen] Move project folder:', e?.message || e);
-          throw e;
+          const msg = (e && (e.message || e.errorDescription || String(e))) || 'Okänt fel';
+          console.warn('[HomeScreen] Move project folder:', msg);
+          throw new Error(
+            typeof msg === 'string' && msg.includes('flytta') ? msg : `Kunde inte flytta projektmappen i SharePoint. ${msg}`
+          );
         }
-      } else if (siteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
+        didMove = true;
+      } else if (destSiteId && oldRootPath && newFolderName && oldFolderName !== newFolderName) {
         try {
           await renameDriveItemByPath(siteId, oldRootPath, newFolderName);
           const parentPath = oldRootPath.split('/').filter(Boolean).slice(0, -1).join('/');
@@ -1644,12 +1670,16 @@ export default function HomeScreen({ navigation, route }) {
       }
 
       const newFullName = formatSharePointProjectFolderName(newNumber, newName);
-      await patchCompanyProject(companyId, projectId, {
+      const patchData = {
         projectNumber: newNumber,
         projectName: newName,
         fullName: newFullName,
         rootFolderPath: finalRootPath,
-      });
+      };
+      if (didMove && destSiteId) {
+        patchData.sharePointSiteId = destSiteId;
+      }
+      await patchCompanyProject(companyId, projectId, patchData);
       // Only sync ProjectNumber/ProjectName to SharePoint when name/number changed (avoids 400 if library lacks those columns when only moving)
       const initialFolderName = oldRootPath.split('/').filter(Boolean).pop() || '';
       const initialNum = (initialFolderName.split(' - ')[0] || '').trim();
@@ -1671,11 +1701,15 @@ export default function HomeScreen({ navigation, route }) {
       setHierarchyReloadKey((k) => k + 1);
       setProjectsListRefreshKey((k) => k + 1);
       setEditProject(null);
+      if (didMove && Platform.OS === 'web' && typeof window !== 'undefined') {
+        try { window.alert('Projektet har flyttats i SharePoint och sparats.'); } catch (_) {}
+      }
     } catch (e) {
+      const errMsg = (e && (e.message || e.errorDescription || String(e))) || 'Kunde inte spara projektet.';
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert(e?.message || 'Kunde inte spara projektet.');
+        try { window.alert(errMsg); } catch (_) {}
       } else {
-        Alert.alert('Fel', e?.message || 'Kunde inte spara projektet.');
+        Alert.alert('Fel', errMsg);
       }
     } finally {
       setIsSavingEdit(false);
@@ -1718,6 +1752,7 @@ export default function HomeScreen({ navigation, route }) {
     routeCompanyId,
     authClaims,
     currentUserId: auth?.currentUser?.uid || null,
+    currentUserEmail: auth?.currentUser?.email || null,
     hierarchy,
     hierarchyRef,
     selectedProject,

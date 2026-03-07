@@ -554,6 +554,26 @@ export default function ContactRegistryScreen({ navigation, route }) {
 
       if (editingId) {
         await updateCompanyContact({ id: editingId, patch: payload }, cid || undefined);
+        // Vid redigering: om företag anges men ingen leverantör/kund är kopplad, försök matcha och koppla (t.ex. efter diakritik-fix eller nytt val).
+        const linkedId = contactLinkedSupplierId.trim() || contactCustomerId.trim();
+        if (!linkedId && payload.contactCompanyName) {
+          const match = await resolveCompanyMatch(payload.contactCompanyName);
+          if (match?.type === 'supplier') {
+            await linkExistingContactToSupplier(cid || undefined, match.supplier.id, editingId, {
+              role: payload.role,
+              phone: payload.phone,
+              email: payload.email,
+              contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
+            });
+          } else if (match?.type === 'customer') {
+            await linkExistingContactToCustomer(cid || undefined, match.customer, editingId, {
+              role: payload.role,
+              phone: payload.phone,
+              email: payload.email,
+              contactCompanyName: match.customer.name || payload.contactCompanyName,
+            });
+          }
+        }
       } else {
         const newId = await createCompanyContact(payload, cid || undefined);
         if (contactLinkedSupplierId.trim()) {
@@ -618,21 +638,34 @@ export default function ContactRegistryScreen({ navigation, route }) {
     }
   };
 
-  const normalizeName = (value) => String(value || '').trim().toLowerCase();
+  /** Normaliserar företagsnamn för matchning: lowercase, trim, ta bort diakritiska tecken (t.ex. é → e) så att "Wilzéns Mark" matchar "Wilzens Mark". */
+  const normalizeNameForMatch = (value) => {
+    const s = String(value || '').trim().toLowerCase();
+    if (!s) return '';
+    try {
+      return s
+        .normalize('NFD')
+        .replace(/\p{Diacritic}+/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    } catch (_e) {
+      return s;
+    }
+  };
 
   const resolveCompanyMatch = async (companyNameInput) => {
-    const name = normalizeName(companyNameInput);
+    const name = normalizeNameForMatch(companyNameInput);
     if (!name) return null;
     try {
       const cid = String(companyId || '').trim() || undefined;
       const suppliers = await fetchCompanySuppliers(cid);
       const supplier = (suppliers || []).find(
-        (s) => normalizeName(s?.companyName) === name
+        (s) => normalizeNameForMatch(s?.companyName) === name
       );
       if (supplier) return { type: 'supplier', supplier };
       const customers = await fetchCompanyCustomers(cid);
       const customer = (customers || []).find(
-        (c) => normalizeName(c?.name) === name
+        (c) => normalizeNameForMatch(c?.name) === name
       );
       if (customer) return { type: 'customer', customer };
     } catch (_e) {}
@@ -658,9 +691,17 @@ export default function ContactRegistryScreen({ navigation, route }) {
             fetchCompanySuppliers(cid),
             fetchCompanyCustomers(cid),
           ]);
-          const lower = q.toLowerCase();
+          const qNorm = (str) => {
+            const s = String(str ?? '').trim().toLowerCase();
+            try {
+              return s.normalize('NFD').replace(/\p{Diacritic}+/gu, '').replace(/\s+/g, ' ').trim();
+            } catch (_e) {
+              return s;
+            }
+          };
+          const lower = qNorm(q);
           const fromSuppliers = (suppliers || [])
-            .filter((s) => String(s?.companyName ?? '').trim().toLowerCase().includes(lower))
+            .filter((s) => qNorm(s?.companyName).includes(lower))
             .map((s) => ({
               id: s.id,
               name: String(s.companyName ?? '').trim(),
@@ -668,7 +709,7 @@ export default function ContactRegistryScreen({ navigation, route }) {
               roles: { supplier: true, customer: false },
             }));
           const fromCustomers = (customers || [])
-            .filter((c) => String(c?.name ?? '').trim().toLowerCase().includes(lower))
+            .filter((c) => qNorm(c?.name).includes(lower))
             .map((c) => ({
               id: c.id,
               name: String(c.name ?? '').trim(),

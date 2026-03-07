@@ -22,6 +22,8 @@ const DashboardAllProjects = ({
   dashboardLoading = false,
   companyId = null,
   currentUserId = null,
+  /** Användarens e-post – används för att matcha kontaktmedlemmar (som har refId = kontakt-id, inte uid). */
+  currentUserEmail = null,
   authClaims = null,
 }) => {
   const DEBUG_MEMBERSHIP = !!(__DEV__ && Platform?.OS === 'web');
@@ -96,9 +98,10 @@ const DashboardAllProjects = ({
   useEffect(() => {
     const cid = String(effectiveCompanyId || '').trim();
     const uid = String(currentUserId || '').trim();
+    const userEmail = String(currentUserEmail || '').trim().toLowerCase();
 
     if (DEBUG_MEMBERSHIP) {
-      console.log('[dashboardAllProjects][membership] subscribe start', { cid, uid, isAdmin });
+      console.log('[dashboardAllProjects][membership] subscribe start', { cid, uid, isAdmin, hasEmail: !!userEmail });
     }
 
     if (!cid || !uid) {
@@ -106,6 +109,8 @@ const DashboardAllProjects = ({
       setMemberProjectsReady(false);
       return;
     }
+
+    const normEmail = (e) => String(e || '').trim().toLowerCase().replace(/\s+/g, '');
 
     setMemberProjectsReady(false);
     const unsub = subscribeCompanyProjectOrganisation(
@@ -160,6 +165,8 @@ const DashboardAllProjects = ({
 
               for (const m of members) {
                 const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                const matchByUid = refId && refId === uid;
+                const matchByEmail = userEmail && String(m?.source || '').trim() === 'contact' && normEmail(m?.email) === userEmail;
                 if (DEBUG_MEMBERSHIP) {
                   compareCount += 1;
                   if (compareCount <= 500) {
@@ -169,14 +176,14 @@ const DashboardAllProjects = ({
                       memberSource: m?.source,
                       memberRole: m?.role,
                       memberName: m?.name,
-                      match: !!(refId && refId === uid),
+                      matchByUid: !!matchByUid,
+                      matchByEmail: !!matchByEmail,
                     });
                   } else if (compareCount === 501) {
                     console.log('[dashboardAllProjects][membership] compare member: too many comparisons, truncating logs after 500');
                   }
                 }
-                if (!refId) continue;
-                if (refId === uid) {
+                if (matchByUid || matchByEmail) {
                   isMember = true;
                   break;
                 }
@@ -186,6 +193,7 @@ const DashboardAllProjects = ({
 
             if (isMember) {
               const pid = String(d?.projectId || d?.id || '').trim();
+              const pnum = String(d?.projectNumber || '').trim();
               if (DEBUG_MEMBERSHIP) {
                 console.log('[dashboardAllProjects][membership] member match => allow project', {
                   docId: d?.id,
@@ -195,6 +203,7 @@ const DashboardAllProjects = ({
                 });
               }
               if (pid) next.add(pid);
+              if (pnum && pnum !== pid) next.add(pnum);
             }
           }
         } catch (_e) {}
@@ -212,7 +221,7 @@ const DashboardAllProjects = ({
     );
 
     return () => { try { unsub?.(); } catch(_e) {} };
-  }, [effectiveCompanyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
+  }, [effectiveCompanyId, currentUserId, currentUserEmail, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Extract all projects from hierarchy (no phase filtering here anymore)
   const allProjects = useMemo(() => {
@@ -288,7 +297,8 @@ const DashboardAllProjects = ({
     const allowed = memberProjectIds;
     return (allProjects || []).filter((p) => {
       const pid = resolveProjectId(p);
-      return pid && allowed.has(pid);
+      const pnum = String(p?.projectNumber || p?.number || '').trim();
+      return (pid && allowed.has(pid)) || (pnum && allowed.has(pnum));
     });
   }, [allProjects, isAdmin, memberProjectsReady, memberProjectIds]);
 

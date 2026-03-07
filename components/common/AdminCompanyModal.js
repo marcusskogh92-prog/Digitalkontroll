@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabActive: { borderBottomColor: ICON_RAIL.activeLeftIndicatorColor },
-  tabLabel: { fontSize: 14, color: '#64748b', fontWeight: '500' },
+  tabLabel: { fontSize: 12, color: '#64748b', fontWeight: '500' },
   tabLabelActive: { color: ICON_RAIL.activeLeftIndicatorColor, fontWeight: '600' },
   scroll: { flex: 1, minHeight: 0 },
   scrollContent: { padding: 20, paddingBottom: 24 },
@@ -442,16 +442,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
+    gap: 8,
+    paddingVertical: 10,
     paddingHorizontal: D.footer.paddingHorizontal,
     borderTopWidth: D.footer.borderTopWidth,
     borderTopColor: D.footer.borderTopColor,
     backgroundColor: D.footer.backgroundColor,
   },
   footerBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     borderWidth: 1,
     borderColor: '#fecaca',
@@ -460,8 +460,8 @@ const styles = StyleSheet.create({
   },
   footerBtnText: { fontSize: 12, fontWeight: '500', color: '#b91c1c' },
   footerBtnPrimary: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: D.buttonPrimaryBg,
     minWidth: 96,
@@ -469,8 +469,8 @@ const styles = StyleSheet.create({
   },
   footerBtnPrimaryText: { fontSize: 12, fontWeight: '500', color: D.buttonPrimaryColor },
   footerBtnDark: {
-    paddingVertical: 4,
-    paddingHorizontal: 12,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: D.buttonPrimaryBg,
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
@@ -1341,7 +1341,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                               onPress={addPlaneringTab}
                               disabled={!newPlaneringTabName.trim()}
                             >
-                              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Lägg till flik</Text>
+                              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>Lägg till flik</Text>
                             </TouchableOpacity>
                           </View>
                           <Text style={styles.planeringAddInfo}>
@@ -1471,20 +1471,20 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                       />
                       <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
                         <TouchableOpacity
-                          style={[styles.footerBtn, { paddingVertical: 10, paddingHorizontal: 16 }]}
+                          style={styles.footerBtn}
                           onPress={() => {
                             setPlaneringRenameTab(null);
                             setPlaneringRenameDraft('');
                           }}
                         >
-                          <Text style={styles.infoValue}>Avbryt</Text>
+                          <Text style={styles.footerBtnText}>Avbryt</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[styles.footerBtnPrimary, { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8 }]}
+                          style={[styles.footerBtnPrimary, !planeringRenameDraft.trim() && styles.footerBtnPrimaryDisabled]}
                           onPress={() => renamePlaneringTab(planeringRenameTab.id, planeringRenameDraft)}
                           disabled={!planeringRenameDraft.trim()}
                         >
-                          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Spara</Text>
+                          <Text style={styles.footerBtnPrimaryText}>Spara</Text>
                         </TouchableOpacity>
                       </View>
                     </View>

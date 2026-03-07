@@ -30,6 +30,7 @@ import { MODAL_THEME } from '../../constants/modalTheme';
 import { PRIMARY_TOPBAR } from '../../constants/topbarTheme';
 import AddPersonModal from './AddPersonModal';
 import EditPersonModal from './EditPersonModal';
+import ResursbankModal from './ResursbankModal';
 
 let createPortal = null;
 try {
@@ -62,6 +63,14 @@ function getWeekStart(d) {
   const day = date.getDay();
   const diff = date.getDate() - day + (day === 0 ? -6 : 1);
   return new Date(date.setDate(diff));
+}
+
+function getInitials(name) {
+  const n = (name || '').trim();
+  if (!n) return '?';
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  return n.slice(0, 2).toUpperCase();
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -150,6 +159,21 @@ function getSwedishHolidayDates(year) {
   return out;
 }
 
+/** Returnera YYYY-MM-DD för alla dagar i vecka 28–31 (byggsemester) för ett givet år. */
+function getByggsemesterDates(year) {
+  const out = new Set();
+  const y = Number(year);
+  for (let month = 0; month < 12; month++) {
+    const daysInMonth = new Date(y, month + 1, 0).getDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(y, month, day);
+      const w = getWeekNumber(d);
+      if (w >= 28 && w <= 31) out.add(dateToKey(d));
+    }
+  }
+  return out;
+}
+
 function dateToKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -230,6 +254,8 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   const [addPersonalVisible, setAddPersonalVisible] = useState(false);
   const [addProjectVisible, setAddProjectVisible] = useState(false);
   const [addCustomerVisible, setAddCustomerVisible] = useState(false);
+  const [resursbankModalVisible, setResursbankModalVisible] = useState(false);
+  const [projektModalVisible, setProjektModalVisible] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [addProjectCustomerId, setAddProjectCustomerId] = useState(null);
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -237,6 +263,12 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   const [newProjectCode, setNewProjectCode] = useState('');
   const [showWeekends, setShowWeekends] = useState(true);
   const [showSwedishHolidays, setShowSwedishHolidays] = useState(false);
+  const [showByggsemester, setShowByggsemester] = useState(false);
+  const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
+  const [delaUnderUppbyggnadVisible, setDelaUnderUppbyggnadVisible] = useState(false);
+  const [searchFilter, setSearchFilter] = useState(''); // Sök resurser eller projekt
+  const [viewWeeksMode, setViewWeeksMode] = useState(6); // 1 = Dag, 6 | 12 | 32 = antal veckor
+  const [inlanadCollapsed, setInlanadCollapsed] = useState(true);
   const [hoveredCell, setHoveredCell] = useState(null); // { rowIndex, dateKey }
   const [hoveredCornerRow, setHoveredCornerRow] = useState(null); // rowIndex
   const [hoveredProjectId, setHoveredProjectId] = useState(null); // projektrad i kundkolumn
@@ -476,6 +508,20 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const isServiceMode = activeTab?.planningType === 'service';
 
+  /** Resurser filtrerade på sökning (namn, roll, projektnamn via assignment). */
+  const filteredResources = useMemo(() => {
+    const q = (searchFilter || '').trim().toLowerCase();
+    if (!q) return resources;
+    return resources.filter((r) => {
+      const nameMatch = (r.name || '').toLowerCase().includes(q);
+      const roleMatch = (r.role || '').toLowerCase().includes(q);
+      const projectMatch = serviceAssignments.some(
+        (a) => a.personId === r.id && (projects.find((p) => p.id === a.projectId)?.name || '').toLowerCase().includes(q)
+      );
+      return nameMatch || roleMatch || projectMatch;
+    });
+  }, [resources, searchFilter, serviceAssignments, projects]);
+
   // Service-läge: om inga grupper finns, skapa en grupp "Personal" med alla resurser
   useEffect(() => {
     if (!isServiceMode || serviceGroups.length > 0 || resources.length === 0) return;
@@ -493,9 +539,9 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
     const now = new Date();
     const currentWeekMonday = getWeekStart(now).getTime();
     const startWeekTime = currentWeekMonday + weekOffset * 7 * MS_PER_DAY;
-    const weeksAhead = activeTab?.weeksAhead ?? WEEKS_PER_YEAR;
+    const weeksAhead = viewWeeksMode === 1 ? 1 : Math.min(viewWeeksMode, activeTab?.weeksAhead ?? WEEKS_PER_YEAR);
     return getWeeksFrom(startWeekTime, Math.max(1, weeksAhead));
-  }, [weekOffset, activeTab?.weeksAhead]);
+  }, [weekOffset, viewWeeksMode, activeTab?.weeksAhead]);
 
   const today = useMemo(() => new Date(), []);
 
@@ -505,12 +551,16 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   );
 
   const holidayDates = useMemo(() => {
-    if (!showSwedishHolidays) return new Set();
     const years = new Set(weeks.map(w => w.days[0]?.getFullYear()).filter(Boolean));
     const set = new Set();
-    years.forEach(yr => getSwedishHolidayDates(yr).forEach(k => set.add(k)));
+    if (showSwedishHolidays) {
+      years.forEach(yr => getSwedishHolidayDates(yr).forEach(k => set.add(k)));
+    }
+    if (showByggsemester) {
+      years.forEach(yr => getByggsemesterDates(yr).forEach(k => set.add(k)));
+    }
     return set;
-  }, [showSwedishHolidays, weeks]);
+  }, [showSwedishHolidays, showByggsemester, weeks]);
 
   const totalGridWidth = useMemo(
     () => weeks.reduce((acc, w) => acc + visibleDaysPerWeek(w).length * DAY_WIDTH, 0),
@@ -575,13 +625,13 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
       rows.push({ type: 'group', id: `group-${g.id}`, groupId: g.id, name: g.name, collapsed: g.collapsed });
       if (!g.collapsed) {
         g.personIds.forEach((personId) => {
-          const r = resources.find((res) => res.id === personId);
+          const r = filteredResources.find((res) => res.id === personId);
           if (r) rows.push({ type: 'person', id: r.id, personId: r.id, name: r.name, role: r.role });
         });
       }
     });
     return rows;
-  }, [isServiceMode, serviceGroups, resources]);
+  }, [isServiceMode, serviceGroups, filteredResources]);
 
   const visiblePersonRows = useMemo(
     () => leftPanelRows.filter((r) => r.type === 'person').map((r) => r.personId),
@@ -607,31 +657,14 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
   const listForRows = useMemo(() => {
     const personRows = isServiceMode
       ? leftPanelRows
-      : resources.map((r) => ({ id: r.id, type: 'resource', name: r.name, role: r.role, personId: r.id }));
-    return [
-      ...personRows,
-      { type: 'spacer', id: 'spacer-1' },
-      { type: 'divider', id: 'divider-customers' },
-    ];
-  }, [isServiceMode, leftPanelRows, resources]);
+      : filteredResources.map((r) => ({ id: r.id, type: 'resource', name: r.name, role: r.role, personId: r.id }));
+    const inlanadHeader = { type: 'inlanadHeader', id: 'inlanad-header', collapsed: inlanadCollapsed };
+    const inlanadItems = inlanadCollapsed ? [] : [1, 2, 3, 4, 5, 6].map((i) => ({ type: 'inlanadItem', id: `inlanad-${i}`, label: `Inlånad ${i}` }));
+    return [...personRows, inlanadHeader, ...inlanadItems];
+  }, [isServiceMode, leftPanelRows, filteredResources, inlanadCollapsed]);
 
-  /* Höjd på kundkolumnsblocket: rubrik + (max projekt + 1 rad för "nytt projekt"-raden) */
-  const customerColumnsHeight = useMemo(() => {
-    let maxProjects = 0;
-    customers.forEach((cust) => {
-      if (cust.collapsed !== true) {
-        const n = projects.filter((p) => p.customerId === cust.id).length;
-        maxProjects = Math.max(maxProjects, n);
-      }
-    });
-    return ROW_HEIGHT + (maxProjects + 1) * ROW_HEIGHT;
-  }, [customers, projects]);
-
-  /* Min bredd för scroll-innehållet: tidslinje eller kundkolumner, så att kunderna får plats till höger om dividern */
-  const scrollContentMinWidth = useMemo(
-    () => Math.max(totalGridWidth, customers.length * (DAY_WIDTH + CUSTOMER_COLUMN_NAME_MIN)),
-    [totalGridWidth, customers.length]
-  );
+  /* Min bredd för scroll-innehållet: endast tidslinjen (inga kundkolumner) */
+  const scrollContentMinWidth = totalGridWidth;
 
   listForRowsRef.current = listForRows;
   isServiceModeRef.current = isServiceMode;
@@ -1164,12 +1197,29 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
             })}
           </View>
         )}
+        <View style={styles.tabBarActionButtons}>
+          <Pressable
+            style={({ pressed }) => [styles.tabBarActionBtn, pressed && styles.tabBarActionBtnPressed]}
+            onPress={() => setResursbankModalVisible(true)}
+          >
+            <Ionicons name="people-outline" size={16} color="#2563eb" />
+            <Text style={styles.tabBarActionBtnText}>Resurs</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.tabBarActionBtn, pressed && styles.tabBarActionBtnPressed]}
+            onPress={() => setProjektModalVisible(true)}
+          >
+            <Ionicons name="folder-open-outline" size={16} color="#2563eb" />
+            <Text style={styles.tabBarActionBtnText}>Projekt</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.mainRow}>
         {/* Gantt: vänsterkolumn = Resurser/Projekt + lista, höger = kalender */}
         <View style={styles.ganttPanel}>
           <View style={styles.ganttToolbar}>
+            <Text style={styles.planeringCompanyLogo}>Wilzéns</Text>
             <Pressable style={styles.ganttToolbarBtn} onPress={() => setWeekOffset((o) => o - 1)}>
               <Ionicons name="chevron-back" size={20} color="#475569" />
             </Pressable>
@@ -1182,29 +1232,132 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
             <Text style={styles.ganttToolbarLabel}>
               {weeks.length > 0 && weeks[0].days[0]
                 ? weeks.length === 1
-                  ? `${weeks[0].days[0].toLocaleDateString('sv-SE', { month: 'short', year: 'numeric' })} – v.${weeks[0].weekNumber}`
-                  : `${weeks[0].days[0].toLocaleDateString('sv-SE', { month: 'short', year: 'numeric' })} – v.${weeks[0].weekNumber} … v.${weeks[weeks.length - 1].weekNumber} ${weeks[weeks.length - 1].days[0]?.getFullYear() ?? ''}`
+                  ? `Vecka ${weeks[0].weekNumber}, ${weeks[0].days[0].toLocaleDateString('sv-SE', { month: 'short', year: 'numeric' })}`
+                  : `v.${weeks[0].weekNumber} – v.${weeks[weeks.length - 1].weekNumber} ${weeks[weeks.length - 1].days[0]?.toLocaleDateString('sv-SE', { month: 'short', year: 'numeric' }) ?? ''}`
                 : 'Veckovy'}
             </Text>
             <View style={styles.ganttToolbarSpacer} />
-            <Pressable
-              style={[styles.ganttToolbarToggle, showWeekends && styles.ganttToolbarToggleActive]}
-              onPress={() => setShowWeekends((v) => !v)}
-            >
-              <Ionicons name="calendar-outline" size={16} color={showWeekends ? '#fff' : '#64748b'} />
-              <Text style={[styles.ganttToolbarToggleText, showWeekends && styles.ganttToolbarToggleTextActive]}>
-                Visa helger
-              </Text>
+            <Pressable style={[styles.ganttToolbarFilterBtn]} onPress={() => {}}>
+              <Ionicons name="filter-outline" size={18} color="#64748b" />
+              <Text style={styles.ganttToolbarFilterText}>Filter</Text>
             </Pressable>
-            <Pressable
-              style={[styles.ganttToolbarToggle, showSwedishHolidays && styles.ganttToolbarToggleActive]}
-              onPress={() => setShowSwedishHolidays((v) => !v)}
-            >
-              <Ionicons name="flag-outline" size={16} color={showSwedishHolidays ? '#fff' : '#64748b'} />
-              <Text style={[styles.ganttToolbarToggleText, showSwedishHolidays && styles.ganttToolbarToggleTextActive]}>
-                Svenska semesterdagar
-              </Text>
-            </Pressable>
+            <View style={styles.ganttToolbarSearchWrap}>
+              <Ionicons name="search-outline" size={18} color="#94a3b8" style={styles.ganttToolbarSearchIcon} />
+              <TextInput
+                style={styles.ganttToolbarSearchInput}
+                value={searchFilter}
+                onChangeText={setSearchFilter}
+                placeholder="Sök resurser eller projekt"
+                placeholderTextColor="#94a3b8"
+              />
+            </View>
+            <View style={styles.ganttToolbarViewToggles}>
+              {[
+                { key: 1, label: 'Dag' },
+                { key: 6, label: '6v' },
+                { key: 12, label: '12v' },
+                { key: 32, label: '32v' },
+              ].map(({ key, label }) => (
+                <Pressable
+                  key={key}
+                  style={[styles.ganttToolbarViewBtn, viewWeeksMode === key && styles.ganttToolbarViewBtnActive]}
+                  onPress={() => setViewWeeksMode(key)}
+                >
+                  <Text style={[styles.ganttToolbarViewBtnText, viewWeeksMode === key && styles.ganttToolbarViewBtnTextActive]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.ganttToolbarSettingsWrap}>
+              <Pressable
+                style={styles.ganttToolbarSettingsBtn}
+                onPress={() => setSettingsMenuVisible((v) => !v)}
+                {...(Platform.OS === 'web' ? { title: 'Inställningar' } : {})}
+              >
+                <Ionicons name="settings-outline" size={20} color="#64748b" />
+              </Pressable>
+              {settingsMenuVisible && (
+                <Modal visible transparent animationType="fade">
+                  <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsMenuVisible(false)} />
+                  <View style={styles.settingsDropdown} pointerEvents="box-none">
+                    <View style={styles.settingsDropdownBox}>
+                      <Text style={styles.settingsDropdownTitle}>Inställningar</Text>
+                      <Pressable
+                        style={styles.settingsDropdownRow}
+                        onPress={() => setShowWeekends((v) => !v)}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Ionicons name={showWeekends ? 'checkbox' : 'square-outline'} size={22} color={showWeekends ? '#2563eb' : '#94a3b8'} />
+                        <Text style={styles.settingsDropdownLabel}>Visa helger</Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.settingsDropdownRow}
+                        onPress={() => setShowSwedishHolidays((v) => !v)}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Ionicons name={showSwedishHolidays ? 'checkbox' : 'square-outline'} size={22} color={showSwedishHolidays ? '#2563eb' : '#94a3b8'} />
+                        <Text style={styles.settingsDropdownLabel}>Högtider</Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.settingsDropdownRow}
+                        onPress={() => setShowByggsemester((v) => !v)}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Ionicons name={showByggsemester ? 'checkbox' : 'square-outline'} size={22} color={showByggsemester ? '#2563eb' : '#94a3b8'} />
+                        <Text style={styles.settingsDropdownLabel}>Byggsemester (v.28–31)</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </Modal>
+              )}
+            </View>
+            <View style={styles.ganttToolbarActions}>
+              <Pressable
+                style={styles.ganttToolbarActionBtn}
+                onPress={() => {}}
+                {...(Platform.OS === 'web' ? { title: 'Anteckningar' } : {})}
+              >
+                <Ionicons name="document-text-outline" size={18} color="#64748b" />
+                <Text style={styles.ganttToolbarActionBtnText}>Anteckningar</Text>
+              </Pressable>
+              <Pressable
+                style={styles.ganttToolbarActionBtn}
+                onPress={() => setResursbankModalVisible(true)}
+                {...(Platform.OS === 'web' ? { title: 'Resurser' } : {})}
+              >
+                <Ionicons name="people-outline" size={18} color="#64748b" />
+                <Text style={styles.ganttToolbarActionBtnText}>Resurser</Text>
+              </Pressable>
+              <Pressable
+                style={styles.ganttToolbarActionBtn}
+                onPress={() => {}}
+                {...(Platform.OS === 'web' ? { title: 'Ledighet' } : {})}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#64748b" />
+                <Text style={styles.ganttToolbarActionBtnText}>Ledighet</Text>
+              </Pressable>
+              <Pressable
+                style={styles.ganttToolbarActionBtn}
+                onPress={() => setDelaUnderUppbyggnadVisible(true)}
+                {...(Platform.OS === 'web' ? { title: 'Dela' } : {})}
+              >
+                <Ionicons name="share-outline" size={18} color="#64748b" />
+                <Text style={styles.ganttToolbarActionBtnText}>Dela</Text>
+              </Pressable>
+              <Pressable
+                style={styles.ganttToolbarActionBtn}
+                onPress={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.print) {
+                    window.print();
+                  } else {
+                    Alert.alert('PDF', 'PDF-export kommer i en senare version.');
+                  }
+                }}
+                {...(Platform.OS === 'web' ? { title: 'Skriv ut PDF' } : {})}
+              >
+                <Ionicons name="document-outline" size={18} color="#64748b" />
+                <Text style={styles.ganttToolbarActionBtnText}>PDF</Text>
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView style={styles.ganttVerticalScroll} contentContainerStyle={styles.ganttVerticalScrollContent} showsVerticalScrollIndicator={true}>
@@ -1217,28 +1370,54 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                   <Text style={styles.ganttMonthLabel}>Månad</Text>
                 </View>
               </View>
-              <View style={[styles.ganttRow, styles.ganttHeaderRow, { height: HEADER_WEEK_ROW_HEIGHT + HEADER_DAYS_ROW_HEIGHT }]}>
-                <View style={[styles.ganttCorner, styles.ganttHeaderCell, styles.ganttCornerHeader, styles.ganttCornerHeaderCompact]}>
-                  <View style={styles.ganttCornerPersonalHeader}>
-                    <Text style={styles.ganttCornerPersonalLabel}>Personal</Text>
-                    <TouchableOpacity style={styles.ganttCornerAddBtn} onPress={() => setAddPersonalVisible(true)} activeOpacity={0.8}>
-                      <Ionicons name="person-add-outline" size={14} color="#fff" />
-                      <Text style={styles.ganttCornerAddBtnText}>Lägg till personal</Text>
-                    </TouchableOpacity>
-                  </View>
+              {/* Flikar Resurser / Projekt (som referensappen) */}
+              <View style={[styles.ganttRow, styles.ganttHeaderRow, styles.leftPanelTabsRow]}>
+                <View style={[styles.ganttCorner, styles.ganttHeaderCell, styles.ganttCornerHeaderCompact, styles.leftPanelTabsWrap]}>
+                  <Pressable
+                    style={[styles.leftPanelTab, leftPanelTab === 'resurser' && styles.leftPanelTabActive]}
+                    onPress={() => setLeftPanelTab('resurser')}
+                  >
+                    <Text style={[styles.leftPanelTabLabel, leftPanelTab === 'resurser' && styles.leftPanelTabLabelActive]}>Resurser</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.leftPanelTab, leftPanelTab === 'projekt' && styles.leftPanelTabActive]}
+                    onPress={() => setLeftPanelTab('projekt')}
+                  >
+                    <Text style={[styles.leftPanelTabLabel, leftPanelTab === 'projekt' && styles.leftPanelTabLabelActive]}>Projekt</Text>
+                  </Pressable>
                 </View>
               </View>
               <View style={styles.ganttBodyWrap}>
-                {listForRows.map((item, rowIndex) => {
+                {leftPanelTab === 'projekt' ? (
+                  <ScrollView style={styles.leftPanelProjectScroll} contentContainerStyle={styles.leftPanelProjectScrollContent} showsVerticalScrollIndicator>
+                    {projects.length === 0 ? (
+                      <Text style={styles.leftPanelProjectEmpty}>Inga projekt. Lägg till via Projekt i verktygsfältet.</Text>
+                    ) : (
+                      projects.map((p) => {
+                        const cust = customers.find((c) => c.id === p.customerId);
+                        const label = [p.code, p.name].filter(Boolean).join(' – ') || p.name || '–';
+                        const sub = cust?.name;
+                        return (
+                          <View key={p.id} style={styles.leftPanelProjectRow}>
+                            <Text style={styles.leftPanelProjectRowLabel} numberOfLines={1}>{label}</Text>
+                            {sub ? <Text style={styles.leftPanelProjectRowSub} numberOfLines={1}>{sub}</Text> : null}
+                          </View>
+                        );
+                      })
+                    )}
+                  </ScrollView>
+                ) : (
+                listForRows.map((item, rowIndex) => {
                   const isGroupRow = item.type === 'group';
-                  const isSpacer = item.type === 'spacer';
-                  const isDivider = item.type === 'divider';
-                  const isResourceRow = !isGroupRow && !isSpacer && !isDivider && (item.type === 'resource' || item.type === 'person');
+                  const isSpacer = false;
+                  const isDivider = false;
+                  const isInlanadHeader = item.type === 'inlanadHeader';
+                  const isInlanadItem = item.type === 'inlanadItem';
+                  const isResourceRow = !isGroupRow && !isInlanadHeader && !isInlanadItem && (item.type === 'resource' || item.type === 'person');
                   const resourceId = isResourceRow ? (item.personId ?? item.id) : null;
                   const isDragging = isResourceRow && dragResourceId === (item.personId ?? item.id);
                   const isCustomerGroup = isGroupRow && customers.some((c) => c.id === item.groupId);
-                  const spacerIndex = listForRows.findIndex((r) => r.type === 'spacer');
-                  const isLastPersonRow = spacerIndex >= 0 && rowIndex === spacerIndex - 1 && isResourceRow;
+                  const isLastPersonRow = rowIndex === listForRows.length - 1;
                   return (
                     <View
                       key={item.id}
@@ -1249,6 +1428,8 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                         isResourceRow && hoveredCornerRow === rowIndex && !dragResourceId && styles.ganttRowResourceHover,
                         isDragging && styles.ganttRowSpacer,
                         isGroupRow && styles.ganttRowGroupHeader,
+                        isInlanadHeader && styles.ganttRowGroupHeader,
+                        isInlanadItem && styles.ganttRowResource,
                         isSpacer && styles.ganttRowSpacerBg,
                         isDivider && styles.ganttRowDivider,
                       ]}
@@ -1257,9 +1438,10 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                         style={[
                           styles.ganttCorner,
                           styles.ganttCornerBody,
-                          hoveredCornerRow === rowIndex && !isDragging && !isGroupRow && !isSpacer && !isDivider && styles.ganttCornerHover,
+                          hoveredCornerRow === rowIndex && !isDragging && !isGroupRow && !isSpacer && !isDivider && !isInlanadHeader && styles.ganttCornerHover,
                           isResourceRow && !isDragging && styles.ganttCornerDraggable,
                           isGroupRow && styles.ganttCornerGroupHeader,
+                          isInlanadHeader && styles.ganttCornerGroupHeader,
                           isLastPersonRow && styles.ganttCornerLastRowBottom,
                           isSpacer && styles.ganttCornerNoBorder,
                           isDivider && styles.ganttCornerDivider,
@@ -1276,6 +1458,19 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           <View style={styles.ganttCornerNameRow} />
                         ) : isDivider ? (
                           <View style={styles.ganttCornerNameRow} />
+                        ) : isInlanadHeader ? (
+                          <Pressable
+                            style={styles.ganttCornerNameRow}
+                            onPress={() => setInlanadCollapsed((c) => !c)}
+                          >
+                            <Ionicons name={item.collapsed ? 'chevron-forward' : 'chevron-down'} size={16} color="#64748b" style={{ marginRight: 6 }} />
+                            <Text style={styles.ganttGroupHeaderText} numberOfLines={1}>Inlånad</Text>
+                          </Pressable>
+                        ) : isInlanadItem ? (
+                          <View style={styles.ganttCornerNameRow}>
+                            <View style={styles.ganttCornerAvatarPlaceholder} />
+                            <Text style={styles.listRowName} numberOfLines={1}>{item.label}</Text>
+                          </View>
                         ) : isGroupRow ? (
                           <Pressable
                             style={styles.ganttCornerNameRow}
@@ -1286,32 +1481,30 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           </Pressable>
                         ) : (
                           <View style={styles.ganttCornerNameRow}>
+                            <View style={styles.ganttCornerAvatar}>
+                              <Text style={styles.ganttCornerAvatarText}>{getInitials(item.name)}</Text>
+                            </View>
                             <View style={styles.ganttCornerNameBlock}>
-                              <Text style={styles.listRowName} numberOfLines={1}>{item.name}</Text>
-                              {item.role ? <Text style={styles.listRowMeta} numberOfLines={1}>{item.role}</Text> : null}
+                              <View style={styles.ganttCornerNameAndRole}>
+                                <Text style={styles.listRowName} numberOfLines={1}>{item.name}</Text>
+                                {item.role ? (
+                                  <View style={styles.listRowRolePill}>
+                                    <Text style={styles.listRowRolePillText} numberOfLines={1}>{item.role}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
                             </View>
                           </View>
                         )}
                       </View>
                     </View>
                   );
-                })}
-              </View>
-              {/* Under divider: kompakt rad "Kunder" + knappar, sedan tom yta så höjden matchar kundkolumnerna */}
-              <View style={[styles.customerColumnsLeftSpacer, { height: customerColumnsHeight }]}>
-                <View style={styles.kunderCompactRow}>
-                  <Text style={styles.kunderCompactLabel}>Kunder</Text>
-                  <View style={styles.ganttCornerAddBtnRow}>
-                    <TouchableOpacity style={styles.ganttCornerAddBtnSmall} onPress={() => setAddCustomerVisible(true)} activeOpacity={0.8}>
-                      <Ionicons name="business-outline" size={12} color="#fff" />
-                      <Text style={styles.ganttCornerAddBtnTextSmall}>Lägg till kund</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                })
+                )}
               </View>
             </View>
 
-            {/* Scrollbar tidslinje + kundkolumner till höger om dividern */}
+            {/* Scrollbar tidslinje */}
             <ScrollView horizontal style={styles.ganttScroll} contentContainerStyle={[styles.ganttScrollContent, { minWidth: scrollContentMinWidth }]} showsHorizontalScrollIndicator={true}>
               <View style={styles.ganttScrollInner}>
                 <View style={[styles.ganttGrid, { minWidth: totalGridWidth }]}>
@@ -1352,12 +1545,14 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           isFirstWeek && styles.ganttWeekNumFirst,
                         ]}
                       >
-                        <Text style={styles.ganttWeekNumText}>v.{week.weekNumber}</Text>
+                        <Text style={styles.ganttWeekNumText}>
+                          Vecka {week.weekNumber}, {week.days[0]?.toLocaleDateString('sv-SE', { month: 'short', year: 'numeric' }) ?? ''}
+                        </Text>
                       </View>
                       <View style={[styles.ganttDaysRow, { height: HEADER_DAYS_ROW_HEIGHT }]}>
                         {visibleDays.map((day, dayIndex) => {
                           const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-                          const isHoliday = showSwedishHolidays && holidayDates.has(dateToKey(day));
+                          const isHoliday = holidayDates.has(dateToKey(day));
                           const isLastInWeek = dayIndex === visibleDays.length - 1;
                           return (
                             <View
@@ -1383,14 +1578,14 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
               <View style={styles.ganttBodyWrap}>
               {listForRows.map((item, rowIndex) => {
                 const isGroupRow = item.type === 'group';
-                const isSpacer = item.type === 'spacer';
-                const isDivider = item.type === 'divider';
-                const isResourceRow = !isGroupRow && !isSpacer && !isDivider && (item.type === 'resource' || item.type === 'person');
+                const isInlanadHeader = item.type === 'inlanadHeader';
+                const isInlanadItem = item.type === 'inlanadItem';
+                const isResourceRow = !isGroupRow && !isInlanadHeader && !isInlanadItem && (item.type === 'resource' || item.type === 'person');
                 const resourceId = isResourceRow ? (item.personId ?? item.id) : null;
                 const isDragging = isResourceRow && dragResourceId === (item.personId ?? item.id);
-                const spacerIndex = listForRows.findIndex((r) => r.type === 'spacer');
-                const isLastPersonRow = spacerIndex >= 0 && rowIndex === spacerIndex - 1 && isResourceRow;
-                const isSepRow = isSpacer || isDivider;
+                const isLastPersonRow = rowIndex === listForRows.length - 1;
+                const isSepRow = isInlanadHeader || isInlanadItem;
+                const isDivider = item.type === 'divider';
                 return (
                   <React.Fragment key={item.id}>
                     <View
@@ -1401,9 +1596,9 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                         isResourceRow && hoveredCornerRow === rowIndex && !dragResourceId && styles.ganttRowResourceHover,
                         isDragging && styles.ganttRowSpacer,
                         isGroupRow && styles.ganttRowGroupHeader,
-                        isSpacer && styles.ganttRowSpacerBg,
-                        isDivider && styles.ganttRowDivider,
-                        isDivider && { minWidth: totalGridWidth },
+                        isInlanadHeader && styles.ganttRowGroupHeader,
+                        isInlanadItem && styles.ganttRowResource,
+                        isSepRow && styles.ganttRowSpacerBg,
                       ]}
                       {...(Platform.OS === 'web' ? { dataSet: { rowindex: String(rowIndex) } } : {})}
                     >
@@ -1423,7 +1618,7 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           <View style={styles.ganttDaysRow}>
                             {visibleDays.map((day, dayIndex) => {
                               const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-                              const isHoliday = showSwedishHolidays && holidayDates.has(dateToKey(day));
+                              const isHoliday = holidayDates.has(dateToKey(day));
                               const isLastInWeek = dayIndex === visibleDays.length - 1;
                               const dateKey = dateToKey(day);
                               const hovered = Platform.OS === 'web' && hoveredCell?.rowIndex === rowIndex && hoveredCell?.dateKey === dateKey;
@@ -1495,7 +1690,7 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
               })}
               {isServiceMode && totalGridWidth > 0 && gridStartKey && (() => {
                 const personRowCount = (() => {
-                  const idx = listForRows.findIndex((r) => r.type === 'spacer');
+                  const idx = listForRows.findIndex((r) => r.type === 'inlanadHeader' || r.type === 'spacer');
                   return idx >= 0 ? idx : listForRows.length;
                 })();
                 return (
@@ -1521,7 +1716,8 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                     const width = numDays * DAY_WIDTH;
                     const top = rowIndexInList * ROW_HEIGHT;
                     const color = customerColorMap[a.customerId] || '#94a3b8';
-                    const projectName = projects.find((p) => p.id === a.projectId)?.name || 'Projekt';
+                    const proj = projects.find((p) => p.id === a.projectId);
+                    const projectLabel = proj ? [proj.code, proj.name].filter(Boolean).join(' ') || proj.name || 'Projekt' : 'Projekt';
                     return (
                       <View
                         key={a.id}
@@ -1530,116 +1726,37 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
                           { left, width, top, height: ROW_HEIGHT, backgroundColor: color },
                           Platform.OS === 'web' && { cursor: blockInteraction?.assignmentId === a.id ? 'grabbing' : 'grab' },
                         ]}
-                        {...(Platform.OS === 'web' ? { title: projectName } : {})}
+                        {...(Platform.OS === 'web' ? { title: projectLabel } : {})}
                         onPointerDown={Platform.OS === 'web' ? (e) => handleServiceBlockPointerDown(e, a, left, width) : undefined}
                       >
-                        <Text style={styles.serviceBlockText} numberOfLines={1}>{projectName}</Text>
+                        <Text style={styles.serviceBlockText} numberOfLines={1}>{projectLabel}</Text>
                       </View>
                     );
                   })}
                 </View>
               );
               })()}
-            </View>
-            </View>
-            {/* Kundkolumner till höger om dividern (samma scrollbara yta som tidslinjen) */}
-            <View style={[styles.customerColumnsWrap, { minHeight: customerColumnsHeight, minWidth: customers.length * (DAY_WIDTH + CUSTOMER_COLUMN_NAME_MIN) }]}>
-              {customers.map((cust) => {
-                const custProjects = cust.collapsed !== true ? projects.filter((p) => p.customerId === cust.id) : [];
-                const label = [cust.number, cust.name].filter(Boolean).join(' - ') || cust.name || 'Kund';
-                const nextCode = getNextProjectCode(cust, custProjects) || '–';
-                const draftName = draftProjectNameByCustomer[cust.id] ?? '';
+              {gridStartKey && (() => {
+                const todayOff = dayOffsetFromGridStart(dateToKey(today));
+                const numDays = totalGridWidth / DAY_WIDTH;
+                if (todayOff < 0 || todayOff >= numDays) return null;
                 return (
-                  <View key={cust.id} style={styles.customerColumn}>
-                    <View
-                      style={[
-                        styles.customerColumnHeader,
-                        Platform.OS === 'web' && hoveredCustomerId === cust.id && styles.customerColumnHeaderHover,
-                      ]}
-                      onMouseEnter={Platform.OS === 'web' ? () => setHoveredCustomerId(cust.id) : undefined}
-                      onMouseLeave={Platform.OS === 'web' ? () => setHoveredCustomerId(null) : undefined}
-                      onContextMenu={Platform.OS === 'web' ? (e) => { e.preventDefault(); setCustomerContextMenu({ customerId: cust.id, x: e.clientX, y: e.clientY }); } : undefined}
-                      onLongPress={Platform.OS !== 'web' ? () => setCustomerContextMenu({ customerId: cust.id }) : undefined}
-                    >
-                      <Text style={styles.customerColumnHeaderText} numberOfLines={2}>{label}</Text>
-                    </View>
-                    {custProjects.map((p) => {
-                      const isHovered = Platform.OS === 'web' && hoveredProjectId === p.id;
-                      const isEditingName = editingProjectId === p.id;
-                      return (
-                        <View
-                          key={p.id}
-                          style={[styles.customerColumnProjectRow, isHovered && styles.customerColumnProjectRowHover]}
-                          onMouseEnter={Platform.OS === 'web' ? () => setHoveredProjectId(p.id) : undefined}
-                          onMouseLeave={Platform.OS === 'web' ? () => setHoveredProjectId(null) : undefined}
-                          onContextMenu={Platform.OS === 'web' ? (e) => { e.preventDefault(); setProjectContextMenu({ projectId: p.id, x: e.clientX, y: e.clientY }); } : undefined}
-                          onLongPress={Platform.OS !== 'web' ? () => setProjectContextMenu({ projectId: p.id }) : undefined}
-                        >
-                          <View style={styles.customerColumnCellCode}>
-                            <Text style={styles.customerColumnCellText} numberOfLines={1}>{p.code ?? '–'}</Text>
-                          </View>
-                          <View style={styles.customerColumnCellName}>
-                            {isEditingName ? (
-                              <TextInput
-                                ref={inlineProjectNameInputRef}
-                                style={styles.customerColumnNameInput}
-                                value={editingProjectName}
-                                onChangeText={setEditingProjectName}
-                                onBlur={() => {
-                                  const projectId = editingProjectId;
-                                  const trimmed = (editingProjectName || '').trim();
-                                  setEditingProjectId(null);
-                                  setEditingProjectName('');
-                                  if (projectId) {
-                                    setProjects((prev) => prev.map((pr) => pr.id === projectId ? { ...pr, name: trimmed || pr.name || '–' } : pr));
-                                  }
-                                }}
-                                onSubmitEditing={() => inlineProjectNameInputRef.current?.blur()}
-                                selectTextOnFocus
-                                autoFocus
-                              />
-                            ) : (
-                              <Pressable
-                                style={styles.customerColumnNamePressable}
-                                onPress={() => {
-                                  setEditingProjectId(p.id);
-                                  setEditingProjectName(p.name ?? '');
-                                }}
-                              >
-                                <Text style={styles.customerColumnCellText} numberOfLines={1}>{p.name ?? '–'}</Text>
-                              </Pressable>
-                            )}
-                          </View>
-                        </View>
-                      );
-                    })}
-                    {/* Alltid en rad med nästa löpnummer + fält för projektnamn */}
-                    <View style={styles.customerColumnProjectRow}>
-                      <View style={styles.customerColumnCellCode}>
-                        <Text style={[styles.customerColumnCellText, styles.customerColumnNextCodeText]} numberOfLines={1}>{nextCode}</Text>
-                      </View>
-                      <View style={styles.customerColumnCellName}>
-                        <TextInput
-                          style={styles.customerColumnNameInput}
-                          value={draftName}
-                          onChangeText={(text) => setDraftProjectNameByCustomer((prev) => ({ ...prev, [cust.id]: text }))}
-                          placeholder="Projektnamn..."
-                          placeholderTextColor="#94a3b8"
-                          onSubmitEditing={() => {
-                            if (draftName.trim()) addProjectForCustomer(cust.id, draftName.trim());
-                          }}
-                          onBlur={() => {
-                            if (draftName.trim()) addProjectForCustomer(cust.id, draftName.trim());
-                          }}
-                        />
-                      </View>
-                    </View>
-                  </View>
+                  <View
+                    style={[
+                      styles.ganttTodayLine,
+                      {
+                        left: todayOff * DAY_WIDTH,
+                        top: HEADER_TOTAL_HEIGHT,
+                        height: listForRows.length * ROW_HEIGHT,
+                      },
+                    ]}
+                    pointerEvents="none"
+                  />
                 );
-              })}
+              })()}
             </View>
             </View>
-            {/* Idag-linje kan läggas till med absolut position om önskat */}
+          </View>
           </ScrollView>
           </View>
           </ScrollView>
@@ -2089,6 +2206,53 @@ export default function PlaneringView({ companyId, onActiveTabName }) {
         onClose={() => { setEditPersonVisible(false); setEditPersonId(null); }}
         onSave={saveEditPerson}
       />
+
+      <ResursbankModal
+        visible={resursbankModalVisible}
+        onClose={() => setResursbankModalVisible(false)}
+        resources={resources}
+        onAddPerson={() => {
+          setResursbankModalVisible(false);
+          setAddPersonalVisible(true);
+        }}
+        onEditPerson={(resourceId) => {
+          setResursbankModalVisible(false);
+          openEditPersonModal(resourceId);
+        }}
+      />
+
+      {/* Dela – funktion under uppbyggnad */}
+      <Modal visible={delaUnderUppbyggnadVisible} transparent animationType="fade" onRequestClose={() => setDelaUnderUppbyggnadVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setDelaUnderUppbyggnadVisible(false)} />
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Dela</Text>
+            <Text style={styles.placeholderText}>Funktion under uppbyggnad.</Text>
+            <TouchableOpacity style={styles.modalBtnSecondary} onPress={() => setDelaUnderUppbyggnadVisible(false)}>
+              <Text style={styles.modalBtnSecondaryText}>Stäng</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Placeholder: Projekt-modal (kan utökas senare) */}
+      <Modal visible={projektModalVisible} transparent animationType="fade" onRequestClose={() => setProjektModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.projektModalBox}>
+            <View style={[styles.modalBanner, { backgroundColor: MODAL_THEME?.banner?.backgroundColor || '#1e293b' }]}>
+              <Text style={styles.modalBannerTitle}>Projekt</Text>
+            </View>
+            <View style={styles.projektModalBody}>
+              <Text style={styles.placeholderText}>Projekthantering kommer att kopplas hit.</Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.modalFooterBtnSecondary} onPress={() => setProjektModalVisible(false)}>
+                <Text style={styles.modalFooterBtnSecondaryText}>Stäng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2189,6 +2353,30 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY_TOPBAR.underlineColor,
     borderRadius: PRIMARY_TOPBAR.underlineBorderRadius,
   },
+  tabBarActionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 12,
+    paddingLeft: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(0,0,0,0.08)',
+  },
+  tabBarActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  tabBarActionBtnPressed: { opacity: 0.8 },
+  tabBarActionBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -2225,8 +2413,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   leftPanelTab: {
-    flex: 1,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     alignItems: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
@@ -2242,6 +2430,46 @@ const styles = StyleSheet.create({
   leftPanelTabLabelActive: {
     color: '#1e40af',
     fontWeight: '600',
+  },
+  leftPanelTabsRow: {
+    minHeight: HEADER_WEEK_ROW_HEIGHT + HEADER_DAYS_ROW_HEIGHT,
+  },
+  leftPanelTabsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'nowrap',
+  },
+  leftPanelProjectScroll: {
+    flex: 1,
+    minHeight: 120,
+  },
+  leftPanelProjectScrollContent: {
+    paddingVertical: 8,
+    paddingBottom: 24,
+  },
+  leftPanelProjectEmpty: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+  },
+  leftPanelProjectRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  leftPanelProjectRowLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#0f172a',
+  },
+  leftPanelProjectRowSub: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
   },
   leftPanelContent: {
     flex: 1,
@@ -2313,6 +2541,49 @@ const styles = StyleSheet.create({
   },
   listRowMetaDragging: {
     color: '#475569',
+  },
+  ganttCornerAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#94a3b8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+    flexShrink: 0,
+  },
+  ganttCornerAvatarText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  ganttCornerAvatarPlaceholder: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#e2e8f0',
+    marginRight: 8,
+    flexShrink: 0,
+  },
+  ganttCornerNameAndRole: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    flex: 1,
+    minWidth: 0,
+  },
+  listRowRolePill: {
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    backgroundColor: '#e2e8f0',
+    maxWidth: 100,
+  },
+  listRowRolePillText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#64748b',
   },
   modalOverlay: {
     flex: 1,
@@ -2573,6 +2844,13 @@ const styles = StyleSheet.create({
     minHeight: 0,
     backgroundColor: '#fff',
   },
+  planeringCompanyLogo: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#b91c1c',
+    marginRight: 16,
+    ...(Platform.OS === 'web' ? { fontFamily: 'Georgia, serif' } : {}),
+  },
   ganttToolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2601,6 +2879,66 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 16,
   },
+  ganttToolbarFilterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  ganttToolbarFilterText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  ganttToolbarSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 200,
+    maxWidth: 280,
+    height: 36,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  ganttToolbarSearchIcon: {
+    marginRight: 8,
+  },
+  ganttToolbarSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#334155',
+    padding: 0,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  ganttToolbarViewToggles: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  ganttToolbarViewBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  ganttToolbarViewBtnActive: {
+    backgroundColor: '#2563eb',
+  },
+  ganttToolbarViewBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  ganttToolbarViewBtnTextActive: {
+    color: '#fff',
+  },
   ganttToolbarToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2624,6 +2962,74 @@ const styles = StyleSheet.create({
   },
   ganttToolbarToggleTextActive: {
     color: '#fff',
+  },
+  ganttToolbarSettingsWrap: {
+    position: 'relative',
+  },
+  ganttToolbarSettingsBtn: {
+    padding: 8,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  settingsDropdown: {
+    flex: 1,
+    alignItems: 'flex-end',
+    paddingTop: 52,
+    paddingRight: 16,
+  },
+  settingsDropdownBox: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    minWidth: 220,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.12)' } : { elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8 }),
+  },
+  settingsDropdownTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    marginBottom: 4,
+  },
+  settingsDropdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  settingsDropdownLabel: {
+    fontSize: 14,
+    color: '#334155',
+  },
+  ganttToolbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 12,
+    paddingLeft: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(0,0,0,0.08)',
+  },
+  ganttToolbarActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  ganttToolbarActionBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
   },
   ganttVerticalScroll: {
     flex: 1,
@@ -2658,6 +3064,13 @@ const styles = StyleSheet.create({
   },
   ganttGrid: {
     minWidth: '100%',
+    position: 'relative',
+  },
+  ganttTodayLine: {
+    position: 'absolute',
+    width: 2,
+    backgroundColor: '#dc2626',
+    zIndex: 5,
   },
   ganttBodyWrap: {
     position: 'relative',

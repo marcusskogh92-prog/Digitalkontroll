@@ -1062,10 +1062,32 @@ export async function getDriveItemPreviewUrl(siteId, itemId) {
 }
 
 export async function moveDriveItemByPath(siteId, itemPath, newParentPath) {
-  const item = await getDriveItemByPath(siteId, itemPath);
+  let item;
+  let parentItem;
+  try {
+    item = await getDriveItemByPath(siteId, itemPath);
+  } catch (e) {
+    const is404 = e?.status === 404 || (e?.message && String(e.message).includes('404'));
+    throw new Error(is404
+      ? 'Projektmappen hittades inte i SharePoint. Kontrollera att sökvägen stämmer.'
+      : (e?.message || 'Kunde inte hitta projektmappen.'));
+  }
+  if (!item?.id) {
+    throw new Error('Projektmappen hittades inte i SharePoint. Kontrollera att sökvägen stämmer.');
+  }
   const parentClean = String(newParentPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
-  const parentItem = await getDriveItemByPath(siteId, parentClean);
-  return await moveDriveItemById(siteId, item?.id, parentItem?.id);
+  try {
+    parentItem = await getDriveItemByPath(siteId, parentClean);
+  } catch (e) {
+    const is404 = e?.status === 404 || (e?.message && String(e.message).includes('404'));
+    throw new Error(is404
+      ? 'Målplatsen (mappen att flytta till) hittades inte i SharePoint. Kontrollera att platsen finns.'
+      : (e?.message || 'Kunde inte hitta målplatsen.'));
+  }
+  if (!parentItem?.id) {
+    throw new Error('Målplatsen (mappen att flytta till) hittades inte i SharePoint. Kontrollera att platsen finns.');
+  }
+  return await moveDriveItemById(siteId, item.id, parentItem.id);
 }
 
 async function getSiteDriveId(siteId) {

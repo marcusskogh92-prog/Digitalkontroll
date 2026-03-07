@@ -570,6 +570,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         title: '',
         type: '',
         description: '',
+        location: '',
         allowMulti: false,
         baseNumber: 1,
         startTime: '',
@@ -596,6 +597,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         title: String(it?.title || ''),
         type: String(it?.type || it?.customType || 'Valfritt möte'),
         description: String(it?.description || ''),
+        location: String(it?.location || '').trim(),
         allowMulti: false,
         baseNumber: 1,
         startTime: String(it?.startTime || '').trim(),
@@ -650,7 +652,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       startTime,
       endTime,
       description,
-      location: type,
+      location: String(it?.location || '').trim() || type,
       attendees,
     });
 
@@ -812,6 +814,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     const ty = String(p.type || p.title || '').trim();
     const t = String(p.title || '').trim();
     const desc = String(p.description || '').trim();
+    const location = String(p.location || '').trim();
     const participants = normalizeParticipants(p.participants);
     const startTime = String(p?.startTime || '').trim();
     const endTime = String(p?.endTime || '').trim();
@@ -854,6 +857,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
           type: ty,
           customType: ty,
           description: desc,
+          location,
           participants: itemParticipants,
           startTime: itemStartTime,
           endTime: itemEndTime,
@@ -887,6 +891,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         type: ty,
         customType: ty,
         description: desc,
+        location,
         participants,
         startTime,
         endTime,
@@ -929,6 +934,7 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         type: ty,
         customType: ty,
         description: desc,
+        location,
         participants,
         startTime,
         endTime,

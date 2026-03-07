@@ -10,13 +10,15 @@ function safeText(v) {
 }
 
 const ALL_TYPES = ['building_part', 'account', 'category', 'manual'];
-const ALL_COLUMNS = ['bd', 'name', 'type', 'suppliers', 'request', 'status'];
+const ALL_COLUMNS = ['bd', 'name', 'konto', 'kategori', 'status', 'ansvarig', 'request'];
+
+const ALL_SORT_KEYS = ['type', 'nr', 'name', 'bd', 'konto', 'kategori', 'status', 'ansvarig', 'request'];
 
 const DEFAULT_PREFS = {
   visibleColumns: ALL_COLUMNS,
-  sortKey: 'type', // 'type' | 'nr' | 'name'
-  sortDir: 'asc', // 'asc' | 'desc'
-  typeFilter: ALL_TYPES, // empty means "all" in UI, but we keep full list
+  sortKey: 'nr',
+  sortDir: 'asc',
+  typeFilter: ALL_TYPES,
 };
 
 function makeStorageKey({ uid, companyId, projectId }) {
@@ -62,7 +64,7 @@ function normalizePrefs(prefs) {
   const cols = Array.isArray(inObj.visibleColumns) ? inObj.visibleColumns.map(safeText).filter(Boolean) : [];
   const visibleColumns = cols.length ? cols.filter((c) => ALL_COLUMNS.includes(c)) : DEFAULT_PREFS.visibleColumns;
 
-  const sortKey = ['type', 'nr', 'name'].includes(safeText(inObj.sortKey)) ? safeText(inObj.sortKey) : DEFAULT_PREFS.sortKey;
+  const sortKey = ALL_SORT_KEYS.includes(safeText(inObj.sortKey)) ? safeText(inObj.sortKey) : DEFAULT_PREFS.sortKey;
   const sortDir = ['asc', 'desc'].includes(safeText(inObj.sortDir)) ? safeText(inObj.sortDir) : DEFAULT_PREFS.sortDir;
 
   const typesRaw = Array.isArray(inObj.typeFilter) ? inObj.typeFilter.map(safeText).filter(Boolean) : [];

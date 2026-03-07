@@ -26,14 +26,14 @@ export default function CompanyAIPromptsContent({ companyId }) {
   if (!cid) {
     return (
       <View style={{ padding: 24 }}>
-        <Text style={{ fontSize: 13, color: '#64748b' }}>Välj ett företag.</Text>
+        <Text style={{ fontSize: 12, color: '#64748b' }}>Välj ett företag.</Text>
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
-      <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 16, lineHeight: 20 }}>
+      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 16, lineHeight: 20 }}>
         Företagets extra instruktioner till AI per analystyp. Sparas företagsbaserat. Hantera flera prompter per kategori genom att öppna en kategori nedan.
       </Text>
 
@@ -46,8 +46,8 @@ export default function CompanyAIPromptsContent({ companyId }) {
             backgroundColor: '#fff',
             borderWidth: 1,
             borderColor: '#E2E8F0',
-            borderRadius: 12,
-            padding: 16,
+            borderRadius: 8,
+            padding: 12,
             marginBottom: 12,
             flexDirection: 'row',
             alignItems: 'center',
@@ -56,11 +56,11 @@ export default function CompanyAIPromptsContent({ companyId }) {
           }}
         >
           <View style={{ flex: 1, minWidth: 0 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-              <Ionicons name="document-text-outline" size={20} color="#475569" style={{ marginRight: 10 }} />
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#1e293b' }}>{label}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <Ionicons name="document-text-outline" size={18} color="#475569" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>{label}</Text>
             </View>
-            <Text style={{ fontSize: 13, color: '#64748b', lineHeight: 18 }}>{description}</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', lineHeight: 18 }}>{description}</Text>
           </View>
           <Ionicons name="chevron-forward" size={22} color="#94a3b8" />
         </TouchableOpacity>

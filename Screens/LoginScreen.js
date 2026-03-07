@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { useEffect, useRef, useState } from 'react';
 import { Image, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
-import { getLoginPageBackgroundStyle, LOGIN_CARD_STYLE } from '../constants/backgroundTheme';
+import { LOGIN_CARD_STYLE } from '../constants/backgroundTheme';
 import { auth, fetchCompanyProfile, fetchUserProfile, signInEmailPassword } from '../components/firebase';
 
 export default function LoginScreen() {
@@ -189,9 +189,16 @@ export default function LoginScreen() {
   const isWeb = Platform.OS === 'web';
   if (isWeb) {
     return (
-      <View style={[styles.bg, getLoginPageBackgroundStyle()]}>
-        <KeyboardAvoidingView style={[styles.container, { flex: 1 }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={[styles.contentWrapper, LOGIN_CARD_STYLE]}>
+      <View style={styles.bg}>
+        <ImageBackground
+          source={require('../assets/images/bakgrundsbild-inlogg.png')}
+          style={[StyleSheet.absoluteFill, styles.bgImageWeb]}
+          imageStyle={styles.bgImageWeb}
+          resizeMode="cover"
+        >
+          <View style={styles.overlayWeb} />
+          <KeyboardAvoidingView style={[styles.container, { flex: 1 }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={[styles.contentWrapper, LOGIN_CARD_STYLE]}>
             <Image
               source={require('../assets/images/digitalkontroll.lang.transparant.jpg')}
               style={styles.logo}
@@ -258,8 +265,9 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
           {/* Konto skapas av administratör – ingen självregistrering */}
-          </View>
-        </KeyboardAvoidingView>
+            </View>
+          </KeyboardAvoidingView>
+        </ImageBackground>
       </View>
     );
   }

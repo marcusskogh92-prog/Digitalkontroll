@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { formatPersonName } from './formatPersonName';
 import { MODAL_DESIGN_2026 } from '../constants/modalDesign2026';
@@ -8,6 +8,11 @@ import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../constants/tableLay
 
 /** Fast bredd för Status-kolumnen längst till höger (kebab borttagen – endast högerklick/dubbelklick som Leverantörer) */
 const STATUS_COLUMN_WIDTH = 80;
+
+/** Justerbara kolumner (golden rules) – endast på webb */
+const DEFAULT_COLUMN_WIDTHS = { name: 180, email: 220, role: 100 };
+const MIN_COLUMN_WIDTH = 72;
+const RESIZE_HANDLE_WIDTH = 6;
 
 const isMemberDisabled = (member) => {
   if (!member) return false;
@@ -37,6 +42,15 @@ const ROLE_FILTERS = [
 const isAdminRole = (member) => {
   const r = String(member?.role || '').trim();
   return r === 'admin' || r === 'superadmin';
+};
+
+/** Visar förnamn + efternamn när de finns, annars displayName/email. */
+const getDisplayNameForUser = (u) => {
+  if (!u) return '';
+  const first = String(u.firstName ?? '').trim();
+  const last = String(u.lastName ?? '').trim();
+  if (first || last) return [first, last].filter(Boolean).join(' ').trim();
+  return formatPersonName(u.displayName || u.email || '') || '';
 };
 
 export default function UsersTable({
@@ -72,6 +86,43 @@ export default function UsersTable({
   const [lastClickKey, setLastClickKey] = useState(null);
   const [lastClickAt, setLastClickAt] = useState(0);
 
+  const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+
+  const w = columnWidths;
+  const col = (key) => ({ width: w[key], minWidth: w[key], flexShrink: 0 });
+  const gapBetweenCols = isWeb ? RESIZE_HANDLE_WIDTH : 0;
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const clientX = e.clientX ?? 0;
+      const delta = clientX - startX;
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: clientX, startWidth: newWidth };
+    };
+    const onUp = () => {
+      resizeRef.current = { column: null, startX: 0, startWidth: 0 };
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
   const roleFiltered = useMemo(() => {
     const arr = Array.isArray(users) ? users : [];
     if (roleFilter === 'all') return arr;
@@ -84,7 +135,7 @@ export default function UsersTable({
     const q = normalizeText(search).trim();
     if (!q) return arr;
     return arr.filter((u) => {
-      const name = normalizeText(formatPersonName(u?.displayName || u?.email || ''));
+      const name = normalizeText(getDisplayNameForUser(u));
       const email = normalizeText(u?.email || '');
       return name.includes(q) || email.includes(q);
     });
@@ -99,7 +150,7 @@ export default function UsersTable({
       if (col === 'email') return String(u?.email || '');
       if (col === 'role') return getRoleLabel(u);
       if (col === 'status') return isMemberDisabled(u) ? 'Inaktiv' : 'Aktiv';
-      return String(formatPersonName(u?.displayName || u?.email || '') || '');
+      return String(getDisplayNameForUser(u) || '');
     };
 
     arr.sort((a, b) => {
@@ -128,7 +179,7 @@ export default function UsersTable({
       if (Platform.OS !== 'web') {
         const u = user || null;
         if (!u) return;
-        Alert.alert('Användare', String(u?.displayName || u?.email || 'Användare'), [
+        Alert.alert('Användare', String(getDisplayNameForUser(u) || u?.email || 'Användare'), [
           { text: 'Avbryt', style: 'cancel' },
           { text: 'Redigera', onPress: () => onEdit?.(u), disabled: !canEditUser?.(u) },
           { text: isMemberDisabled(u) ? 'Aktivera' : 'Inaktivera', onPress: () => onToggleDisabled?.(u) },
@@ -249,18 +300,18 @@ export default function UsersTable({
                 <TouchableOpacity
                   onPress={onAdd}
                   style={{
-                    paddingVertical: 9,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
                     backgroundColor: '#1e293b',
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 8,
+                    gap: 6,
                     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.2s' } : {}),
                   }}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="add" size={18} color="#fff" />
+                  <Ionicons name="add" size={16} color="#fff" />
                   <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>Lägg till användare</Text>
                 </TouchableOpacity>
               </>
@@ -316,56 +367,60 @@ export default function UsersTable({
               ) : null}
             </View>
 
-            <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: MODAL_DESIGN_2026.tableRadius, overflow: 'hidden', backgroundColor: '#fff', width: '100%' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, backgroundColor: '#f1f5f9', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', width: '100%' }}>
+            <View style={[styles.tableWrap, { width: '100%' }]}>
+              <View style={[styles.headerRow, isWeb && { gap: gapBetweenCols }]}>
                 <TouchableOpacity
                   onPress={() => handleSort('displayName')}
-                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s', userSelect: 'none' } : {}) }}
+                  style={[styles.headerCell, col('name'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }} numberOfLines={1}>Namn</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>Namn</Text>
                   {sortColumn === 'displayName' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('name', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('email')}
-                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s', userSelect: 'none' } : {}) }}
+                  style={[styles.headerCell, col('email'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }} numberOfLines={1}>E-post</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>E-post</Text>
                   {sortColumn === 'email' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('email', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('role')}
-                  style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT, ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'opacity 0.2s', userSelect: 'none' } : {}) }}
+                  style={[styles.headerCell, col('role'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }} numberOfLines={1}>Roll</Text>
+                  <Text style={styles.headerText} numberOfLines={1}>Roll</Text>
                   {sortColumn === 'role' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('role', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
                   onPress={() => handleSort('status')}
-                  style={[{ width: STATUS_COLUMN_WIDTH, flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT }, Platform.OS === 'web' ? { position: 'sticky', right: 0, backgroundColor: '#f1f5f9', zIndex: 2, cursor: 'pointer' } : {}]}
+                  style={[styles.headerCell, styles.statusCell, Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Status</Text>
+                  <Text style={styles.headerText}>Status</Text>
                   {sortColumn === 'status' ? (
                     <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
                   ) : (
                     <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
                   )}
                 </TouchableOpacity>
+                <View style={styles.cellSpacer} />
               </View>
 
             {loading ? (
@@ -417,46 +472,43 @@ export default function UsersTable({
                       onLongPress={(e) => openRowMenu(e, u)}
                       onMouseEnter={Platform.OS === 'web' ? () => setHoveredRowKey(key) : undefined}
                       onMouseLeave={Platform.OS === 'web' ? () => setHoveredRowKey((prev) => (String(prev) === String(key) ? null : prev)) : undefined}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        minHeight: MODAL_DESIGN_2026.tableRowHeight,
-                        paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
-                        paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
-                        borderBottomWidth: idx < shownUsers.length - 1 ? 1 : 0,
-                        borderBottomColor: '#eef0f3',
-                        backgroundColor: isHovered ? hoverBg : baseBg,
-                        width: '100%',
-                        ...(Platform.OS === 'web' ? { cursor: isBusy ? 'wait' : 'pointer', transition: 'background-color 0.15s' } : {}),
-                      }}
+                      style={[
+                        styles.bodyRow,
+                        isWeb && { gap: gapBetweenCols },
+                        { borderBottomWidth: idx < shownUsers.length - 1 ? 1 : 0, backgroundColor: isHovered ? hoverBg : baseBg },
+                        Platform.OS === 'web' && { cursor: isBusy ? 'wait' : 'pointer' },
+                      ]}
                       activeOpacity={0.7}
                     >
-                      <View style={{ flex: 1, minWidth: 0, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT }}>
-                        <Text style={{ fontSize: 13, color: '#111' }} numberOfLines={1}>
-                          {formatPersonName(u?.displayName || u?.email || '') || '—'}
+                      <View style={[styles.cellContent, col('name')]}>
+                        <Text style={styles.cellText} numberOfLines={1}>
+                          {getDisplayNameForUser(u) || '—'}
                         </Text>
                       </View>
-                      <View style={{ flex: 1, minWidth: 0, paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT }}>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, col('email')]}>
                         {u?.email ? (
                           <TouchableOpacity
                             onPress={() => Linking.openURL(`mailto:${String(u.email).trim()}`)}
                             style={Platform.OS === 'web' ? { cursor: 'pointer' } : {}}
                             activeOpacity={0.7}
                           >
-                            <Text style={{ fontSize: 13, color: '#1976D2', textDecorationLine: 'underline' }} numberOfLines={1}>
+                            <Text style={styles.cellLink} numberOfLines={1}>
                               {String(u.email)}
                             </Text>
                           </TouchableOpacity>
                         ) : (
-                          <Text style={{ fontSize: 13, color: '#64748b' }}>—</Text>
+                          <Text style={styles.cellMuted}>—</Text>
                         )}
                       </View>
-                      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT }}>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, col('role'), { flexDirection: 'row', alignItems: 'center' }]}>
                         <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: roleBadge.bg }}>
                           <Text style={{ fontSize: 12, fontWeight: '500', color: roleBadge.color }}>{roleBadge.label}</Text>
                         </View>
                       </View>
-                      <View style={[{ width: STATUS_COLUMN_WIDTH, flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', paddingLeft: COLUMN_PADDING_LEFT, paddingRight: COLUMN_PADDING_RIGHT }, Platform.OS === 'web' ? { position: 'sticky', right: 0, backgroundColor: isHovered ? hoverBg : baseBg, zIndex: 2 } : {}]}>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, styles.statusCell, isWeb && { backgroundColor: isHovered ? hoverBg : baseBg }]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 0 }}>
                           <View style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, backgroundColor: disabled ? '#FEF2F2' : '#F1F5F9' }}>
                             <Text style={{ fontSize: 12, fontWeight: '500', color: disabled ? '#B91C1C' : '#64748b' }}>{disabled ? 'Inaktiv' : 'Aktiv'}</Text>
@@ -468,6 +520,7 @@ export default function UsersTable({
                           ) : null}
                         </View>
                       </View>
+                      <View style={styles.cellSpacer} />
                     </TouchableOpacity>
                   );
                 })}
@@ -501,3 +554,91 @@ export default function UsersTable({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  tableWrap: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: MODAL_DESIGN_2026.tableRadius,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+    backgroundColor: '#f1f5f9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  headerCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+    minWidth: 0,
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+  },
+  headerText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#475569',
+  },
+  statusCell: {
+    width: STATUS_COLUMN_WIDTH,
+    minWidth: STATUS_COLUMN_WIDTH,
+    flexShrink: 0,
+    justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' ? { position: 'sticky', right: 0, zIndex: 2, backgroundColor: '#f1f5f9' } : {}),
+  },
+  cellSpacer: {
+    flex: 1,
+    minWidth: 0,
+  },
+  bodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: MODAL_DESIGN_2026.tableRowHeight,
+    paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+    paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+    borderBottomColor: '#eef0f3',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s' } : {}),
+  },
+  cellContent: {
+    paddingLeft: COLUMN_PADDING_LEFT,
+    paddingRight: COLUMN_PADDING_RIGHT,
+    minWidth: 0,
+  },
+  cellText: {
+    fontSize: 13,
+    color: '#111',
+  },
+  cellLink: {
+    fontSize: 13,
+    color: '#1976D2',
+    textDecorationLine: 'underline',
+  },
+  cellMuted: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  resizeHandle: {
+    width: RESIZE_HANDLE_WIDTH,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'col-resize' } : {}),
+  },
+  resizeHandleLine: {
+    position: 'absolute',
+    left: Math.floor(RESIZE_HANDLE_WIDTH / 2) - 1,
+    top: 4,
+    bottom: 4,
+    width: 2,
+    backgroundColor: '#cbd5e1',
+    borderRadius: 1,
+  },
+});

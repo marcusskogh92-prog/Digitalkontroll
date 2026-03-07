@@ -36,6 +36,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
   const [modalIsNew, setModalIsNew] = useState(false);
   const [modalMember, setModalMember] = useState(null);
   const [modalSaving, setModalSaving] = useState(false);
+  const [modalSaveSuccess, setModalSaveSuccess] = useState(false);
   const [modalError, setModalError] = useState('');
 
   const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
@@ -252,8 +253,13 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           try { window.alert(`Användare skapad. Lösenord: ${tempPw}`); } catch (_e) {}
         }
       }
-      setModalOpen(false);
+      setModalSaving(false);
+      setModalSaveSuccess(true);
       setReloadNonce((n) => n + 1);
+      setTimeout(() => {
+        setModalOpen(false);
+        setModalSaveSuccess(false);
+      }, 1500);
     } catch (e) {
       setModalError(String(e?.message || e));
     } finally {
@@ -366,6 +372,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
         companyId={cid}
         isNew={modalIsNew}
         saving={modalSaving}
+        saveSuccess={modalSaveSuccess}
         errorMessage={modalError}
         userLimit={userLimit}
         usagePercent={kpiStats.usagePercent}
@@ -378,6 +385,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           if (modalSaving) return;
           setModalOpen(false);
           setModalError('');
+          setModalSaveSuccess(false);
         }}
         onSave={handleSave}
       />

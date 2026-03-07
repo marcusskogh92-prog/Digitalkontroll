@@ -34,6 +34,24 @@ function getBackgroundImageUriCached() {
  */
 export function applyGlobalBodyBackground() {
   if (Platform.OS !== 'web' || typeof document === 'undefined' || !document.body) return;
+  // Säkerställ full höjd så att appen inte blir vit (flex:1 behöver parent med höjd)
+  try {
+    const html = document.documentElement;
+    if (html && html.style) {
+      html.style.height = '100%';
+      html.style.minHeight = '100vh';
+    }
+    if (document.body.style) {
+      document.body.style.height = '100%';
+      document.body.style.minHeight = '100vh';
+      document.body.style.margin = '0';
+    }
+    const root = document.getElementById('root');
+    if (root && root.style) {
+      root.style.minHeight = '100vh';
+      root.style.height = '100%';
+    }
+  } catch (_e) {}
   const uri = getBackgroundImageUriCached();
   if (!uri) return;
   document.body.style.backgroundImage = `url(${uri})`;

@@ -26,8 +26,12 @@ const SECTION_DEFS = {
       '02 - Projektinformation',
       '03 - Organisation och roller',
       '04 - Tidsplan och viktiga datum',
-      '05 - FrågaSvar',
     ],
+  },
+  fragaSvar: {
+    title: 'FrågaSvar',
+    icon: 'chatbubble-ellipses-outline',
+    items: [],
   },
   forfragningsunderlag: {
     title: 'Förfrågningsunderlag',
@@ -61,12 +65,6 @@ const SECTION_DEFS = {
       '07 - Geoteknik',
       '08 - Teknisk samordning',
     ],
-  },
-  myndigheter: {
-    title: 'Myndigheter',
-    icon: 'business-outline',
-    // GOLDEN RULE (Myndigheter): no fixed subfolder structure; users manage flikar/folders.
-    items: [],
   },
   'risk-mojligheter': {
     title: 'Risk och möjligheter',
@@ -105,20 +103,20 @@ const ORDER_BY_VERSION = {
     'kalkyl',
     'offerter',
     'konstruktion-berakningar',
-    'myndigheter',
+    'fragaSvar',   // 05 - FrågaSvar, direkt före Risk och möjligheter (06) i SharePoint
     'risk-mojligheter',
     'bilder',
     'moten',
     'anbud',
   ],
 
-  // New order: Kalkyl is late (between Möten and Anbud)
+  // New order: Kalkyl is late (between Möten and Anbud); FrågaSvar = 05 före Risk = 06
   [KALKYLSKEDE_STRUCTURE_VERSIONS.V2]: [
     'oversikt',
     'forfragningsunderlag',
     'offerter',
     'konstruktion-berakningar',
-    'myndigheter',
+    'fragaSvar',   // 05 - FrågaSvar, direkt före Risk och möjligheter (06) i SharePoint
     'risk-mojligheter',
     'bilder',
     'moten',
@@ -172,12 +170,16 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'projektinfo', name: '02 - Projektinformation', component: 'ProjektinfoView', order: 2, enabled: true },
             { id: 'organisation-roller', name: '03 - Organisation och roller', component: 'OrganisationRollerView', order: 3, enabled: true },
             { id: 'tidsplan-viktiga-datum', name: '04 - Tidsplan och viktiga datum', component: 'TidsplanViktigaDatumView', order: 4, enabled: true },
-            { id: 'status-beslut', name: '05 - FrågaSvar', component: 'StatusBeslutView', order: 5, enabled: true },
+          ];
+        } else if (id === 'fragaSvar') {
+          section.items = [
+            { id: 'status-beslut', name: 'FrågaSvar', component: 'StatusBeslutView', order: 1, enabled: true },
           ];
         } else if (id === 'forfragningsunderlag') {
-          // GOLDEN RULE (FFU): AI-analys alltid från start; övriga flikar = användarskapade mappar.
+          // GOLDEN RULE (FFU): Först flik "Förfrågningsunderlag" (filer/mappar), sedan "AI-analys"; övriga flikar = användarskapade mappar.
           section.items = [
-            { id: 'ai-summary', name: 'AI-analys', component: 'FFUAISummaryView', order: 0, enabled: true, sharePointName: '', isSystemItem: true },
+            { id: 'ffu-filer', name: 'Förfrågningsunderlag', component: null, order: 0, enabled: true, sharePointName: '', isSystemItem: true },
+            { id: 'ai-summary', name: 'AI-analys', component: 'FFUAISummaryView', order: 1, enabled: true, sharePointName: '', isSystemItem: true },
           ];
         } else if (id === 'kalkyl') {
           section.items = [
@@ -204,9 +206,6 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'geoteknik', name: '07 - Geoteknik', component: 'DigitalkontrollsUtforskare', order: 7, enabled: true },
             { id: 'teknisk-samordning', name: '08 - Teknisk samordning', component: 'DigitalkontrollsUtforskare', order: 8, enabled: true },
           ];
-        } else if (id === 'myndigheter') {
-          // GOLDEN RULE (Myndigheter): no fixed item navigation; browse folders directly, create flikar.
-          section.items = [];
         } else if (id === 'risk-mojligheter') {
           section.items = [
             { id: 'identifierade-risker', name: '01 - Identifierade risker', component: 'IdentifieradeRiskerView', order: 1, enabled: true },

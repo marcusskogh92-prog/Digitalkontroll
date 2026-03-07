@@ -194,6 +194,7 @@ export default function NativeMainPane({
             }
             companyId={companyId || routeCompanyId}
             currentUserId={auth?.currentUser?.uid || null}
+            currentUserEmail={auth?.currentUser?.email || null}
             onCreateProject={() => {
               // Preferred flow: SharePoint-based CreateProjectModal.
               if (typeof onOpenCreateProjectModal === 'function') {

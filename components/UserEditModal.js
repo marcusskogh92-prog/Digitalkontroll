@@ -6,6 +6,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Platform,
   ScrollView,
@@ -42,6 +43,19 @@ const ADMIN_PERMISSIONS = [
   { key: 'manage_ai_settings', label: 'Hantera AI-inställningar' },
 ];
 
+/** Register = Struktur under Register (Mallar, Kategorier, Kontoplan, Byggdelar). */
+const REGISTER_PERMISSION_KEYS = ['manage_templates', 'manage_categories', 'manage_chart_of_accounts', 'manage_building_parts'];
+/** Administration = Användare, SharePoint, AI m.m. */
+const ADMINISTRATION_PERMISSION_KEYS = ['manage_sharepoint', 'manage_users', 'manage_ai_settings'];
+
+const PERMISSION_GROUPS = [
+  { title: 'Register', keys: REGISTER_PERMISSION_KEYS },
+  { title: 'Administration', keys: ADMINISTRATION_PERMISSION_KEYS },
+];
+
+/** Alla behörighetsnycklar – används för att bocka i allt när man väljer Admin/Superadmin. */
+const ALL_PERMISSION_KEYS = [...REGISTER_PERMISSION_KEYS, ...ADMINISTRATION_PERMISSION_KEYS];
+
 const USER_EDIT_MODAL_WIDTH = 680;
 const USER_EDIT_MODAL_HEIGHT = 560;
 
@@ -52,6 +66,7 @@ export default function UserEditModal({
   onClose,
   onSave,
   saving,
+  saveSuccess,
   isNew,
   errorMessage,
   onDelete,
@@ -105,6 +120,19 @@ export default function UserEditModal({
   const togglePermission = (key) => {
     setPermissions((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   };
+
+  const getPermissionLabel = (key) => ADMIN_PERMISSIONS.find((p) => p.key === key)?.label ?? key;
+
+  const toggleGroup = (groupKeys) => {
+    const allChecked = groupKeys.every((k) => permissions.includes(k));
+    setPermissions((prev) => {
+      if (allChecked) return prev.filter((k) => !groupKeys.includes(k));
+      const added = groupKeys.filter((k) => !prev.includes(k));
+      return [...prev, ...added];
+    });
+  };
+
+  const isGroupAllChecked = (groupKeys) => groupKeys.length > 0 && groupKeys.every((k) => permissions.includes(k));
 
   const normalizeName = (value) => {
     if (!value) return '';
@@ -163,7 +191,9 @@ export default function UserEditModal({
     setAvatarPreviewUrl('');
     setSendInviteEmail(true);
     const perms = member?.permissions;
-    setPermissions(Array.isArray(perms) ? [...perms] : []);
+    const isAdminRole = isSuperMember || adminGuess;
+    const defaultAdminPerms = Array.isArray(perms) && perms.length > 0 ? [...perms] : (isAdminRole ? [...ALL_PERMISSION_KEYS] : []);
+    setPermissions(defaultAdminPerms);
   }, [visible, member, isNew, isMsBygg]);
 
   useEffect(() => {
@@ -261,11 +291,11 @@ export default function UserEditModal({
             paddingVertical: D.buttonPaddingVertical,
             paddingHorizontal: D.buttonPaddingHorizontal,
             borderRadius: D.buttonRadius,
-            backgroundColor: '#475569',
+            backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
             opacity: (saving || (isNew && !requiredFilledForCreate())) ? 0.6 : 1,
           }}
         >
-          <Text style={{ fontSize: 13, fontWeight: '500', color: '#fff', fontFamily: FONT_FAMILY }}>
+          <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight ?? '500', color: D.buttonPrimaryColor ?? '#fff', fontFamily: FONT_FAMILY }}>
             {saving ? 'Sparar...' : isNew ? 'Skapa användare' : 'Spara'}
           </Text>
         </TouchableOpacity>
@@ -279,8 +309,8 @@ export default function UserEditModal({
       onClose={onClose}
       title={isNew ? 'Lägg till användare' : 'Redigera användare'}
       subtitle={isNew ? 'Skapa ny admin eller användare' : undefined}
-      headerVariant="neutral"
-      titleIcon={<Ionicons name="person" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="person" size={D.headerNeutralCompactIconPx ?? 14} color={D.headerNeutralTextColor} />}
       footer={footer}
       boxStyle={[defaultBoxStyle, dragBoxStyle]}
       overlayStyle={overlayStyle}
@@ -288,17 +318,35 @@ export default function UserEditModal({
       resizeHandles={resizeHandles}
       contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
     >
+      <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: D.contentPadding, paddingBottom: 16 }} showsVerticalScrollIndicator>
-        {/* Licens (endast ny användare) */}
+        {/* Licens (endast ny användare) – golden rule: info-banner enligt MODAL_DESIGN_2026 */}
         {isNew && userLimit != null ? (
-          <View style={{ marginBottom: 14 }}>
-            <Text style={{ fontSize: 11, color: '#64748b', backgroundColor: '#F1F5F9', paddingVertical: 4, paddingHorizontal: 8, borderRadius: D.inputRadius, fontWeight: '500', fontFamily: FONT_FAMILY }}>
-              Påverkar licens: +1 användare
-            </Text>
+          <View style={{ marginBottom: D.sectionGap ?? 16 }}>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: D.buttonPaddingVertical,
+              paddingHorizontal: 12,
+              borderRadius: D.inputRadius,
+              backgroundColor: D.tableHeaderBackgroundColor ?? '#f1f5f9',
+              borderWidth: 1,
+              borderColor: D.tableHeaderBorderColor ?? '#e2e8f0',
+            }}>
+              <Ionicons name="information-circle-outline" size={16} color={D.tableHeaderColor ?? '#475569'} style={{ marginRight: 8 }} />
+              <Text style={{
+                fontSize: 12,
+                fontWeight: '500',
+                color: D.tableHeaderColor ?? '#475569',
+                fontFamily: FONT_FAMILY,
+              }}>
+                Påverkar licens: +1 användare
+              </Text>
+            </View>
             {licenseWarning ? (
-              <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff7ed', padding: 8, borderRadius: D.inputRadius }}>
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff7ed', paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#fed7aa' }}>
                 <Ionicons name="warning" size={16} color="#c2410c" />
-                <Text style={{ fontSize: 12, color: '#c2410c', fontFamily: FONT_FAMILY }}>Licensgräns nära att uppnås</Text>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#c2410c', fontFamily: FONT_FAMILY }}>Licensgräns nära att uppnås</Text>
               </View>
             ) : null}
           </View>
@@ -398,7 +446,10 @@ export default function UserEditModal({
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', backgroundColor: '#F1F5F9', borderRadius: D.buttonRadius, padding: 3, alignSelf: 'flex-start' }}>
                 {isMsBygg ? (
                   <TouchableOpacity
-                    onPress={() => setRole('superadmin')}
+                    onPress={() => {
+                      setRole('superadmin');
+                      if (role !== 'superadmin') setPermissions([...ALL_PERMISSION_KEYS]);
+                    }}
                     style={{
                       paddingVertical: 6,
                       paddingHorizontal: 12,
@@ -410,7 +461,10 @@ export default function UserEditModal({
                   </TouchableOpacity>
                 ) : null}
                 <TouchableOpacity
-                  onPress={() => setRole('admin')}
+                  onPress={() => {
+                    setRole('admin');
+                    if (role !== 'admin') setPermissions([...ALL_PERMISSION_KEYS]);
+                  }}
                   style={{
                     paddingVertical: 6,
                     paddingHorizontal: 12,
@@ -434,28 +488,52 @@ export default function UserEditModal({
               </View>
               {(role === 'admin' || role === 'superadmin') ? (
                 <View style={{ marginTop: 8, padding: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 8, fontFamily: FONT_FAMILY }}>Admin-behörigheter</Text>
-                  {ADMIN_PERMISSIONS.map((p) => (
-                    <TouchableOpacity
-                      key={p.key}
-                      onPress={() => togglePermission(p.key)}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}
-                    >
-                      <View style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 3,
-                        borderWidth: 1,
-                        borderColor: '#94a3b8',
-                        backgroundColor: permissions.includes(p.key) ? '#1e293b' : 'transparent',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}>
-                        {permissions.includes(p.key) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 10, fontFamily: FONT_FAMILY }}>Admin-behörigheter</Text>
+                  <View style={{ flexDirection: 'row', gap: 20 }}>
+                    {PERMISSION_GROUPS.map((group) => (
+                      <View key={group.title} style={{ flex: 1, minWidth: 0 }}>
+                        <TouchableOpacity
+                          onPress={() => toggleGroup(group.keys)}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                        >
+                          <View style={{
+                            width: 16,
+                            height: 16,
+                            borderRadius: 3,
+                            borderWidth: 1,
+                            borderColor: '#64748b',
+                            backgroundColor: isGroupAllChecked(group.keys) ? '#1e293b' : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}>
+                            {isGroupAllChecked(group.keys) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                          </View>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#1e293b', fontFamily: FONT_FAMILY }}>{group.title}</Text>
+                        </TouchableOpacity>
+                        {group.keys.map((key) => (
+                          <TouchableOpacity
+                            key={key}
+                            onPress={() => togglePermission(key)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, marginLeft: 24 }}
+                          >
+                            <View style={{
+                              width: 16,
+                              height: 16,
+                              borderRadius: 3,
+                              borderWidth: 1,
+                              borderColor: '#94a3b8',
+                              backgroundColor: permissions.includes(key) ? '#1e293b' : 'transparent',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}>
+                              {permissions.includes(key) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                            </View>
+                            <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{getPermissionLabel(key)}</Text>
+                          </TouchableOpacity>
+                        ))}
                       </View>
-                      <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
+                    ))}
+                  </View>
                 </View>
               ) : null}
             </View>
@@ -553,6 +631,56 @@ export default function UserEditModal({
         ) : null}
       </ScrollView>
 
+      {(saving || saveSuccess) && (
+        <View
+          pointerEvents="auto"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255,255,255,0.92)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 10,
+            borderRadius: 0,
+          }}
+        >
+          {saving ? (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingVertical: 16,
+              paddingHorizontal: 24,
+              borderRadius: 12,
+              backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : { elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 }),
+            }}>
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff', fontFamily: FONT_FAMILY }}>Sparar...</Text>
+            </View>
+          ) : saveSuccess ? (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingVertical: 16,
+              paddingHorizontal: 24,
+              borderRadius: 12,
+              backgroundColor: '#166534',
+              ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : { elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 }),
+            }}>
+              <Ionicons name="checkmark-circle" size={28} color="#fff" />
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff', fontFamily: FONT_FAMILY }}>
+                {isNew ? 'Användaren skapad' : 'Användaren uppdaterad'}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+
       {Platform.OS === 'web' ? (
         <input
           ref={avatarUploadInputRef}
@@ -562,6 +690,7 @@ export default function UserEditModal({
           onChange={onAvatarFileSelected}
         />
       ) : null}
+      </View>
     </ModalBase>
   );
 }

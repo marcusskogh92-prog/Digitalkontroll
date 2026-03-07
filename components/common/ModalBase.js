@@ -141,7 +141,11 @@ export default function ModalBase({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[styles.overlay, overlayStyle]} onPress={onClose}>
+      <Pressable
+        style={[styles.overlay, overlayStyle]}
+        onPress={onClose}
+        {...(Platform.OS === 'web' ? { onClick: onClose } : {})}
+      >
         <Pressable style={[styles.box, boxStyle]} onPress={(e) => e.stopPropagation()}>
           <View
             style={[headerStyle, headerProps.style]}
@@ -182,7 +186,14 @@ export default function ModalBase({
               accessibilityLabel="Stäng"
               onMouseEnter={Platform.OS === 'web' ? () => setCloseHover(true) : undefined}
               onMouseLeave={Platform.OS === 'web' ? () => setCloseHover(false) : undefined}
-              {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}
+              {...(Platform.OS === 'web'
+                ? {
+                    onMouseDown: (e) => {
+                      e.stopPropagation();
+                      onClose();
+                    },
+                  }
+                : {})}
             >
               <Ionicons
                 name="close"

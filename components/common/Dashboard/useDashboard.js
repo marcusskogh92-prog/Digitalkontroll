@@ -15,6 +15,8 @@ export function useDashboard({
   routeCompanyId,
   authClaims,
   currentUserId,
+  /** Användarens e-post – för att matcha kontaktmedlemmar i Organisation och roller. */
+  currentUserEmail,
   hierarchy,
   hierarchyRef,
   selectedProject,
@@ -78,9 +80,11 @@ export function useDashboard({
   useEffect(() => {
     const cid = String(companyId || routeCompanyId || authClaims?.companyId || '').trim();
     const uid = String(currentUserId || '').trim();
+    const userEmail = String(currentUserEmail || '').trim().toLowerCase();
+    const normEmail = (e) => String(e || '').trim().toLowerCase().replace(/\s+/g, '');
 
     if (DEBUG_MEMBERSHIP) {
-      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin });
+      console.log('[dashboard][membership] subscribe start', { cid, uid, isAdmin, hasEmail: !!userEmail });
     }
 
     if (!cid || !uid) {
@@ -142,6 +146,8 @@ export function useDashboard({
 
               for (const m of members) {
                 const refId = String(m?.refId || m?.uid || m?.userId || '').trim();
+                const matchByUid = refId && refId === uid;
+                const matchByEmail = userEmail && String(m?.source || '').trim() === 'contact' && normEmail(m?.email) === userEmail;
                 if (DEBUG_MEMBERSHIP) {
                   compareCount += 1;
                   if (compareCount <= 500) {
@@ -149,16 +155,14 @@ export function useDashboard({
                       currentUserId: uid,
                       memberRefId: refId,
                       memberSource: m?.source,
-                      memberRole: m?.role,
-                      memberName: m?.name,
-                      match: !!(refId && refId === uid),
+                      matchByUid: !!matchByUid,
+                      matchByEmail: !!matchByEmail,
                     });
                   } else if (compareCount === 501) {
                     console.log('[dashboard][membership] compare member: too many comparisons, truncating logs after 500');
                   }
                 }
-                if (!refId) continue;
-                if (refId === uid) {
+                if (matchByUid || matchByEmail) {
                   isMember = true;
                   break;
                 }
@@ -168,6 +172,7 @@ export function useDashboard({
 
             if (isMember) {
               const pid = String(d?.projectId || d?.id || '').trim();
+              const pnum = String(d?.projectNumber || '').trim();
               if (DEBUG_MEMBERSHIP) {
                 console.log('[dashboard][membership] member match => allow project', {
                   docId: d?.id,
@@ -177,6 +182,7 @@ export function useDashboard({
                 });
               }
               if (pid) next.add(pid);
+              if (pnum && pnum !== pid) next.add(pnum);
             }
           }
         } catch (_e) {}
@@ -196,7 +202,7 @@ export function useDashboard({
     return () => {
       try { unsub?.(); } catch (_e) {}
     };
-  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId, DEBUG_MEMBERSHIP, isAdmin]);
+  }, [companyId, routeCompanyId, authClaims?.companyId, currentUserId, currentUserEmail, DEBUG_MEMBERSHIP, isAdmin]);
 
   // Canonical project source for dashboard rendering:
   // Firestore collection foretag/{companyId}/projects (not SharePoint folder hierarchy).
@@ -316,6 +322,11 @@ export function useDashboard({
 
       try { setDashboardDraftItems(Array.isArray(filteredDrafts) ? filteredDrafts : []); } catch (_e) {}
 
+      const isProjectAllowed = (p) => {
+        const pid = resolveProjectId(p);
+        const pnum = String(p?.projectNumber || p?.number || '').trim();
+        return (pid && allowedProjectIds.has(pid)) || (pnum && allowedProjectIds.has(pnum));
+      };
       try {
         const activeList = [];
         const list = companyProjectsRef.current;
@@ -323,7 +334,7 @@ export function useDashboard({
           for (const p of list) {
             const pid = resolveProjectId(p);
             if (!pid) continue;
-            if (!allowedProjectIds.has(pid)) continue;
+            if (!isProjectAllowed(p)) continue;
             if (isProjectCompleted(p)) continue;
             activeList.push({
               ...p,
@@ -362,7 +373,7 @@ export function useDashboard({
             for (const p of list) {
               const pid = resolveProjectId(p);
               if (!pid) continue;
-              if (!allowedProjectIds.has(pid)) continue;
+              if (!isProjectAllowed(p)) continue;
               if (isProjectCompleted(p)) continue;
               n += 1;
             }

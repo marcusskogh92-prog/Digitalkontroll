@@ -147,7 +147,14 @@ async function analyzeFFU(input: AnalyzeFFUInput, authContext: { uid: string; to
 }
 ```
 
-## 3) Förslag: cachelagring per projekt
+## 3) Gräns för underlagsstorlek
+
+AI-analysen accepterar stora FFU. Standardgräns är **400 000 tecken** (ca 128k tokens passar inom gpt-4.1-mini). Övre tak är **500 000 tecken**. Om underlaget är större trunkeras texten och status blir "partial" (delvis analyserad).
+
+- **FFU_MAX_TOTAL_CHARS** (env): max tecken som skickas till AI (default 400 000).
+- **FFU_AI_MAX_CHARS** / **openai.max_chars** (config): övre tak (default 500 000).
+
+## 4) Förslag: cachelagring per projekt
 
 **Rekommenderad cache:**
 - Dokument: `foretag/{companyId}/projects/{projectId}/ai/ffu_analysis`

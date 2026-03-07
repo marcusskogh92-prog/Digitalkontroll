@@ -165,11 +165,14 @@ export default function PhaseLeftPanel({
       if (sec === 'oversikt' && it === 'projektinfo') return hasProjectInfoContent;
       if (sec === 'oversikt' && it === 'organisation-roller') return hasOrganisationMembers;
       if (sec === 'oversikt' && it === 'tidsplan-viktiga-datum') return hasTimelineContent;
-      if (sec === 'oversikt' && it === 'status-beslut') return Number(fragaSvarCount || 0) > 0;
 
       if (sec === 'oversikt' && !it) {
-        return Boolean(hasProjectInfoContent || hasOrganisationMembers || hasTimelineContent || Number(fragaSvarCount || 0) > 0);
+        return Boolean(hasProjectInfoContent || hasOrganisationMembers || hasTimelineContent);
       }
+
+      // FrågaSvar (egen huvudflik)
+      if (sec === 'fragaSvar' && it === 'status-beslut') return Number(fragaSvarCount || 0) > 0;
+      if (sec === 'fragaSvar' && !it) return Number(fragaSvarCount || 0) > 0;
 
       return false;
     },

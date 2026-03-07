@@ -340,6 +340,124 @@ async function callOpenAIForFFUAnalysis({ apiKey, system, user }) {
   }
 }
 
+/** OpenAI chat completions for plain text (no JSON). Used for inquiry drafts. */
+async function callOpenAIPlainText({ apiKey, system, user }) {
+  const model = process.env.OPENAI_MODEL || readFunctionsConfigValue('openai.model', null) || 'gpt-4.1-mini';
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    }),
+  });
+  const rawText = await res.text();
+  if (!res.ok) throw new Error(`OpenAI error: ${res.status} - ${rawText}`);
+  const data = JSON.parse(rawText);
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  throw new Error('OpenAI response missing message content');
+}
+
+/** Read latest FFU analysis from Firestore for inquiry generation. Returns { summary, requirements, risks, questions } or null. */
+async function getLatestFFUAnalysisForInquiry(companyId, projectId) {
+  const canonical = db.doc(`companies/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  const legacy = db.doc(`foretag/${companyId}/projects/${projectId}/ai_ffu_analysis/latest`);
+  let snap = await canonical.get().catch(() => null);
+  if (!snap || !snap.exists) snap = await legacy.get().catch(() => null);
+  if (!snap || !snap.exists) return null;
+  const d = snap.data() || {};
+  if (String(d.status || '').trim() !== 'success') return null;
+  const summary = String(d.summary || '').trim();
+  const req = d.requirements && typeof d.requirements === 'object' ? d.requirements : {};
+  const ska = Array.isArray(req.ska) ? req.ska : (Array.isArray(req.must) ? req.must : []);
+  const bor = Array.isArray(req.bor) ? req.bor : (Array.isArray(req.should) ? req.should : []);
+  const requirements = [...ska, ...bor].map((x) => (typeof x === 'string' ? x : (x && x.text ? x.text : '')).trim()).filter(Boolean);
+  const risks = Array.isArray(d.risks) ? d.risks.map((r) => (typeof r === 'string' ? r : (r && (r.issue || r.reason) ? `${r.issue || ''} ${r.reason || ''}`.trim() : '')).trim()).filter(Boolean) : [];
+  const questions = Array.isArray(d.questions) ? d.questions.map((q) => (typeof q === 'string' ? q : (q && (q.question || q.reason) ? `${q.question || ''} ${q.reason || ''}`.trim() : '')).trim()).filter(Boolean) : [];
+  return { summary, requirements, risks, questions };
+}
+
+// AI: Generate generic inquiry draft from FFU analysis (for inköpsrad)
+exports.generateInquiryDraft = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  if (!companyId || !projectId) throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  assertAnalyzeFFUPermission({ companyId, context });
+
+  const rowName = (data && data.rowName != null) ? String(data.rowName).trim() : '';
+  const ffu = await getLatestFFUAnalysisForInquiry(companyId, projectId);
+  if (!ffu || !ffu.summary) {
+    throw new functions.https.HttpsError('failed-precondition', 'Ingen AI-analys finns för projektet. Kör först AI-analys under Förfrågningsunderlag.');
+  }
+
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'AI är inte konfigurerad (saknar API-nyckel).');
+
+  const itemContext = rowName ? ` för upphandlingsposten "${rowName}"` : '';
+  const userPrompt = `Projektets AI-analys (förfrågningsunderlag):
+
+Sammanfattning:
+${ffu.summary}
+
+${ffu.requirements.length ? `Krav/önskemål:\n${ffu.requirements.map((r) => `- ${r}`).join('\n')}\n` : ''}
+${ffu.risks.length ? `Oklarheter/risker:\n${ffu.risks.map((r) => `- ${r}`).join('\n')}\n` : ''}
+${ffu.questions.length ? `Öppna frågor:\n${ffu.questions.map((q) => `- ${q}`).join('\n')}\n` : ''}
+
+Skriv ett kort, professionellt utkast till förfrågan (e-posttext)${itemContext} som vi kan skicka till installatörer och underentreprenörer. Språk: svenska. Inkludera bara e-posttexten (ingen rubrik). Håll tonen tydlig och affärsmässig.`;
+  const systemPrompt = 'Du är en assistent som skriver korta, professionella förfrågningstexter till underentreprenörer och installatörer baserat på projektinformation. Svara endast med e-posttexten, inget annat.';
+  let text;
+  try {
+    text = await callOpenAIPlainText({ apiKey, system: systemPrompt, user: userPrompt });
+  } catch (e) {
+    console.error('generateInquiryDraft failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+    throw new functions.https.HttpsError('internal', 'Kunde inte generera utkast. Försök igen.');
+  }
+  return { text: text || '' };
+});
+
+// AI: Generate personalized inquiry for a supplier (contact name + company)
+exports.generatePersonalizedInquiry = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
+  const projectId = (data && data.projectId) ? String(data.projectId).trim() : '';
+  if (!companyId || !projectId) throw new functions.https.HttpsError('invalid-argument', 'companyId and projectId are required');
+  assertAnalyzeFFUPermission({ companyId, context });
+
+  const inquiryDraftText = (data && data.inquiryDraftText != null) ? String(data.inquiryDraftText).trim() : '';
+  const contactName = (data && data.contactName != null) ? String(data.contactName).trim() : '';
+  const supplierCompanyName = (data && data.supplierCompanyName != null) ? String(data.supplierCompanyName).trim() : '';
+  if (!inquiryDraftText) {
+    throw new functions.https.HttpsError('invalid-argument', 'inquiryDraftText saknas. Generera först ett utkast på inköpsraden.');
+  }
+
+  const apiKey = getOpenAIKey();
+  if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'AI är inte konfigurerad (saknar API-nyckel).');
+
+  const userPrompt = `Generell förfrågetext för projektet:
+---
+${inquiryDraftText}
+---
+
+Gör en personlig version av denna förfrågan till mottagaren: ${contactName || 'Kontakt'}${supplierCompanyName ? ` på ${supplierCompanyName}` : ''}. Börja med ett kort personligt tilltal (t.ex. "Hej ${contactName || 'du'},"). Behåll projektinformationen men anpassa inledningen. Språk: svenska. Output: endast e-posttexten.`;
+  const systemPrompt = 'Du är en assistent som anpassar förfrågningstexter till en specifik mottagare (kontaktperson och företag). Svara endast med e-posttexten.';
+  let text;
+  try {
+    text = await callOpenAIPlainText({ apiKey, system: systemPrompt, user: userPrompt });
+  } catch (e) {
+    console.error('generatePersonalizedInquiry failed', { message: String(e && e.message ? e.message : e), companyId, projectId });
+    throw new functions.https.HttpsError('internal', 'Kunde inte generera personlig förfrågan. Försök igen.');
+  }
+  return { text: text || '' };
+});
+
 // AI: Analyze FFU (förfrågningsunderlag)
 // Input: { companyId, projectId, files: [{id,name,type,extractedText}] }
 // Output: FFUAnalysisResult JSON (exact schema; no extra keys)
@@ -360,9 +478,9 @@ async function analyzeFFUCore({ companyId, projectId, files, uid, customInstruct
     throw new functions.https.HttpsError('invalid-argument', 'No extractedText found in any file');
   }
 
-  // Guardrails: keep prompt size bounded.
+  // Guardrails: keep prompt size bounded (gpt-4.1-mini 128k tokens ~ 500k chars).
   const totalChars = nonEmpty.reduce((sum, f) => sum + String(f.extractedText || '').length, 0);
-  const maxChars = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
+  const maxChars = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 500_000);
   if (Number.isFinite(maxChars) && totalChars > maxChars) {
     throw new functions.https.HttpsError('invalid-argument', `Combined extractedText too large (${totalChars} chars). Reduce documents or split analysis.`);
   }
@@ -759,14 +877,8 @@ async function graphListFilesRecursive({ siteId, rootPath, accessToken, maxDepth
   return out;
 }
 
-async function getProjectSharePointBasePath({ companyId, projectId }) {
-  const cid = String(companyId || '').trim();
-  const pid = String(projectId || '').trim();
-  if (!cid || !pid) return '';
-
-  const ref = db.doc(`foretag/${cid}/projects/${pid}`);
-  const snap = await ref.get().catch(() => null);
-  const p = snap && snap.exists ? (snap.data() || {}) : {};
+function readProjectPath(data) {
+  const p = data && typeof data === 'object' ? data : {};
   const base = String(
     p?.rootFolderPath ||
     p?.rootPath ||
@@ -779,6 +891,54 @@ async function getProjectSharePointBasePath({ companyId, projectId }) {
     ''
   ).trim();
   return base.replace(/^\/+/, '').replace(/\/+$/, '').trim();
+}
+
+function readProjectSiteId(data) {
+  const p = data && typeof data === 'object' ? data : {};
+  return (p?.sharePointSiteId || p?.sharePointSiteID || p?.siteId || p?.siteID || '').trim() || null;
+}
+
+/** Return { siteId, basePath } for the project. siteId = project's SharePoint site when set, else null (caller uses company site). */
+async function getProjectSharePointSiteAndPath({ companyId, projectId }) {
+  const cid = String(companyId || '').trim();
+  const pid = String(projectId || '').trim();
+  if (!cid || !pid) return { siteId: null, basePath: '' };
+
+  let data = null;
+  const refForetag = db.doc(`foretag/${cid}/projects/${pid}`);
+  const snapForetag = await refForetag.get().catch(() => null);
+  if (snapForetag?.exists) data = snapForetag.data();
+  if (!data) {
+    const snapCompanies = await db.doc(`companies/${cid}/projects/${pid}`).get().catch(() => null);
+    if (snapCompanies?.exists) data = snapCompanies.data();
+  }
+  let basePath = readProjectPath(data);
+  let siteId = readProjectSiteId(data);
+
+  if (!basePath && cid) {
+    const projectsRef = db.collection('foretag').doc(cid).collection('projects');
+    const byNumber = await projectsRef.where('projectNumber', '==', pid).limit(1).get().catch(() => null);
+    if (byNumber && !byNumber.empty) {
+      const first = byNumber.docs[0];
+      data = first.data();
+      basePath = readProjectPath(data);
+      siteId = readProjectSiteId(data);
+    }
+    if (!basePath) {
+      const byIdField = await projectsRef.where('projectId', '==', pid).limit(1).get().catch(() => null);
+      if (byIdField && !byIdField.empty) {
+        data = byIdField.docs[0].data();
+        basePath = readProjectPath(data);
+        siteId = readProjectSiteId(data);
+      }
+    }
+  }
+  return { siteId, basePath };
+}
+
+async function getProjectSharePointBasePath({ companyId, projectId }) {
+  const { basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
+  return basePath;
 }
 
 async function downloadStorageObjectAsBuffer({ bucketName, objectPath }) {
@@ -1138,14 +1298,13 @@ exports.analyzeFFUFromFiles = functions
     await updateFFUAnalysisProgress(companyId, projectId, { progress: 8, progressStep: 'Ansluter till SharePoint' });
     if (await maybeCancel()) return { status: 'cancelled' };
 
-    const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
-    if (!siteId) {
-      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
-    }
-
-    const basePath = await getProjectSharePointBasePath({ companyId, projectId });
+    const { siteId: projectSiteId, basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
     if (!basePath) {
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
+    }
+    const siteId = projectSiteId || seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
     }
     await updateFFUAnalysisProgress(companyId, projectId, { progress: 10, progressStep: 'Hämtar mappstruktur' });
     if (await maybeCancel()) return { status: 'cancelled' };
@@ -1287,9 +1446,10 @@ exports.analyzeFFUFromFiles = functions
   await updateFFUAnalysisProgress(companyId, projectId, { progress: 50, progressStep: 'Förbereder text till AI' });
   if (await maybeCancel()) return { status: 'cancelled' };
 
-  const defaultCap = 120_000;
+  // gpt-4.1-mini has 128k token context (~500k chars). Default 400k so large FFUs are analyzed in full.
+  const defaultCap = 400_000;
   const capFromEnv = Number(process.env.FFU_MAX_TOTAL_CHARS || defaultCap);
-  const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 250_000);
+  const coreCap = Number(process.env.FFU_AI_MAX_CHARS || readFunctionsConfigValue('openai.max_chars', null) || 500_000);
   const maxTotalChars = Number.isFinite(coreCap)
     ? Math.min(Number.isFinite(capFromEnv) ? capFromEnv : defaultCap, coreCap)
     : (Number.isFinite(capFromEnv) ? capFromEnv : defaultCap);
@@ -1516,14 +1676,13 @@ exports.analyzeKalkylFromSharePoint = functions
     await updateKalkylAnalysisProgress(companyId, projectId, { progress: 15, progressStep: 'Ansluter till SharePoint' });
     if (await maybeCancelKalkyl()) return { status: 'cancelled' };
 
-    const siteId = seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
-    if (!siteId) {
-      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
-    }
-
-    const basePath = await getProjectSharePointBasePath({ companyId, projectId });
+    const { siteId: projectSiteId, basePath } = await getProjectSharePointSiteAndPath({ companyId, projectId });
     if (!basePath) {
       throw new functions.https.HttpsError('failed-precondition', `Project ${projectId} is missing SharePoint base path`);
+    }
+    const siteId = projectSiteId || seed.siteId || await resolveCompanyWorkspaceSiteId(companyId);
+    if (!siteId) {
+      throw new functions.https.HttpsError('failed-precondition', `Missing SharePoint workspace siteId for company ${companyId}`);
     }
     await updateKalkylAnalysisProgress(companyId, projectId, { progress: 20, progressStep: 'Hämtar mappstruktur' });
     if (await maybeCancelKalkyl()) return { status: 'cancelled' };
