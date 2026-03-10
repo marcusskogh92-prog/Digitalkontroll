@@ -805,3 +805,108 @@ export async function getAccessToken() {
   // No valid token, authenticate
   return await authenticate();
 }
+
+// --- SSO inloggning (Logga in med arbetskonto) – separata nycklar så vi inte krockar med tenant/SharePoint-flödet ---
+const SSO_STATE_PREFIX = 'sso_';
+const SSO_STATE_KEY = 'sso_oauth_state';
+const SSO_CODE_VERIFIER_KEY = 'sso_code_verifier';
+
+const SSO_SCOPES = ['openid', 'profile', 'email'];
+
+/**
+ * Startar SSO-flödet: redirect till Microsoft med openid profile email, tenant=common.
+ * Används endast på web. Sparar state och code_verifier i localStorage.
+ */
+export async function startSSOLogin() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    throw new Error('SSO-inloggning stöds endast i webbläsaren.');
+  }
+  const config = getAzureConfig();
+  if (!config.clientId) throw new Error('Azure Client ID är inte konfigurerad.');
+  const redirectUri = `${window.location.origin}/`;
+  const state = SSO_STATE_PREFIX + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  try {
+    window.localStorage.setItem(SSO_STATE_KEY, state);
+    window.localStorage.setItem(SSO_CODE_VERIFIER_KEY, codeVerifier);
+  } catch (e) {
+    throw new Error('Kunde inte spara SSO-data: ' + (e?.message || e));
+  }
+  const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+    `client_id=${encodeURIComponent(config.clientId)}&` +
+    `response_type=code&` +
+    `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+    `response_mode=fragment&` +
+    `scope=${encodeURIComponent(SSO_SCOPES.join(' '))}&` +
+    `state=${encodeURIComponent(state)}&` +
+    `code_challenge=${encodeURIComponent(codeChallenge)}&` +
+    `code_challenge_method=S256&` +
+    `prompt=select_account`;
+  await new Promise(resolve => setTimeout(resolve, 50));
+  window.location.href = authUrl;
+}
+
+/**
+ * Returnerar { code, codeVerifier } om aktuell URL är SSO-callback (code + state som börjar med sso_), annars null.
+ */
+export function getSSOCallbackParams() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !window.location || !window.localStorage) return null;
+  try {
+    const hash = (window.location.hash || '').substring(1);
+    const search = (window.location.search || '').substring(1);
+    const urlParams = new URLSearchParams(hash || search);
+    const code = urlParams.get('code');
+    const state = urlParams.get('state');
+    if (!code || !state || !String(state).startsWith(SSO_STATE_PREFIX)) return null;
+    const codeVerifier = window.localStorage.getItem(SSO_CODE_VERIFIER_KEY);
+    if (!codeVerifier) return null;
+    return { code, codeVerifier };
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
+ * Byter authorization code mot tokens; returnerar id_token.
+ */
+export async function exchangeCodeForSSOIdToken(code, codeVerifier) {
+  const config = getAzureConfig();
+  if (!config.clientId) throw new Error('Azure Client ID är inte konfigurerad.');
+  const redirectUri = (typeof window !== 'undefined' && window.location && window.location.origin)
+    ? `${window.location.origin}/`
+    : (config.redirectUri || '');
+  const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      code,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+      code_verifier: codeVerifier,
+      scope: SSO_SCOPES.join(' '),
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let err;
+    try { err = JSON.parse(text); } catch (_e) { err = { error: text }; }
+    throw new Error(err.error_description || err.error || `Token exchange failed: ${response.status}`);
+  }
+  const data = await response.json();
+  const idToken = data.id_token || null;
+  if (!idToken) throw new Error('Ingen id_token i svar från Microsoft.');
+  return idToken;
+}
+
+/**
+ * Rensar SSO-state och code_verifier från localStorage.
+ */
+export function clearSSOStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(SSO_STATE_KEY);
+    window.localStorage.removeItem(SSO_CODE_VERIFIER_KEY);
+  } catch (_e) {}
+}

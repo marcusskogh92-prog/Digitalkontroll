@@ -9,6 +9,7 @@ import {
   getReactNativePersistence,
   initializeAuth,
   reauthenticateWithCredential,
+  signInWithCustomToken,
   signInWithEmailAndPassword,
   updatePassword,
   updateProfile,
@@ -59,6 +60,9 @@ export const functionsClient = getFunctions(app, 'us-central1');
 // Callable wrappers (must be invoked via httpsCallable)
 export const deleteProjectCallable = httpsCallable(functionsClient, 'deleteProject');
 export const deleteFolderCallable = httpsCallable(functionsClient, 'deleteFolder');
+export const ssoEntraLoginCallable = httpsCallable(functionsClient, 'ssoEntraLogin');
+
+export { signInWithCustomToken };
 
 /** Sätt att användaren har projektet öppet (anropas när användaren öppnar ett projekt). */
 export async function setProjectPresence(companyId, projectId, userId, displayName = null) {

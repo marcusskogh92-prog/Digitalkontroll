@@ -18,6 +18,7 @@ const { adminFetchCompanyMembers, setCompanyStatus, setCompanyUserLimit, setComp
 const { purgeCompany, purgeAllCompaniesExceptMSByggsystem } = require('./companyPurge');
 const { devResetAdmin } = require('./devReset');
 const { deleteProject, deleteFolder } = require('./deleteOperations');
+const { ssoEntraLoginImpl } = require('./ssoEntraLogin');
 const {
   getSharePointGraphAccessToken,
   getSharePointHostname,
@@ -51,6 +52,9 @@ exports.devResetAdmin = functions.https.onCall(devResetAdmin);
 
 exports.deleteProject = functions.https.onCall(deleteProject);
 exports.deleteFolder = functions.https.onCall(deleteFolder);
+
+// SSO: Entra id_token → Firebase custom token (endast befintliga användare)
+exports.ssoEntraLogin = functions.https.onCall(ssoEntraLoginImpl);
 
 exports.getDefaultAIPrompt = functions.https.onCall((data, context) => {
   if (!context.auth) {
