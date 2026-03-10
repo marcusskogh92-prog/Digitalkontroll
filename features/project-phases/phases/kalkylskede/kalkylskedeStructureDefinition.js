@@ -45,12 +45,10 @@ const SECTION_DEFS = {
     // 3 undermappar + AI-analys (ingen mapp); AI-analys analyserar underlag + kalkyl.
     items: ['01 - Kalkylritningar', '02 - Kalkylanteckningar', '03 - Kalkyl'],
   },
-  // Inköp & offerter: två hårdkodade flikar (Förfrågningar, Offerter) + egna flikar med utforskare.
-  // Basflikar kan raderas om man vill köra enbart utforskare med egen mappstruktur.
   offerter: {
     title: 'Inköp och offerter',
     icon: 'document-outline',
-    items: ['01 - Förfrågningar', '02 - Offerter'],
+    items: ['01 - Inköp', '02 - Dokument', '03 - AI-Analys'],
   },
   'risk-mojligheter': {
     title: 'Risk och möjligheter',
@@ -172,10 +170,10 @@ export function buildKalkylskedeNavigation(version = KALKYLSKEDE_STRUCTURE_VERSI
             { id: 'ai-kalkyl-analys', name: '04 - AI-analys', component: 'AIKalkylAnalysView', order: 4, enabled: true },
           ];
         } else if (id === 'offerter') {
-          // Två hårdkodade flikar (inga utforskare) + egna flikar får DigitalkontrollsUtforskare.
           section.items = [
-            { id: 'forfragningar', name: '01 - Förfrågningar', component: 'ForfragningarView', order: 1, enabled: true },
-            { id: 'offerter', name: '02 - Offerter', component: 'OfferterView', order: 2, enabled: true },
+            { id: 'inkop', name: 'Inköp', component: 'InkopView', order: 1, enabled: true, isSystemItem: true },
+            { id: 'dokument', name: 'Dokument', component: 'DokumentView', order: 2, enabled: true, isSystemItem: true },
+            { id: 'ai-inkop-analys', name: 'AI-Analys', component: 'AIInkopAnalysView', order: 3, enabled: true, isSystemItem: true },
           ];
         } else if (id === 'risk-mojligheter') {
           section.items = [

@@ -231,6 +231,7 @@ export default function ProjectSubTopbar({
   itemLoadingIds = [],
 }) {
   const [hoveredId, setHoveredId] = useState(null);
+  const [barHovered, setBarHovered] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -239,6 +240,22 @@ export default function ProjectSubTopbar({
   const topPx = typeof primaryTopbarHeight === 'number' && primaryTopbarHeight >= 0 ? primaryTopbarHeight : PRIMARY_TOPBAR_HEIGHT;
   const isDragging = !!draggingId;
   const wrapperRef = useRef(null);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (!isWeb || !scrollRef.current) return;
+    const el = scrollRef.current;
+    const dom = el?.getScrollableNode?.() ?? el;
+    if (!dom || typeof dom.addEventListener !== 'function') return;
+
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      dom.scrollLeft += e.deltaY;
+    };
+    dom.addEventListener('wheel', onWheel, { passive: false });
+    return () => dom.removeEventListener('wheel', onWheel);
+  }, [isWeb]);
 
   useEffect(() => {
     if (!isWeb || !wrapperRef.current || !(isEditable && onReorder)) return;
@@ -379,16 +396,20 @@ export default function ProjectSubTopbar({
     <>
       <View
         ref={wrapperRef}
+        onMouseEnter={isWeb ? () => setBarHovered(true) : undefined}
+        onMouseLeave={isWeb ? () => setBarHovered(false) : undefined}
         style={[
           styles.wrapper,
           isWeb && styles.wrapperSticky,
           isWeb && { top: topPx },
           isDragging && styles.wrapperDragActive,
+          isWeb && barHovered && styles.wrapperHovered,
         ]}
       >
         <View style={styles.wrapperInner}>
           <View style={styles.container}>
             <ScrollView
+              ref={scrollRef}
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.scrollContent}
@@ -491,6 +512,9 @@ const styles = StyleSheet.create({
   wrapperSticky: {
     position: 'sticky',
     zIndex: SUB_TOPBAR.stickyZIndex,
+  },
+  wrapperHovered: {
+    backgroundColor: 'rgba(241, 245, 249, 0.95)',
   },
   wrapperDragActive: {
     backgroundColor: 'rgba(0,0,0,0.025)',

@@ -288,17 +288,37 @@ export async function fetchCompanySuppliersForInkopsplan(companyId) {
   if (!cid) return [];
 
   try {
-    const suppliersSnap = await getDocs(collection(db, 'foretag', cid, 'leverantorer'));
+    const [suppliersSnap, kategorierSnap] = await Promise.all([
+      getDocs(collection(db, 'foretag', cid, 'leverantorer')),
+      getDocs(collection(db, 'companies', cid, 'categories')),
+    ]);
+
+    const categoryMap = {};
+    kategorierSnap.docs.forEach((d) => {
+      categoryMap[d.id] = safeText(d.data()?.name) || d.id;
+    });
+
     const suppliers = suppliersSnap.docs.map((d) => {
       const data = d.data() || {};
       const registryId = d.id;
       const companyName = safeText(data?.companyName) || 'Leverantör';
+      const categoryId = safeText(data?.category) || null;
+      const categoryIds = Array.isArray(data?.categories) ? data.categories.map((c) => safeText(c)).filter(Boolean) : [];
+      const allCategoryIds = categoryId && !categoryIds.includes(categoryId) ? [categoryId, ...categoryIds] : categoryIds.length ? categoryIds : categoryId ? [categoryId] : [];
+      const categoryNames = allCategoryIds.map((id) => categoryMap[id] || null).filter(Boolean);
+      const byggdelIds = Array.isArray(data?.byggdelTags) ? data.byggdelTags.map((b) => safeText(b)).filter(Boolean) : [];
+      const kontoIds = Array.isArray(data?.konton) ? data.konton.map((k) => safeText(k)).filter(Boolean) : [];
+
       return {
         key: `supplier:${registryId}`,
         registryType: 'supplier',
         registryId,
         companyName,
-        category: safeText(data?.category) || null,
+        category: categoryNames.length > 0 ? categoryNames.join(', ') : (categoryId ? (categoryMap[categoryId] || categoryId) : null),
+        categoryIds: allCategoryIds,
+        categoryNames,
+        byggdelIds,
+        kontoIds,
         companyId: safeText(data?.companyId) || null,
       };
     });

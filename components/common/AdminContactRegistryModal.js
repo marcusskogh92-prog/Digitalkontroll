@@ -356,7 +356,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     const c = editModalContact;
     const digitsOnly = (s) => String(s ?? '').replace(/\D/g, '');
     const name = String(c.name ?? '').trim();
-    const contactCompanyName = String(c.contactCompanyName ?? c.companyName ?? '').trim();
+    const contactCompanyName = String(c.contactCompanyName ?? '').trim();
     const linkedSupplierId = String(c.linkedSupplierId ?? '').trim();
     const customerId = String(c.customerId ?? '').trim();
     const role = String(c.role ?? '').trim();
@@ -547,7 +547,7 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
     const qDigits = digitsOnly(search);
     return contacts.filter((c) => {
       const n = normalizeSearchText(c.name);
-      const co = normalizeSearchText(c.contactCompanyName ?? c.companyName ?? c.company ?? '');
+      const co = normalizeSearchText(c.contactCompanyName ?? '');
       const r = normalizeSearchText(c.role);
       const e = normalizeSearchText(c.email);
       const p = String(c.phone ?? '').trim();
@@ -569,8 +569,8 @@ export default function AdminContactRegistryModal({ visible, companyId, onClose 
         aVal = String(a.name ?? '').trim();
         bVal = String(b.name ?? '').trim();
       } else if (sortColumn === 'contactCompanyName') {
-        aVal = String(a.contactCompanyName ?? a.companyName ?? '').trim();
-        bVal = String(b.contactCompanyName ?? b.companyName ?? '').trim();
+        aVal = String(a.contactCompanyName ?? '').trim();
+        bVal = String(b.contactCompanyName ?? '').trim();
       } else if (sortColumn === 'role') {
         aVal = String(a.role ?? '').trim();
         bVal = String(b.role ?? '').trim();

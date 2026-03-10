@@ -16,7 +16,7 @@ import { fetchCompanyContacts, updateProjectInfoImportantDateFromTimeline } from
 import { emitProjectUpdated } from '../../../../../../../../components/projectBus';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 import { useProjectTimelineDates } from '../../../../../../../../hooks/useProjectTimelineDates';
-import { cancelOutlookEvent, updateOutlookEvent } from '../../../../../../../../services/outlook/outlookCalendarService';
+import { updateOutlookEvent } from '../../../../../../../../services/outlook/outlookCalendarService';
 import ContextMenu from '../../../../../../../../components/ContextMenu';
 import ConfirmModal from '../../../../../../../../components/common/Modals/ConfirmModal';
 
@@ -472,7 +472,6 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
   const [deleteConfirmDate, setDeleteConfirmDate] = React.useState(null);
 
   /** Modal: "Avboka möte i Outlook" only (no delete) – requires confirmation. */
-  const [cancelOutlookOnlyModal, setCancelOutlookOnlyModal] = React.useState({ open: false, item: null });
 
   /** Optimistic Outlook status per id: 'sending' | 'sent'. Cleared when Firestore snapshot has outlookStatus. */
   const [optimisticOutlook, setOptimisticOutlook] = React.useState(() => ({}));
@@ -560,6 +559,25 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     scrollToItemId(mid);
   }, [sortedItems, scrollToItemId, flashSelectionById]);
 
+  const internalParticipants = React.useMemo(() => {
+    const groups = Array.isArray(organisationGroups) ? organisationGroups : [];
+    const internalGroup = groups.find(
+      (g) => g?.locked === true || g?.isInternalMainGroup === true || String(g?.id || '') === 'internal-main'
+    );
+    if (!internalGroup) return [];
+    const members = Array.isArray(internalGroup.members) ? internalGroup.members : [];
+    const seen = new Set();
+    const out = [];
+    for (const m of members) {
+      const email = String(m?.email || '').trim().toLowerCase();
+      if (!email || !email.includes('@')) continue;
+      if (seen.has(email)) continue;
+      seen.add(email);
+      out.push({ name: String(m?.name || '').trim(), email });
+    }
+    return out;
+  }, [organisationGroups]);
+
   const openAddGeneric = React.useCallback(() => {
     setModalState({
       open: true,
@@ -575,11 +593,11 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         baseNumber: 1,
         startTime: '',
         endTime: '',
-        participants: [],
+        participants: internalParticipants,
         outlookInvitationPrepared: false,
       },
     });
-  }, [todayIso]);
+  }, [todayIso, internalParticipants]);
 
   const openEdit = React.useCallback((it) => {
     if (!it) return;
@@ -774,23 +792,10 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       requestDeleteDate(it);
     } else if (key === 'resend_outlook') {
       prepareOutlookInvitation(it);
-    } else if (key === 'cancel_outlook') {
-      setCancelOutlookOnlyModal({ open: true, item: it });
     }
     closeRowMenu();
   }, [rowMenuAnchor?.item, openEdit, requestDeleteDate, prepareOutlookInvitation, closeRowMenu]);
 
-  const confirmCancelOutlookOnly = React.useCallback(async () => {
-    const it = cancelOutlookOnlyModal?.item;
-    const id = it ? String(it.id || '').trim() : '';
-    const outlookEventId = it?.outlookEventId != null ? String(it.outlookEventId).trim() : '';
-    setCancelOutlookOnlyModal({ open: false, item: null });
-    if (!id || !outlookEventId) return;
-    try {
-      await cancelOutlookEvent(outlookEventId);
-      await timeline.updateCustomDate(id, { outlookStatus: 'cancelled' });
-    } catch (_e) {}
-  }, [cancelOutlookOnlyModal?.item, timeline]);
 
   const rowMenuItems = React.useMemo(() => {
     const it = rowMenuAnchor?.item;
@@ -804,7 +809,6 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
     ];
     if (hasOutlook) {
       list.push({ key: 'resend_outlook', label: 'Skicka om Outlook-kallelse', icon: <Ionicons name="send-outline" size={16} color="#475569" /> });
-      list.push({ key: 'cancel_outlook', label: 'Avboka möte i Outlook', danger: true, icon: <Ionicons name="close-circle-outline" size={16} color="#b91c1c" /> });
     }
     return list;
   }, [rowMenuAnchor?.item]);
@@ -1295,54 +1299,63 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
       <Modal visible={!!outlookDeleteModal?.open} transparent animationType="fade" onRequestClose={closeOutlookDeleteModal}>
         <Pressable
           onPress={closeOutlookDeleteModal}
-          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
+          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.40)', padding: 16, justifyContent: 'center' }}
         >
           <Pressable
             onPress={(e) => e?.stopPropagation?.()}
             style={{
               width: '100%',
-              maxWidth: 440,
+              maxWidth: 460,
               alignSelf: 'center',
               backgroundColor: '#fff',
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#E2E8F0',
+              borderRadius: 14,
+              borderWidth: 2,
+              borderColor: '#DC2626',
               overflow: 'hidden',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
+              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(220, 38, 38, 0.18)' } : {}),
             }}
           >
-            <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-              <Text style={{ fontSize: 16, fontWeight: FW_MED, color: COLORS.text }}>Outlook-kallelse är skickad</Text>
+            <View style={{ backgroundColor: '#FEF2F2', paddingHorizontal: 18, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#FECACA', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700' }}>!</Text>
+              </View>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: '#991B1B', flex: 1 }}>Varning – Outlook-kallelse skickad</Text>
             </View>
-            <View style={{ padding: 14, gap: 12 }}>
-              <Text style={{ fontSize: 13, color: COLORS.textMuted }}>
-                Detta möte har skickats som kallelse via Outlook. Om du raderar datumet här tas det inte bort i Outlook. Glöm inte att även avboka mötet i Outlook.
+            <View style={{ padding: 18, gap: 14 }}>
+              <Text style={{ fontSize: 14, color: '#1E293B', lineHeight: 22 }}>
+                Detta möte har skickats som <Text style={{ fontWeight: '700' }}>kallelse via Outlook</Text> till deltagarna.
               </Text>
+              <View style={{ backgroundColor: '#FFF7ED', borderRadius: 10, borderWidth: 1, borderColor: '#FDBA74', padding: 12, flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+                <Ionicons name="warning-outline" size={20} color="#EA580C" style={{ marginTop: 1 }} />
+                <Text style={{ fontSize: 13, color: '#9A3412', lineHeight: 20, flex: 1 }}>
+                  Om du raderar datumet här tas det <Text style={{ fontWeight: '700' }}>inte</Text> bort automatiskt i Outlook. Du måste manuellt avboka eller ta bort mötet i Outlook så att deltagarna får en uppdatering.
+                </Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 18, paddingBottom: 16, paddingTop: 4 }}>
               <Pressable
                 onPress={closeOutlookDeleteModal}
                 style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
+                  paddingVertical: 9,
+                  paddingHorizontal: 18,
                   borderRadius: 10,
                   borderWidth: 1,
                   borderColor: '#CBD5E1',
                   backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
                 })}
               >
-                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
+                <Text style={{ fontSize: 14, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
               </Pressable>
               <Pressable
                 onPress={confirmOutlookReminderAndDelete}
                 style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
+                  paddingVertical: 9,
+                  paddingHorizontal: 18,
                   borderRadius: 10,
-                  backgroundColor: hovered || pressed ? COLORS.blueHover : COLORS.blue,
+                  backgroundColor: hovered || pressed ? '#B91C1C' : '#DC2626',
                 })}
               >
-                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#fff' }}>Radera ändå</Text>
+                <Text style={{ fontSize: 14, fontWeight: FW_MED, color: '#fff' }}>Radera ändå</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -1371,62 +1384,6 @@ export default function TidsplanViktigaDatumView({ projectId, companyId, project
         compact
       />
 
-      <Modal visible={!!cancelOutlookOnlyModal?.open} transparent animationType="fade" onRequestClose={() => setCancelOutlookOnlyModal({ open: false, item: null })}>
-        <Pressable
-          onPress={() => setCancelOutlookOnlyModal({ open: false, item: null })}
-          style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.30)', padding: 16, justifyContent: 'center' }}
-        >
-          <Pressable
-            onPress={(e) => e?.stopPropagation?.()}
-            style={{
-              width: '100%',
-              maxWidth: 400,
-              alignSelf: 'center',
-              backgroundColor: '#fff',
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#E2E8F0',
-              overflow: 'hidden',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 10px 30px rgba(0,0,0,0.18)' } : {}),
-            }}
-          >
-            <View style={{ paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F7' }}>
-              <Text style={{ fontSize: 16, fontWeight: FW_MED, color: COLORS.text }}>❌ Avboka möte i Outlook</Text>
-            </View>
-            <View style={{ padding: 14 }}>
-              <Text style={{ fontSize: 13, color: COLORS.textMuted }}>
-                Vill du avboka detta möte i Outlook? Datumet finns kvar i DigitalKontroll.
-              </Text>
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: '#EEF2F7' }}>
-              <Pressable
-                onPress={() => setCancelOutlookOnlyModal({ open: false, item: null })}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: '#CBD5E1',
-                  backgroundColor: hovered || pressed ? 'rgba(148, 163, 184, 0.14)' : '#fff',
-                })}
-              >
-                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.textMuted }}>Avbryt</Text>
-              </Pressable>
-              <Pressable
-                onPress={confirmCancelOutlookOnly}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 14,
-                  borderRadius: 10,
-                  backgroundColor: hovered || pressed ? COLORS.blueHover : COLORS.blue,
-                })}
-              >
-                <Text style={{ fontSize: 13, fontWeight: FW_MED, color: '#fff' }}>Bekräfta</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </ScrollView>
   );
 }

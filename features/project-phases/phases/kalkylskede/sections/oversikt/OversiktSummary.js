@@ -19,6 +19,7 @@ import { PROJECT_PHASES } from '../../../../../projects/constants';
 import PersonSelector from '../../components/PersonSelector';
 import { enqueueFsExcelSync } from '../../services/fragaSvarExcelSyncQueue';
 import { formatOrganizationNumber } from '../../../../../../utils/formatOrganizationNumber';
+import { formatMobileDisplay } from '../../../../../../utils/formatPhone';
 import ProjectAddressMap from '../../../../../../components/common/ProjectAddressMap';
 
 function isValidIsoDate(value) {
@@ -1418,12 +1419,14 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             onSelect={() => setKontaktpersonSelectorVisible(true)}
             onClear={() => {
               setKontaktperson(null);
+              setTelefon('');
+              setEpost('');
               setHasChangesKund(true);
             }}
             placeholder="Välj kontaktperson..."
             hasChanged={JSON.stringify(kontaktperson) !== JSON.stringify(originalValues.kontaktperson)}
           />
-          <InfoRow
+          <TelefonRow
             key="telefon"
             label="Telefon"
             value={telefon}
@@ -1438,6 +1441,7 @@ export default function OversiktSummary({ projectId, companyId, project }) {
             onChange={handleEpostChange}
             placeholder="E-postadress"
             originalValue={originalValues.epost || ''}
+            textColor="#1976D2"
           />
         </InfoCard>
           </View>
@@ -1728,16 +1732,26 @@ export default function OversiktSummary({ projectId, companyId, project }) {
         onClose={() => setKontaktpersonSelectorVisible(false)}
         onSelect={(person) => {
           setKontaktperson(person);
-          // Auto-fill email and phone if available
           if (person && person.email) {
             setEpost(person.email);
           }
-          if (person && person.phone) {
-            setTelefon(person.phone);
+          if (person) {
+            const mobile = person.phone ? formatMobileDisplay(person.phone) : '';
+            const work = person.workPhone ? String(person.workPhone).trim() : '';
+            if (mobile && work) {
+              setTelefon(`Mobil: ${mobile} / Arbete: ${work}`);
+            } else if (mobile) {
+              setTelefon(`Mobil: ${mobile}`);
+            } else if (work) {
+              setTelefon(`Arbete: ${work}`);
+            } else {
+              setTelefon('');
+            }
           }
           setHasChangesKund(checkKundChanges());
         }}
         companyId={companyId}
+        filterCompanyId={linkedKundSupplierId || linkedKundCustomerId || null}
         value={kontaktperson}
         label="Välj kontaktperson"
       />
@@ -2065,11 +2079,10 @@ const styles = StyleSheet.create({
   personInfo: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 10
   },
   personIcon: {
-    marginTop: 2
   },
   personDetails: {
     flex: 1,
@@ -2238,7 +2251,7 @@ InfoCard.displayName = 'InfoCard';
 // InfoRow component - defined at module level to prevent re-creation on every render
 // Completely uncontrolled - maintains its own state to prevent focus loss
 // transformInput: optional (v) => formattedValue – e.g. for org.nr xxxxxx-xxxx; both display and onChange use transformed value
-const InfoRow = ({ label, value, onChange, placeholder, multiline = false, originalValue = '', transformInput }) => {
+const InfoRow = ({ label, value, onChange, placeholder, multiline = false, originalValue = '', transformInput, textColor }) => {
   const initial = transformInput ? transformInput(String(value || '')) : String(value || '');
   const [localValue, setLocalValue] = React.useState(() => initial);
   const isFocusedRef = React.useRef(false);
@@ -2281,13 +2294,105 @@ const InfoRow = ({ label, value, onChange, placeholder, multiline = false, origi
         onFocus={handleFocus}
         onBlur={handleBlur}
         placeholder={placeholder}
-        style={[styles.infoInput, multiline && styles.infoInputMultiline, hasChanged && styles.infoInputChanged]}
+        style={[styles.infoInput, multiline && styles.infoInputMultiline, hasChanged && styles.infoInputChanged, textColor ? { color: textColor } : null]}
         multiline={multiline}
         numberOfLines={multiline ? 3 : 1}
         autoCapitalize="none"
         autoCorrect={false}
         blurOnSubmit={false}
       />
+    </View>
+  );
+};
+
+// TelefonRow - renders "Mobil:" / "Arbete:" labels in normal color and numbers in blue
+const TelefonRow = ({ label, value, onChange, placeholder, originalValue = '' }) => {
+  const initial = String(value || '');
+  const [localValue, setLocalValue] = React.useState(() => initial);
+  const [editing, setEditing] = React.useState(false);
+  const isFocusedRef = React.useRef(false);
+  const prevValueRef = React.useRef(value);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!isFocusedRef.current && prevValueRef.current !== value) {
+      setLocalValue(String(value || ''));
+      prevValueRef.current = value;
+    }
+  }, [value]);
+
+  const handleChangeText = React.useCallback((text) => {
+    setLocalValue(text);
+    onChange(text);
+  }, [onChange]);
+
+  const handleFocus = React.useCallback(() => {
+    isFocusedRef.current = true;
+  }, []);
+
+  const handleBlur = React.useCallback(() => {
+    isFocusedRef.current = false;
+    prevValueRef.current = value;
+    setEditing(false);
+  }, [value]);
+
+  const originalString = String(originalValue || '');
+  const hasChanged = localValue.trim() !== originalString.trim();
+
+  const renderFormattedPhone = () => {
+    const raw = localValue.trim();
+    if (!raw) return <Text style={{ fontSize: 14, color: '#999' }}>{placeholder}</Text>;
+
+    const parts = raw.split('/').map(s => s.trim());
+    return (
+      <Text style={{ fontSize: 14, flexWrap: 'wrap' }}>
+        {parts.map((part, i) => {
+          const labelMatch = part.match(/^(Mobil:|Arbete:)\s*(.*)/i);
+          return (
+            <React.Fragment key={i}>
+              {i > 0 && <Text style={{ color: '#222' }}> / </Text>}
+              {labelMatch ? (
+                <>
+                  <Text style={{ color: '#222' }}>{labelMatch[1]} </Text>
+                  <Text style={{ color: '#1976D2' }}>{labelMatch[2]}</Text>
+                </>
+              ) : (
+                <Text style={{ color: '#1976D2' }}>{part}</Text>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </Text>
+    );
+  };
+
+  return (
+    <View style={[styles.infoRow, hasChanged && styles.infoRowChanged]}>
+      <Text style={styles.infoLabel}>{label}:</Text>
+      {editing ? (
+        <TextInput
+          ref={inputRef}
+          value={localValue}
+          onChangeText={handleChangeText}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          placeholder={placeholder}
+          style={[styles.infoInput, hasChanged && styles.infoInputChanged]}
+          autoCapitalize="none"
+          autoCorrect={false}
+          blurOnSubmit={false}
+        />
+      ) : (
+        <Pressable
+          style={[styles.infoInput, hasChanged && styles.infoInputChanged, { justifyContent: 'center' }]}
+          onPress={() => {
+            setEditing(true);
+            setTimeout(() => inputRef.current?.focus(), 50);
+          }}
+        >
+          {renderFormattedPhone()}
+        </Pressable>
+      )}
     </View>
   );
 };
@@ -2447,12 +2552,6 @@ const PersonRow = React.memo(({ label, person, onSelect, onClear, placeholder, h
             />
             <View style={styles.personDetails}>
               <Text style={styles.personName}>{person.name}</Text>
-              {person.phone && (
-                <Text style={styles.personPhone}>{person.phone}</Text>
-              )}
-              {person.email && (
-                <Text style={styles.personEmail}>{person.email}</Text>
-              )}
             </View>
           </View>
         ) : (

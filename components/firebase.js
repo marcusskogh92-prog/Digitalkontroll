@@ -2095,6 +2095,43 @@ export async function createCommentNotifications(companyId, projectId, {
 }
 
 /**
+ * Create a notification when a FrågaSvar item is assigned to a person.
+ * Collection: foretag/{company}/projects/{projectId}/notifications/{notificationId}
+ */
+export async function createFsAssignmentNotification(companyId, projectId, {
+  fsId,
+  fsNumber = '',
+  fsTitle = '',
+  assignedUserIds = [],
+  authorId,
+  authorName,
+}) {
+  if (!companyId || !projectId || !fsId || !authorId || !Array.isArray(assignedUserIds)) return;
+  const cid = String(companyId).trim();
+  const pid = String(projectId).trim();
+  const colRef = collection(db, 'foretag', cid, 'projects', pid, 'notifications');
+  const preview = fsNumber ? `${fsNumber} – ${String(fsTitle || '').slice(0, 150)}` : String(fsTitle || '').slice(0, 200);
+  for (const userId of assignedUserIds) {
+    if (!userId || String(userId).trim() === String(authorId).trim()) continue;
+    try {
+      await addDoc(colRef, sanitizeForFirestore({
+        type: 'fs_assigned',
+        userId: String(userId).trim(),
+        companyId: cid,
+        projectId: pid,
+        fsId: String(fsId).trim(),
+        fsNumber: String(fsNumber || '').trim(),
+        authorId: String(authorId).trim(),
+        authorName: String(authorName || '').trim() || 'Användare',
+        textPreview: preview,
+        createdAt: serverTimestamp(),
+        read: false,
+      }));
+    } catch (_e) {}
+  }
+}
+
+/**
  * Subscribe to notifications for the current user (comment mentions, etc.) across all projects.
  * Uses collection group query on "notifications" with userId == currentUserId.
  * Returns unsubscribe function.

@@ -183,7 +183,7 @@ export async function addContactToSupplier(
   companyId: string | undefined | null,
   supplierId: string,
   supplierCompanyName: string,
-  contact: { name: string; email?: string; phone?: string; role?: string }
+  contact: { name: string; email?: string; phone?: string; workPhone?: string; role?: string }
 ): Promise<{ contactId: string; created: boolean }> {
   const cid = safeCompanyId(companyId);
   const id = String(supplierId ?? '').trim();
@@ -196,6 +196,7 @@ export async function addContactToSupplier(
       name: contact.name,
       email: contact.email ?? '',
       phone: contact.phone ?? '',
+      workPhone: contact.workPhone ?? '',
       role: contact.role ?? '',
     },
     contactCompanyName: supplierCompanyName,
@@ -211,6 +212,7 @@ export async function addContactToSupplier(
     };
     if (contact.role?.trim()) patch.role = contact.role.trim();
     if (contact.phone?.trim()) patch.phone = contact.phone.trim();
+    if (contact.workPhone !== undefined) patch.workPhone = (contact.workPhone ?? '').trim();
     if (contact.email?.trim()) patch.email = contact.email.trim();
     await updateCompanyContact({ id: result.id, patch }, cid);
     await linkContactToCompany({ companyId: cid, id: supplierId, contactId: result.id });
@@ -225,7 +227,7 @@ export async function linkExistingContactToSupplier(
   companyId: string | undefined | null,
   supplierId: string,
   contactId: string,
-  patch?: { role?: string; phone?: string; email?: string; contactCompanyName?: string }
+  patch?: { role?: string; phone?: string; workPhone?: string; email?: string; contactCompanyName?: string }
 ): Promise<void> {
   const cid = safeCompanyId(companyId);
   const sid = String(supplierId ?? '').trim();
@@ -240,12 +242,13 @@ export async function linkExistingContactToSupplier(
   if (patch?.contactCompanyName) nextPatch.contactCompanyName = patch.contactCompanyName;
   if (patch?.role?.trim()) nextPatch.role = patch.role.trim();
   if (patch?.phone?.trim()) nextPatch.phone = patch.phone.trim();
+  if (patch?.workPhone !== undefined) nextPatch.workPhone = (patch.workPhone ?? '').trim();
   if (patch?.email?.trim()) nextPatch.email = patch.email.trim();
   await updateCompanyContact({ id: cidContact, patch: nextPatch }, cid);
   await linkContactToCompany({ companyId: cid, id: sid, contactId: cidContact });
 }
 
-/** Koppla bort en befintlig kontakt från leverantören (kontakten finns kvar i registret). */
+/** Koppla bort en befintlig kontakt från leverantören (kontakten finns kvar i registret). Nollställer även företagskopplingen i kontaktregistret så att kontakten inte visar något företag. */
 export async function removeContactFromSupplier(
   companyId: string | undefined | null,
   supplierId: string,
@@ -257,6 +260,17 @@ export async function removeContactFromSupplier(
   if (!sid || !cid2) return;
   await unlinkContactFromCompany({ companyId: cid, id: sid, contactId: cid2 });
   try {
-    await updateCompanyContact({ id: cid2, patch: { linkedSupplierId: null } }, cid);
+    await updateCompanyContact(
+      {
+        id: cid2,
+        patch: {
+          linkedSupplierId: null,
+          contactCompanyName: '',
+          companyId: null,
+          companyType: null,
+        },
+      },
+      cid
+    );
   } catch (_e) {}
 }

@@ -2,10 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MODAL_DESIGN_2026 as D } from '../../constants/modalDesign2026';
+import { formatMobileDisplay } from '../../utils/formatPhone';
 
 const RESIZE_HANDLE_WIDTH = 6;
-const DEFAULT_COLUMN_WIDTHS = [200, 150, 220, 130, 86]; // Namn, Företag, E-post, Telefon, Källa
+const DEFAULT_COLUMN_WIDTHS = [200, 150, 220, 260, 86]; // Namn, Företag, E-post, Telefon, Källa
 const MIN_COLUMN_WIDTHS = [80, 80, 100, 90, 60];
+const CHARS_TO_WIDTH = 7.5;
+const CELL_PADDING = 24;
 
 function normalizeSearch(s) {
   return String(s || '').trim().toLowerCase();
@@ -13,10 +16,38 @@ function normalizeSearch(s) {
 
 function matchesCandidate(candidate, q) {
   if (!q) return true;
-  const hay = [candidate?.name, candidate?.company, candidate?.email, candidate?.phone]
+  const hay = [candidate?.name, candidate?.company, candidate?.email, candidate?.phone, candidate?.workPhone]
     .map((x) => String(x || '').toLowerCase())
     .join(' ');
   return hay.includes(q);
+}
+
+function getPhoneText(c) {
+  const mob = c?.phone ? formatMobileDisplay(c.phone) : '';
+  const work = c?.workPhone ? String(c.workPhone).trim() : '';
+  if (mob && work) return `Mobil: ${mob} / Arbete: ${work}`;
+  if (mob) return `Mobil: ${mob}`;
+  if (work) return `Arbete: ${work}`;
+  return '—';
+}
+
+function getCellText(candidate, colIndex) {
+  if (colIndex === 0) return String(candidate?.name || '—');
+  if (colIndex === 1) return String(candidate?.company || '—');
+  if (colIndex === 2) return String(candidate?.email || '—');
+  if (colIndex === 3) return getPhoneText(candidate);
+  if (colIndex === 4) return sourceLabelFromCandidate(candidate);
+  return '—';
+}
+
+function calcAutoFitWidth(headerLabel, cellTexts) {
+  const headerW = String(headerLabel || '').length * CHARS_TO_WIDTH + CELL_PADDING + 24;
+  let maxCellW = 0;
+  for (const txt of cellTexts) {
+    const w = String(txt || '').length * CHARS_TO_WIDTH + CELL_PADDING;
+    if (w > maxCellW) maxCellW = w;
+  }
+  return Math.max(MIN_COLUMN_WIDTHS[0], Math.min(Math.max(headerW, maxCellW), 500));
 }
 
 function normalizeSortValue(v) {
@@ -115,11 +146,34 @@ export default function ParticipantPickerModal({
 
   const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
   const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+  const lastClickRef = useRef({ column: null, time: 0 });
+  const filteredRef = useRef([]);
+
+  const headerLabels = ['Namn', 'Företag', 'E-post', 'Telefon', 'Källa'];
+
+  const autoFitColumn = useCallback((colIndex) => {
+    const list = filteredRef.current;
+    const cellTexts = list.slice(0, 250).map((c) => getCellText(c, colIndex));
+    const newW = calcAutoFitWidth(headerLabels[colIndex], cellTexts);
+    setColumnWidths((prev) => {
+      const next = [...prev];
+      next[colIndex] = newW;
+      return next;
+    });
+  }, []);
 
   const startResize = useCallback((columnIndex, e) => {
     if (Platform.OS !== 'web') return;
     e.preventDefault();
     e.stopPropagation();
+    const now = Date.now();
+    const last = lastClickRef.current;
+    if (last.column === columnIndex && now - last.time < 400) {
+      lastClickRef.current = { column: null, time: 0 };
+      autoFitColumn(columnIndex);
+      return;
+    }
+    lastClickRef.current = { column: columnIndex, time: now };
     if (typeof document !== 'undefined') document.body.style.cursor = 'col-resize';
     const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
     resizeRef.current = {
@@ -127,7 +181,7 @@ export default function ParticipantPickerModal({
       startX: clientX,
       startWidth: columnWidths[columnIndex],
     };
-  }, [columnWidths]);
+  }, [columnWidths, autoFitColumn]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -151,14 +205,23 @@ export default function ParticipantPickerModal({
       }
       resizeRef.current = { column: null, startX: 0, startWidth: 0 };
     };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        requestClose?.();
+      }
+    };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKeyDown);
     return () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKeyDown);
       if (typeof document !== 'undefined') document.body.style.cursor = '';
     };
-  }, []);
+  }, [requestClose]);
 
   const tableGap = 10;
   const totalTableWidth =
@@ -280,6 +343,25 @@ export default function ParticipantPickerModal({
         return String(a?.name || '').localeCompare(String(b?.name || ''), 'sv');
       });
   }, [showInternal, showExternal, internalCandidates, externalCandidates, search, existingRowKeys, sortKey, sortDir]);
+
+  filteredRef.current = filtered;
+
+  const autoFitDoneRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (filtered.length === 0) return;
+    if (autoFitDoneRef.current) return;
+    autoFitDoneRef.current = true;
+    const items = filtered.slice(0, 250);
+    setColumnWidths((prev) => {
+      const next = [...prev];
+      for (let i = 0; i < headerLabels.length; i++) {
+        const cellTexts = items.map((c) => getCellText(c, i));
+        next[i] = calcAutoFitWidth(headerLabels[i], cellTexts);
+      }
+      return next;
+    });
+  }, [filtered]);
 
   const selectedList = React.useMemo(() => {
     const map = selectedByKey && typeof selectedByKey === 'object' ? selectedByKey : {};
@@ -594,16 +676,30 @@ export default function ParticipantPickerModal({
                           {String(c?.name || '—')}
                         </Text>
                       </View>
-
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
                       <Text style={[styles.td, col(1), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.company || '—')}
                       </Text>
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
                       <Text style={[styles.td, col(2), { color: COLORS.text }]} numberOfLines={1}>
                         {String(c?.email || '—')}
                       </Text>
-                      <Text style={[styles.td, col(3), { color: COLORS.text }]} numberOfLines={1}>
-                        {String(c?.phone || '—')}
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
+                      <Text style={[styles.td, col(3)]} numberOfLines={1}>
+                        {(() => {
+                          const mob = c?.phone ? formatMobileDisplay(c.phone) : '';
+                          const work = c?.workPhone ? String(c.workPhone).trim() : '';
+                          if (!mob && !work) return <Text style={{ color: COLORS.text }}>—</Text>;
+                          return (
+                            <>
+                              {mob ? <><Text style={{ color: COLORS.text }}>Mobil: </Text><Text style={{ color: '#1976D2' }}>{mob}</Text></> : null}
+                              {mob && work ? <Text style={{ color: COLORS.text }}> / </Text> : null}
+                              {work ? <><Text style={{ color: COLORS.text }}>Arbete: </Text><Text style={{ color: '#1976D2' }}>{work}</Text></> : null}
+                            </>
+                          );
+                        })()}
                       </Text>
+                      {Platform.OS === 'web' && <View style={{ width: RESIZE_HANDLE_WIDTH }} />}
                       <Text style={[styles.td, col(4), { fontSize: 12, color: COLORS.textMuted, textAlign: 'right' }]} numberOfLines={1}>
                         {sourceLabel}
                       </Text>

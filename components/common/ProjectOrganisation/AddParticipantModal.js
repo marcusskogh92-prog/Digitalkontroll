@@ -39,6 +39,7 @@ function mapExternalContacts(contactsRes, fallbackCompanyId) {
         company: companyName,
         email: String(c?.email || '').trim(),
         phone: String(c?.phone || '').trim(),
+        workPhone: String(c?.workPhone || '').trim(),
         metaRole: String(c?.role || '').trim(),
       };
     })

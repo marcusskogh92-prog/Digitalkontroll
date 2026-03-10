@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PRIMARY_TOPBAR } from '../../constants/topbarTheme';
 import { useProjectScroll } from '../../contexts/ProjectScrollContext';
@@ -32,25 +32,47 @@ function sortSections(sections) {
 
 export default function ProjectTopbar({ sections: sectionsProp, activeSection, onSelectSection, onLayout, sectionLoadingIds = [] }) {
   const [hoveredId, setHoveredId] = useState(null);
+  const [barHovered, setBarHovered] = useState(false);
   const { scrollY = 0 } = useProjectScroll();
   const sections = sortSections(sectionsProp || []);
+  const scrollRef = useRef(null);
+
+  const isWeb = Platform.OS === 'web';
+
+  useEffect(() => {
+    if (!isWeb || !scrollRef.current) return;
+    const el = scrollRef.current;
+    const dom = el?.getScrollableNode?.() ?? el;
+    if (!dom || typeof dom.addEventListener !== 'function') return;
+
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      dom.scrollLeft += e.deltaY;
+    };
+    dom.addEventListener('wheel', onWheel, { passive: false });
+    return () => dom.removeEventListener('wheel', onWheel);
+  }, [isWeb]);
 
   if (sections.length === 0) return null;
 
-  const isWeb = Platform.OS === 'web';
   const isScrolled = scrollY > 8;
 
   return (
     <View
       onLayout={onLayout}
+      onMouseEnter={isWeb ? () => setBarHovered(true) : undefined}
+      onMouseLeave={isWeb ? () => setBarHovered(false) : undefined}
       style={[
         styles.wrapper,
         isWeb && styles.wrapperSticky,
         isWeb && isScrolled && styles.wrapperScrolled,
+        isWeb && barHovered && styles.wrapperHovered,
       ]}
     >
       <View style={styles.container}>
         <ScrollView
+          ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
@@ -128,6 +150,9 @@ const styles = StyleSheet.create({
     position: 'sticky',
     top: 0,
     zIndex: PRIMARY_TOPBAR.stickyZIndex,
+  },
+  wrapperHovered: {
+    backgroundColor: 'rgba(241, 245, 249, 0.95)',
   },
   wrapperScrolled: {
     ...(Platform.OS === 'web'

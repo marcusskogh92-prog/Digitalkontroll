@@ -1,12 +1,13 @@
 /**
- * Offerter Section
+ * Offerter Section – Inköp och offerter
+ * Tabs: Inköp | Dokument | AI-Analys
  */
 
 import { StyleSheet, Text, View } from 'react-native';
 
 import ErrorBoundary from '../../../../../../components/ErrorBoundary';
-import OfferterView from '../../../../../../modules/offerter/offerter/OfferterView';
-import ForfragningarView from './items/Forfragningar/ForfragningarView';
+import DokumentView from '../../../../../../modules/offerter/dokument/DokumentView';
+import InkopsplanView from '../../../../../../modules/offerter/inkopsplan/InkopsplanView';
 
 function Placeholder({ label, activeItem }) {
   return (
@@ -18,18 +19,27 @@ function Placeholder({ label, activeItem }) {
   );
 }
 
+function AIPlaceholder() {
+  return (
+    <View style={styles.aiPlaceholderWrap}>
+      <Text style={styles.aiPlaceholderTitle}>AI-Analys</Text>
+      <Text style={styles.aiPlaceholderHint}>AI-analys för inköp och offerter kommer snart.</Text>
+    </View>
+  );
+}
+
 const ITEM_COMPONENTS = {
-  // 01 - Förfrågningar (primary startpoint)
-  forfragningar: ForfragningarView,
-  // 02 - Offerter
-  offerter: OfferterView,
-  // Backwards compatible alias
-  'inkomna-offerter': OfferterView,
+  inkop: InkopsplanView,
+  dokument: DokumentView,
+  'ai-inkop-analys': AIPlaceholder,
+  // Legacy aliases
+  forfragningar: InkopsplanView,
+  offerter: DokumentView,
+  'inkomna-offerter': DokumentView,
 };
 
 export default function OfferterSection({ projectId, companyId, project, activeItem, navigation, navigationParams }) {
-  // Default to förfrågningar when no item selected
-  const resolvedItem = activeItem || 'forfragningar';
+  const resolvedItem = activeItem || 'inkop';
   const ItemComponent = ITEM_COMPONENTS[resolvedItem];
 
   if (!ItemComponent) {
@@ -78,6 +88,23 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     color: '#9ca3af',
+    textAlign: 'center',
+  },
+  aiPlaceholderWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  aiPlaceholderTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  aiPlaceholderHint: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6b7280',
     textAlign: 'center',
   },
 });

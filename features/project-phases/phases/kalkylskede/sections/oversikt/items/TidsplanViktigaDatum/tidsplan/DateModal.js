@@ -626,6 +626,23 @@ export default function DateModal({
     safeOnClose();
   }, [safeOnClose]);
 
+  React.useEffect(() => {
+    if (!visible || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (activeDropdown) {
+        setActiveDropdown(null);
+        return;
+      }
+      if (datePickerOpen || participantsModalOpen || occurrenceEdit?.open) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [visible, handleClose, activeDropdown, datePickerOpen, participantsModalOpen, occurrenceEdit?.open]);
+
   const { boxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(!!visible, {
     defaultWidth: 820,
     defaultHeight: 680,

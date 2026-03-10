@@ -7,7 +7,7 @@ import { buildKalkylskedeNavigation, KALKYLSKEDE_STRUCTURE_VERSIONS } from './ph
 
 /** Sektioner som kan anpassas (lägg till/ta bort/byta namn/ordna om mappar). Översikt ingår inte. */
 export const SECTIONS_EDITABLE = new Set([
-  'forfragningsunderlag', 'offerter',
+  'forfragningsunderlag',
   'risk-mojligheter', 'bilder', 'moten', 'kalkyl', 'anbud',
 ]);
 

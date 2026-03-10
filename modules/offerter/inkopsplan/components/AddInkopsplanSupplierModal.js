@@ -120,21 +120,60 @@ export default function AddInkopsplanSupplierModal({
     };
   }, [visible, companyId]);
 
-  const supplierMatches = useMemo(() => {
+  const isSupplierRelevant = useMemo(() => {
+    const rowSourceId = safeText(row?.sourceId);
+    const rowType = safeText(row?.type);
+    const rowName = safeText(row?.name).toLowerCase();
+    const linkedCatIds = Array.isArray(row?.linkedCategoryIds) ? row.linkedCategoryIds.map((id) => safeText(id)).filter(Boolean) : [];
+    const linkedCatId = safeText(row?.linkedCategoryId);
+    if (linkedCatId && !linkedCatIds.includes(linkedCatId)) linkedCatIds.push(linkedCatId);
+
+    if (!rowSourceId && !rowName && linkedCatIds.length === 0) return () => false;
+
+    return (supplier) => {
+      const sCatIds = Array.isArray(supplier?.categoryIds) ? supplier.categoryIds : [];
+      const sByggdelIds = Array.isArray(supplier?.byggdelIds) ? supplier.byggdelIds : [];
+      const sKontoIds = Array.isArray(supplier?.kontoIds) ? supplier.kontoIds : [];
+      const sCatNames = Array.isArray(supplier?.categoryNames) ? supplier.categoryNames : [];
+
+      if (rowType === 'category' && rowSourceId && sCatIds.includes(rowSourceId)) return true;
+      if (rowType === 'building_part' && rowSourceId && sByggdelIds.includes(rowSourceId)) return true;
+      if (rowType === 'account' && rowSourceId && sKontoIds.includes(rowSourceId)) return true;
+
+      if (linkedCatIds.length > 0 && sCatIds.some((id) => linkedCatIds.includes(id))) return true;
+
+      if (rowName && sCatNames.length > 0) {
+        const match = sCatNames.some((cn) => {
+          const cnLow = cn.toLowerCase();
+          return cnLow.includes(rowName) || rowName.includes(cnLow);
+        });
+        if (match) return true;
+      }
+
+      return false;
+    };
+  }, [row?.sourceId, row?.type, row?.name, row?.linkedCategoryId, row?.linkedCategoryIds]);
+
+  const { recommended, others } = useMemo(() => {
     const q = String(supplierQuery || '').trim().toLowerCase();
     const list = Array.isArray(suppliers) ? suppliers : [];
-    if (!q) return list.slice(0, 10);
-    return list
-      .map((s) => {
-        const name = safeText(s?.companyName).toLowerCase();
-        const idx = name.indexOf(q);
-        return { s, idx };
-      })
-      .filter((x) => x.idx >= 0)
-      .sort((a, b) => a.idx - b.idx || safeText(a?.s?.companyName).localeCompare(safeText(b?.s?.companyName), 'sv'))
-      .slice(0, 10)
-      .map((x) => x.s);
-  }, [suppliers, supplierQuery]);
+
+    const filtered = q
+      ? list.filter((s) => safeText(s?.companyName).toLowerCase().includes(q))
+      : list;
+
+    const rec = [];
+    const rest = [];
+    filtered.forEach((s) => {
+      if (isSupplierRelevant(s)) rec.push(s);
+      else rest.push(s);
+    });
+
+    rec.sort((a, b) => safeText(a?.companyName).localeCompare(safeText(b?.companyName), 'sv'));
+    rest.sort((a, b) => safeText(a?.companyName).localeCompare(safeText(b?.companyName), 'sv'));
+
+    return { recommended: rec, others: rest };
+  }, [suppliers, supplierQuery, isSupplierRelevant]);
 
   const loadContactsForSupplier = async (supplier) => {
     const sid = safeText(supplier?.registryId);
@@ -244,30 +283,72 @@ export default function AddInkopsplanSupplierModal({
               style={styles.input}
             />
 
-            {supplierMatches.length > 0 ? (
+            {recommended.length > 0 || others.length > 0 ? (
               <View style={styles.suggestBox}>
-                {supplierMatches.map((s) => {
-                  const label = safeText(s?.companyName) || '—';
-                  const meta = safeText(s?.category);
-                  const key = safeText(s?.key) || label;
-                  return (
-                    <Pressable
-                      key={key}
-                      onPress={() => handlePickSupplier(s)}
-                      style={({ pressed, hovered }) => [
-                        styles.suggestRow,
-                        (pressed || hovered) && styles.suggestRowHover,
-                      ]}
-                    >
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.suggestText} numberOfLines={1}>{label}</Text>
-                        <Text style={styles.suggestMeta} numberOfLines={1}>
-                          {meta ? `Kategori · ${meta}` : 'Leverantör'}
-                        </Text>
+                {recommended.length > 0 ? (
+                  <>
+                    <View style={styles.sectionHeaderRow}>
+                      <View style={styles.sectionBadge}>
+                        <Text style={styles.sectionBadgeText}>Rekommenderade</Text>
                       </View>
-                    </Pressable>
-                  );
-                })}
+                      <Text style={styles.sectionHeaderHint}>
+                        Matchar {safeText(row?.name) || 'vald byggdel'}
+                      </Text>
+                    </View>
+                    {recommended.map((s) => {
+                      const label = safeText(s?.companyName) || '—';
+                      const meta = safeText(s?.category);
+                      const key = safeText(s?.key) || `rec-${label}`;
+                      return (
+                        <Pressable
+                          key={key}
+                          onPress={() => handlePickSupplier(s)}
+                          style={({ pressed, hovered }) => [
+                            styles.suggestRow,
+                            styles.suggestRowRecommended,
+                            (pressed || hovered) && styles.suggestRowRecommendedHover,
+                          ]}
+                        >
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.suggestText} numberOfLines={1}>{label}</Text>
+                            <Text style={styles.suggestMeta} numberOfLines={1}>
+                              {meta ? `Kategori · ${meta}` : 'Leverantör'}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                ) : null}
+                {others.length > 0 ? (
+                  <>
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionHeaderLabel}>Alla leverantörer</Text>
+                    </View>
+                    {others.map((s) => {
+                      const label = safeText(s?.companyName) || '—';
+                      const meta = safeText(s?.category);
+                      const key = safeText(s?.key) || `other-${label}`;
+                      return (
+                        <Pressable
+                          key={key}
+                          onPress={() => handlePickSupplier(s)}
+                          style={({ pressed, hovered }) => [
+                            styles.suggestRow,
+                            (pressed || hovered) && styles.suggestRowHover,
+                          ]}
+                        >
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.suggestText} numberOfLines={1}>{label}</Text>
+                            <Text style={styles.suggestMeta} numberOfLines={1}>
+                              {meta ? `Kategori · ${meta}` : 'Leverantör'}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </>
+                ) : null}
               </View>
             ) : supplierQuery ? (
               <Text style={styles.muted}>Inga träffar.</Text>
@@ -415,8 +496,48 @@ const styles = StyleSheet.create({
     ...(isWeb() ? { cursor: 'pointer' } : {}),
   },
   suggestRowHover: { backgroundColor: '#eef6ff' },
+  suggestRowRecommended: {
+    backgroundColor: '#f0fdf4',
+  },
+  suggestRowRecommendedHover: {
+    backgroundColor: '#dcfce7',
+  },
   suggestText: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
   suggestMeta: { fontSize: 12, color: '#64748b', marginTop: 1 },
+
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: '#f8fafc',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  sectionBadge: {
+    backgroundColor: '#16a34a',
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  sectionBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  sectionHeaderHint: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  sectionHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
 
   readonlyGrid: { flexDirection: 'row', gap: 10 },
   readonlyLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 },

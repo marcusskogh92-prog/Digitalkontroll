@@ -491,6 +491,7 @@ export function HomeHeader({
               ) : (
                 userNotifications.map((n, index) => {
                   const isCommentMention = n?.type === 'comment_mention';
+                  const isFsAssigned = n?.type === 'fs_assigned';
                   const authorName = (n?.authorName && String(n.authorName).trim()) || 'Någon';
                   const textPreview = (n?.textPreview && String(n.textPreview).trim()) ? String(n.textPreview).trim().slice(0, 120) : '';
                   const timeText = (typeof formatRelativeTime === 'function' && n?.createdAt ? formatRelativeTime(n.createdAt) : null) || (n?.createdAt ? new Date(n.createdAt).toLocaleString('sv-SE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
@@ -500,6 +501,11 @@ export function HomeHeader({
                         <>
                           <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} nämnde dig i en kommentar</Text>
                           {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>“{textPreview}{textPreview.length >= 120 ? '…' : ''}”</Text> : null}
+                        </>
+                      ) : isFsAssigned ? (
+                        <>
+                          <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} tilldelade dig en fråga</Text>
+                          {textPreview ? <Text style={{ fontSize: 12, color: '#1976D2', marginTop: 2 }} numberOfLines={2}>{textPreview}{textPreview.length >= 120 ? '…' : ''}</Text> : null}
                         </>
                       ) : (
                         <Text style={{ fontSize: 13, color: '#0F172A' }}>{n?.textPreview || 'Ny händelse'}</Text>
@@ -872,6 +878,7 @@ export function HomeHeader({
                 ) : (
                   userNotifications.map((n, index) => {
                     const isCommentMention = n?.type === 'comment_mention';
+                    const isFsAssigned = n?.type === 'fs_assigned';
                     const authorName = (n?.authorName && String(n.authorName).trim()) || 'Någon';
                     const textPreview = (n?.textPreview && String(n.textPreview).trim()) ? String(n.textPreview).trim().slice(0, 120) : '';
                     const timeText = (typeof formatRelativeTime === 'function' && n?.createdAt ? formatRelativeTime(n.createdAt) : null) || (n?.createdAt ? new Date(n.createdAt).toLocaleString('sv-SE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
@@ -881,6 +888,11 @@ export function HomeHeader({
                           <>
                             <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} nämnde dig i en kommentar</Text>
                             {textPreview ? <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={2}>“{textPreview}{textPreview.length >= 120 ? '…' : ''}”</Text> : null}
+                          </>
+                        ) : isFsAssigned ? (
+                          <>
+                            <Text style={{ fontSize: 13, color: '#0F172A', fontWeight: '500' }}>{authorName} tilldelade dig en fråga</Text>
+                            {textPreview ? <Text style={{ fontSize: 12, color: '#1976D2', marginTop: 2 }} numberOfLines={2}>{textPreview}{textPreview.length >= 120 ? '…' : ''}</Text> : null}
                           </>
                         ) : (
                           <Text style={{ fontSize: 13, color: '#0F172A' }}>{n?.textPreview || 'Ny händelse'}</Text>

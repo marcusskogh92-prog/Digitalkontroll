@@ -304,7 +304,7 @@ export default function ContactRegistryTable({
   const [emailHoveredId, setEmailHoveredId] = useState(null);
   const [editDraft, setEditDraft] = useState(null);
   const lastTapRef = useRef({ contactId: null, time: 0 });
-  const DOUBLE_TAP_MS = 350;
+  const DOUBLE_TAP_MS = 400;
   const [mobileDisplayFormatted, setMobileDisplayFormatted] = useState(false);
   const [companyHighlightedIndex, setCompanyHighlightedIndex] = useState(0);
   const [companyDropdownRect, setCompanyDropdownRect] = useState(null);
@@ -460,7 +460,7 @@ export default function ContactRegistryTable({
       setEditDraft({
         name: String(editingContact.name ?? ''),
         companyId: editingContact.companyId ?? '',
-        contactCompanyName: String(editingContact.contactCompanyName ?? editingContact.companyName ?? ''),
+        contactCompanyName: String(editingContact.contactCompanyName ?? ''),
         linkedSupplierId: editingContact.linkedSupplierId ?? '',
         customerId: editingContact.customerId ?? '',
         role: String(editingContact.role ?? ''),
@@ -729,13 +729,12 @@ export default function ContactRegistryTable({
           <View
             key={contact.id}
             onContextMenu={Platform.OS === 'web' ? (e) => { e.preventDefault(); e.stopPropagation(); onRowMenu?.(e, contact); } : undefined}
-            onDoubleClick={Platform.OS === 'web' && onRowDoubleClick ? (e) => { e.stopPropagation(); onRowDoubleClick(contact); } : undefined}
             style={{ alignSelf: 'stretch' }}
           >
             <TouchableOpacity
               style={[styles.row, Platform.OS === 'web' && styles.rowGapWeb, idx % 2 === 1 ? styles.rowAlt : null, hoveredId === contact.id ? styles.rowHover : null]}
               onPress={() => {
-                if (Platform.OS !== 'web' && onRowDoubleClick) {
+                if (onRowDoubleClick) {
                   const now = Date.now();
                   if (lastTapRef.current.contactId === contact.id && now - lastTapRef.current.time < DOUBLE_TAP_MS) {
                     lastTapRef.current = { contactId: null, time: 0 };
@@ -756,7 +755,7 @@ export default function ContactRegistryTable({
             </View>
             <View style={[styles.cellFlex, col('company')]}>
               <View style={styles.columnContent}>
-                <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.contactCompanyName || contact.companyName)}</Text>
+                <Text style={[styles.cellMuted, { flex: 1 }]} numberOfLines={1}>{safeText(contact.contactCompanyName) || '—'}</Text>
               </View>
             </View>
             <View style={[styles.cellFlex, col('role')]}>

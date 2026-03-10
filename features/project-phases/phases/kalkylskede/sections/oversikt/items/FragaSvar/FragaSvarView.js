@@ -4,7 +4,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,12 +21,14 @@ import {
 import { WebView } from 'react-native-webview';
 import { v4 as uuidv4 } from 'uuid';
 
-import DashboardBanner from '../../../../../../../../components/common/Dashboard/DashboardBanner';
+import { MODAL_DESIGN_2026 } from '../../../../../../../../constants/modalDesign2026';
+import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../../../../../constants/tableLayout';
 import IsoDatePickerModal from '../../../../../../../../components/common/Modals/IsoDatePickerModal';
+import { useDraggableResizableModal } from '../../../../../../../../hooks/useDraggableResizableModal';
 import { PROJECT_TYPOGRAPHY } from '../../../../../../../../components/common/projectTypography';
 import ContextMenu from '../../../../../../../../components/ContextMenu';
 import ErrorBoundary from '../../../../../../../../components/ErrorBoundary';
-import { auth, formatSharePointProjectFolderName, logCompanyActivity, patchCompanyProject } from '../../../../../../../../components/firebase';
+import { auth, createFsAssignmentNotification, fetchByggdelar, formatSharePointProjectFolderName, logCompanyActivity, patchCompanyProject } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 import { deleteFile, ensureFolderPath, getDriveItemByPath, renameDriveItemByIdGuarded, resolveProjectRootFolderPath as resolveProjectRootFolderPathInSite, uploadFile } from '../../../../../../../../services/azure/fileService';
 import { getSiteByUrl } from '../../../../../../../../services/azure/siteService';
@@ -487,9 +489,9 @@ function normalizeResponsiblesFromItem(it) {
 function formatResponsiblesSummary(it) {
   const list = normalizeResponsiblesFromItem(it);
   if (list.length === 0) return '—';
-  const firstName = safeText(list[0]?.name) || 'Vald';
-  if (list.length === 1) return firstName;
-  return `${firstName} +${list.length - 1}`;
+  const names = list.map((r) => safeText(r?.name)).filter(Boolean);
+  if (names.length === 0) return '—';
+  return names.join(', ');
 }
 
 function responsibleKey(groupId, memberId) {
@@ -620,12 +622,17 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     border: '#E6E8EC',
     borderStrong: '#D1D5DB',
     bgMuted: '#F8FAFC',
-    text: '#111',
+    text: MODAL_DESIGN_2026.tableCellColor,
     textMuted: '#475569',
-    textSubtle: '#64748b',
+    textSubtle: MODAL_DESIGN_2026.tableCellMutedColor,
     inputBorder: '#E2E8F0',
-    tableBorder: '#EEF0F3',
-    tableHeaderText: '#64748b',
+    tableBorder: MODAL_DESIGN_2026.tableBorderColor,
+    tableHeaderBg: MODAL_DESIGN_2026.tableHeaderBackgroundColor,
+    tableHeaderText: MODAL_DESIGN_2026.tableHeaderColor,
+    tableRowBorder: MODAL_DESIGN_2026.tableRowBorderColor,
+    tableRowBg: MODAL_DESIGN_2026.tableRowBackgroundColor,
+    tableRowAltBg: MODAL_DESIGN_2026.tableRowAltBackgroundColor,
+    tableRowHoverBg: MODAL_DESIGN_2026.tableRowHoverBackgroundColor,
     danger: '#DC2626',
   };
 
@@ -687,6 +694,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const [panelVisible, setPanelVisible] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [selectedRowId, setSelectedRowId] = useState(null);
+
+  const { boxStyle: fsModalBoxStyle, overlayStyle: fsModalOverlayStyle, headerProps: fsModalHeaderProps, resizeHandles: fsModalResizeHandles } = useDraggableResizableModal(panelVisible, { defaultWidth: 900, defaultHeight: 620, minWidth: 520, minHeight: 380 });
 
   // Rättighet att radera FS: endast admin/projektadmin (företagsadmin) för aktuellt företag
   const [canDeleteFs, setCanDeleteFs] = useState(false);
@@ -784,10 +793,19 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const [disciplineMenuPos, setDisciplineMenuPos] = useState({ x: 20, y: 64 });
   const [disciplineMenuFor, setDisciplineMenuFor] = useState('quick'); // 'quick' | 'form'
 
+  // Byggdel dropdown (valfri – från företagets register)
+  const [byggdelarList, setByggdelarList] = useState([]);
+  const [byggdelMenuVisible, setByggdelMenuVisible] = useState(false);
+  const [byggdelMenuPos, setByggdelMenuPos] = useState({ x: 20, y: 64 });
+  const [byggdelMenuFor, setByggdelMenuFor] = useState('form'); // 'quick' | 'form'
+  const [byggdelPickerSearch, setByggdelPickerSearch] = useState('');
+
   // Ansvarig picker (searchable multi-select)
   const [responsiblePickerVisible, setResponsiblePickerVisible] = useState(false);
   const [responsiblePickerFor, setResponsiblePickerFor] = useState('quick'); // 'quick' | 'form'
   const [responsiblePickerSearch, setResponsiblePickerSearch] = useState('');
+  const [responsiblePickerPendingKeys, setResponsiblePickerPendingKeys] = useState([]); // lokala val i modalen; sparas bara vid "Lägg till"
+  const [responsibleGroupOpen, setResponsibleGroupOpen] = useState({}); // grupp-id -> öppen (intern alltid true)
 
   const [externalPersonModalVisible, setExternalPersonModalVisible] = useState(false);
   const [externalPersonName, setExternalPersonName] = useState('');
@@ -812,6 +830,21 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const answerFileInputRef = useRef(null);
   const formEnsureRef = useRef(null); // { id, promise }
   const spFragaSvarRootPathRef = useRef(null); // cached base path for FS-case uploads
+
+  // Ref för ESC-hantering så att en enda lyssnare (registrerad vid första mount) alltid ser aktuellt tillstånd och körs före modalen
+  const escStateRef = useRef({
+    responsiblePickerVisible: false,
+    externalPersonModalVisible: false,
+    datePickerVisible: false,
+    externalGroupMenuVisible: false,
+    disciplineMenuVisible: false,
+    byggdelMenuVisible: false,
+    panelVisible: false,
+    closePanel: () => {},
+  });
+
+  /** Vilken overlay som är öppen – sätts när användaren öppnar, rensas när den stängs. onRequestClose läser denna så att ESC bara stänger pickern. */
+  const overlayOpenRef = useRef(null);
 
   const spResolvedSiteIdRef = useRef(null);
   const spResolvedProjectRootRef = useRef(null);
@@ -975,6 +1008,15 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     };
   }, [companyId, projectId, hasContext, showDeleted]);
 
+  useEffect(() => {
+    if (!companyId) return;
+    let cancelled = false;
+    fetchByggdelar(companyId).then((list) => {
+      if (!cancelled && Array.isArray(list)) setByggdelarList(list);
+    }).catch(() => { if (!cancelled) setByggdelarList([]); });
+    return () => { cancelled = true; };
+  }, [companyId]);
+
   const filteredAndSorted = useMemo(() => {
     const q = safeText(search).toLowerCase();
     const list = Array.isArray(items) ? items : [];
@@ -1016,7 +1058,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     const getVal = (it) => {
       if (sortColumn === 'bd') return normalizeBd(it?.bd);
       if (sortColumn === 'status') return safeText(it?.status);
-      if (sortColumn === 'title') return safeText(it?.title) || deriveTitleFromText(it?.question);
+      if (sortColumn === 'title') return Number(it?.fsSeq) || 0;
       if (sortColumn === 'discipline') return displayDiscipline(it);
       if (sortColumn === 'responsibles') {
         const list = normalizeResponsiblesFromItem(it);
@@ -1032,6 +1074,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
       if (sortColumn === 'answer') return safeText(it?.answer) || safeText(it?.comment);
       if (sortColumn === 'answeredAt') return toDateSafe(it?.answeredAt)?.getTime() || 0;
       if (sortColumn === 'createdAt') return toDateSafe(it?.createdAt)?.getTime() || 0;
+      if (sortColumn === 'createdByName') return safeText(it?.createdByName) || '';
+      if (sortColumn === 'answeredByName') return safeText(it?.answeredByName) || '';
       return safeText(it?.question);
     };
 
@@ -1049,6 +1093,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const openDatePicker = (which) => {
     const t = which === 'form' ? 'form' : 'quick';
     setDatePickerTarget(t);
+    overlayOpenRef.current = 'datePicker';
     setDatePickerVisible(true);
   };
 
@@ -1077,8 +1122,61 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     } catch (_err) {
       setDisciplineMenuPos({ x: 20, y: 64 });
     }
+    overlayOpenRef.current = 'discipline';
     setDisciplineMenuVisible(true);
   };
+
+  const openByggdelMenu = (e, which) => {
+    const forKey = which === 'form' ? 'form' : 'quick';
+    setByggdelMenuFor(forKey);
+    setByggdelPickerSearch('');
+    if (Platform.OS !== 'web') {
+      const actions = (Array.isArray(byggdelarList) ? byggdelarList : []).slice(0, 20).map((b) => {
+        const code = String(b?.code ?? '').trim();
+        const name = String(b?.name ?? '').trim();
+        const label = name ? `${code} – ${name}` : code || '—';
+        return { text: label, onPress: () => { if (forKey === 'form') setFormBd(code); else setQuickBd(code); } };
+      });
+      actions.push({ text: '— Ingen', onPress: () => { if (forKey === 'form') setFormBd(''); else setQuickBd(''); } });
+      actions.push({ text: 'Avbryt', style: 'cancel' });
+      Alert.alert('Byggdel', 'Välj byggdel', actions);
+      return;
+    }
+    try {
+      const ne = e?.nativeEvent || e;
+      const x = Number(ne?.pageX ?? ne?.clientX ?? 20);
+      const y = Number(ne?.pageY ?? ne?.clientY ?? 64);
+      setByggdelMenuPos({ x: Number.isFinite(x) ? x : 20, y: Number.isFinite(y) ? y : 64 });
+    } catch (_err) {
+      setByggdelMenuPos({ x: 20, y: 64 });
+    }
+    overlayOpenRef.current = 'byggdel';
+    setByggdelMenuVisible(true);
+  };
+
+  const byggdelMenuItems = useMemo(() => {
+    const selected = byggdelMenuFor === 'form' ? safeText(formBd) : safeText(quickBd);
+    const emptyItem = { key: 'bd:empty', label: '— Ingen', value: '', isSelected: !selected, iconName: 'remove-outline', phaseColor: COLORS.blue };
+    const list = (Array.isArray(byggdelarList) ? byggdelarList : []).map((b) => {
+      const code = String(b?.code ?? '').trim();
+      const name = String(b?.name ?? '').trim();
+      const label = name ? `${code} – ${name}` : code || '—';
+      return { key: `bd:${b?.id || code}`, label, value: code, isSelected: selected === code, iconName: 'cube-outline', phaseColor: COLORS.blue };
+    });
+    return [emptyItem, ...list];
+  }, [byggdelMenuFor, formBd, quickBd, byggdelarList, COLORS.blue]);
+
+  const filteredByggdelarForPicker = useMemo(() => {
+    const list = Array.isArray(byggdelarList) ? byggdelarList : [];
+    const q = safeText(byggdelPickerSearch).toLowerCase();
+    if (!q) return list;
+    return list.filter((b) => {
+      const code = String(b?.code ?? '').toLowerCase();
+      const name = String(b?.name ?? '').toLowerCase();
+      const notes = String(b?.notes ?? '').toLowerCase();
+      return code.includes(q) || name.includes(q) || notes.includes(q);
+    });
+  }, [byggdelarList, byggdelPickerSearch]);
 
   const disciplineMenuItems = useMemo(() => {
     const selected = disciplineMenuFor === 'form' ? normalizeDiscipline(formDiscipline) : normalizeDiscipline(quickDiscipline);
@@ -1097,10 +1195,12 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const formatResponsibleSummary = (keys) => {
     const normalized = normalizeResponsibleKeys(keys);
     if (normalized.length === 0) return '';
-    const firstResolved = findResponsibleByKey(orgGroups, normalized[0]);
-    const firstName = safeText(firstResolved?.member?.name) || 'Vald';
-    if (normalized.length === 1) return firstName;
-    return `${firstName} +${normalized.length - 1}`;
+    const names = normalized
+      .map((k) => findResponsibleByKey(orgGroups, k))
+      .map((r) => safeText(r?.member?.name))
+      .filter(Boolean);
+    if (names.length === 0) return 'Valda';
+    return names.join(', ');
   };
 
   const openExternalGroupMenu = (e) => {
@@ -1138,6 +1238,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     } catch (_err) {
       setExternalGroupMenuPos({ x: 20, y: 64 });
     }
+    overlayOpenRef.current = 'externalGroup';
     setExternalGroupMenuVisible(true);
   };
 
@@ -1171,6 +1272,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     const forKey = which === 'form' ? 'form' : 'quick';
     setResponsiblePickerFor(forKey);
     setResponsiblePickerSearch('');
+    overlayOpenRef.current = 'responsible';
     setResponsiblePickerVisible(true);
   };
 
@@ -1201,9 +1303,16 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   const filteredResponsibleGroups = useMemo(() => {
     const groups = Array.isArray(orgGroups) ? orgGroups : [];
     const q = safeText(responsiblePickerSearch).toLowerCase();
+    // Interna gruppen (Organisation och roller: isInternalMainGroup) först, sedan beställare/övriga alfabetiskt
     const sortedGroups = [...groups]
       .filter(Boolean)
-      .sort((a, b) => String(a?.title || '').localeCompare(String(b?.title || ''), 'sv'));
+      .sort((a, b) => {
+        const aIntern = !!a?.isInternalMainGroup;
+        const bIntern = !!b?.isInternalMainGroup;
+        if (aIntern && !bIntern) return -1;
+        if (!aIntern && bIntern) return 1;
+        return String(a?.title || '').localeCompare(String(b?.title || ''), 'sv');
+      });
 
     if (!q) {
       return sortedGroups.map((g) => ({
@@ -1230,6 +1339,21 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
       .filter((g) => (Array.isArray(g?.members) ? g.members.length > 0 : false));
   }, [orgGroups, responsiblePickerSearch]);
 
+  // När Ansvariga-modalen öppnas: initiera pending-nycklar från aktuella val + grupp-öppen (interna gruppen alltid öppen)
+  useEffect(() => {
+    if (!responsiblePickerVisible) return;
+    const which = responsiblePickerFor === 'form' ? 'form' : 'quick';
+    const current = normalizeResponsibleKeys(which === 'form' ? formResponsibleKeys : quickResponsibleKeys);
+    setResponsiblePickerPendingKeys(current);
+    const groups = Array.isArray(orgGroups) ? orgGroups : [];
+    const nextOpen = {};
+    groups.forEach((g) => {
+      const gid = safeText(g?.id);
+      nextOpen[gid] = !!g?.isInternalMainGroup;
+    });
+    setResponsibleGroupOpen(nextOpen);
+  }, [responsiblePickerVisible, responsiblePickerFor, orgGroups]);
+
   // UX rule: after a new FS is created, the "Ny fråga" input state must be fully cleared.
   const resetQuickNewQuestion = () => {
     setQuickBd('');
@@ -1247,6 +1371,40 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
         quickFileInputRef.current.value = '';
       }
     } catch (_e) {}
+  };
+
+  const isQuickFormDirty = () => {
+    const bd = safeText(quickBd);
+    const disc = safeText(quickDiscipline);
+    const keys = Array.isArray(quickResponsibleKeys) ? quickResponsibleKeys : [];
+    const needsBy = safeText(quickNeedsAnswerBy);
+    const title = safeText(quickTitle);
+    const question = safeText(quickQuestion);
+    const files = Array.isArray(quickFiles) ? quickFiles : [];
+    return !!(bd || disc || keys.length > 0 || needsBy || title || question || files.length > 0);
+  };
+
+  const handleToggleQuickPanel = () => {
+    if (quickPanelOpen && isQuickFormDirty()) {
+      const message = 'Du har fyllt i uppgifter som inte är sparade. Vill du stänga utan att spara? Allt du fyllt i kommer att tas bort.';
+      if (Platform.OS === 'web') {
+        if (window.confirm('Stäng ny fråga?\n\n' + message)) {
+          resetQuickNewQuestion();
+          setQuickPanelOpen(false);
+        }
+        return;
+      }
+      Alert.alert(
+        'Stäng ny fråga?',
+        message,
+        [
+          { text: 'Avbryt', style: 'cancel' },
+          { text: 'Stäng', onPress: () => { resetQuickNewQuestion(); setQuickPanelOpen(false); } },
+        ]
+      );
+      return;
+    }
+    setQuickPanelOpen((v) => !v);
   };
 
   const resetFormNewQuestion = () => {
@@ -1683,6 +1841,25 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     }
   };
 
+  const openNewQuestion = () => {
+    resetFormNewQuestion();
+    setEditingId(null);
+    setSelectedRowId(null);
+    setPanelVisible(true);
+  };
+
+  const isFormDirtyModal = () => {
+    const bd = safeText(formBd);
+    const disc = safeText(formDiscipline);
+    const keys = Array.isArray(formResponsibleKeys) ? formResponsibleKeys : [];
+    const needsBy = safeText(formNeedsAnswerBy);
+    const title = safeText(formTitle);
+    const question = safeText(formQuestion);
+    const staged = Array.isArray(formStagedQuestionFiles) ? formStagedQuestionFiles : [];
+    const attachments = Array.isArray(formAttachments) ? formAttachments : [];
+    return !!(bd || disc || keys.length > 0 || needsBy || title || question || staged.length > 0 || attachments.length > 0);
+  };
+
   const openEdit = (it, opts = {}) => {
     if (!it) return;
     setSelectedRowId(String(it?.id || '').trim() || null);
@@ -1880,6 +2057,30 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           reportSharePointFailure('Kunde inte säkerställa FS-mapp i SharePoint', e, { fsId: safeText(editingId) || null });
         }
 
+        // Notify newly assigned responsible persons via dashboard notification
+        try {
+          const currentItem = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === safeText(editingId));
+          const prevKeys = new Set(
+            normalizeResponsiblesFromItem(currentItem)
+              .map((r) => safeText(r?.memberId))
+              .filter(Boolean),
+          );
+          const newUserIds = responsibles
+            .map((r) => safeText(r?.memberId))
+            .filter((uid) => uid && !prevKeys.has(uid));
+          if (newUserIds.length > 0) {
+            const fsNum = formatFsNumberFromItem(currentItem) || '';
+            await createFsAssignmentNotification(companyId, projectId, {
+              fsId: editingId,
+              fsNumber: fsNum,
+              fsTitle: title,
+              assignedUserIds: newUserIds,
+              authorId: user?.uid || '',
+              authorName: safeText(user?.displayName) || safeText(user?.email) || 'Användare',
+            });
+          }
+        } catch (_e) {}
+
         // If answer was added/changed to non-empty, emit activity (notifications)
         const prevAnswer = safeText(originalAnswerRef.current);
         if (answer && answer !== prevAnswer) {
@@ -2038,6 +2239,24 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
             targets,
           }, companyId);
         } catch (_e) {}
+
+        // Notify assigned responsible persons for new items
+        try {
+          const newUserIds = responsibles
+            .map((r) => safeText(r?.memberId))
+            .filter(Boolean);
+          if (newUserIds.length > 0 && created?.id) {
+            const fsNum = formatFsNumberFromItem(created) || '';
+            await createFsAssignmentNotification(companyId, projectId, {
+              fsId: created.id,
+              fsNumber: fsNum,
+              fsTitle: title,
+              assignedUserIds: newUserIds,
+              authorId: user?.uid || '',
+              authorName: safeText(user?.displayName) || safeText(user?.email) || 'Användare',
+            });
+          }
+        } catch (_e) {}
       }
 
       setPanelVisible(false);
@@ -2182,10 +2401,130 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   };
 
   const closePanel = () => {
+    const isNew = !editingId;
+    if (isNew && isFormDirtyModal()) {
+      const message = 'Du har fyllt i uppgifter som inte är sparade. Vill du stänga utan att spara? Allt du fyllt i kommer att tas bort.';
+      if (Platform.OS === 'web') {
+        if (!window.confirm('Stäng ny fråga?\n\n' + message)) return;
+      } else {
+        Alert.alert('Stäng ny fråga?', message, [
+          { text: 'Avbryt', style: 'cancel' },
+          { text: 'Stäng', onPress: () => doClosePanel(true) },
+        ]);
+        return;
+      }
+    }
+    doClosePanel(isNew);
+  };
+
+  const doClosePanel = (wasNewQuestion) => {
     setPanelVisible(false);
     setEditingId(null);
     setSelectedRowId(null);
+    if (wasNewQuestion) resetFormNewQuestion();
   };
+
+  // Uppdatera ref varje render så att ESC-lyssnaren alltid ser aktuellt tillstånd (inga stal closures)
+  escStateRef.current = {
+    responsiblePickerVisible,
+    externalPersonModalVisible,
+    datePickerVisible,
+    externalGroupMenuVisible,
+    disciplineMenuVisible,
+    byggdelMenuVisible,
+    panelVisible,
+    closePanel,
+  };
+
+  // Rensa overlayOpenRef när en overlay stängs (t.ex. klick utanför), så nästa ESC stänger modalen
+  useEffect(() => {
+    if (!responsiblePickerVisible && overlayOpenRef.current === 'responsible') overlayOpenRef.current = null;
+  }, [responsiblePickerVisible]);
+  useEffect(() => {
+    if (!externalPersonModalVisible && overlayOpenRef.current === 'externalPerson') overlayOpenRef.current = null;
+  }, [externalPersonModalVisible]);
+  useEffect(() => {
+    if (!datePickerVisible && overlayOpenRef.current === 'datePicker') overlayOpenRef.current = null;
+  }, [datePickerVisible]);
+  useEffect(() => {
+    if (!externalGroupMenuVisible && overlayOpenRef.current === 'externalGroup') overlayOpenRef.current = null;
+  }, [externalGroupMenuVisible]);
+  useEffect(() => {
+    if (!disciplineMenuVisible && overlayOpenRef.current === 'discipline') overlayOpenRef.current = null;
+  }, [disciplineMenuVisible]);
+  useEffect(() => {
+    if (!byggdelMenuVisible && overlayOpenRef.current === 'byggdel') overlayOpenRef.current = null;
+  }, [byggdelMenuVisible]);
+  useEffect(() => {
+    if (!panelVisible) overlayOpenRef.current = null;
+  }, [panelVisible]);
+
+  // ESC: stäng bara picker/dropdown om någon är öppen; annars stäng Ny fråga. Fånga keyup i capture så Modal inte får eventet.
+  const handleEscape = (e) => {
+    if (e.key !== 'Escape') return;
+    const s = escStateRef.current;
+    if (!s.panelVisible) return; // Hantera bara när Ny fråga-modalen är öppen
+    if (s.responsiblePickerVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setResponsiblePickerVisible(false);
+      return;
+    }
+    if (s.externalPersonModalVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setExternalPersonModalVisible(false);
+      return;
+    }
+    if (s.datePickerVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setDatePickerVisible(false);
+      return;
+    }
+    if (s.externalGroupMenuVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setExternalGroupMenuVisible(false);
+      return;
+    }
+    if (s.disciplineMenuVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setDisciplineMenuVisible(false);
+      return;
+    }
+    if (s.byggdelMenuVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      setByggdelMenuVisible(false);
+      return;
+    }
+    if (s.panelVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      s.closePanel();
+    }
+  };
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onKeyUp = (e) => handleEscape(e);
+    document.addEventListener('keyup', onKeyUp, true);
+    return () => document.removeEventListener('keyup', onKeyUp, true);
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKeyDown = (e) => handleEscape(e);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   const resolveFragaSvarRootPath = async () => {
     if (spFragaSvarRootPathRef.current) return spFragaSvarRootPathRef.current;
@@ -2204,10 +2543,10 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
 
     const rootPath = normalizeGraphPath(rootFolderPath);
 
-    // Required structure: Projekt → 01 - Översikt → 05 - FrågaSvar
+    // FrågaSvar is a top-level phase folder (not nested under Översikt)
     const base = rootPath === '/'
-      ? '/01 - Översikt/05 - FrågaSvar'
-      : `${rootPath}/01 - Översikt/05 - FrågaSvar`;
+      ? '/04 - FrågaSvar'
+      : `${rootPath}/04 - FrågaSvar`;
     const normalized = normalizeGraphPath(base);
     const withoutLeadingSlash = normalized.replace(/^\/+/, '');
 
@@ -2479,27 +2818,123 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
   };
 
   const listData = useMemo(() => {
-    const out = [
-      { type: 'top', key: 'top' },
-      { type: 'tableHeader', key: 'tableHeader' },
-    ];
-    if (loading) out.push({ type: 'loading', key: 'loading' });
-    if (!loading && filteredAndSorted.length === 0) out.push({ type: 'empty', key: 'empty' });
-    for (const it of filteredAndSorted) {
-      out.push({ type: 'row', key: `row:${safeText(it?.id) || Math.random()}`, it });
+    const out = [{ type: 'top', key: 'top' }];
+    if (loading) {
+      out.push({ type: 'loading', key: 'loading' });
+      return out;
     }
+    if (filteredAndSorted.length === 0) {
+      out.push({ type: 'empty', key: 'empty' });
+      return out;
+    }
+    out.push({ type: 'tableContainer', key: 'tableContainer' });
     return out;
   }, [filteredAndSorted, loading]);
 
-  const tableColStyles = {
-    byggdel: { width: 110 },
-    rubrik: { flex: 1, minWidth: 340 },
-    discipline: { width: 130 },
-    ansvarig: { width: 170 },
-    svarSenast: { width: 130 },
-    status: { width: 180 },
-    action: { width: 160 },
+  const FS_DEFAULT_COLUMN_WIDTHS = {
+    byggdel: 90, rubrik: 260, discipline: 100, skapadDatum: 100, skapadAv: 120, tilldelade: 140, svarSenast: 100, svarAv: 120, besvaradDatum: 100, status: 140,
   };
+  const FS_MIN_COL_WIDTH = 60;
+  const FS_RESIZE_HANDLE_W = 6;
+
+  const [columnWidths, setColumnWidths] = useState(FS_DEFAULT_COLUMN_WIDTHS);
+  const resizeRef = useRef({ column: null, startX: 0, startWidth: 0 });
+  const [rowCtxMenu, setRowCtxMenu] = useState(null);
+
+  const col = (key) => ({ width: columnWidths[key], minWidth: columnWidths[key], maxWidth: columnWidths[key], flexGrow: 0, flexShrink: 0 });
+
+  const FS_COLUMN_KEYS = ['byggdel', 'rubrik', 'discipline', 'skapadDatum', 'skapadAv', 'tilldelade', 'svarSenast', 'svarAv', 'besvaradDatum', 'status'];
+  const totalTableWidth = useMemo(() => {
+    const sum = FS_COLUMN_KEYS.reduce((acc, k) => acc + (columnWidths[k] || 0), 0);
+    return sum + FS_COLUMN_KEYS.length * FS_RESIZE_HANDLE_W;
+  }, [columnWidths]);
+
+  const FS_CHARS_TO_WIDTH = 8;
+  const FS_CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12;
+  const FS_MAX_AUTO_WIDTH = 500;
+
+  const FS_HEADER_LABELS = {
+    byggdel: 'Byggdel', rubrik: 'Rubrik', discipline: 'Disciplin', skapadDatum: 'Skapad', skapadAv: 'Skapad av', tilldelade: 'Tilldelade', svarSenast: 'Svar senast', svarAv: 'Svar av', besvaradDatum: 'Besvarad', status: 'Status',
+  };
+
+  const getCellText = useCallback((row, columnKey) => {
+    if (!row) return '';
+    switch (columnKey) {
+      case 'byggdel': return normalizeBd(row.bd) || '';
+      case 'rubrik': {
+        const fs = formatFsNumberFromItem(row) || '';
+        const t = safeText(row.title) || deriveTitleFromText(row.question);
+        return fs ? `${fs} – ${t}` : t;
+      }
+      case 'discipline': return displayDiscipline(row) || '';
+      case 'skapadDatum': return formatDateTime(row.createdAt) || '';
+      case 'skapadAv': return safeText(row.createdByName) || '';
+      case 'tilldelade': return formatResponsiblesSummary(row) || '';
+      case 'svarSenast': return normalizeDateYmd(row.needsAnswerBy) || '';
+      case 'svarAv': return safeText(row.answeredByName) || '';
+      case 'besvaradDatum': return formatDateTime(row.answeredAt) || '';
+      case 'status': return displayStatusLabel(normalizeStatusValue(safeText(row.status) || 'Obesvarad'));
+      default: return '';
+    }
+  }, []);
+
+  const contentWidthForColumn = useCallback((headerLabel, cellTexts) => {
+    const maxLen = Math.max(
+      String(headerLabel || '').length,
+      ...cellTexts.map((t) => String(t || '').length),
+    );
+    return Math.min(Math.max(maxLen * FS_CHARS_TO_WIDTH + FS_CELL_PADDING, FS_MIN_COL_WIDTH), FS_MAX_AUTO_WIDTH);
+  }, []);
+
+  const widenColumn = useCallback((columnKey) => {
+    const headerLabel = FS_HEADER_LABELS[columnKey] || '';
+    const cellTexts = (Array.isArray(filteredAndSorted) ? filteredAndSorted : []).map((row) => getCellText(row, columnKey));
+    const optimal = contentWidthForColumn(headerLabel, cellTexts);
+    setColumnWidths((prev) => ({ ...prev, [columnKey]: optimal }));
+  }, [filteredAndSorted, getCellText, contentWidthForColumn]);
+
+  const lastClickRef = useRef({ column: null, time: 0 });
+
+  const startResize = useCallback((column, e) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const now = Date.now();
+    const last = lastClickRef.current;
+    if (last.column === column && now - last.time < 400) {
+      lastClickRef.current = { column: null, time: 0 };
+      widenColumn(column);
+      return;
+    }
+    lastClickRef.current = { column, time: now };
+
+    const clientX = e.clientX ?? e.nativeEvent?.pageX ?? 0;
+    resizeRef.current = { column, startX: clientX, startWidth: columnWidths[column] };
+  }, [columnWidths, widenColumn]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e) => {
+      const { column, startX, startWidth } = resizeRef.current;
+      if (column == null) return;
+      const delta = (e.clientX ?? 0) - startX;
+      const newWidth = Math.max(FS_MIN_COL_WIDTH, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
+      resizeRef.current = { ...resizeRef.current, startX: e.clientX, startWidth: newWidth };
+    };
+    const onUp = () => { resizeRef.current = { column: null, startX: 0, startWidth: 0 }; };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, []);
+
+  const handleRowContextMenu = useCallback((e, it) => {
+    if (Platform.OS !== 'web') return;
+    e.preventDefault();
+    e.stopPropagation();
+    setRowCtxMenu({ x: e.clientX ?? e.nativeEvent?.pageX ?? 0, y: e.clientY ?? e.nativeEvent?.pageY ?? 0, item: it });
+  }, []);
 
   const toneForRow = (status, overdue) => {
     const s = normalizeStatusValue(status);
@@ -2523,16 +2958,90 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
     };
   };
 
-  const toggleExpandedRow = (it) => {
+  const renderOneTableRow = (it) => {
     const id = safeText(it?.id);
-    if (!id) return;
-    setSelectedRowId((prev) => {
-      const next = safeText(prev) === id ? null : id;
-      if (next) {
-        try { refreshFilesForItem(it); } catch (_e) {}
-      }
-      return next;
-    });
+    if (!id) return null;
+    const status = safeText(it?.status) || 'Obesvarad';
+    const normalizedStatus = STATUSES.includes(normalizeStatusValue(status)) ? normalizeStatusValue(status) : 'Obesvarad';
+    const overdue = normalizedStatus === 'Pågår' && isOverdueNeedsAnswerBy(it?.needsAnswerBy);
+    const tone = toneForRow(normalizedStatus, overdue);
+    const bd = normalizeBd(it?.bd) || '—';
+    const discipline = displayDiscipline(it) || '—';
+    const ansvarigSummary = formatResponsiblesSummary(it);
+    const responsibles = normalizeResponsiblesFromItem(it);
+    const responsiblesTooltip = responsibles.map((r) => { const name = safeText(r?.name); const role = safeText(r?.role); return name ? `${name}${role ? ` (${role})` : ''}` : ''; }).filter(Boolean).join(', ');
+    const needsBy = normalizeDateYmd(it?.needsAnswerBy) || '—';
+    const fsNumber = formatFsNumberFromItem(it) || '';
+    const title = safeText(it?.title) || deriveTitleFromText(safeText(it?.question));
+    const isDeleting = deletingFsId === id;
+    const rowIdx = Array.isArray(filteredAndSorted) ? filteredAndSorted.indexOf(it) : -1;
+    const rowBg = rowIdx % 2 === 1 ? COLORS.tableRowAltBg : COLORS.tableRowBg;
+    return (
+      <View style={{ borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.tableRowBorder, overflow: 'hidden' }}>
+        <Pressable
+          onPress={isDeleting ? undefined : () => openEdit(it)}
+          onLongPress={isDeleting ? undefined : (e) => handleRowContextMenu(e, it)}
+          disabled={isDeleting}
+          style={({ hovered, pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'stretch',
+            minHeight: MODAL_DESIGN_2026.tableRowHeight,
+            backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : (hovered ? COLORS.tableRowHoverBg : rowBg)),
+            opacity: isDeleting ? 0.85 : 1,
+            ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
+          })}
+          {...(Platform.OS === 'web' ? { onContextMenu: (e) => handleRowContextMenu(e, it) } : {})}
+        >
+          <View style={{ ...col('byggdel'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.text, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{bd}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('rubrik'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.text, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{fsNumber ? `${fsNumber} – ` : ''}{title || '—'}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('discipline'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1} title={Platform.OS === 'web' ? discipline : undefined}>{discipline}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('skapadDatum'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{formatDateTime(it?.createdAt) || '—'}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('skapadAv'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{safeText(it?.createdByName) || '—'}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('tilldelade'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={2} title={Platform.OS === 'web' ? (responsiblesTooltip || ansvarigSummary) : undefined}>{ansvarigSummary}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('svarSenast'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{needsBy}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('svarAv'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{safeText(it?.answeredByName) || '—'}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <View style={{ ...col('besvaradDatum'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{formatDateTime(it?.answeredAt) || '—'}</Text>
+          </View>
+          <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+          <Pressable
+            onPress={isDeleting ? undefined : (e) => { e.stopPropagation(); openRowStatusMenu(e, it); }}
+            disabled={isDeleting}
+            style={({ hovered, pressed }) => ({ ...col('status'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 6, ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}) })}
+          >
+            <View style={{ width: 92, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, borderWidth: 1, borderColor: tone.statusBorder, backgroundColor: tone.statusBg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+              {overdue ? <Ionicons name="alert-circle" size={12} color={tone.statusFg} /> : null}
+              <Text style={{ fontSize: 11, fontWeight: FW_MED, color: tone.statusFg }} numberOfLines={1}>{displayStatusLabel(normalizedStatus)}</Text>
+              <Ionicons name="chevron-down" size={12} color={tone.statusFg} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </View>
+    );
   };
 
   const renderListItem = ({ item }) => {
@@ -2547,7 +3056,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           ) : null}
 
           <Text style={[PROJECT_TYPOGRAPHY.introText, { marginBottom: 14, color: COLORS.textMuted }]}>
-            Överblick först, detaljer vid behov. Klicka en rad för att öppna ärendet inline.
+            Överblick först, detaljer vid behov. Klicka en rad för att öppna ärendet.
           </Text>
 
           {!hasContext ? (
@@ -2729,7 +3238,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
             </View>
           ) : null}
 
-          {/* Ny fråga (collapsible) */}
+          {/* Ny fråga – öppnar samma modal som vid redigera */}
           <View style={{
             paddingTop: 4,
             paddingBottom: 12,
@@ -2737,13 +3246,9 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
             borderBottomWidth: 1,
             borderBottomColor: COLORS.tableBorder,
           }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-              <Text style={{ fontSize: 13, fontWeight: FW_MED, color: COLORS.text }}>
-                Ny fråga
-              </Text>
-
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Pressable
-                onPress={() => setQuickPanelOpen((v) => !v)}
+                onPress={openNewQuestion}
                 style={({ hovered, pressed }) => ({
                   ...PRIMARY_ACTION_BUTTON_BASE,
                   flexDirection: 'row',
@@ -2756,421 +3261,12 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               >
                 <Ionicons name="add" size={16} color="#fff" />
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: FW_MED }}>
-                  {quickPanelOpen ? 'Stäng ny fråga' : 'Ny fråga'}
+                  Ny fråga
                 </Text>
               </Pressable>
             </View>
-
-            {quickPanelOpen ? (
-              <View style={{
-                marginTop: 10,
-                borderWidth: 1,
-                borderColor: COLORS.border,
-                borderRadius: 12,
-                backgroundColor: '#F8FAFC',
-                padding: 12,
-                position: 'relative',
-              }}>
-                {quickSaving ? (
-                  <View style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(255,255,255,0.92)',
-                    borderRadius: 12,
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    zIndex: 10,
-                  }}>
-                    <ActivityIndicator size="large" color={COLORS.blue} />
-                    <Text style={{ marginTop: 12, fontSize: 15, fontWeight: FW_MED, color: COLORS.text }}>Sparar fråga…</Text>
-                  </View>
-                ) : null}
-                <View
-                  style={{
-                    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-                    gap: 10,
-                    alignItems: Platform.OS === 'web' ? 'center' : 'stretch',
-                  }}
-                >
-              {/* Byggdel */}
-              <View style={{ width: Platform.OS === 'web' ? 200 : '100%' }}>
-                <View
-                  style={{
-                    height: 44,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 8,
-                    opacity: (!hasContext || quickSaving) ? 0.8 : 1,
-                  }}
-                >
-                  <Text style={{ color: COLORS.textSubtle, fontSize: 13, fontWeight: '400' }} numberOfLines={1}>
-                    Byggdel
-                  </Text>
-                  <TextInput
-                    value={quickBd}
-                    onChangeText={setQuickBd}
-                    placeholder="Byggdel"
-                    placeholderTextColor={COLORS.textSubtle}
-                    editable={hasContext && !quickSaving}
-                    style={{
-                      flex: 1,
-                      height: 42,
-                      paddingVertical: 0,
-                      paddingHorizontal: 0,
-                      fontSize: 14,
-                      color: COLORS.text,
-                      backgroundColor: 'transparent',
-                      ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-                    }}
-                  />
-                </View>
-              </View>
-
-              {/* Disciplin */}
-              <Pressable
-                onPress={(e) => openDisciplineMenu(e, 'quick')}
-                disabled={!hasContext || quickSaving}
-                style={({ hovered, pressed }) => ({
-                  width: Platform.OS === 'web' ? 180 : '100%',
-                  height: 44,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: COLORS.inputBorder,
-                  backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                  opacity: (!hasContext || quickSaving) ? 0.7 : 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                  ...(pressed ? { opacity: 0.9 } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                  <Text style={{ color: COLORS.textSubtle }}>Disciplin </Text>
-                  <Text style={{ color: COLORS.text }}>{normalizeDiscipline(quickDiscipline) || 'Intern'}</Text>
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.textSubtle} />
-              </Pressable>
-
-              {/* Ansvarig (multi) */}
-              <Pressable
-                onPress={() => openResponsiblePicker('quick')}
-                disabled={!hasContext || quickSaving || orgLoading}
-                style={({ hovered, pressed }) => {
-                  return {
-                    width: Platform.OS === 'web' ? 360 : '100%',
-                    paddingHorizontal: 12,
-                    height: 44,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                    opacity: (!hasContext || quickSaving || orgLoading) ? 0.7 : 1,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 10,
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(pressed ? { opacity: 0.9 } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  };
-                }}
-              >
-                <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                  <Text style={{ color: COLORS.textSubtle }}>Ansvarig </Text>
-                  {(() => {
-                    const keys = normalizeResponsibleKeys(quickResponsibleKeys);
-                    const label = orgLoading
-                      ? 'Laddar…'
-                      : (keys.length ? formatResponsibleSummary(keys) : 'Välj personer…');
-                    const color = keys.length ? COLORS.text : COLORS.textMuted;
-                    return <Text style={{ color }} numberOfLines={1}>{label}</Text>;
-                  })()}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.textSubtle} />
-              </Pressable>
-
-              {/* Svar senast */}
-              <Pressable
-                onPress={() => openDatePicker('quick')}
-                disabled={!hasContext || quickSaving}
-                style={({ hovered, pressed }) => ({
-                  width: Platform.OS === 'web' ? 220 : '100%',
-                  height: 44,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: COLORS.inputBorder,
-                  backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                  opacity: (!hasContext || quickSaving) ? 0.7 : 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                  ...(pressed ? { opacity: 0.9 } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                  <Text style={{ color: COLORS.textSubtle }}>Svar senast </Text>
-                  <Text style={{ color: COLORS.text }}>{normalizeDateYmd(quickNeedsAnswerBy) || '—'}</Text>
-                </Text>
-                <Ionicons name="calendar-outline" size={16} color={COLORS.textSubtle} />
-              </Pressable>
-
-              {/* Create */}
-              <Pressable
-                onPress={createQuick}
-                disabled={!hasContext || quickSaving || quickUploadingFiles || !safeText(quickTitle) || !safeText(quickQuestion)}
-                style={({ hovered, pressed }) => ({
-                  height: 44,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  paddingHorizontal: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: COLORS.inputBorder,
-                  backgroundColor: '#fff',
-                  opacity: (!hasContext || quickSaving || quickUploadingFiles || !safeText(quickTitle) || !safeText(quickQuestion)) ? 0.4 : 1,
-                  ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                  ...(pressed ? { opacity: 0.9 } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                {quickSaving ? <ActivityIndicator size="small" color={COLORS.textMuted} /> : <Ionicons name="add" size={16} color={COLORS.textMuted} />}
-                <Text style={{ color: COLORS.textMuted, fontSize: 13, fontWeight: FW_MED }}>
-                  {quickSaving ? 'Sparar fråga…' : 'Skapa'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={{ marginTop: 10 }}>
-              <TextInput
-                value={quickTitle}
-                onChangeText={setQuickTitle}
-                placeholder={hasContext ? 'Rubrik' : 'Saknar projektkontext'}
-                placeholderTextColor={COLORS.textSubtle}
-                editable={hasContext && !quickSaving && !quickUploadingFiles}
-                style={{
-                  borderWidth: 1,
-                  borderColor: (quickAttemptedSubmit && !safeText(quickTitle)) ? '#FCA5A5' : COLORS.inputBorder,
-                  borderRadius: 10,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  fontSize: 14,
-                  color: COLORS.text,
-                  backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-                }}
-              />
-            </View>
-
-            {(quickAttemptedSubmit && !safeText(quickTitle)) ? (
-              <Text style={{ marginTop: 6, fontSize: 12, color: '#991B1B' }}>Rubrik är obligatorisk.</Text>
-            ) : null}
-
-            <View style={{ marginTop: 10 }}>
-              <TextInput
-                ref={quickQuestionRef}
-                value={quickQuestion}
-                onChangeText={setQuickQuestion}
-                placeholder={hasContext ? 'Fråga / Beskrivning… (Enter för att skapa)' : 'Saknar projektkontext'}
-                placeholderTextColor={COLORS.textSubtle}
-                editable={hasContext && !quickSaving && !quickUploadingFiles}
-                multiline
-                scrollEnabled={false}
-                blurOnSubmit={false}
-                onKeyPress={(e) => {
-                  if (Platform.OS !== 'web') return;
-                  const key = String(e?.nativeEvent?.key || '');
-                  const shiftKey = !!e?.nativeEvent?.shiftKey;
-                  if (key === 'Enter' && !shiftKey) {
-                    try { e?.preventDefault?.(); } catch (_err) {}
-                    createQuick();
-                  }
-                }}
-                onContentSizeChange={(e) => {
-                  const raw = Number(e?.nativeEvent?.contentSize?.height || 0);
-                  if (!Number.isFinite(raw) || raw <= 0) return;
-                  const pad = Platform.OS === 'web' ? 0 : 18;
-                  const next = Math.max(74, Math.ceil(raw + pad));
-                  setQuickQuestionHeight((prev) => (Math.abs(Number(prev) - next) >= 2 ? next : prev));
-                }}
-                style={{
-                  borderWidth: 1,
-                  borderColor: COLORS.inputBorder,
-                  borderRadius: 10,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  fontSize: 14,
-                  color: COLORS.text,
-                  backgroundColor: hasContext ? '#fff' : COLORS.bgMuted,
-                  minHeight: 74,
-                  height: quickQuestionHeight,
-                }}
-              />
-            </View>
-
-            <View
-              style={{
-                marginTop: 10,
-                borderWidth: 1,
-                borderColor: quickDrag ? COLORS.blue : COLORS.tableBorder,
-                backgroundColor: quickDrag ? 'rgba(25,118,210,0.04)' : 'transparent',
-                padding: 10,
-                borderRadius: 12,
-                overflow: 'hidden',
-              }}
-              onDragOver={(e) => {
-                if (Platform.OS !== 'web') return;
-                try { e?.preventDefault?.(); } catch (_e) {}
-                setQuickDrag(true);
-              }}
-              onDragLeave={() => {
-                if (Platform.OS !== 'web') return;
-                setQuickDrag(false);
-              }}
-              onDrop={(e) => {
-                if (Platform.OS !== 'web') return;
-                try { e?.preventDefault?.(); } catch (_e) {}
-                setQuickDrag(false);
-                try {
-                  const list = Array.from(e?.dataTransfer?.files || []);
-                  addQuickFiles(list);
-                } catch (_err) {}
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: FW_MED }}>Bifogade filer</Text>
-                <Pressable
-                  onPress={() => {
-                    if (Platform.OS !== 'web') {
-                      Alert.alert('Lägg till filer', 'Filbifogning är tillgängligt i webbläget.');
-                      return;
-                    }
-
-                    setQuickUploadError('');
-                    // IMPORTANT (web): the file picker must be opened synchronously from the user gesture.
-                    // We therefore start SharePoint preflight in the background and only block the upload later.
-                    try {
-                      quickEnsureRef.current = { promise: resolveFragaSvarRootPath() };
-                      quickEnsureRef.current.promise.catch((e) => {
-                        reportSharePointFailure('Kunde inte förbereda filbifogning i SharePoint', e);
-                        setQuickUploadError('SharePoint-synk misslyckades. Bilagor är spärrade tills SharePoint fungerar.');
-                      });
-                    } catch (_e) {}
-
-                    try { quickFileInputRef.current?.click?.(); } catch (_e) {}
-                  }}
-                  disabled={!hasContext || quickSaving || quickUploadingFiles}
-                  style={({ hovered, pressed }) => ({
-                    paddingVertical: 5,
-                    paddingHorizontal: 8,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: COLORS.tableBorder,
-                    backgroundColor: '#fff',
-                    opacity: (!hasContext || quickSaving || quickUploadingFiles) ? 0.5 : 1,
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(pressed ? { opacity: 0.9 } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Text style={{ color: COLORS.blue, fontWeight: FW_MED, fontSize: 12 }}>
-                    {quickUploadingFiles ? 'Lägger till…' : '+ Lägg till filer'}
-                  </Text>
-                </Pressable>
-              </View>
-
-              {Platform.OS === 'web' ? (
-                <input
-                  ref={quickFileInputRef}
-                  type="file"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const list = Array.from(e?.target?.files || []);
-                    addQuickFiles(list);
-                    try { if (quickFileInputRef?.current) quickFileInputRef.current.value = ''; } catch (_err) {}
-                  }}
-                />
-              ) : null}
-
-              {quickUploadError ? (
-                <View style={{ padding: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, marginBottom: 10, marginTop: 10 }}>
-                  <Text style={{ color: '#991B1B', fontSize: 13 }}>{quickUploadError}</Text>
-                </View>
-              ) : null}
-
-              {(Array.isArray(quickFiles) ? quickFiles : []).length > 0 ? (
-                <View style={{ marginTop: 8, borderWidth: 1, borderColor: COLORS.tableBorder, borderRadius: 10, overflow: 'hidden', backgroundColor: '#fff' }}>
-                  <View style={{ flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 10, backgroundColor: COLORS.bgMuted, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder }}>
-                    <Text style={{ flex: 2, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filnamn</Text>
-                    <Text style={{ width: 70, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filtyp</Text>
-                    <Text style={{ flex: 1, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Uppladdad av</Text>
-                    <Text style={{ width: 120, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED, textAlign: 'right' }} numberOfLines={1}>Datum</Text>
-                    <View style={{ width: 30 }} />
-                  </View>
-
-                  {(Array.isArray(quickFiles) ? quickFiles : []).map((f, i) => {
-                    const k = fileKey(f);
-                    const name = safeText(f?.name) || 'fil';
-                    const { label } = classifyFileType(name);
-                    const by = safeText(auth?.currentUser?.displayName) || safeText(auth?.currentUser?.email) || '—';
-                    const at = formatDateTime(new Date().toISOString()) || '—';
-                    return (
-                      <Pressable
-                        key={k}
-                        onPress={() => openPreviewForLocalFile(f)}
-                        style={({ hovered, pressed }) => ({
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          paddingVertical: 7,
-                          paddingHorizontal: 10,
-                          borderBottomWidth: i === quickFiles.length - 1 ? 0 : 1,
-                          borderBottomColor: COLORS.tableBorder,
-                          backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : (Platform.OS === 'web' && hovered ? 'rgba(25,118,210,0.04)' : '#fff'),
-                          ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                        })}
-                      >
-                        <Text style={{ flex: 2, color: COLORS.blue, fontSize: 13 }} numberOfLines={1}>{name}</Text>
-                        <Text style={{ width: 70, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{label}</Text>
-                        <Text style={{ flex: 1, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{by}</Text>
-                        <Text style={{ width: 120, color: COLORS.textMuted, fontSize: 12, textAlign: 'right' }} numberOfLines={1}>{at}</Text>
-                        <Pressable
-                          onPress={(e) => {
-                            stopPressPropagation(e);
-                            removeQuickFile(k);
-                          }}
-                          style={({ pressed: p2 }) => ({
-                            width: 30,
-                            alignItems: 'flex-end',
-                            opacity: p2 ? 0.8 : 1,
-                            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                          })}
-                        >
-                          <Ionicons name="close" size={16} color={COLORS.textSubtle} />
-                        </Pressable>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
-            </View>
-              </View>
-            ) : null}
           </View>
+
         </View>
       );
     }
@@ -3187,38 +3283,120 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           style={({ hovered, pressed }) => ({
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
-            paddingVertical: 10,
-            paddingHorizontal: 10,
-            backgroundColor: pressed ? 'rgba(15,23,42,0.04)' : (hovered ? 'rgba(15,23,42,0.02)' : '#fff'),
+            gap: 4,
+            paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+            paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+            paddingLeft: COLUMN_PADDING_LEFT,
+            paddingRight: COLUMN_PADDING_RIGHT,
+            backgroundColor: pressed ? 'rgba(15,23,42,0.04)' : (hovered ? 'rgba(15,23,42,0.02)' : 'transparent'),
             ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
             ...style,
           })}
         >
-          <Text style={{ color: COLORS.tableHeaderText, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>{label}</Text>
+          <Text style={{ color: COLORS.tableHeaderText, fontSize: MODAL_DESIGN_2026.tableHeaderFontSize, fontWeight: MODAL_DESIGN_2026.tableHeaderFontWeight }} numberOfLines={1}>{label}</Text>
           <Ionicons name={sortIcon(col)} size={14} color={COLORS.textSubtle} />
         </Pressable>
       );
 
-      const HeaderTextCell = ({ label, style }) => (
-        <View style={{ paddingVertical: 10, paddingHorizontal: 10, backgroundColor: '#fff', ...style }}>
-          <Text style={{ color: COLORS.tableHeaderText, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>{label}</Text>
-        </View>
+      const ResizeHandle = ({ colKey }) => (
+        Platform.OS === 'web' ? (
+          <View
+            onMouseDown={(e) => startResize(colKey, e)}
+            style={{ width: FS_RESIZE_HANDLE_W, alignSelf: 'stretch', backgroundColor: 'transparent', justifyContent: 'center', alignItems: 'center', cursor: 'col-resize' }}
+          >
+            <View style={{ position: 'absolute', left: Math.floor(FS_RESIZE_HANDLE_W / 2) - 1, top: 4, bottom: 4, width: 2, backgroundColor: '#cbd5e1', borderRadius: 1 }} />
+          </View>
+        ) : null
       );
 
       return (
         <View style={{ backgroundColor: '#fff' }}>
           <View style={{ paddingHorizontal: 18 }}>
-            <View style={{ flexDirection: 'row', borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.tableBorder, backgroundColor: '#fff', overflow: 'hidden', borderTopLeftRadius: 12, borderTopRightRadius: 12 }}>
-              <HeaderCell col="bd" label="Byggdel" style={tableColStyles.byggdel} />
-              <HeaderCell col="title" label="Rubrik" style={tableColStyles.rubrik} />
-              <HeaderCell col="discipline" label="Disciplin" style={tableColStyles.discipline} />
-              <HeaderCell col="responsibles" label="Ansvarig" style={tableColStyles.ansvarig} />
-              <HeaderCell col="needsAnswerBy" label="Svar senast" style={tableColStyles.svarSenast} />
-              <HeaderCell col="status" label="Status" style={tableColStyles.status} />
-              <HeaderTextCell label="Åtgärd" style={tableColStyles.action} />
+            <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: COLORS.tableBorder, backgroundColor: COLORS.tableHeaderBg, overflow: 'hidden', borderRadius: MODAL_DESIGN_2026.tableRadius }}>
+              <HeaderCell col="bd" label="Byggdel" style={col('byggdel')} />
+              <ResizeHandle colKey="byggdel" />
+              <HeaderCell col="title" label="Rubrik" style={col('rubrik')} />
+              <ResizeHandle colKey="rubrik" />
+              <HeaderCell col="discipline" label="Disciplin" style={col('discipline')} />
+              <ResizeHandle colKey="discipline" />
+              <HeaderCell col="createdAt" label="Skapad" style={col('skapadDatum')} />
+              <ResizeHandle colKey="skapadDatum" />
+              <HeaderCell col="createdByName" label="Skapad av" style={col('skapadAv')} />
+              <ResizeHandle colKey="skapadAv" />
+              <HeaderCell col="responsibles" label="Tilldelade" style={col('tilldelade')} />
+              <ResizeHandle colKey="tilldelade" />
+              <HeaderCell col="needsAnswerBy" label="Svar senast" style={col('svarSenast')} />
+              <ResizeHandle colKey="svarSenast" />
+              <HeaderCell col="answeredByName" label="Svar av" style={col('svarAv')} />
+              <ResizeHandle colKey="svarAv" />
+              <HeaderCell col="answeredAt" label="Besvarad" style={col('besvaradDatum')} />
+              <ResizeHandle colKey="besvaradDatum" />
+              <HeaderCell col="status" label="Status" style={col('status')} />
             </View>
           </View>
+        </View>
+      );
+    }
+
+    if (item?.type === 'tableContainer') {
+      const sortIcon = (colKey) => (sortColumn !== colKey ? 'swap-vertical-outline' : (sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'));
+      const HeaderCell = ({ col: colKey, label, style }) => (
+        <Pressable
+          onPress={() => toggleSort(colKey)}
+          style={({ hovered, pressed }) => ({
+            flexDirection: 'row', alignItems: 'center', gap: 4,
+            paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+            paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
+            paddingLeft: COLUMN_PADDING_LEFT,
+            paddingRight: COLUMN_PADDING_RIGHT,
+            backgroundColor: pressed ? 'rgba(15,23,42,0.04)' : (hovered ? 'rgba(15,23,42,0.02)' : 'transparent'),
+            ...style,
+            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+          })}
+        >
+          <Text style={{ color: COLORS.tableHeaderText, fontSize: MODAL_DESIGN_2026.tableHeaderFontSize, fontWeight: MODAL_DESIGN_2026.tableHeaderFontWeight }} numberOfLines={1}>{label}</Text>
+          <Ionicons name={sortIcon(colKey)} size={14} color={COLORS.textSubtle} />
+        </Pressable>
+      );
+      const ResizeHandle = ({ colKey: colKeyR }) => (Platform.OS === 'web' ? (
+        <View onMouseDown={(e) => startResize(colKeyR, e)} style={{ width: FS_RESIZE_HANDLE_W, alignSelf: 'stretch', backgroundColor: 'transparent', justifyContent: 'center', alignItems: 'center', cursor: 'col-resize' }}>
+          <View style={{ position: 'absolute', left: Math.floor(FS_RESIZE_HANDLE_W / 2) - 1, top: 4, bottom: 4, width: 2, backgroundColor: '#cbd5e1', borderRadius: 1 }} />
+        </View>
+      ) : null);
+      return (
+        <View style={{ paddingHorizontal: 18, paddingBottom: 28 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator
+            contentContainerStyle={{ paddingRight: 18 }}
+          >
+            <View style={{ width: totalTableWidth }}>
+              <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: COLORS.tableBorder, backgroundColor: COLORS.tableHeaderBg, overflow: 'hidden', borderRadius: MODAL_DESIGN_2026.tableRadius }}>
+                <HeaderCell col="bd" label="Byggdel" style={col('byggdel')} />
+                <ResizeHandle colKey="byggdel" />
+                <HeaderCell col="title" label="Rubrik" style={col('rubrik')} />
+                <ResizeHandle colKey="rubrik" />
+                <HeaderCell col="discipline" label="Disciplin" style={col('discipline')} />
+                <ResizeHandle colKey="discipline" />
+                <HeaderCell col="createdAt" label="Skapad" style={col('skapadDatum')} />
+                <ResizeHandle colKey="skapadDatum" />
+                <HeaderCell col="createdByName" label="Skapad av" style={col('skapadAv')} />
+                <ResizeHandle colKey="skapadAv" />
+                <HeaderCell col="responsibles" label="Tilldelade" style={col('tilldelade')} />
+                <ResizeHandle colKey="tilldelade" />
+                <HeaderCell col="needsAnswerBy" label="Svar senast" style={col('svarSenast')} />
+                <ResizeHandle colKey="svarSenast" />
+                <HeaderCell col="answeredByName" label="Svar av" style={col('svarAv')} />
+                <ResizeHandle colKey="svarAv" />
+                <HeaderCell col="answeredAt" label="Besvarad" style={col('besvaradDatum')} />
+                <ResizeHandle colKey="besvaradDatum" />
+                <HeaderCell col="status" label="Status" style={col('status')} />
+              </View>
+              {(filteredAndSorted || []).map((rowIt) => (
+                <View key={safeText(rowIt?.id)}>{renderOneTableRow(rowIt)}</View>
+              ))}
+            </View>
+          </ScrollView>
         </View>
       );
     }
@@ -3275,495 +3453,111 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
       const questionText = safeText(it?.question);
       const fsNumber = formatFsNumberFromItem(it) || '';
       const title = safeText(it?.title) || deriveTitleFromText(questionText);
-      const answerText = safeText(it?.answer) || safeText(it?.comment);
 
-      const answeredAt = formatDateTime(it?.answeredAt) || '';
-      const answeredBy = answeredAt ? (safeText(it?.answeredByName) || 'Okänd användare') : '';
-
-      const expanded = safeText(selectedRowId) === id;
-      const isUploading = !!rowUploadingById?.[id];
-      const rowErr = safeText(rowUploadErrorById?.[id]);
-      // Prevent race condition when deleting FS items: disable row while delete in progress
       const isDeleting = deletingFsId === id;
 
-      const hasLiveKey = Object.prototype.hasOwnProperty.call(fsFolderFilesById || {}, id);
-      const liveFiles = fsFolderFilesById?.[id];
-      const attachmentsMeta = uniqAttachments(Array.isArray(it?.attachments) ? it.attachments : []);
-      const liveForMerge = (hasLiveKey && Array.isArray(liveFiles))
-        ? liveFiles.map((f) => ({
-          name: f?.name,
-          webUrl: f?.webUrl,
-          downloadUrl: f?.downloadUrl,
-          createdBy: f?.createdBy,
-          lastModified: f?.lastModified,
-        }))
-        : null;
-
-      const filesAll = liveForMerge
-        ? mergeLiveFilesWithAttachments(liveForMerge, attachmentsMeta)
-        : attachmentsMeta;
-
-      const questionFiles = (Array.isArray(filesAll) ? filesAll : []).filter((f) => normalizeAttachedIn(f?.attachedIn) === 'question');
-      const answerFiles = (Array.isArray(filesAll) ? filesAll : []).filter((f) => normalizeAttachedIn(f?.attachedIn) === 'answer');
+      const rowIdx = Array.isArray(filteredAndSorted) ? filteredAndSorted.indexOf(it) : -1;
+      const rowBg = rowIdx % 2 === 1 ? COLORS.tableRowAltBg : COLORS.tableRowBg;
 
       return (
         <View style={{ paddingHorizontal: 18 }}>
-          <View style={{ borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.tableBorder, overflow: 'hidden', borderBottomLeftRadius: isLastVisibleRow ? 12 : 0, borderBottomRightRadius: isLastVisibleRow ? 12 : 0 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
+          <View style={{ borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.tableRowBorder, overflow: 'hidden' }}>
+            <Pressable
+              onPress={isDeleting ? undefined : () => openEdit(it)}
+              onLongPress={isDeleting ? undefined : (e) => handleRowContextMenu(e, it)}
+              disabled={isDeleting}
+              style={({ hovered, pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'stretch',
+                minHeight: MODAL_DESIGN_2026.tableRowHeight,
+                backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : (hovered ? COLORS.tableRowHoverBg : rowBg)),
+                opacity: isDeleting ? 0.85 : 1,
+                ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
+              })}
+              {...(Platform.OS === 'web' ? { onContextMenu: (e) => handleRowContextMenu(e, it) } : {})}
+            >
+              <View style={{ ...col('byggdel'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.text, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{bd}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('rubrik'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.text, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>
+                  {fsNumber ? `${fsNumber} – ` : ''}{title || '—'}
+                </Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('discipline'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text
+                  style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }}
+                  numberOfLines={1}
+                  title={Platform.OS === 'web' ? discipline : undefined}
+                >
+                  {discipline}
+                </Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('skapadDatum'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{formatDateTime(it?.createdAt) || '—'}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('skapadAv'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{safeText(it?.createdByName) || '—'}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('tilldelade'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text
+                  style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }}
+                  numberOfLines={2}
+                  title={Platform.OS === 'web' ? (responsiblesTooltip || ansvarigSummary) : undefined}
+                >
+                  {ansvarigSummary}
+                </Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('svarSenast'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{needsBy}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('svarAv'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{safeText(it?.answeredByName) || '—'}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
+              <View style={{ ...col('besvaradDatum'), paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal, justifyContent: 'center' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: MODAL_DESIGN_2026.tableCellFontSize }} numberOfLines={1}>{formatDateTime(it?.answeredAt) || '—'}</Text>
+              </View>
+              <View style={{ width: FS_RESIZE_HANDLE_W, flexShrink: 0 }} />
+
               <Pressable
-                onPress={isDeleting ? undefined : () => toggleExpandedRow(it)}
+                onPress={isDeleting ? undefined : (e) => { e.stopPropagation(); openRowStatusMenu(e, it); }}
                 disabled={isDeleting}
                 style={({ hovered, pressed }) => ({
-                  flex: 1,
-                  flexDirection: 'row',
-                  backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : tone.bg),
-                  opacity: isDeleting ? 0.85 : 1,
-                  ...(Platform.OS === 'web' && hovered && !isDeleting ? { filter: 'brightness(0.99)' } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
-                })}
-              >
-                <View style={{ ...tableColStyles.byggdel, paddingVertical: 10, paddingHorizontal: 10 }}>
-                  <Text style={{ color: COLORS.text, fontSize: 13 }} numberOfLines={1}>{bd}</Text>
-                </View>
-
-                <View style={{ ...tableColStyles.rubrik, paddingVertical: 10, paddingHorizontal: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                    <Text style={{ color: COLORS.text, fontSize: 13, flex: 1 }}>
-                      {fsNumber ? `${fsNumber} – ` : ''}{title || '—'}
-                    </Text>
-                    <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={COLORS.textSubtle} />
-                  </View>
-                </View>
-
-                <View style={{ ...tableColStyles.discipline, paddingVertical: 10, paddingHorizontal: 10 }}>
-                  <Text
-                    style={{ color: COLORS.textMuted, fontSize: 13 }}
-                    numberOfLines={1}
-                    title={Platform.OS === 'web' ? discipline : undefined}
-                  >
-                    {discipline}
-                  </Text>
-                </View>
-
-                <View style={{ ...tableColStyles.ansvarig, paddingVertical: 10, paddingHorizontal: 10 }}>
-                  <Text
-                    style={{ color: COLORS.textMuted, fontSize: 13 }}
-                    numberOfLines={1}
-                    title={Platform.OS === 'web' ? (responsiblesTooltip || ansvarigSummary) : undefined}
-                  >
-                    {ansvarigSummary}
-                  </Text>
-                </View>
-
-                <View style={{ ...tableColStyles.svarSenast, paddingVertical: 10, paddingHorizontal: 10 }}>
-                  <Text style={{ color: COLORS.textMuted, fontSize: 13 }} numberOfLines={1}>{needsBy}</Text>
-                </View>
-              </Pressable>
-
-              <Pressable
-                onPress={isDeleting ? undefined : (e) => openRowStatusMenu(e, it)}
-                disabled={isDeleting}
-                style={({ hovered, pressed }) => ({
-                  ...tableColStyles.status,
-                  paddingVertical: 10,
-                  paddingHorizontal: 10,
-                  backgroundColor: isDeleting ? COLORS.bgMuted : (pressed ? 'rgba(25,118,210,0.04)' : tone.bg),
-                  opacity: isDeleting ? 0.85 : 1,
+                  ...col('status'),
+                  paddingVertical: MODAL_DESIGN_2026.tableCellPaddingVertical,
+                  paddingHorizontal: MODAL_DESIGN_2026.tableCellPaddingHorizontal,
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'flex-start',
-                  gap: 8,
-                  ...(Platform.OS === 'web' && hovered && !isDeleting ? { filter: 'brightness(0.99)' } : {}),
+                  gap: 6,
                   ...(Platform.OS === 'web' ? { cursor: isDeleting ? 'default' : 'pointer' } : {}),
                 })}
               >
-                <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: tone.statusBorder, backgroundColor: tone.statusBg, flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
-                  {overdue ? <Ionicons name="alert-circle" size={14} color={tone.statusFg} /> : null}
-                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: tone.statusFg }} numberOfLines={1}>
+                <View style={{ width: 92, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 999, borderWidth: 1, borderColor: tone.statusBorder, backgroundColor: tone.statusBg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  {overdue ? <Ionicons name="alert-circle" size={12} color={tone.statusFg} /> : null}
+                  <Text style={{ fontSize: 11, fontWeight: FW_MED, color: tone.statusFg }} numberOfLines={1}>
                     {displayStatusLabel(normalizedStatus)}
                   </Text>
-                  <Ionicons name="chevron-down" size={14} color={tone.statusFg} />
+                  <Ionicons name="chevron-down" size={12} color={tone.statusFg} />
                 </View>
               </Pressable>
-
-              <View style={{ ...tableColStyles.action, flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 10, backgroundColor: isDeleting ? COLORS.bgMuted : tone.bg }}>
-                {isDeleting ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <ActivityIndicator size="small" color={COLORS.textMuted} />
-                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>Raderar…</Text>
-                  </View>
-                ) : (
-                  <>
-                    <Pressable
-                      onPress={(e) => {
-                        stopPressPropagation(e);
-                        openAnswer(it);
-                      }}
-                      style={({ hovered, pressed }) => ({
-                        paddingVertical: 4,
-                        paddingHorizontal: 10,
-                        borderRadius: 10,
-                        borderWidth: 1,
-                        borderColor: COLORS.inputBorder,
-                        backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : '#fff',
-                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                      })}
-                    >
-                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textMuted }} numberOfLines={1}>Svara</Text>
-                    </Pressable>
-                    {canDeleteFs ? (
-                      <Pressable
-                        onPress={(e) => {
-                          stopPressPropagation(e);
-                          handleDelete(it);
-                        }}
-                        style={({ hovered, pressed }) => ({
-                          paddingVertical: 4,
-                          paddingHorizontal: 10,
-                          borderRadius: 10,
-                          borderWidth: 1,
-                          borderColor: '#FCA5A5',
-                          backgroundColor: pressed ? '#FEE2E2' : '#FEF2F2',
-                          ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.danger } : {}),
-                          ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                        })}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.danger }} numberOfLines={1}>Ta bort</Text>
-                      </Pressable>
-                    ) : null}
-                  </>
-                )}
-              </View>
-            </View>
-
-            {expanded ? (
-              <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: 'rgba(15,23,42,0.08)', padding: 12 }}>
-                {/* ExpandedCard (root) */}
-                <View
-                  style={{
-                    borderWidth: 1,
-                    borderColor: COLORS.border,
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    backgroundColor: '#fff',
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(0,0,0,0.06)' } : { elevation: 2 }),
-                  }}
-                >
-                  {Platform.OS === 'web' ? (
-                    <input
-                      ref={rowFileInputRef}
-                      type="file"
-                      multiple
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const list = Array.from(e?.target?.files || []);
-                        const targetId = safeText(rowUploadTargetId);
-                        const current = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === targetId);
-                        if (current && list.length > 0) {
-                          (async () => {
-                            const ensured = (rowEnsureRef.current && safeText(rowEnsureRef.current.id) === safeText(targetId))
-                              ? await rowEnsureRef.current.promise.catch(() => null)
-                              : null;
-                            await uploadFilesToItem(current, list, ensured, rowUploadTargetAttachedIn);
-                          })();
-                        }
-                        try { if (rowFileInputRef?.current) rowFileInputRef.current.value = ''; } catch (_err) {}
-                      }}
-                    />
-                  ) : null}
-
-                  {/* QuestionSection */}
-                  <View style={{ padding: 12, backgroundColor: '#F8FAFC' }}>
-                    <Text style={{ fontSize: 13, color: COLORS.text, fontWeight: FW_MED, marginBottom: 10 }}>
-                      {fsNumber ? `${fsNumber} – ` : ''}{title || '—'}
-                    </Text>
-
-                    <Text style={{ fontSize: 12, color: COLORS.textSubtle, marginBottom: 10 }} numberOfLines={2}>
-                      Skapad: {safeText(it?.createdByName) || 'Okänd användare'}
-                      {formatDateTime(it?.createdAt) ? ` · ${formatDateTime(it?.createdAt)}` : ''}
-                      {formatDateTime(it?.updatedAt) ? `  |  Senast uppdaterad: ${formatDateTime(it?.updatedAt)}` : ''}
-                    </Text>
-
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
-                      <Text style={{ fontSize: 12, color: COLORS.textMuted }}>
-                        <Text style={{ color: COLORS.textSubtle, fontWeight: FW_MED }}>Disciplin: </Text>
-                        {discipline || '—'}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: COLORS.textMuted }}>
-                        <Text style={{ color: COLORS.textSubtle, fontWeight: FW_MED }}>Ansvariga: </Text>
-                        {responsiblesTooltip || '—'}
-                      </Text>
-                    </View>
-
-                    <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: FW_MED, marginBottom: 6 }}>Fråga / Beskrivning</Text>
-                    <Text style={{ color: COLORS.text, fontSize: 13, lineHeight: 19 }}>{questionText || '—'}</Text>
-
-                    {/* Question attachments */}
-                    <View style={{ marginTop: 12 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                        <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: FW_MED }}>Bilagor (Fråga)</Text>
-                        <Pressable
-                          onPress={() => {
-                            if (Platform.OS !== 'web') {
-                              Alert.alert('Lägg till filer', 'Filbifogning är tillgängligt i webbläget.');
-                              return;
-                            }
-                            setRowUploadTargetId(id);
-                            setRowUploadTargetAttachedIn('question');
-                            setRowUploadErrorById((prev) => ({ ...(prev || {}), [id]: '' }));
-
-                            // IMPORTANT (web): the file picker must be opened synchronously from the user gesture.
-                            // Start SharePoint ensure in background; we will await it after file selection.
-                            try {
-                              const current = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === safeText(id));
-                              rowEnsureRef.current = {
-                                id: safeText(id),
-                                promise: current ? ensureFolderPathForItem(current) : resolveFragaSvarRootPath().then(() => null),
-                              };
-                              rowEnsureRef.current.promise.catch((e) => {
-                                reportSharePointFailure('Kunde inte förbereda filuppladdning i SharePoint', e, { fsId: safeText(id) || null });
-                                setRowUploadErrorById((prev) => ({ ...(prev || {}), [id]: 'SharePoint-synk misslyckades. Bilagor är spärrade tills SharePoint fungerar.' }));
-                              });
-                            } catch (_e) {}
-
-                            try { rowFileInputRef.current?.click?.(); } catch (_e) {}
-                          }}
-                          disabled={isUploading || Platform.OS !== 'web'}
-                          style={({ hovered, pressed }) => ({
-                            paddingVertical: 5,
-                            paddingHorizontal: 8,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: COLORS.tableBorder,
-                            backgroundColor: '#fff',
-                            opacity: isUploading ? 0.6 : 1,
-                            ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                            ...(pressed ? { opacity: 0.9 } : {}),
-                            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                          })}
-                        >
-                          <Text style={{ color: COLORS.blue, fontWeight: FW_MED, fontSize: 12 }}>{isUploading ? 'Lägger till…' : '+ Lägg till filer'}</Text>
-                        </Pressable>
-                      </View>
-
-                      {rowErr ? (
-                        <View style={{ padding: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, marginBottom: 10 }}>
-                          <Text style={{ color: '#991B1B', fontSize: 13 }}>{rowErr}</Text>
-                        </View>
-                      ) : null}
-
-                      {questionFiles.length > 0 ? (
-                        <View style={{ borderWidth: 1, borderColor: COLORS.tableBorder, borderRadius: 10, overflow: 'hidden', backgroundColor: '#fff' }}>
-                          <View style={{ flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 10, backgroundColor: COLORS.bgMuted, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder }}>
-                            <Text style={{ flex: 2, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filnamn</Text>
-                            <Text style={{ width: 70, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filtyp</Text>
-                            <Text style={{ flex: 1, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Uppladdad av</Text>
-                            <Text style={{ width: 120, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED, textAlign: 'right' }} numberOfLines={1}>Datum</Text>
-                            <Text style={{ width: 34, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED, textAlign: 'right' }} numberOfLines={1} />
-                          </View>
-
-                          {questionFiles.map((f, i) => {
-                            const row = f?.downloadUrl || f?.createdBy
-                              ? toTableRowFromLiveFile(f)
-                              : toTableRowFromAttachment(f);
-
-                            return (
-                              <Pressable
-                                key={fileTableRowKey(row, i)}
-                                onPress={() => openPreview({ name: row.name, webUrl: row.webUrl, downloadUrl: row.downloadUrl })}
-                                style={({ hovered, pressed }) => ({
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  paddingVertical: 7,
-                                  paddingHorizontal: 10,
-                                  borderBottomWidth: i === questionFiles.length - 1 ? 0 : 1,
-                                  borderBottomColor: COLORS.tableBorder,
-                                  backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : (Platform.OS === 'web' && hovered ? 'rgba(25,118,210,0.04)' : '#fff'),
-                                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                                })}
-                              >
-                                <Text style={{ flex: 2, color: COLORS.blue, fontSize: 13 }} numberOfLines={1}>{row.name}</Text>
-                                <Text style={{ width: 70, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{row.fileTypeLabel}</Text>
-                                <Text style={{ flex: 1, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{row.uploadedBy}</Text>
-                                <Text style={{ width: 120, color: COLORS.textMuted, fontSize: 12, textAlign: 'right' }} numberOfLines={1}>{row.dateText}</Text>
-                                <Pressable
-                                  onPress={(e) => {
-                                    stopPressPropagation(e);
-                                    void openDownload({ name: row.name, webUrl: row.webUrl, downloadUrl: row.downloadUrl });
-                                  }}
-                                  style={({ hovered, pressed }) => ({
-                                    width: 34,
-                                    alignItems: 'flex-end',
-                                    opacity: pressed ? 0.8 : 1,
-                                    ...(Platform.OS === 'web' && hovered ? { opacity: 0.9 } : {}),
-                                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                                  })}
-                                >
-                                  <Ionicons name="download-outline" size={16} color={COLORS.textSubtle} />
-                                </Pressable>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      ) : (
-                        <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga filer.</Text>
-                      )}
-                    </View>
-                  </View>
-
-                  {/* Divider */}
-                  <View style={{ height: 2, backgroundColor: COLORS.borderStrong, borderRadius: 1 }} />
-
-                  {/* AnswerSection */}
-                  <View style={{ padding: 12, backgroundColor: '#EFF6FF' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: FW_MED }}>Svar</Text>
-                      <Text style={{ fontSize: 12, color: COLORS.textSubtle }} numberOfLines={1}>
-                        {answeredAt ? `${answeredBy} · ${answeredAt}` : '—'}
-                      </Text>
-                    </View>
-
-                    {answerText ? (
-                      <Text style={{ color: COLORS.text, fontSize: 13, lineHeight: 19 }}>{answerText}</Text>
-                    ) : (
-                      <Text style={{ color: COLORS.textSubtle, fontSize: 13, fontStyle: 'italic' }}>Inget svar ännu</Text>
-                    )}
-
-                    {(Array.isArray(it?.answers) ? it.answers : []).length > 1 ? (
-                      <View style={{ marginTop: 10, padding: 10, borderWidth: 1, borderColor: COLORS.tableBorder, backgroundColor: COLORS.bgMuted, borderRadius: 10 }}>
-                        <Text style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: FW_MED, marginBottom: 6 }}>
-                          Svarhistorik ({(Array.isArray(it?.answers) ? it.answers : []).length})
-                        </Text>
-                        {(Array.isArray(it?.answers) ? [...it.answers] : [])
-                          .map((x) => {
-                            const d = toDateSafe(x?.answeredAt);
-                            return { ...x, _t: d ? d.getTime() : 0 };
-                          })
-                          .sort((a, b) => (b._t - a._t))
-                          .slice(0, 3)
-                          .map((x, i) => (
-                            <View key={`${x?._t}-${i}`} style={{ marginBottom: i === 2 ? 0 : 8 }}>
-                              <Text style={{ color: COLORS.textSubtle, fontSize: 12 }} numberOfLines={1}>
-                                {safeText(x?.answeredByName) || 'Okänd användare'}{x?._t ? ` · ${formatDateTime(x?.answeredAt)}` : ''}
-                              </Text>
-                              <Text style={{ color: COLORS.text, fontSize: 13, marginTop: 2 }}>
-                                {safeText(x?.text)}
-                              </Text>
-                            </View>
-                          ))}
-                      </View>
-                    ) : null}
-
-                    {/* Answer attachments */}
-                    <View style={{ marginTop: 12 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                        <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: FW_MED }}>Bilagor (Svar)</Text>
-                        <Pressable
-                          onPress={() => {
-                            if (Platform.OS !== 'web') {
-                              Alert.alert('Lägg till filer', 'Filbifogning är tillgängligt i webbläget.');
-                              return;
-                            }
-                            setRowUploadTargetId(id);
-                            setRowUploadTargetAttachedIn('answer');
-                            setRowUploadErrorById((prev) => ({ ...(prev || {}), [id]: '' }));
-
-                            // IMPORTANT (web): the file picker must be opened synchronously from the user gesture.
-                            // Start SharePoint ensure in background; we will await it after file selection.
-                            try {
-                              const current = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === safeText(id));
-                              rowEnsureRef.current = {
-                                id: safeText(id),
-                                promise: current ? ensureFolderPathForItem(current) : resolveFragaSvarRootPath().then(() => null),
-                              };
-                              rowEnsureRef.current.promise.catch((e) => {
-                                reportSharePointFailure('Kunde inte förbereda filuppladdning i SharePoint', e, { fsId: safeText(id) || null });
-                                setRowUploadErrorById((prev) => ({ ...(prev || {}), [id]: 'SharePoint-synk misslyckades. Bilagor är spärrade tills SharePoint fungerar.' }));
-                              });
-                            } catch (_e) {}
-
-                            try { rowFileInputRef.current?.click?.(); } catch (_e) {}
-                          }}
-                          disabled={isUploading || Platform.OS !== 'web'}
-                          style={({ hovered, pressed }) => ({
-                            paddingVertical: 5,
-                            paddingHorizontal: 8,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: COLORS.tableBorder,
-                            backgroundColor: '#fff',
-                            opacity: isUploading ? 0.6 : 1,
-                            ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                            ...(pressed ? { opacity: 0.9 } : {}),
-                            ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                          })}
-                        >
-                          <Text style={{ color: COLORS.blue, fontWeight: FW_MED, fontSize: 12 }}>{isUploading ? 'Lägger till…' : '+ Lägg till filer'}</Text>
-                        </Pressable>
-                      </View>
-
-                      {answerFiles.length > 0 ? (
-                        <View style={{ borderWidth: 1, borderColor: COLORS.tableBorder, borderRadius: 10, overflow: 'hidden', backgroundColor: '#fff' }}>
-                          <View style={{ flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 10, backgroundColor: COLORS.bgMuted, borderBottomWidth: 1, borderBottomColor: COLORS.tableBorder }}>
-                            <Text style={{ flex: 2, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filnamn</Text>
-                            <Text style={{ width: 70, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Filtyp</Text>
-                            <Text style={{ flex: 1, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED }} numberOfLines={1}>Uppladdad av</Text>
-                            <Text style={{ width: 120, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED, textAlign: 'right' }} numberOfLines={1}>Datum</Text>
-                            <Text style={{ width: 34, color: COLORS.textSubtle, fontSize: 12, fontWeight: FW_MED, textAlign: 'right' }} numberOfLines={1} />
-                          </View>
-
-                          {answerFiles.map((f, i) => {
-                            const row = f?.downloadUrl || f?.createdBy
-                              ? toTableRowFromLiveFile(f)
-                              : toTableRowFromAttachment(f);
-
-                            return (
-                              <Pressable
-                                key={fileTableRowKey(row, i)}
-                                onPress={() => openPreview({ name: row.name, webUrl: row.webUrl, downloadUrl: row.downloadUrl })}
-                                style={({ hovered, pressed }) => ({
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  paddingVertical: 7,
-                                  paddingHorizontal: 10,
-                                  borderBottomWidth: i === answerFiles.length - 1 ? 0 : 1,
-                                  borderBottomColor: COLORS.tableBorder,
-                                  backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : (Platform.OS === 'web' && hovered ? 'rgba(25,118,210,0.04)' : '#fff'),
-                                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                                })}
-                              >
-                                <Text style={{ flex: 2, color: COLORS.blue, fontSize: 13 }} numberOfLines={1}>{row.name}</Text>
-                                <Text style={{ width: 70, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{row.fileTypeLabel}</Text>
-                                <Text style={{ flex: 1, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>{row.uploadedBy}</Text>
-                                <Text style={{ width: 120, color: COLORS.textMuted, fontSize: 12, textAlign: 'right' }} numberOfLines={1}>{row.dateText}</Text>
-                                <Pressable
-                                  onPress={(e) => {
-                                    stopPressPropagation(e);
-                                    void openDownload({ name: row.name, webUrl: row.webUrl, downloadUrl: row.downloadUrl });
-                                  }}
-                                  style={({ hovered, pressed }) => ({
-                                    width: 34,
-                                    alignItems: 'flex-end',
-                                    opacity: pressed ? 0.8 : 1,
-                                    ...(Platform.OS === 'web' && hovered ? { opacity: 0.9 } : {}),
-                                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                                  })}
-                                >
-                                  <Ionicons name="download-outline" size={16} color={COLORS.textSubtle} />
-                                </Pressable>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      ) : (
-                        <Text style={{ color: COLORS.textSubtle, fontSize: 13 }}>Inga filer.</Text>
-                      )}
-                    </View>
-                  </View>
-                </View>
-              </View>
-            ) : null}
+            </Pressable>
           </View>
         </View>
       );
@@ -3851,6 +3645,25 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
         </View>
       </Modal>
 
+      {/* Row context menu (right-click) */}
+      <ContextMenu
+        visible={!!rowCtxMenu}
+        x={rowCtxMenu?.x ?? 0}
+        y={rowCtxMenu?.y ?? 0}
+        items={[
+          { label: 'Svara', value: 'answer', icon: 'chatbubble-outline' },
+          ...(canDeleteFs ? [{ label: 'Ta bort', value: 'delete', icon: 'trash-outline', destructive: true }] : []),
+        ]}
+        onClose={() => setRowCtxMenu(null)}
+        onSelect={(menuItem) => {
+          const ctxIt = rowCtxMenu?.item;
+          setRowCtxMenu(null);
+          if (!ctxIt) return;
+          if (menuItem?.value === 'answer') openAnswer(ctxIt);
+          if (menuItem?.value === 'delete') handleDelete(ctxIt);
+        }}
+      />
+
       {/* Status dropdown menu (web) */}
       <ContextMenu
         visible={statusMenuVisible}
@@ -3900,7 +3713,11 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           }
           setDisciplineMenuVisible(false);
         }}
+        itemLabelFontSize={12}
+        itemLabelFontWeight="400"
       />
+
+      {/* Byggdel-picker renderas nu inuti Ny fråga-modalen som overlay (web) så att ESC bara stänger pickern */}
 
       {/* External group dropdown menu (web) */}
       <ContextMenu
@@ -3923,185 +3740,6 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           setExternalGroupMenuVisible(false);
         }}
       />
-
-      {/* Ansvarig picker (multi-select + search) */}
-      <Modal
-        visible={responsiblePickerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setResponsiblePickerVisible(false)}
-      >
-        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', padding: 18, justifyContent: 'center' }}>
-          <Pressable onPress={() => setResponsiblePickerVisible(false)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-
-          <View style={{ width: '100%', maxWidth: 720, alignSelf: 'center', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)', maxHeight: '78vh' } : { maxHeight: '90%' }) }}>
-            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: 'rgba(25,118,210,0.12)', borderWidth: 1, borderColor: 'rgba(25,118,210,0.25)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="people-outline" size={16} color={COLORS.blue} />
-                </View>
-                <View style={{ minWidth: 0 }}>
-                  <Text style={{ fontSize: 14, fontWeight: FW_MED, color: COLORS.text }} numberOfLines={1}>Ansvariga</Text>
-                  <Text style={{ fontSize: 12, color: COLORS.textSubtle }} numberOfLines={1}>Välj en eller flera personer</Text>
-                </View>
-              </View>
-              <Pressable
-                onPress={() => setResponsiblePickerVisible(false)}
-                style={({ hovered, pressed }) => ({
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: COLORS.inputBorder,
-                  backgroundColor: '#fff',
-                  ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                  ...(pressed ? { opacity: 0.9 } : {}),
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                })}
-              >
-                <Ionicons name="close" size={18} color={COLORS.textSubtle} />
-              </Pressable>
-            </View>
-
-            <View style={{ padding: 14, gap: 10 }}>
-              <View style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Ionicons name="search" size={16} color={COLORS.textSubtle} />
-                <TextInput
-                  value={responsiblePickerSearch}
-                  onChangeText={setResponsiblePickerSearch}
-                  placeholder="Sök namn, e-post eller roll…"
-                  placeholderTextColor={COLORS.textSubtle}
-                  style={{ flex: 1, fontSize: 14, color: COLORS.text, ...(Platform.OS === 'web' ? { outline: 'none' } : {}) }}
-                />
-              </View>
-
-              {(() => {
-                const which = responsiblePickerFor === 'form' ? 'form' : 'quick';
-                const keys = normalizeResponsibleKeys(which === 'form' ? formResponsibleKeys : quickResponsibleKeys);
-                if (keys.length === 0) return null;
-                return (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {keys.map((k) => {
-                      const resolved = findResponsibleByKey(orgGroups, k);
-                      const name = safeText(resolved?.member?.name) || '—';
-                      return (
-                        <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: 'rgba(25,118,210,0.06)' }}>
-                          <Text style={{ fontSize: 12, color: COLORS.text }} numberOfLines={1}>{name}</Text>
-                          <Pressable
-                            onPress={() => removeResponsibleKeyFor(which, k)}
-                            style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}
-                          >
-                            <Ionicons name="close" size={14} color={COLORS.textSubtle} />
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                  </View>
-                );
-              })()}
-            </View>
-
-            <ScrollView contentContainerStyle={{ padding: 14, paddingTop: 0 }}>
-              {orgError ? (
-                <View style={{ padding: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, marginBottom: 12 }}>
-                  <Text style={{ color: '#991B1B', fontSize: 13 }}>{String(orgError || 'Kunde inte ladda organisationen.')}</Text>
-                </View>
-              ) : null}
-
-              {filteredResponsibleGroups.length === 0 ? (
-                <View style={{ paddingVertical: 12 }}>
-                  <Text style={{ color: COLORS.textMuted }}>Inga träffar.</Text>
-                </View>
-              ) : null}
-
-              {filteredResponsibleGroups.map((g) => {
-                const gid = safeText(g?.id);
-                const gtitle = safeText(g?.title) || 'Grupp';
-                const members = Array.isArray(g?.members) ? g.members : [];
-                return (
-                  <View key={gid || gtitle} style={{ marginBottom: 12 }}>
-                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle, marginBottom: 6 }}>{gtitle}</Text>
-                    <View style={{ borderWidth: 1, borderColor: COLORS.tableBorder, borderRadius: 12, overflow: 'hidden' }}>
-                      {members.map((m, idx) => {
-                        const mid = safeText(m?.id);
-                        const k = responsibleKey(gid, mid);
-                        const which = responsiblePickerFor === 'form' ? 'form' : 'quick';
-                        const selected = normalizeResponsibleKeys(which === 'form' ? formResponsibleKeys : quickResponsibleKeys).includes(k);
-                        const name = safeText(m?.name) || '—';
-                        const subtitle = safeText(m?.role) || safeText(m?.email) || '';
-                        return (
-                          <Pressable
-                            key={k || `${gid}:${idx}`}
-                            onPress={() => toggleResponsibleKeyFor(which, k)}
-                            style={({ hovered, pressed }) => ({
-                              paddingVertical: 10,
-                              paddingHorizontal: 12,
-                              backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : (Platform.OS === 'web' && hovered ? 'rgba(25,118,210,0.04)' : '#fff'),
-                              borderBottomWidth: idx === members.length - 1 ? 0 : 1,
-                              borderBottomColor: COLORS.tableBorder,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 10,
-                              ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                            })}
-                          >
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <Text style={{ fontSize: 13, color: COLORS.text }} numberOfLines={1}>{name}</Text>
-                              {subtitle ? <Text style={{ marginTop: 2, fontSize: 12, color: COLORS.textMuted }} numberOfLines={1}>{subtitle}</Text> : null}
-                            </View>
-                            <Ionicons name={selected ? 'checkbox' : 'square-outline'} size={18} color={selected ? COLORS.blue : COLORS.textSubtle} />
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
-                );
-              })}
-
-              <View style={{ marginTop: 6 }}>
-                <Pressable
-                  onPress={() => {
-                    setResponsiblePickerVisible(false);
-                    setExternalPersonTarget(responsiblePickerFor === 'form' ? 'form' : 'quick');
-                    setExternalPersonError('');
-                    setExternalPersonName('');
-                    setExternalPersonEmail('');
-                    setExternalPersonRole('');
-                    setExternalPersonCreatingGroup(false);
-                    setExternalPersonNewGroupTitle('');
-                    {
-                      const groups = Array.isArray(orgGroups) ? orgGroups : [];
-                      const intern = groups.find((g) => String(g?.title || '').trim().toLowerCase() === 'intern') || null;
-                      setExternalPersonGroupId(safeText(intern?.id) || safeText(groups?.[0]?.id) || '');
-                    }
-                    setExternalPersonModalVisible(true);
-                  }}
-                  style={({ hovered, pressed }) => ({
-                    paddingVertical: 12,
-                    paddingHorizontal: 12,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : '#fff',
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 10,
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Ionicons name="person-add-outline" size={18} color={COLORS.blue} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ color: COLORS.text, fontWeight: FW_MED }} numberOfLines={1}>Lägg till person utanför projektet…</Text>
-                    <Text style={{ marginTop: 2, color: COLORS.textMuted, fontSize: 12 }} numberOfLines={1}>Läggs till i organisationen och kan väljas framöver</Text>
-                  </View>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {/* Add external responsible person */}
       <Modal visible={externalPersonModalVisible} transparent animationType="fade" onRequestClose={() => setExternalPersonModalVisible(false)}>
@@ -4326,7 +3964,7 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
         data={listData}
         renderItem={renderListItem}
         keyExtractor={(x) => String(x?.key || Math.random())}
-        stickyHeaderIndices={[1]}
+        stickyHeaderIndices={[0]}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 28 }}
       />
@@ -4344,10 +3982,258 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
         onClose={() => setDatePickerVisible(false)}
       />
 
-      {/* Edit/Create modal (wide + centered, matching create form) */}
-      <Modal visible={panelVisible} transparent animationType="fade" onRequestClose={closePanel}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', padding: 18, justifyContent: 'center' }}>
+      {/* Edit/Create modal. Vid ESC: onRequestClose läser overlayOpenRef – stäng bara den öppna pickern, annars closePanel. */}
+      <Modal
+        visible={panelVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          const open = overlayOpenRef.current;
+          if (open === 'responsible') {
+            setResponsiblePickerVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          if (open === 'externalPerson') {
+            setExternalPersonModalVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          if (open === 'datePicker') {
+            setDatePickerVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          if (open === 'externalGroup') {
+            setExternalGroupMenuVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          if (open === 'discipline') {
+            setDisciplineMenuVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          if (open === 'byggdel') {
+            setByggdelMenuVisible(false);
+            overlayOpenRef.current = null;
+            return;
+          }
+          closePanel();
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: MODAL_DESIGN_2026.overlayBg, ...fsModalOverlayStyle }}>
           <Pressable onPress={closePanel} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+
+          {/* Byggdel-picker som overlay inuti modalen (web) – då hanterar en enda Modal ESC korrekt */}
+          {Platform.OS === 'web' && byggdelMenuVisible ? (
+            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <Pressable style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.35)' }} onPress={() => setByggdelMenuVisible(false)} />
+              <View
+                style={{
+                  width: '100%',
+                  maxWidth: 420,
+                  minHeight: 420,
+                  maxHeight: '70vh',
+                  backgroundColor: '#fff',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  overflow: 'hidden',
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.2)' } : {}),
+                }}
+                onStartShouldSetResponder={() => true}
+              >
+                <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border }}>
+                  <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.text, marginBottom: 8 }}>Byggdel</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#fff', gap: 8 }}>
+                    <Ionicons name="search" size={14} color={COLORS.textSubtle} />
+                    <TextInput
+                      value={byggdelPickerSearch}
+                      onChangeText={setByggdelPickerSearch}
+                      placeholder="Sök byggdel, beskrivning, anteckningar…"
+                      placeholderTextColor={COLORS.textSubtle}
+                      style={{ flex: 1, fontSize: 13, color: COLORS.text, ...(Platform.OS === 'web' ? { outline: 'none' } : {}) }}
+                    />
+                  </View>
+                </View>
+                <ScrollView
+                  style={{ height: 320, minHeight: 320 }}
+                  contentContainerStyle={{ padding: 8, paddingTop: 4 }}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <Pressable
+                    onPress={() => {
+                      if (byggdelMenuFor === 'form') setFormBd('');
+                      else setQuickBd('');
+                      setByggdelMenuVisible(false);
+                    }}
+                    style={({ hovered, pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      backgroundColor: pressed ? 'rgba(25,118,210,0.08)' : (hovered ? 'rgba(0,0,0,0.04)' : 'transparent'),
+                      marginBottom: 4,
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                    })}
+                  >
+                    <Text style={{ fontSize: 13, color: COLORS.text }}>Ingen</Text>
+                  </Pressable>
+                  {(filteredByggdelarForPicker || []).map((b) => {
+                    const code = String(b?.code ?? '').trim();
+                    const name = String(b?.name ?? '').trim();
+                    const label = name ? `${code} – ${name}` : code || '—';
+                    const selected = (byggdelMenuFor === 'form' ? safeText(formBd) : safeText(quickBd)) === code;
+                    return (
+                      <Pressable
+                        key={b?.id || code}
+                        onPress={() => {
+                          if (byggdelMenuFor === 'form') setFormBd(code);
+                          else setQuickBd(code);
+                          setByggdelMenuVisible(false);
+                        }}
+                        style={({ hovered, pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          backgroundColor: pressed ? 'rgba(25,118,210,0.08)' : (hovered ? 'rgba(0,0,0,0.04)' : 'transparent'),
+                          marginBottom: 4,
+                          ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                        })}
+                      >
+                        <Text style={{ flex: 1, fontSize: 13, color: COLORS.text }} numberOfLines={1}>{label}</Text>
+                        {selected ? <Ionicons name="checkmark" size={16} color={COLORS.blue} /> : null}
+                      </Pressable>
+                    );
+                  })}
+                  {filteredByggdelarForPicker.length === 0 && byggdelarList.length > 0 ? (
+                    <Text style={{ fontSize: 12, color: COLORS.textMuted, paddingVertical: 12, paddingHorizontal: 10 }}>Inga träffar. Prova ett annat sökord.</Text>
+                  ) : null}
+                </ScrollView>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Ansvariga-picker som overlay inuti modalen – då finns bara en Modal och ESC stänger bara pickern */}
+          {responsiblePickerVisible ? (
+            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', zIndex: 1001 }}>
+              <Pressable style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.35)' }} onPress={() => setResponsiblePickerVisible(false)} />
+              <View style={{ width: '100%', maxWidth: 720, maxHeight: '78vh', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden', ...(Platform.OS === 'web' ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)' } : {}) }}>
+                <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: 'rgba(25,118,210,0.12)', borderWidth: 1, borderColor: 'rgba(25,118,210,0.25)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="people-outline" size={14} color={COLORS.blue} />
+                    </View>
+                    <View style={{ minWidth: 0 }}>
+                      <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.text }} numberOfLines={1}>Ansvariga</Text>
+                      <Text style={{ fontSize: 11, color: COLORS.textSubtle }} numberOfLines={1}>Välj en eller flera personer</Text>
+                    </View>
+                  </View>
+                  <Pressable onPress={() => setResponsiblePickerVisible(false)} style={({ hovered, pressed }) => ({ paddingVertical: 6, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: '#fff', ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}), ...(pressed ? { opacity: 0.9 } : {}), ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}>
+                    <Ionicons name="close" size={16} color={COLORS.textSubtle} />
+                  </Pressable>
+                </View>
+                <View style={{ padding: 12, gap: 8 }}>
+                  <View style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="search" size={14} color={COLORS.textSubtle} />
+                    <TextInput value={responsiblePickerSearch} onChangeText={setResponsiblePickerSearch} placeholder="Sök namn, e-post eller roll…" placeholderTextColor={COLORS.textSubtle} style={{ flex: 1, fontSize: 13, color: COLORS.text, ...(Platform.OS === 'web' ? { outline: 'none' } : {}) }} />
+                  </View>
+                  {(() => {
+                    const pending = normalizeResponsibleKeys(responsiblePickerPendingKeys);
+                    if (pending.length === 0) return null;
+                    return (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {pending.map((k) => {
+                          const resolved = findResponsibleByKey(orgGroups, k);
+                          const name = safeText(resolved?.member?.name) || '—';
+                          return (
+                            <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: 'rgba(25,118,210,0.06)' }}>
+                              <Text style={{ fontSize: 11, color: COLORS.text }} numberOfLines={1}>{name}</Text>
+                              <Pressable onPress={() => setResponsiblePickerPendingKeys((prev) => normalizeResponsibleKeys(prev).filter((x) => x !== k))} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}>
+                                <Ionicons name="close" size={12} color={COLORS.textSubtle} />
+                              </Pressable>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    );
+                  })()}
+                </View>
+                <ScrollView contentContainerStyle={{ padding: 12, paddingTop: 0 }}>
+                  {orgError ? (
+                    <View style={{ padding: 8, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 8, marginBottom: 10 }}>
+                      <Text style={{ color: '#991B1B', fontSize: 12 }}>{String(orgError || 'Kunde inte ladda organisationen.')}</Text>
+                    </View>
+                  ) : null}
+                  {filteredResponsibleGroups.length === 0 ? (
+                    <View style={{ paddingVertical: 10 }}>
+                      <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>Inga träffar.</Text>
+                    </View>
+                  ) : null}
+                  {filteredResponsibleGroups.map((g) => {
+                    const gid = safeText(g?.id);
+                    const gtitle = safeText(g?.title) || 'Grupp';
+                    const isInternalGroup = !!g?.isInternalMainGroup;
+                    const isOpen = isInternalGroup || !!responsibleGroupOpen[gid];
+                    const members = Array.isArray(g?.members) ? g.members : [];
+                    return (
+                      <View key={gid || gtitle} style={{ marginBottom: 12 }}>
+                        <Pressable onPress={() => { if (isInternalGroup) return; setResponsibleGroupOpen((prev) => ({ ...prev, [gid]: !prev[gid] })); }} style={({ hovered }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 8, backgroundColor: (Platform.OS === 'web' && hovered && !isInternalGroup) ? 'rgba(0,0,0,0.04)' : 'transparent', ...(Platform.OS === 'web' && !isInternalGroup ? { cursor: 'pointer' } : {}) })}>
+                          <Text style={{ fontSize: 11, fontWeight: FW_MED, color: COLORS.textSubtle }}>{gtitle}</Text>
+                          <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={16} color={COLORS.textSubtle} />
+                        </Pressable>
+                        {isOpen ? (
+                          <View style={{ borderWidth: 1, borderColor: COLORS.tableBorder, borderRadius: 10, overflow: 'hidden' }}>
+                            {members.map((m, idx) => {
+                              const mid = safeText(m?.id);
+                              const k = responsibleKey(gid, mid);
+                              const pending = normalizeResponsibleKeys(responsiblePickerPendingKeys);
+                              const selected = pending.includes(k);
+                              const name = safeText(m?.name) || '—';
+                              return (
+                                <Pressable
+                                  key={k || `${gid}:${idx}`}
+                                  onPress={() => setResponsiblePickerPendingKeys((prev) => { const norm = normalizeResponsibleKeys(prev); if (norm.includes(k)) return norm.filter((x) => x !== k); return [...norm, k]; })}
+                                  style={({ hovered, pressed }) => ({ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : (Platform.OS === 'web' && hovered ? 'rgba(25,118,210,0.04)' : '#fff'), borderBottomWidth: idx === members.length - 1 ? 0 : 1, borderBottomColor: COLORS.tableBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}
+                                >
+                                  <Text style={{ flex: 1, minWidth: 0, fontSize: 12, color: COLORS.text }} numberOfLines={1}>{name}</Text>
+                                  <Ionicons name={selected ? 'checkbox' : 'square-outline'} size={16} color={selected ? COLORS.blue : COLORS.textSubtle} />
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                  <View style={{ marginTop: 6 }}>
+                    <Pressable
+                      onPress={() => { setResponsiblePickerVisible(false); setExternalPersonTarget(responsiblePickerFor === 'form' ? 'form' : 'quick'); setExternalPersonError(''); setExternalPersonName(''); setExternalPersonEmail(''); setExternalPersonRole(''); setExternalPersonCreatingGroup(false); setExternalPersonNewGroupTitle(''); const groups = Array.isArray(orgGroups) ? orgGroups : []; const intern = groups.find((gr) => String(gr?.title || '').trim().toLowerCase() === 'intern') || null; setExternalPersonGroupId(safeText(intern?.id) || safeText(groups?.[0]?.id) || ''); overlayOpenRef.current = 'externalPerson'; setExternalPersonModalVisible(true); }}
+                      style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: pressed ? 'rgba(25,118,210,0.06)' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 8, ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}), ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}
+                    >
+                      <Ionicons name="person-add-outline" size={16} color={COLORS.blue} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ color: COLORS.text, fontWeight: FW_MED, fontSize: 12 }} numberOfLines={1}>Lägg till person utanför projektet…</Text>
+                        <Text style={{ marginTop: 2, color: COLORS.textMuted, fontSize: 11 }} numberOfLines={1}>Läggs till i organisationen och kan väljas framöver</Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                </ScrollView>
+                <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                  <Pressable onPress={() => setResponsiblePickerVisible(false)} style={({ hovered, pressed }) => ({ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: '#fff', ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}), ...(pressed ? { opacity: 0.9 } : {}), ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}>
+                    <Text style={{ fontSize: 12, fontWeight: FW_MED, color: COLORS.textSubtle }}>Avbryt</Text>
+                  </Pressable>
+                  <Pressable onPress={() => { const which = responsiblePickerFor === 'form' ? 'form' : 'quick'; setResponsibleKeysFor(which, normalizeResponsibleKeys(responsiblePickerPendingKeys)); setResponsiblePickerVisible(false); }} style={({ hovered, pressed }) => ({ ...PRIMARY_ACTION_BUTTON_BASE, paddingVertical: 8, paddingHorizontal: 12, ...(Platform.OS === 'web' && hovered ? { backgroundColor: COLORS.blueHover } : {}), ...(pressed ? { opacity: 0.9 } : {}), ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) })}>
+                    <Text style={{ color: '#fff', fontWeight: FW_MED, fontSize: 12 }}>Lägg till</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          ) : null}
 
           <View
             style={{
@@ -4355,185 +4241,216 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               maxWidth: 980,
               alignSelf: 'center',
               backgroundColor: '#fff',
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: COLORS.border,
+              borderRadius: MODAL_DESIGN_2026.radius,
               overflow: 'hidden',
+              zIndex: 0,
               ...(Platform.OS === 'web'
-                ? { boxShadow: '0 12px 32px rgba(0,0,0,0.20)', maxHeight: '78vh' }
+                ? { boxShadow: MODAL_DESIGN_2026.shadow, display: 'flex', flexDirection: 'column' }
                 : { maxHeight: '90%' }),
+              ...fsModalBoxStyle,
             }}
           >
-            {/* Header (dashboard-style banner) */}
-            <DashboardBanner
-              marginBottom={0}
-              borderRadius={0}
-              borderLeftWidth={4}
-              accentColor="#1976D2"
-              backgroundColor="rgba(25, 118, 210, 0.12)"
-              padding={14}
-              title={editingId ? 'Fråga / Svar' : 'Ny fråga'}
-              message={(() => {
-                if (!editingId) return '';
-                const current = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === safeText(editingId));
-                if (!current) return '';
-                const createdBy = safeText(current?.createdByName) || 'Okänd användare';
-                const createdAt = formatDateTime(current?.createdAt);
-                const updatedAt = formatDateTime(current?.updatedAt);
-                const createdPart = `Skapad: ${createdBy}${createdAt ? ` · ${createdAt}` : ''}`;
-                const updatedPart = updatedAt ? `Senast uppdaterad: ${updatedAt}` : '';
-                return updatedPart ? `${createdPart}  |  ${updatedPart}` : createdPart;
-              })()}
-              titleStyle={{ fontSize: 16, fontWeight: FW_MED, color: '#0F172A' }}
-              messageStyle={{ marginTop: 4, fontSize: 12, color: 'rgba(51, 65, 85, 0.90)' }}
-              onClose={closePanel}
-            />
+            {fsModalResizeHandles}
+
+            {/* Banner – compact blue, draggable */}
+            <View
+              {...fsModalHeaderProps}
+              style={{
+                backgroundColor: 'rgba(25, 118, 210, 0.12)',
+                borderLeftWidth: 4,
+                borderLeftColor: '#1976D2',
+                paddingVertical: 6,
+                paddingHorizontal: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                minHeight: 36,
+                ...(fsModalHeaderProps?.style || {}),
+              }}
+            >
+              <Text style={{ fontSize: 15, fontWeight: FW_MED, color: '#0F172A' }}>{editingId ? 'Fråga / Svar' : 'Ny fråga'}</Text>
+              <Pressable
+                onPress={closePanel}
+                style={({ hovered }) => ({
+                  padding: 4, borderRadius: 6,
+                  backgroundColor: hovered ? 'rgba(0,0,0,0.06)' : 'transparent',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                })}
+              >
+                <Ionicons name="close" size={18} color="#64748b" />
+              </Pressable>
+            </View>
+
+            {/* Metadata row below banner */}
+            {editingId ? (() => {
+              const current = (Array.isArray(items) ? items : []).find((x) => safeText(x?.id) === safeText(editingId));
+              if (!current) return null;
+              const createdBy = safeText(current?.createdByName) || 'Okänd användare';
+              const createdAtDate = toDateSafe(current?.createdAt);
+              const updatedAtDate = toDateSafe(current?.updatedAt);
+              const fmtDate = (d) => d ? new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) : '';
+              const fmtTime = (d) => d ? new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit' }).format(d) : '';
+              return (
+                <View style={{ paddingVertical: 5, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#eee', backgroundColor: '#FAFBFC', gap: 2 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <Ionicons name="person-outline" size={12} color="#64748b" />
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Skapad av: <Text style={{ color: '#1e293b', fontWeight: '600' }}>{createdBy}</Text></Text>
+                  </View>
+                  {createdAtDate ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Ionicons name="calendar-outline" size={12} color="#64748b" />
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>Datum: {fmtDate(createdAtDate)} Kl: {fmtTime(createdAtDate)}</Text>
+                    </View>
+                  ) : null}
+                  {updatedAtDate ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Ionicons name="refresh-outline" size={12} color="#64748b" />
+                      <Text style={{ fontSize: 12, color: '#64748b' }}>Senast uppdaterad: {fmtDate(updatedAtDate)} Kl: {fmtTime(updatedAtDate)}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })() : null}
 
             {/* Content */}
-            <ScrollView contentContainerStyle={{ padding: 14, backgroundColor: '#fff' }}>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, backgroundColor: '#fff' }}>
               {/* FRÅGA */}
-              <View style={{ padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
-                {/* Meta row: BD / Disciplin / Ansvarig / Svar senast */}
-                <View
-                  style={{
-                    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-                    gap: 10,
-                    alignItems: Platform.OS === 'web' ? 'center' : 'stretch',
-                    marginBottom: 12,
-                  }}
-                >
-                <View style={{ width: Platform.OS === 'web' ? 160 : '100%' }}>
-                  <View
-                    style={{
-                      height: 44,
-                      borderWidth: 1,
-                      borderColor: COLORS.inputBorder,
-                        borderRadius: 10,
-                      paddingHorizontal: 12,
-                      backgroundColor: '#fff',
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <Text style={{ color: COLORS.textSubtle, fontSize: 13, fontWeight: '400' }} numberOfLines={1}>
-                      Byggdel
-                    </Text>
-                    <TextInput
-                      value={formBd}
-                      onChangeText={setFormBd}
-                      placeholder="t.ex. 55"
-                      placeholderTextColor={COLORS.textSubtle}
-                      style={{
+              <View style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
+                {/* Meta row: rubrik till vänster, fält till höger */}
+                <View style={{ marginBottom: 10, gap: 8 }}>
+                  {/* Byggdel */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={{ width: 92, fontSize: 12, fontWeight: '500', color: COLORS.textSubtle }}>Byggdel</Text>
+                    <Pressable
+                      onPress={(e) => openByggdelMenu(e, 'form')}
+                      style={({ hovered, pressed }) => ({
                         flex: 1,
-                        height: 42,
-                        paddingVertical: 0,
-                        paddingHorizontal: 0,
-                        fontSize: 14,
-                        color: COLORS.text,
-                        backgroundColor: 'transparent',
-                        ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-                      }}
-                    />
+                        minWidth: 0,
+                        height: 32,
+                        borderWidth: 1,
+                        borderColor: COLORS.inputBorder,
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        backgroundColor: '#fff',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
+                        ...(pressed ? { opacity: 0.92 } : {}),
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                    >
+                      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: formBd ? COLORS.text : COLORS.textSubtle }} numberOfLines={1}>
+                        {formBd
+                          ? (() => {
+                              const b = (Array.isArray(byggdelarList) ? byggdelarList : []).find((x) => String(x?.code ?? '').trim() === String(formBd).trim());
+                              const name = b ? String(b?.name ?? '').trim() : '';
+                              return name ? `${formBd} – ${name}` : formBd;
+                            })()
+                          : 'Välj byggdel…'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={COLORS.textSubtle} />
+                    </Pressable>
+                  </View>
+                  {/* Disciplin */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={{ width: 92, fontSize: 12, fontWeight: '500', color: COLORS.textSubtle }}>Disciplin</Text>
+                    <Pressable
+                      onPress={(e) => openDisciplineMenu(e, 'form')}
+                      style={({ hovered, pressed }) => ({
+                        flex: 1,
+                        minWidth: 0,
+                        height: 32,
+                        paddingHorizontal: 8,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: COLORS.inputBorder,
+                        backgroundColor: '#fff',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
+                        ...(pressed ? { opacity: 0.92 } : {}),
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                    >
+                      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: COLORS.text }} numberOfLines={1}>
+                        {normalizeDiscipline(formDiscipline) || 'Intern'}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={COLORS.textSubtle} />
+                    </Pressable>
+                  </View>
+                  {/* Tilldela till */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={{ width: 92, fontSize: 12, fontWeight: '500', color: COLORS.textSubtle }}>Tilldela till</Text>
+                    <Pressable
+                      onPress={() => openResponsiblePicker('form')}
+                      disabled={orgLoading}
+                      style={({ hovered, pressed }) => ({
+                        flex: 1,
+                        minWidth: 0,
+                        paddingHorizontal: 8,
+                        minHeight: 32,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: COLORS.inputBorder,
+                        backgroundColor: '#fff',
+                        opacity: orgLoading ? 0.75 : 1,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
+                        ...(pressed ? { opacity: 0.92 } : {}),
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                    >
+                      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: (normalizeResponsibleKeys(formResponsibleKeys) || []).length ? COLORS.text : COLORS.textSubtle }} numberOfLines={2}>
+                        {orgLoading ? 'Laddar…' : ((normalizeResponsibleKeys(formResponsibleKeys) || []).length ? formatResponsibleSummary(formResponsibleKeys) : 'Välj personer…')}
+                      </Text>
+                      <Ionicons name="people-outline" size={14} color={COLORS.textSubtle} />
+                    </Pressable>
+                  </View>
+                  {/* Svar senast */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={{ width: 92, fontSize: 12, fontWeight: '500', color: COLORS.textSubtle }}>Svar senast</Text>
+                    <Pressable
+                      onPress={() => openDatePicker('form')}
+                      style={({ hovered, pressed }) => ({
+                        flex: 1,
+                        minWidth: 0,
+                        height: 32,
+                        paddingHorizontal: 8,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: COLORS.inputBorder,
+                        backgroundColor: '#fff',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
+                        ...(pressed ? { opacity: 0.92 } : {}),
+                        ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                      })}
+                    >
+                      <Text style={{ flex: 1, minWidth: 0, fontSize: 13, color: formNeedsAnswerBy ? COLORS.text : COLORS.textSubtle }} numberOfLines={1}>
+                        {normalizeDateYmd(formNeedsAnswerBy) || '—'}
+                      </Text>
+                      <Ionicons name="calendar-outline" size={14} color={COLORS.textSubtle} />
+                    </Pressable>
                   </View>
                 </View>
 
-                <Pressable
-                  onPress={(e) => openDisciplineMenu(e, 'form')}
-                  style={({ hovered, pressed }) => ({
-                    width: Platform.OS === 'web' ? 200 : '100%',
-                    height: 44,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    backgroundColor: '#fff',
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(pressed ? { opacity: 0.92 } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                    <Text style={{ color: COLORS.textSubtle }}>Disciplin </Text>
-                    <Text style={{ color: COLORS.text }}>{normalizeDiscipline(formDiscipline) || 'Intern'}</Text>
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color={COLORS.textSubtle} />
-                </Pressable>
-
-                <Pressable
-                  onPress={() => openResponsiblePicker('form')}
-                  disabled={orgLoading}
-                  style={({ hovered, pressed }) => ({
-                    width: Platform.OS === 'web' ? 360 : '100%',
-                    paddingHorizontal: 12,
-                    height: 44,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    backgroundColor: '#fff',
-                    opacity: orgLoading ? 0.75 : 1,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 10,
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(pressed ? { opacity: 0.92 } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                    <Text style={{ color: COLORS.textSubtle }}>Ansvarig </Text>
-                    {(() => {
-                      const keys = normalizeResponsibleKeys(formResponsibleKeys);
-                      const label = orgLoading
-                        ? 'Laddar…'
-                        : (keys.length ? formatResponsibleSummary(keys) : 'Välj personer…');
-                      const color = keys.length ? COLORS.text : COLORS.textMuted;
-                      return <Text style={{ color }} numberOfLines={1}>{label}</Text>;
-                    })()}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color={COLORS.textSubtle} />
-                </Pressable>
-
-                <Pressable
-                  onPress={() => openDatePicker('form')}
-                  style={({ hovered, pressed }) => ({
-                    width: Platform.OS === 'web' ? 260 : '100%',
-                    height: 44,
-                    paddingHorizontal: 12,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: COLORS.inputBorder,
-                    backgroundColor: '#fff',
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    ...(Platform.OS === 'web' && hovered ? { borderColor: COLORS.blue } : {}),
-                    ...(pressed ? { opacity: 0.92 } : {}),
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
-                  })}
-                >
-                  <Text style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: '400', color: COLORS.textMuted }} numberOfLines={1}>
-                    <Text style={{ color: COLORS.textSubtle }}>Svar senast </Text>
-                    <Text style={{ color: COLORS.text }}>{normalizeDateYmd(formNeedsAnswerBy) || '—'}</Text>
-                  </Text>
-                  <Ionicons name="calendar-outline" size={16} color={COLORS.textSubtle} />
-                </Pressable>
-              </View>
-
-                <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 6 }}>Rubrik</Text>
+                <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 4 }}>Rubrik</Text>
                 <TextInput
                   value={formTitle}
                   onChangeText={setFormTitle}
                   placeholder="Rubrik (t.ex. 'Brandklass dörrar')"
                   placeholderTextColor={COLORS.textSubtle}
-                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, backgroundColor: '#fff', padding: 10, minHeight: 44, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 6, backgroundColor: '#fff', paddingVertical: 5, paddingHorizontal: 8, minHeight: 32, fontSize: 13, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
                 />
 
-                <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 6, marginTop: 12 }}>Fråga / Beskrivning *</Text>
+                <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 4, marginTop: 10 }}>Fråga / Beskrivning *</Text>
                 <TextInput
                   value={formQuestion}
                   onChangeText={setFormQuestion}
@@ -4545,10 +4462,10 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                     const raw = Number(e?.nativeEvent?.contentSize?.height || 0);
                     if (!Number.isFinite(raw) || raw <= 0) return;
                     const pad = Platform.OS === 'web' ? 0 : 18;
-                    const next = Math.max(72, Math.ceil(raw + pad));
+                    const next = Math.max(56, Math.ceil(raw + pad));
                     setQuestionInputHeight((prev) => (Math.abs(Number(prev) - next) >= 2 ? next : prev));
                   }}
-                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, backgroundColor: '#fff', padding: 10, minHeight: 72, height: questionInputHeight, color: COLORS.text }}
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 6, backgroundColor: '#fff', paddingVertical: 5, paddingHorizontal: 8, minHeight: 56, height: questionInputHeight, fontSize: 13, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
                 />
 
                 {/* Question attachments */}
@@ -4760,21 +4677,27 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               </View>
 
               {/* Separator */}
-              <View style={{ marginVertical: 14, height: 2, backgroundColor: COLORS.borderStrong, borderRadius: 1 }} />
+              <View style={{ marginVertical: 10, height: 1, backgroundColor: COLORS.borderStrong, borderRadius: 1 }} />
 
               {/* SVAR */}
-              <View style={{ padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '500' }}>Svar</Text>
+              <View style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: '500' }}>Svar</Text>
                   {(() => {
-                    const byRaw = safeText(items.find((x) => String(x?.id || '').trim() === String(editingId || '').trim())?.answeredByName);
-                    const at = formatDateTime(items.find((x) => String(x?.id || '').trim() === String(editingId || '').trim())?.answeredAt);
-                    const by = at ? (byRaw || 'Okänd användare') : '';
-                    if (!by && !at) return null;
+                    const currentItem = items.find((x) => String(x?.id || '').trim() === String(editingId || '').trim());
+                    const byRaw = safeText(currentItem?.answeredByName);
+                    const answeredAtDate = toDateSafe(currentItem?.answeredAt);
+                    if (!byRaw && !answeredAtDate) return null;
+                    const fmtD = (d) => d ? new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) : '';
+                    const fmtT = (d) => d ? new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit' }).format(d) : '';
                     return (
-                      <Text style={{ fontSize: 12, color: COLORS.textSubtle }} numberOfLines={1}>
-                        {by}{at ? ` · ${at}` : ''}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="chatbubble-ellipses-outline" size={12} color="#64748b" />
+                        <Text style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
+                          Besvarad av: <Text style={{ fontWeight: '600', color: '#334155' }}>{byRaw || 'Okänd'}</Text>
+                          {answeredAtDate ? ` · ${fmtD(answeredAtDate)} Kl: ${fmtT(answeredAtDate)}` : ''}
+                        </Text>
+                      </View>
                     );
                   })()}
                 </View>
@@ -4790,10 +4713,10 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                     const raw = Number(e?.nativeEvent?.contentSize?.height || 0);
                     if (!Number.isFinite(raw) || raw <= 0) return;
                     const pad = Platform.OS === 'web' ? 0 : 18;
-                    const next = Math.max(110, Math.ceil(raw + pad));
+                    const next = Math.max(72, Math.ceil(raw + pad));
                     setAnswerInputHeight((prev) => (Math.abs(Number(prev) - next) >= 2 ? next : prev));
                   }}
-                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 10, backgroundColor: '#fff', padding: 10, minHeight: 110, height: answerInputHeight, color: COLORS.text }}
+                  style={{ borderWidth: 1, borderColor: COLORS.inputBorder, borderRadius: 6, backgroundColor: '#fff', paddingVertical: 5, paddingHorizontal: 8, minHeight: 72, height: answerInputHeight, fontSize: 13, color: COLORS.text, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
                 />
 
                 {(Array.isArray(formAnswersHistory) ? formAnswersHistory : []).length > 0 ? (
@@ -4823,8 +4746,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                     ) : null}
                   </View>
                 ) : null}
-                <View style={{ marginTop: 12 }}>
-                  <Text style={{ fontSize: 12, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 6 }}>Status</Text>
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ fontSize: 11, color: COLORS.textSubtle, fontWeight: '500', marginBottom: 4 }}>Status</Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                     {STATUSES.map((s) => (
                       <Pill key={s} label={displayStatusLabel(s)} active={formStatus === s} onPress={() => setFormStatus(s)} />
@@ -5046,11 +4969,11 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
               </View>
             </ScrollView>
 
-            {/* Footer */}
-            <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Footer – Golden Rules */}
+            <View style={{ ...MODAL_DESIGN_2026.footer, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               {editingId && canDeleteFs ? (
                 deletingFsId === editingId ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: MODAL_DESIGN_2026.buttonPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.buttonPaddingHorizontal }}>
                     <ActivityIndicator size="small" color={COLORS.danger} />
                     <Text style={{ color: COLORS.textMuted, fontWeight: FW_MED }}>Raderar…</Text>
                   </View>
@@ -5058,9 +4981,9 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                   <Pressable
                     onPress={() => handleDelete({ id: editingId })}
                     disabled={saving || !!deletingFsId}
-                    style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', opacity: (saving || deletingFsId) ? 0.7 : 1 }}
+                    style={{ paddingVertical: MODAL_DESIGN_2026.buttonPaddingVertical, paddingHorizontal: MODAL_DESIGN_2026.buttonPaddingHorizontal, borderRadius: MODAL_DESIGN_2026.buttonRadius, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', opacity: (saving || deletingFsId) ? 0.7 : 1 }}
                   >
-                    <Text style={{ color: COLORS.danger, fontWeight: FW_MED }}>Ta bort</Text>
+                    <Text style={{ color: COLORS.danger, fontWeight: MODAL_DESIGN_2026.buttonPrimaryFontWeight }}>Ta bort</Text>
                   </Pressable>
                 )
               ) : (
@@ -5070,17 +4993,36 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
                 <Pressable
                   onPress={closePanel}
                   disabled={saving}
-                  style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: COLORS.inputBorder, backgroundColor: '#fff', opacity: saving ? 0.7 : 1 }}
+                  style={({ hovered }) => ({
+                    paddingVertical: MODAL_DESIGN_2026.buttonPaddingVertical,
+                    paddingHorizontal: MODAL_DESIGN_2026.buttonPaddingHorizontal,
+                    borderRadius: MODAL_DESIGN_2026.buttonRadius,
+                    borderWidth: 1,
+                    borderColor: '#ddd',
+                    backgroundColor: hovered ? '#f8f8f8' : MODAL_DESIGN_2026.buttonSecondaryBg,
+                    opacity: saving ? 0.7 : 1,
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  })}
                 >
-                  <Text style={{ color: COLORS.textMuted, fontWeight: FW_MED }}>Stäng</Text>
+                  <Text style={{ color: MODAL_DESIGN_2026.buttonSecondaryColor, fontWeight: MODAL_DESIGN_2026.buttonPrimaryFontWeight }}>Stäng</Text>
                 </Pressable>
                 <Pressable
                   onPress={handleSave}
                   disabled={saving}
-                  style={{ ...PRIMARY_ACTION_BUTTON_BASE, opacity: saving ? 0.7 : 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                  style={({ hovered }) => ({
+                    paddingVertical: MODAL_DESIGN_2026.buttonPaddingVertical,
+                    paddingHorizontal: MODAL_DESIGN_2026.buttonPaddingHorizontal,
+                    borderRadius: MODAL_DESIGN_2026.buttonRadius,
+                    backgroundColor: hovered ? '#3A4A5D' : MODAL_DESIGN_2026.buttonPrimaryBg,
+                    opacity: saving ? 0.7 : 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  })}
                 >
                   {saving ? <ActivityIndicator size="small" color="#fff" /> : null}
-                  <Text style={{ color: '#fff', fontWeight: FW_MED }}>
+                  <Text style={{ color: MODAL_DESIGN_2026.buttonPrimaryColor, fontWeight: MODAL_DESIGN_2026.buttonPrimaryFontWeight }}>
                     {saving ? (editingId ? 'Sparar…' : 'Sparar fråga…') : (editingId ? 'Spara' : 'Skapa')}
                   </Text>
                 </Pressable>
@@ -5089,6 +5031,8 @@ export default function FragaSvarView({ projectId, companyId, project, hidePageH
           </View>
         </View>
       </Modal>
+
+      {/* Ansvariga-picker renderas nu inuti Ny fråga-modalen som overlay – då får bara en Modal ESC */}
 
       </View>
     </ErrorBoundary>

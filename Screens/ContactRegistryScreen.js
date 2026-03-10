@@ -17,6 +17,7 @@ import {
 } from '../components/firebase';
 import { linkExistingContactToSupplier } from '../modules/leverantorer/leverantorerService';
 import { linkExistingContactToCustomer } from '../modules/kunder/kunderService';
+import { linkContactToCompany, linkContactToCustomer, unlinkContactFromCompany, unlinkContactFromCustomer } from '../modules/companyDirectory/companyDirectoryService';
 import MainLayout from '../components/MainLayout';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 
@@ -160,6 +161,8 @@ export default function ContactRegistryScreen({ navigation, route }) {
   const [contactCompanyHighlightedIndex, setContactCompanyHighlightedIndex] = useState(0);
   const [contactLinkedSupplierId, setContactLinkedSupplierId] = useState('');
   const [contactCustomerId, setContactCustomerId] = useState('');
+  const [originalLinkedSupplierId, setOriginalLinkedSupplierId] = useState('');
+  const [originalCustomerId, setOriginalCustomerId] = useState('');
   const contactCompanySearchDebounceRef = useRef(null);
 
   const mountedRef = useRef(true);
@@ -425,6 +428,8 @@ export default function ContactRegistryScreen({ navigation, route }) {
     setContactCompanyName('');
     setContactLinkedSupplierId('');
     setContactCustomerId('');
+    setOriginalLinkedSupplierId('');
+    setOriginalCustomerId('');
     setContactCompanySearchResults([]);
     setContactCompanySearchOpen(false);
     setRole('');
@@ -447,8 +452,12 @@ export default function ContactRegistryScreen({ navigation, route }) {
       setEditingCompanyName(String(contact?.companyName || '').trim());
       setName(String(contact?.name || ''));
       setContactCompanyName(String(contact?.contactCompanyName || contact?.companyName || '').trim());
-      setContactLinkedSupplierId(String(contact?.linkedSupplierId ?? '').trim());
-      setContactCustomerId(String(contact?.customerId ?? '').trim());
+      const suppId = String(contact?.linkedSupplierId ?? '').trim();
+      const custId = String(contact?.customerId ?? '').trim();
+      setContactLinkedSupplierId(suppId);
+      setContactCustomerId(custId);
+      setOriginalLinkedSupplierId(suppId);
+      setOriginalCustomerId(custId);
       setContactCompanySearchResults([]);
       setContactCompanySearchOpen(false);
       setRole(String(contact?.role || ''));
@@ -554,11 +563,36 @@ export default function ContactRegistryScreen({ navigation, route }) {
 
       if (editingId) {
         await updateCompanyContact({ id: editingId, patch: payload }, cid || undefined);
-        // Vid redigering: om företag anges men ingen leverantör/kund är kopplad, försök matcha och koppla (t.ex. efter diakritik-fix eller nytt val).
-        const linkedId = contactLinkedSupplierId.trim() || contactCustomerId.trim();
+
+        const newSupplierId = contactLinkedSupplierId.trim();
+        const newCustomerId = contactCustomerId.trim();
+        const oldSupplierId = originalLinkedSupplierId.trim();
+        const oldCustomerId = originalCustomerId.trim();
+        const supplierChanged = newSupplierId !== oldSupplierId;
+        const customerChanged = newCustomerId !== oldCustomerId;
+
+        if (supplierChanged && oldSupplierId) {
+          try { await unlinkContactFromCompany({ companyId: cid, id: oldSupplierId, contactId: editingId }); } catch (_e) {}
+        }
+        if (supplierChanged && newSupplierId) {
+          try { await linkContactToCompany({ companyId: cid, id: newSupplierId, contactId: editingId }); } catch (_e) {}
+        }
+
+        if (customerChanged && oldCustomerId) {
+          try { await unlinkContactFromCustomer({ companyId: cid, customerId: oldCustomerId, contactId: editingId }); } catch (_e) {}
+        }
+        if (customerChanged && newCustomerId) {
+          try { await linkContactToCustomer({ companyId: cid, customerId: newCustomerId, contactId: editingId }); } catch (_e) {}
+        }
+
+        // Om företag anges men ingen leverantör/kund är kopplad, försök matcha och koppla
+        const linkedId = newSupplierId || newCustomerId;
         if (!linkedId && payload.contactCompanyName) {
           const match = await resolveCompanyMatch(payload.contactCompanyName);
           if (match?.type === 'supplier') {
+            if (oldSupplierId && oldSupplierId !== match.supplier.id) {
+              try { await unlinkContactFromCompany({ companyId: cid, id: oldSupplierId, contactId: editingId }); } catch (_e) {}
+            }
             await linkExistingContactToSupplier(cid || undefined, match.supplier.id, editingId, {
               role: payload.role,
               phone: payload.phone,
@@ -566,6 +600,9 @@ export default function ContactRegistryScreen({ navigation, route }) {
               contactCompanyName: match.supplier.companyName || payload.contactCompanyName,
             });
           } else if (match?.type === 'customer') {
+            if (oldCustomerId && oldCustomerId !== match.customer.id) {
+              try { await unlinkContactFromCustomer({ companyId: cid, customerId: oldCustomerId, contactId: editingId }); } catch (_e) {}
+            }
             await linkExistingContactToCustomer(cid || undefined, match.customer, editingId, {
               role: payload.role,
               phone: payload.phone,
@@ -842,6 +879,15 @@ export default function ContactRegistryScreen({ navigation, route }) {
           ]);
         });
         if (!ok) return;
+      }
+
+      const linkedSuppId = String(contact?.linkedSupplierId ?? '').trim();
+      const linkedCustId = String(contact?.customerId ?? '').trim();
+      if (linkedSuppId) {
+        try { await unlinkContactFromCompany({ companyId: cid, id: linkedSuppId, contactId: id }); } catch (_e) {}
+      }
+      if (linkedCustId) {
+        try { await unlinkContactFromCustomer({ companyId: cid, customerId: linkedCustId, contactId: id }); } catch (_e) {}
       }
 
       await deleteCompanyContact({ id }, cid);

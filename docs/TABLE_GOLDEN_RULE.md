@@ -75,6 +75,8 @@ På webb ska tabeller med kolumnrubriker kunna ha **justerbar bredd** – samma 
 
 - **Resize-handtag** mellan kolumnrubriker (t.ex. 6–10 px bredd, diskret vertikal linje). Cursor: `col-resize`.
 - **Drag:** Bredd ändras steglöst under drag; kolumnen följer musen.
+- **Dubbelklick på handtag:** Kolumnen auto-anpassas till det bredaste innehållet (Excel-beteende). Se §7.3.
+- **Auto-fit vid laddning:** Kolumner anpassas automatiskt till innehållet vid initial rendering. Se §7.4.
 - **Ingen kebab-kolumn** för radåtgärder – använd högerklick/long-press (se §6).
 
 ### 7.2 Implementation (samma mönster överallt)
@@ -97,10 +99,71 @@ För att kolumnerna ska vara justerbara och **inte starta ihoptryckta** eller l�
 4. **Handtag**  
    Ett `View` (endast webb) med `onMouseDown={(e) => startResize(columnKey, e)}`, position absolute på kolumnens högerkant, cursor `col-resize`.
 
-### 7.3 Referensimplementationer
+### 7.3 Dubbelklick på avdelare – auto-fit (Excel-beteende)
 
+Dubbelklick på ett resize-handtag ska automatiskt bredda kolumnen så att **all text i kolumnen syns** – samma beteende som i Excel.
+
+1. **Beräkna optimal bredd**  
+   Gå igenom alla synliga rader och mät den längsta texten i kolumnen. Jämför även med kolumnrubrikens text. Funktionen `contentWidthForColumn(headerLabel, cellTexts)` beräknar:  
+   ```
+   maxLen = Math.max(headerLabel.length, ...cellTexts.map(t => t.length))
+   width  = clamp(maxLen * CHARS_TO_WIDTH + CELL_PADDING, MIN_WIDTH, MAX_WIDTH)
+   ```
+   Konstanter: `CHARS_TO_WIDTH = 8`, `CELL_PADDING = COLUMN_PADDING_LEFT + COLUMN_PADDING_RIGHT + 12`, `MAX_WIDTH = 500–600`.
+
+2. **Text-extraktion**  
+   Varje tabell behöver en `getCellText(row, columnKey)`-funktion som returnerar den text som visas i en given cell. Denna ska matcha vad som faktiskt renderas (t.ex. formaterade telefonnummer, komma-separerade roller, etc.).
+
+3. **Dubbelklick-detektion**  
+   React Native Webs `onDoubleClick` på `View` fungerar inte alltid pålitligt i kombination med `onMouseDown` + `preventDefault`. Använd istället **tidsstämpel-baserad dubbelklick-detektion** direkt i `onMouseDown`:
+   ```javascript
+   const lastClickRef = useRef({ column: null, time: 0 });
+
+   const startResize = useCallback((column, e, autoFitFn) => {
+     e.preventDefault();
+     e.stopPropagation();
+     const now = Date.now();
+     const last = lastClickRef.current;
+     if (last.column === column && now - last.time < 400) {
+       lastClickRef.current = { column: null, time: 0 };
+       autoFitFn(column);
+       return;  // dubbelklick → auto-fit, ingen drag
+     }
+     lastClickRef.current = { column, time: now };
+     // starta vanlig drag-resize...
+   }, [columnWidths]);
+   ```
+   Handtaget anropas: `onMouseDown={(e) => startResize(key, e, widenColumn)}`.
+
+### 7.4 Auto-fit vid laddning
+
+Kolumnerna ska **automatiskt anpassas till innehållet vid initial rendering** så att text inte klipps eller överlappar.
+
+1. **Beräkna vid data-laddning**  
+   Kör `contentWidthForColumn` för varje kolumn när data har laddats (t.ex. i en `useEffect`). Använd en `autoFitDoneRef` för att bara köra en gång:
+   ```javascript
+   const autoFitDoneRef = useRef(false);
+   useEffect(() => {
+     if (autoFitDoneRef.current || loading || !data.length) return;
+     autoFitDoneRef.current = true;
+     const newWidths = {};
+     COLUMNS.forEach((col) => {
+       const cellTexts = data.map((row) => getCellText(row, col));
+       newWidths[col] = contentWidthForColumn(HEADER_LABELS[col], cellTexts);
+     });
+     setColumnWidths(newWidths);
+   }, [data, loading]);
+   ```
+
+2. **Fallback**  
+   Om data inte laddats ännu, använd `DEFAULT_COLUMN_WIDTHS` som startvärde (§7.2 punkt 1). Auto-fit ersätter dessa när data finns.
+
+### 7.5 Referensimplementationer
+
+- **Inköpsplan:** `modules/offerter/inkopsplan/components/InkopsplanTable.js` (dubbelklick auto-fit via `widenColumn` + `contentWidthForColumn`, `didMove`-flagga).
+- **Organisation & Roller:** `features/project-phases/phases/kalkylskede/sections/oversikt/items/OrganisationRoller/OrganisationRollerView.js` (tidsstämpel-baserad dubbelklick, auto-fit vid mount, två tabelltyper).
 - **Leverantörer:** `modules/leverantorer/LeverantorerTable.tsx` (columnWidths, startResize, ref-uppdatering på mousemove).
-- **Kontakter:** `components/common/ContactRegistryTable.js` (samma mönster).
+- **Kontakter:** `components/common/ContactRegistryTable.js` (samma resize-mönster).
 - **Digitalkontrolls utforskare:** `components/common/SharePointFiles/SharePointFolderFileArea.js` (EXPLORER_TABLE_COLUMN_DEFAULTS, colStyle med width/minWidth/maxWidth, inkrementell resize). Används i Bilder, Myndigheter, Konstruktion och beräkningar, Förfrågningsunderlag, Kalkyl, Anbud m.fl.
 
 ---
@@ -140,4 +203,4 @@ För att kolumnerna ska vara justerbara och **inte starta ihoptryckta** eller l�
   - `components/common/ByggdelTable.js`, `KontoplanTable.js`, `KategoriTable.js`  
   - `components/UsersTable.js` (context menu, ingen kebab)
 
-**Viktigt:** Alla tabeller med kolumnrubriker på webb – inklusive Digitalkontrolls utforskare – ska använda samma lösning för justerbar bredd (§7) och dessa tokens så att utseende och funktion är enhetlig i hela systemet.
+**Viktigt:** Alla tabeller med kolumnrubriker på webb – inklusive Digitalkontrolls utforskare – ska använda samma lösning för justerbar bredd (§7), dubbelklick auto-fit (§7.3), auto-fit vid laddning (§7.4) och dessa tokens så att utseende och funktion är enhetlig i hela systemet.

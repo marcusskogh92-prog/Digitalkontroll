@@ -69,6 +69,7 @@ function normalizeGroups(raw) {
               company: String(m?.company || '').trim() || '',
               email: String(m?.email || '').trim() || '',
               phone: String(m?.phone || '').trim() || '',
+              workPhone: String(m?.workPhone || '').trim() || '',
               roles,
             };
           })
@@ -316,6 +317,7 @@ export function useProjectOrganisation({ companyId, projectId }) {
         company: String(c.company || '').trim() || '',
         email: String(c.email || '').trim() || '',
         phone: String(c.phone || '').trim() || '',
+        workPhone: String(c.workPhone || '').trim() || '',
         roles,
       };
 

@@ -2825,7 +2825,7 @@ export function SharePointLeftPanel({
           // If phaseNavigation isn't loaded yet (or items missing), we still want to be able to repair.
           // Use known defaults for the most important sections.
           const fallbackBySectionId = {
-            oversikt: ['01 - Checklista', '02 - Projektinformation', '03 - Organisation och roller', '04 - Tidsplan och viktiga datum', '05 - FrågaSvar'],
+            oversikt: ['01 - Checklista', '02 - Projektinformation', '03 - Organisation och roller', '04 - Tidsplan och viktiga datum'],
             forfragningsunderlag: [],
           };
 

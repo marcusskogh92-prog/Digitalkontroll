@@ -31,8 +31,8 @@ const FIXED = { organizationNumber: 170, city: 160, actions: 30 } as const;
 /** Edit-rad (öppet läge) använder även adress och postnr. */
 const FLEX_FULL = { companyName: 0.9, category: 1, byggdelar: 1, address: 1.6, city: 0.75 } as const;
 const FIXED_FULL = { organizationNumber: 170, postalCode: 110, actions: 30 } as const;
-/** Kontakt-tabell i öppet läge: samma kolumnbredder som Kontaktregister (utan Företag). */
-const FLEX_CONTACT = { name: 1.2, role: 1.1, email: 2 } as const;
+/** Kontakt-tabell i öppet läge: samma kolumner som Kontaktregister (Namn, Företag, Roll, Mobil, Arbete, E-post). */
+const FLEX_CONTACT = { name: 1.2, company: 1.1, role: 1.1, email: 2 } as const;
 const FIXED_CONTACT = { mobile: 130, workPhone: 150, actions: 30 } as const;
 
 function formatMobileDisplay(value: string | undefined): string {
@@ -295,6 +295,9 @@ const styles = StyleSheet.create({
   openContactTableRowAlt: {
     backgroundColor: '#f8fafc',
   },
+  openContactTableRowHover: {
+    backgroundColor: '#eef6ff',
+  },
   openContactTableCell: {
     fontSize: 13,
     color: '#334155',
@@ -385,11 +388,11 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontWeight: '500',
   },
-  /** Expander-sektion: klickbar rubrikrad med chevron */
+  /** Expander-sektion: rubrik + "Lägg till kontakt" direkt till höger om rubriken */
   expanderHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
     paddingVertical: 8,
     paddingHorizontal: 0,
     marginBottom: 0,
@@ -397,7 +400,6 @@ const styles = StyleSheet.create({
   expanderHeaderTouchable: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
     gap: 6,
   },
   expanderChevron: {
@@ -412,6 +414,75 @@ const styles = StyleSheet.create({
     marginVertical: 16,
     marginHorizontal: 0,
     borderRadius: 1,
+  },
+  /** Flikar Information / Kontaktpersoner */
+  detailsTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  detailsTab: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -1,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
+  },
+  detailsTabActive: {
+    borderBottomColor: '#2563eb',
+  },
+  detailsTabLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  detailsTabLabelActive: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  /** Information-fliken: etikett-värde rader */
+  infoGrid: {
+    marginBottom: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 12,
+  },
+  infoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    minWidth: 130,
+  },
+  infoValue: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  infoLink: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
+  },
+  infoRowHover: {
+    backgroundColor: '#f8fafc',
+  },
+  infoAndraBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f1f5f9',
   },
   detailsMeta: {
     fontSize: 12,
@@ -483,32 +554,37 @@ const styles = StyleSheet.create({
     color: '#111',
   },
   contactHint: {
-    marginTop: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
+    borderColor: '#FDBA74',
+    backgroundColor: '#FFF7ED',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     flexWrap: 'wrap',
+  },
+  contactHintIcon: {
+    fontSize: 18,
   },
   contactHintText: {
     fontSize: 12,
-    color: '#475569',
+    color: '#92400E',
+    flex: 1,
+    minWidth: 180,
   },
   contactHintBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
     borderRadius: 8,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#0F172A',
   },
   contactHintBtnText: {
     fontSize: 12,
-    color: '#334155',
-    fontWeight: '500',
+    color: '#fff',
+    fontWeight: '600',
   },
   contactCell: {
     fontSize: 12,
@@ -681,12 +757,12 @@ interface LeverantorerTableProps {
   contactRegistry?: { id: string; name: string; email?: string; phone?: string; role?: string }[];
   contactsBySupplierId?: Record<string, { id: string; name: string; role?: string; email?: string; phone?: string }[]>;
   onContactMenu?: (e: unknown, supplier: Supplier, contact: { id: string; name: string; role?: string; email?: string; phone?: string }) => void;
-  onAddContact?: (supplier: Supplier, contact: { name: string; role?: string; email?: string; phone?: string }) => void;
+  onAddContact?: (supplier: Supplier, contact: { name: string; role?: string; email?: string; phone?: string; workPhone?: string }) => void;
   onRemoveContact?: (supplier: Supplier, contactId: string) => void;
   onLinkContact?: (
     supplier: Supplier,
     contactId: string,
-    patch?: { role?: string; phone?: string; email?: string; contactCompanyName?: string }
+    patch?: { role?: string; phone?: string; workPhone?: string; email?: string; contactCompanyName?: string }
   ) => void;
   /** Företagets kategorier (companies/{id}/categories) – används i expanderad rad. */
   companyCategories?: { id: string; name?: string }[];
@@ -701,6 +777,8 @@ interface LeverantorerTableProps {
   onOpenByggdelar?: (supplier: Supplier) => void;
   onOpenKonton?: (supplier: Supplier) => void;
   onOpenKategorier?: (supplier: Supplier) => void;
+  /** Öppna "Redigera leverantör"-modalen (org.nr, adress, kategori m.m.) från Information-fliken. */
+  onEditSupplier?: (supplier: Supplier) => void;
   /** Öppna Kategori-modalen från inline "lägg till"-radens kategorifält (istället för dropdown). */
   onOpenKategoriForInlineAdd?: () => void;
   inlineEnabled?: boolean;
@@ -761,6 +839,7 @@ export default function LeverantorerTable({
   onOpenByggdelar,
   onOpenKonton,
   onOpenKategorier,
+  onEditSupplier,
   onOpenKategoriForInlineAdd,
   inlineEnabled = false,
   inlineValues,
@@ -774,16 +853,21 @@ export default function LeverantorerTable({
   keepExpandedSupplierId,
 }: LeverantorerTableProps): React.ReactElement {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredContactId, setHoveredContactId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
-  /** Relationer-sektion expanderad (default stängd). */
+  /** Aktiv flik i expanderad rad: Information | Kontaktpersoner */
+  const [detailsTabBySupplierId, setDetailsTabBySupplierId] = useState<Record<string, 'information' | 'kontaktpersoner'>>({});
+  /** Relationer-sektion expanderad (default stängd) – används ej med flikar, behålls för kompatibilitet. */
   const [relationerExpandedIds, setRelationerExpandedIds] = useState<Record<string, boolean>>({});
-  /** Kontaktpersoner-sektion expanderad (default öppen). */
+  /** Kontaktpersoner-sektion expanderad (default öppen) – används när flik Kontaktpersoner är vald. */
   const [kontaktpersonerExpandedIds, setKontaktpersonerExpandedIds] = useState<Record<string, boolean>>({});
   /** Vilken sektion som är i redigeringsläge per leverantör (null = alla i läsläge). */
   const [editingSection, setEditingSection] = useState<Record<string, 'categories' | 'byggdelar' | 'konton' | 'contacts' | 'address' | null>>({});
   /** E-postlänk hover (för underline) i öppet läge kontakt-tabell. */
   const [openContactEmailHoverId, setOpenContactEmailHoverId] = useState<string | null>(null);
-  const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string }>>({});
+  /** Hover på Information-flikens rader (org, address, category, byggdelar, konto) för visuell feedback + högerklick. */
+  const [infoRowHover, setInfoRowHover] = useState<string | null>(null);
+  const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string; workPhone: string }>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
   const [editDraft, setEditDraft] = useState<{
     companyName: string;
@@ -839,9 +923,23 @@ export default function LeverantorerTable({
   const DOUBLE_TAP_MS = 350;
   const inlineCategoryTriggerRef = useRef<React.ComponentRef<typeof TouchableOpacity> | null>(null);
   const editCategoryTriggerRef = useRef<React.ComponentRef<typeof TouchableOpacity> | null>(null);
+  const duplicatePromptRef = useRef<View | null>(null);
   /** När användaren stänger Kategori-modalen återförs fokus till triggern och onFocus körs igen – ignorera det. */
   const categoryModalJustOpenedRef = useRef(false);
   const contactMap = useMemo(() => contactsBySupplierId, [contactsBySupplierId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const hasPrompt = Object.keys(duplicatePrompt).length > 0;
+    if (!hasPrompt) return;
+    const timer = setTimeout(() => {
+      try {
+        const el = duplicatePromptRef.current as unknown as HTMLElement | null;
+        if (el?.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_) {}
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [duplicatePrompt]);
 
   const blurTrigger = (ref: React.MutableRefObject<unknown>): void => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -932,6 +1030,18 @@ export default function LeverantorerTable({
     });
   };
 
+  /** Konton som visningstext med benämning (t.ex. "4401 Mark") för expanderad Information. */
+  const getKontoDisplayList = (supplier: Supplier): string[] => {
+    const ids = Array.isArray(supplier.konton) ? (supplier.konton as string[]) : [];
+    if (!ids.length) return [];
+    return ids.map((kontoId) => {
+      const item = companyKontoplan.find((x) => (x.konto ?? x.id) === kontoId);
+      const num = item?.konto ?? kontoId;
+      const benamning = (item?.benamning ?? '').trim();
+      return benamning ? `${num} ${benamning}` : String(num);
+    });
+  };
+
 
   const submitDraft = (supplier: Supplier) => {
     const draft = contactDrafts[supplier.id];
@@ -955,10 +1065,11 @@ export default function LeverantorerTable({
         role: draft.role?.trim(),
         email: draft.email?.trim(),
         phone: draft.phone?.trim(),
+        workPhone: draft.workPhone?.trim(),
       });
       setContactDrafts((prev) => ({
         ...prev,
-        [supplier.id]: { name: '', role: '', email: '', phone: '' },
+        [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' },
       }));
       setDuplicatePrompt((prev) => {
         const next = { ...prev };
@@ -1453,223 +1564,233 @@ export default function LeverantorerTable({
           {expandedIds[supplier.id] ? (
             <View style={styles.detailsRow}>
               <View style={styles.detailsInner}>
-                {/* A. Företagets header (summary) – read-only */}
-                <View style={styles.openSummary}>
-                  <Text style={styles.openSummaryTitle} numberOfLines={1}>
-                    {supplier.companyName || '—'}
-                  </Text>
-                  <Text style={styles.openSummaryMeta} numberOfLines={1}>
-                    {['Leverantörer', ...getCategoryList(supplier).slice(0, 10)].join(' • ') || 'Leverantörer'}
-                  </Text>
-                </View>
-
-                {/* Relationer – expander (default stängd), tvåkolumnslayout när öppen */}
-                <View style={styles.openRelationerSection}>
-                  <TouchableOpacity
-                    style={styles.expanderHeader}
-                    onPress={() => setRelationerExpandedIds((prev) => ({ ...prev, [supplier.id]: !(prev[supplier.id] ?? false) }))}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
-                  >
-                    <View style={styles.expanderHeaderTouchable}>
-                      <View style={styles.expanderChevron}>
-                        <Ionicons
-                          name={relationerExpandedIds[supplier.id] ? 'chevron-down' : 'chevron-forward'}
-                          size={20}
-                          color="#475569"
-                        />
-                      </View>
-                      <Text style={styles.openRelationerTitle}>Relationer</Text>
-                    </View>
-                  </TouchableOpacity>
-                  {relationerExpandedIds[supplier.id] ? (
+                {(() => {
+                  const activeTab = detailsTabBySupplierId[supplier.id] ?? 'information';
+                  return (
                     <>
-                      <View style={styles.openRelationerRow}>
-                        <View style={styles.openRelationerColLeft}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (onOpenByggdelar) onOpenByggdelar(supplier);
-                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'byggdelar' }));
-                            }}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openRelationerLink}>+ Byggdelar</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.openRelationerColRight}>
-                          {Array.isArray(supplier.byggdelTags) && supplier.byggdelTags.length > 0 ? (
-                            <Text style={styles.openRelationerValues} numberOfLines={1}>
-                              {(supplier.byggdelTags as string[])
-                                .slice(0, 5)
-                                .map((code) => {
-                                  const b = companyByggdelar.find((x) => (x.code ?? x.id) === code);
-                                  return b ? (b.name ?? b.code ?? code) : code;
-                                })
-                                .join(', ')}
-                              {(supplier.byggdelTags?.length ?? 0) > 5 ? ` +${(supplier.byggdelTags?.length ?? 0) - 5}` : ''}
-                            </Text>
-                          ) : null}
-                          {!onOpenByggdelar && editingSection[supplier.id] === 'byggdelar' && companyByggdelar.length > 0 && onByggdelarChange ? (
-                            <View style={styles.openRelationerDropdownWrap}>
-                              <SelectDropdown
-                                value={Array.isArray(supplier.byggdelTags) ? supplier.byggdelTags : []}
-                                options={companyByggdelar.map((b) => ({
-                                  value: b.code ?? b.id,
-                                  label: [b.code, b.name].filter(Boolean).join(' – ') || b.id,
-                                }))}
-                                multiple
-                                searchable
-                                placeholder="Välj byggdelar"
-                                onChange={(next: string[]) => {
-                                  onByggdelarChange(supplier, next);
-                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
-                                }}
-                                usePortal={true}
-                                fieldStyle={styles.inlineSelectField}
-                                listStyle={styles.inlineSelectList}
-                                inputStyle={{ fontSize: 13, color: '#111' }}
-                              />
-                            </View>
-                          ) : null}
-                        </View>
-                      </View>
-                      <View style={styles.openRelationerRow}>
-                        <View style={styles.openRelationerColLeft}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (onOpenKonton) onOpenKonton(supplier);
-                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'konton' }));
-                            }}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openRelationerLink}>+ Konton</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.openRelationerColRight}>
-                          {Array.isArray(supplier.konton) && supplier.konton.length > 0 ? (
-                            <Text style={styles.openRelationerValues} numberOfLines={1}>
-                              {(supplier.konton as string[]).slice(0, 5).join(', ')}
-                              {(supplier.konton?.length ?? 0) > 5 ? ` +${(supplier.konton?.length ?? 0) - 5}` : ''}
-                            </Text>
-                          ) : null}
-                          {!onOpenKonton && editingSection[supplier.id] === 'konton' && companyKontoplan.length > 0 && onKontonChange ? (
-                            <View style={styles.openRelationerDropdownWrap}>
-                              <SelectDropdown
-                                value={Array.isArray(supplier.konton) ? supplier.konton : []}
-                                options={companyKontoplan.map((k) => ({
-                                  value: k.konto ?? k.id,
-                                  label: [k.konto, k.benamning].filter(Boolean).join(' – ') || k.id,
-                                }))}
-                                multiple
-                                searchable
-                                placeholder="Välj konton"
-                                onChange={(next: string[]) => {
-                                  onKontonChange(supplier, next);
-                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
-                                }}
-                                usePortal={true}
-                                fieldStyle={styles.inlineSelectField}
-                                listStyle={styles.inlineSelectList}
-                                inputStyle={{ fontSize: 13, color: '#111' }}
-                              />
-                            </View>
-                          ) : null}
-                        </View>
-                      </View>
-                      <View style={styles.openRelationerRow}>
-                        <View style={styles.openRelationerColLeft}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (onOpenKategorier) onOpenKategorier(supplier);
-                              else setEditingSection((prev) => ({ ...prev, [supplier.id]: 'categories' }));
-                            }}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openRelationerLink}>+ Kategorier</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.openRelationerColRight}>
-                          {getCategoryList(supplier).length > 0 ? (
-                            <Text style={styles.openRelationerValues} numberOfLines={1}>
-                              {getCategoryList(supplier).slice(0, 5).join(', ')}
-                              {getCategoryList(supplier).length > 5 ? ` +${getCategoryList(supplier).length - 5}` : ''}
-                            </Text>
-                          ) : null}
-                          {!onOpenKategorier && editingSection[supplier.id] === 'categories' && companyCategories.length > 0 && onCategoriesChange ? (
-                            <View style={styles.openRelationerDropdownWrap}>
-                              <SelectDropdown
-                                value={Array.isArray(supplier.categories) ? supplier.categories : []}
-                                options={companyCategories.map((c) => ({ value: c.id, label: c.name ?? c.id }))}
-                                multiple
-                                searchable
-                                placeholder="Välj kategorier"
-                                onChange={(next: string[]) => {
-                                  onCategoriesChange(supplier, next);
-                                  setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
-                                }}
-                                usePortal={true}
-                                fieldStyle={styles.inlineSelectField}
-                                listStyle={styles.inlineSelectList}
-                                inputStyle={{ fontSize: 13, color: '#111' }}
-                              />
-                            </View>
-                          ) : null}
-                        </View>
-                      </View>
-                      <View style={[styles.openRelationerRow, styles.openRelationerRowLast]}>
-                        <View style={styles.openRelationerColLeft}>
-                          <TouchableOpacity
-                            onPress={(e) => onRowMenu?.(e, supplier)}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openRelationerLink}>+ Adress</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={styles.openRelationerColRight}>
-                          <Text style={styles.openRelationerValues} numberOfLines={2}>
-                            {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
+                      {/* Flikar: Information | Kontaktpersoner */}
+                      <View style={styles.detailsTabsRow}>
+                        <TouchableOpacity
+                          style={[styles.detailsTab, activeTab === 'information' && styles.detailsTabActive]}
+                          onPress={() => setDetailsTabBySupplierId((prev) => ({ ...prev, [supplier.id]: 'information' }))}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                        >
+                          <Text style={[styles.detailsTabLabel, activeTab === 'information' && styles.detailsTabLabelActive]}>
+                            Information
                           </Text>
-                        </View>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.detailsTab, activeTab === 'kontaktpersoner' && styles.detailsTabActive]}
+                          onPress={() => setDetailsTabBySupplierId((prev) => ({ ...prev, [supplier.id]: 'kontaktpersoner' }))}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                        >
+                          <Text style={[styles.detailsTabLabel, activeTab === 'kontaktpersoner' && styles.detailsTabLabelActive]}>
+                            Kontaktpersoner ({(contactMap[supplier.id] || []).length})
+                          </Text>
+                        </TouchableOpacity>
                       </View>
-                    </>
-                  ) : null}
-                </View>
 
-                {/* Kontaktpersoner – expander (default öppen), antal i rubrik, + Lägg till kontakt högerjusterad */}
-                <View style={styles.openRelationerSection}>
-                  <View style={styles.expanderHeader}>
-                    <TouchableOpacity
-                      style={styles.expanderHeaderTouchable}
-                      onPress={() => setKontaktpersonerExpandedIds((prev) => ({ ...prev, [supplier.id]: !(prev[supplier.id] ?? true) }))}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
-                    >
-                      <View style={styles.expanderChevron}>
-                        <Ionicons
-                          name={kontaktpersonerExpandedIds[supplier.id] !== false ? 'chevron-down' : 'chevron-forward'}
-                          size={20}
-                          color="#475569"
-                        />
-                      </View>
-                      <Text style={styles.openRelationerTitle}>
-                        Kontaktpersoner ({(contactMap[supplier.id] || []).length})
-                      </Text>
-                    </TouchableOpacity>
-                    {kontaktpersonerExpandedIds[supplier.id] !== false && editingSection[supplier.id] !== 'contacts' ? (
-                      <TouchableOpacity
-                        onPress={() => setEditingSection((prev) => ({ ...prev, [supplier.id]: 'contacts' }))}
-                        activeOpacity={0.8}
-                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                      >
-                        <Text style={styles.openRelationerActionLink}>+ Lägg till kontakt</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                  {kontaktpersonerExpandedIds[supplier.id] !== false ? (
+                      {activeTab === 'information' ? (
+                        <View style={styles.infoGrid}>
+                          {/* Organisationsnummer – redigera öppnar leverantörsmodalen */}
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === 'org' ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onEditSupplier?.(supplier);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover('org'),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Organisationsnummer</Text>
+                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                              <Text style={styles.infoValue}>{formatOrganizationNumber(String(supplier.organizationNumber ?? '')) || '—'}</Text>
+                              {onEditSupplier ? (
+                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          {/* Adress */}
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === 'address' ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onEditSupplier?.(supplier);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover('address'),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Adress</Text>
+                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                              <Text style={styles.infoValue} numberOfLines={2}>
+                                {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
+                              </Text>
+                              {onEditSupplier ? (
+                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          {/* Kategori */}
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === 'category' ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (onOpenKategorier) onOpenKategorier(supplier);
+                                    else onEditSupplier?.(supplier);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover('category'),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Kategori</Text>
+                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                              {getCategoryList(supplier).length > 0 ? (
+                                <Text style={styles.infoValue}>{getCategoryList(supplier).join(', ')}</Text>
+                              ) : (
+                                <Text style={styles.infoValue}>—</Text>
+                              )}
+                              {(onOpenKategorier || (companyCategories.length > 0 && onCategoriesChange)) ? (
+                                <TouchableOpacity
+                                  style={styles.infoAndraBtn}
+                                  onPress={() => onOpenKategorier?.(supplier)}
+                                  activeOpacity={0.8}
+                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : onEditSupplier ? (
+                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          {/* Byggdelar – högerklick på raden eller valfri byggdel öppnar byggdelar-modalen */}
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === 'byggdelar' ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onOpenByggdelar?.(supplier);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover('byggdelar'),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Byggdelar</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
+                              {getByggdelList(supplier).length > 0 ? (
+                                getByggdelList(supplier).map((line, idx) => (
+                                  <Text key={idx} style={styles.infoValue}>{line}</Text>
+                                ))
+                              ) : (
+                                <Text style={styles.infoValue}>—</Text>
+                              )}
+                              {onOpenByggdelar ? (
+                                <TouchableOpacity
+                                  style={[styles.infoAndraBtn, { alignSelf: 'flex-start', marginTop: 2 }]}
+                                  onPress={() => onOpenByggdelar(supplier)}
+                                  activeOpacity={0.8}
+                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          {/* Konto – högerklick öppnar konton-modalen */}
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === 'konto' ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onOpenKonton?.(supplier);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover('konto'),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Konto</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
+                              {getKontoDisplayList(supplier).length > 0 ? (
+                                getKontoDisplayList(supplier).map((line, idx) => (
+                                  <Text key={idx} style={styles.infoValue}>{line}</Text>
+                                ))
+                              ) : (
+                                <Text style={styles.infoValue}>—</Text>
+                              )}
+                              {onOpenKonton ? (
+                                <TouchableOpacity
+                                  style={[styles.infoAndraBtn, { alignSelf: 'flex-start', marginTop: 2 }]}
+                                  onPress={() => onOpenKonton(supplier)}
+                                  activeOpacity={0.8}
+                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                        </View>
+                      ) : null}
+
+                      {activeTab === 'kontaktpersoner' ? (
+                        <View style={styles.openRelationerSection}>
+                          <View style={styles.expanderHeader}>
+                            <View style={styles.expanderHeaderTouchable}>
+                              <Text style={styles.openRelationerTitle}>Kontaktpersoner</Text>
+                            </View>
+                            {editingSection[supplier.id] !== 'contacts' ? (
+                              <TouchableOpacity
+                                onPress={() => setEditingSection((prev) => ({ ...prev, [supplier.id]: 'contacts' }))}
+                                activeOpacity={0.8}
+                                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                              >
+                                <Text style={styles.openRelationerActionLink}>+ Lägg till kontakt</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
                   <>
                   <View style={styles.openSectionContent}>
                     {(contactMap[supplier.id] || []).length > 0 ? (
@@ -1677,6 +1798,9 @@ export default function LeverantorerTable({
                         <View style={styles.openContactTableHeader}>
                           <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
                             <Text style={styles.openContactTableHeaderCell}>Namn</Text>
+                          </View>
+                          <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                            <Text style={styles.openContactTableHeaderCell}>Företag</Text>
                           </View>
                           <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
                             <Text style={styles.openContactTableHeaderCell}>Roll</Text>
@@ -1700,6 +1824,7 @@ export default function LeverantorerTable({
                               style={[
                                 styles.openContactTableRow,
                                 cIdx % 2 === 1 ? styles.openContactTableRowAlt : null,
+                                Platform.OS === 'web' && hoveredContactId === contact.id ? styles.openContactTableRowHover : null,
                               ]}
                               {...(Platform.OS === 'web'
                                 ? {
@@ -1708,12 +1833,19 @@ export default function LeverantorerTable({
                                       e.stopPropagation();
                                       onContactMenu?.(e, supplier, contact);
                                     },
+                                    onMouseEnter: () => setHoveredContactId(contact.id),
+                                    onMouseLeave: () => setHoveredContactId(null),
                                   }
                                 : {})}
                             >
                               <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
                                 <Text style={[styles.openContactTableCell, { fontWeight: '500' }]} numberOfLines={1}>
                                   {contact.name || '—'}
+                                </Text>
+                              </View>
+                              <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                                <Text style={[styles.openContactTableCell, styles.openContactTableCellMuted]} numberOfLines={1}>
+                                  {supplier.companyName || '—'}
                                 </Text>
                               </View>
                               <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
@@ -1755,16 +1887,7 @@ export default function LeverantorerTable({
                                   </Text>
                                 )}
                               </View>
-                              <View style={styles.openContactTableKebabCol}>
-                                <TouchableOpacity
-                                  style={styles.rowMenuBtn}
-                                  onPress={(e) => onContactMenu?.(e, supplier, contact)}
-                                  activeOpacity={0.8}
-                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                                >
-                                  <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-                                </TouchableOpacity>
-                              </View>
+                              <View style={styles.openContactTableKebabCol} />
                             </View>
                           );
                         })}
@@ -1775,69 +1898,112 @@ export default function LeverantorerTable({
                   </View>
                   {editingSection[supplier.id] === 'contacts' ? (
                     <>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                        <TextInput
-                          value={contactDrafts[supplier.id]?.name ?? ''}
-                          onChangeText={(v) =>
-                            setContactDrafts((prev) => ({
-                              ...prev,
-                              [supplier.id]: { name: v, role: prev[supplier.id]?.role || '', email: prev[supplier.id]?.email || '', phone: prev[supplier.id]?.phone || '' },
-                            }))
-                          }
-                          placeholder="Namn"
-                          style={[styles.contactInput, { minWidth: 140, flex: 1 }]}
-                          placeholderTextColor="#94a3b8"
-                          {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-                        />
-                        <TextInput
-                          value={contactDrafts[supplier.id]?.role ?? ''}
-                          onChangeText={(v) =>
-                            setContactDrafts((prev) => ({
-                              ...prev,
-                              [supplier.id]: { name: prev[supplier.id]?.name || '', role: v, email: prev[supplier.id]?.email || '', phone: prev[supplier.id]?.phone || '' },
-                            }))
-                          }
-                          placeholder="Roll"
-                          style={[styles.contactInput, { minWidth: 100 }]}
-                          placeholderTextColor="#94a3b8"
-                          {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-                        />
-                        <TextInput
-                          value={contactDrafts[supplier.id]?.email ?? ''}
-                          onChangeText={(v) =>
-                            setContactDrafts((prev) => ({
-                              ...prev,
-                              [supplier.id]: { name: prev[supplier.id]?.name || '', role: prev[supplier.id]?.role || '', email: v, phone: prev[supplier.id]?.phone || '' },
-                            }))
-                          }
-                          placeholder="E-post"
-                          style={[styles.contactInput, { minWidth: 140 }]}
-                          placeholderTextColor="#94a3b8"
-                          {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-                        />
-                        <TouchableOpacity
-                          style={[styles.openActionBtn, { backgroundColor: '#e0f2fe' }]}
-                          onPress={() => submitDraft(supplier)}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                        >
-                          <Text style={styles.openActionBtnText}>Lägg till</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={styles.openActionBtn}
-                          onPress={() => {
-                            setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
-                            setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '' } }));
-                            setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
-                          }}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                        >
-                          <Text style={styles.openActionBtnText}>Avbryt</Text>
-                        </TouchableOpacity>
+                      <View style={[styles.openContactTableRow, { marginTop: 8 }]}>
+                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
+                          <TextInput
+                            value={contactDrafts[supplier.id]?.name ?? ''}
+                            onChangeText={(v) =>
+                              setContactDrafts((prev) => ({
+                                ...prev,
+                                [supplier.id]: { name: v, role: prev[supplier.id]?.role ?? '', email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }))
+                            }
+                            placeholder="Namn"
+                            style={[styles.contactInput, { flex: 1 }]}
+                            placeholderTextColor="#94a3b8"
+                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                          />
+                        </View>
+                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                          <Text style={[styles.openContactTableCell, styles.openContactTableCellMuted]} numberOfLines={1}>
+                            {supplier.companyName || '—'}
+                          </Text>
+                        </View>
+                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
+                          <TextInput
+                            value={contactDrafts[supplier.id]?.role ?? ''}
+                            onChangeText={(v) =>
+                              setContactDrafts((prev) => ({
+                                ...prev,
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: v, email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }))
+                            }
+                            placeholder="Roll"
+                            style={[styles.contactInput, { flex: 1 }]}
+                            placeholderTextColor="#94a3b8"
+                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                          />
+                        </View>
+                        <View style={[styles.cellFixed, { width: FIXED_CONTACT.mobile }]}>
+                          <TextInput
+                            value={contactDrafts[supplier.id]?.phone ?? ''}
+                            onChangeText={(v) =>
+                              setContactDrafts((prev) => ({
+                                ...prev,
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: prev[supplier.id]?.role ?? '', email: prev[supplier.id]?.email ?? '', phone: v, workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }))
+                            }
+                            placeholder="Mobil"
+                            style={[styles.contactInput, { width: FIXED_CONTACT.mobile }]}
+                            placeholderTextColor="#94a3b8"
+                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                          />
+                        </View>
+                        <View style={[styles.cellFixed, { width: FIXED_CONTACT.workPhone }]}>
+                          <TextInput
+                            value={contactDrafts[supplier.id]?.workPhone ?? ''}
+                            onChangeText={(v) =>
+                              setContactDrafts((prev) => ({
+                                ...prev,
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: prev[supplier.id]?.role ?? '', email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: v },
+                              }))
+                            }
+                            placeholder="Arbete"
+                            style={[styles.contactInput, { width: FIXED_CONTACT.workPhone }]}
+                            placeholderTextColor="#94a3b8"
+                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                          />
+                        </View>
+                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.email }]}>
+                          <TextInput
+                            value={contactDrafts[supplier.id]?.email ?? ''}
+                            onChangeText={(v) =>
+                              setContactDrafts((prev) => ({
+                                ...prev,
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: prev[supplier.id]?.role ?? '', email: v, phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }))
+                            }
+                            placeholder="E-post"
+                            style={[styles.contactInput, { flex: 1 }]}
+                            placeholderTextColor="#94a3b8"
+                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                          />
+                        </View>
+                        <View style={styles.openContactTableKebabCol}>
+                          <TouchableOpacity
+                            style={[styles.openActionBtn, { backgroundColor: '#e0f2fe' }]}
+                            onPress={() => submitDraft(supplier)}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openActionBtnText}>Lägg till</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.openActionBtn, { marginLeft: 6 }]}
+                            onPress={() => {
+                              setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
+                              setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
+                            }}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                          >
+                            <Text style={styles.openActionBtnText}>Avbryt</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                       {(() => {
-                        const draft = contactDrafts[supplier.id] || { name: '', role: '', email: '', phone: '' };
+                        const draft = contactDrafts[supplier.id] || { name: '', role: '', email: '', phone: '', workPhone: '' };
                         const q = String(draft.name || '').trim().toLowerCase();
                         const linkedIds = new Set((contactMap[supplier.id] || []).map((c) => c.id));
                         const matches = q
@@ -1858,10 +2024,11 @@ export default function LeverantorerTable({
                                   onLinkContact?.(supplier, m.id, {
                                     role: draft.role,
                                     phone: draft.phone,
+                                    workPhone: draft.workPhone,
                                     email: draft.email,
                                     contactCompanyName: supplier.companyName || '',
                                   });
-                                  setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '' } }));
+                                  setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
                                   setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
                                 }}
                                 activeOpacity={0.8}
@@ -1875,23 +2042,27 @@ export default function LeverantorerTable({
                         );
                       })()}
                       {duplicatePrompt[supplier.id] ? (
-                        <View style={styles.contactHint}>
-                          <Text style={styles.contactHintText}>Det finns redan en kontakt som matchar. Vill du använda befintlig eller skapa ny?</Text>
+                        <View ref={duplicatePromptRef} style={styles.contactHint}>
+                          <Text style={styles.contactHintIcon}>⚠️</Text>
+                          <Text style={styles.contactHintText}>
+                            <Text style={{ fontWeight: '700' }}>{duplicatePrompt[supplier.id]?.label || 'Kontakten'}</Text> finns redan i registret. Vill du använda befintlig eller skapa ny?
+                          </Text>
                           <TouchableOpacity
                             style={styles.contactHintBtn}
                             onPress={() => {
                               const dup = duplicatePrompt[supplier.id];
                               if (dup) {
-                                const draft = contactDrafts[supplier.id] || { role: '', phone: '', email: '' };
+                                const draft = contactDrafts[supplier.id] || { role: '', phone: '', workPhone: '', email: '' };
                                 onLinkContact?.(supplier, dup.contactId, {
                                   role: draft.role,
                                   phone: draft.phone,
+                                  workPhone: draft.workPhone,
                                   email: draft.email,
                                   contactCompanyName: supplier.companyName || '',
                                 });
                               }
                               setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
-                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '' } }));
+                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
                               setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
                             }}
                           >
@@ -1907,10 +2078,11 @@ export default function LeverantorerTable({
                                   role: draft.role?.trim(),
                                   email: draft.email?.trim(),
                                   phone: draft.phone?.trim(),
+                                  workPhone: draft.workPhone?.trim(),
                                 });
                               }
                               setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
-                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '' } }));
+                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
                               setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
                             }}
                           >
@@ -1921,9 +2093,11 @@ export default function LeverantorerTable({
                     </>
                   ) : null}
                   </>
-                  ) : null}
-                </View>
-
+                        </View>
+                      ) : null}
+                    </>
+                  );
+                })()}
                 <View style={styles.detailsDivider} />
               </View>
             </View>
