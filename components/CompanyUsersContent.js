@@ -15,6 +15,7 @@ import {
     updateUserRemote,
     uploadUserAvatar,
 } from './firebase';
+import ConfirmModal from './common/Modals/ConfirmModal';
 import UserEditModal from './UserEditModal';
 import UsersTable from './UsersTable';
 
@@ -41,6 +42,8 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
 
   const [canSeeAllCompanies, setCanSeeAllCompanies] = useState(false);
   const [currentClaims, setCurrentClaims] = useState({ admin: false, superadmin: false, role: '' });
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   const currentUid = String(auth?.currentUser?.uid || '').trim();
   const currentEmail = String(auth?.currentUser?.email || '').toLowerCase();
@@ -181,23 +184,32 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
     }
   };
 
-  const handleDelete = async (member) => {
+  const handleDeleteClick = (member) => {
     if (!member || !canDeleteUser(member)) {
       Alert.alert('Inte tillåtet', 'Du kan inte ta bort denna användare.');
       return;
     }
+    setDeleteConfirmUser(member);
+  };
+
+  const confirmDeleteUser = async () => {
+    const member = deleteConfirmUser;
+    if (!member || !cid) return;
     const uid = String(member?.uid || member?.id || '').trim();
-    if (!uid) return;
-    const label = String(member?.displayName || member?.email || 'användaren');
-    const conf = (typeof window !== 'undefined')
-      ? window.confirm(`Ta bort ${label}?\n\nDetta drar tillbaka åtkomst (soft delete).`)
-      : true;
-    if (!conf) return;
+    if (!uid) {
+      setDeleteConfirmUser(null);
+      return;
+    }
+    setDeletingUser(true);
     try {
       await deleteUserRemote({ companyId: cid, uid });
+      setMembers((prev) => (Array.isArray(prev) ? prev.filter((m) => String(m?.uid || m?.id || '').trim() !== uid) : prev));
       setReloadNonce((n) => n + 1);
+      setDeleteConfirmUser(null);
     } catch (e) {
       Alert.alert('Fel', String(e?.message || e));
+    } finally {
+      setDeletingUser(false);
     }
   };
 
@@ -282,7 +294,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           onAdd={openAddModal}
           onEdit={openEditModal}
           onToggleDisabled={handleToggleDisabled}
-          onDelete={handleDelete}
+          onDelete={handleDeleteClick}
           canEditUser={canEditUser}
           canDeleteUser={canDeleteUser}
         />
@@ -305,7 +317,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           onAdd={() => {}}
           onEdit={() => {}}
           onToggleDisabled={() => {}}
-          onDelete={() => {}}
+          onDelete={handleDeleteClick}
           canEditUser={() => false}
           canDeleteUser={() => false}
         />
@@ -361,11 +373,26 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           onAdd={openAddModal}
           onEdit={openEditModal}
           onToggleDisabled={handleToggleDisabled}
-          onDelete={handleDelete}
+          onDelete={handleDeleteClick}
           canEditUser={canEditUser}
           canDeleteUser={canDeleteUser}
         />
       </View>
+      <ConfirmModal
+        visible={!!deleteConfirmUser}
+        title="Radera användare?"
+        message={
+          deleteConfirmUser
+            ? `Du är på väg att permanent radera användaren "${String(deleteConfirmUser?.displayName || deleteConfirmUser?.email || '').trim() || 'användaren'}". Detta går inte att ångra.`
+            : ''
+        }
+        cancelLabel="Avbryt"
+        confirmLabel="Radera"
+        danger
+        busy={deletingUser}
+        onCancel={() => setDeleteConfirmUser(null)}
+        onConfirm={confirmDeleteUser}
+      />
       <UserEditModal
         visible={modalOpen}
         member={modalMember}
@@ -379,7 +406,7 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
         canDelete={!modalIsNew && canDeleteUser(modalMember)}
         onDelete={() => {
           setModalOpen(false);
-          handleDelete(modalMember);
+          setDeleteConfirmUser(modalMember);
         }}
         onClose={() => {
           if (modalSaving) return;

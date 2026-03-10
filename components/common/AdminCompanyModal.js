@@ -9,7 +9,9 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
+    Animated,
     Image,
+    Linking,
     Modal,
     Platform,
     Pressable,
@@ -30,6 +32,7 @@ import CompanySharePointContent from '../CompanySharePointContent';
 import CompanyUsersContent from '../CompanyUsersContent';
 import {
     adminFetchCompanyMembers,
+    auth,
     fetchCompanyMembers,
     fetchCompanyProfile,
     resolveCompanyLogoUrl,
@@ -41,7 +44,7 @@ import {
 } from '../firebase';
 import ContextMenu from '../ContextMenu';
 import { AdminModalContext } from './AdminModalContext';
-import LoadingState from './LoadingState';
+import { AZURE_CONFIG } from '../../services/azure/config';
 
 const MODULE_PHASES = PROJECT_PHASES.filter((p) => p.key !== 'free');
 
@@ -57,6 +60,7 @@ const ALL_MODULES = [
 
 const TABS = [
   { key: 'oversikt', label: 'Översikt', icon: 'grid-outline' },
+  { key: 'microsoft-inloggning', label: 'Microsoft-inloggning', icon: 'log-in-outline' },
   { key: 'moduler', label: 'Moduler', icon: 'apps-outline' },
   { key: 'licenser', label: 'Licenser', icon: 'people-outline' },
   { key: 'anvandare', label: 'Användare', icon: 'people-outline' },
@@ -83,6 +87,89 @@ const REGISTER_LINKS = [
   { key: 'kategorier', label: 'Kategorier', description: 'Kategorier och taggar', icon: 'pricetag-outline', openModal: 'openKategoriModal', comingSoon: false },
   { key: 'mallar', label: 'Mallar', description: 'Mallar för kontroller', icon: 'document-text-outline', openModal: 'openMallarModal', comingSoon: false },
 ];
+
+const COMPANY_SETTINGS_LOADING_STEPS = [
+  'Hämtar företagsinfo…',
+  'Laddar inställningar…',
+  'Förbereder flikar…',
+];
+
+function CompanySettingsLoadingView() {
+  const pulseAnim = React.useRef(new Animated.Value(1)).current;
+  const rotateAnim = React.useRef(new Animated.Value(0)).current;
+  const [stepIndex, setStepIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.96, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  React.useEffect(() => {
+    const rotate = Animated.loop(
+      Animated.timing(rotateAnim, { toValue: 1, duration: 3000, useNativeDriver: true })
+    );
+    rotate.start();
+    return () => rotate.stop();
+  }, [rotateAnim]);
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setStepIndex((i) => (i + 1) % COMPANY_SETTINGS_LOADING_STEPS.length);
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
+
+  const spin = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={companySettingsLoadingStyles.container}>
+      <Animated.View style={{ transform: [{ scale: pulseAnim }, { rotate: spin }] }}>
+        <View style={companySettingsLoadingStyles.iconWrap}>
+          <Ionicons name="business" size={44} color="#1976D2" />
+          <View style={companySettingsLoadingStyles.iconBadge}>
+            <Ionicons name="settings" size={20} color="#fff" />
+          </View>
+        </View>
+      </Animated.View>
+      <Text style={companySettingsLoadingStyles.title}>Laddar Företagsinställningar</Text>
+      <Text style={companySettingsLoadingStyles.step}>{COMPANY_SETTINGS_LOADING_STEPS[stepIndex]}</Text>
+      <View style={companySettingsLoadingStyles.dots}>
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={[
+              companySettingsLoadingStyles.dot,
+              i === stepIndex && companySettingsLoadingStyles.dotActive,
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const companySettingsLoadingStyles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  iconWrap: { position: 'relative', width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
+  iconBadge: {
+    position: 'absolute', right: -2, bottom: -2, width: 26, height: 26, borderRadius: 13,
+    backgroundColor: '#1976D2', alignItems: 'center', justifyContent: 'center',
+  },
+  title: { fontSize: 17, fontWeight: '600', color: '#1e293b', marginTop: 18, marginBottom: 4 },
+  step: { fontSize: 14, color: '#64748b', marginBottom: 16 },
+  dots: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#cbd5e1' },
+  dotActive: { backgroundColor: '#1976D2', transform: [{ scale: 1.2 }] },
+});
 
 const styles = StyleSheet.create({
   overlay: {
@@ -596,6 +683,38 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
   const [planeringContextMenu, setPlaneringContextMenu] = useState(null);
   const [planeringRenameTab, setPlaneringRenameTab] = useState(null);
   const [planeringRenameDraft, setPlaneringRenameDraft] = useState('');
+  const [companyAzureTenantIdDraft, setCompanyAzureTenantIdDraft] = useState('');
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
+  const [currentUserCompanyId, setCurrentUserCompanyId] = useState('');
+  const [currentUserIsAdmin, setCurrentUserIsAdmin] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const user = auth?.currentUser;
+        if (!user) {
+          if (mounted) { setIsSuperadmin(false); setCurrentUserCompanyId(''); setCurrentUserIsAdmin(false); }
+          return;
+        }
+        const email = String(user.email || '').toLowerCase();
+        const token = await user.getIdTokenResult(false).catch(() => null);
+        const claims = token?.claims || {};
+        const superClaim = !!(claims.superadmin === true || claims.role === 'superadmin');
+        const isEmailSuperadmin = email === 'marcus@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.se' || email === 'marcus.skogh@msbyggsystem.com' || email === 'marcus.skogh@msbyggsystem';
+        if (mounted) {
+          setIsSuperadmin(!!(superClaim || isEmailSuperadmin));
+          setCurrentUserCompanyId(String(claims.companyId || '').trim());
+          setCurrentUserIsAdmin(!!(claims.admin === true || claims.role === 'admin'));
+        }
+      } catch (_e) {
+        if (mounted) { setIsSuperadmin(false); setCurrentUserCompanyId(''); setCurrentUserIsAdmin(false); }
+      }
+    })();
+    return () => { mounted = false; };
+  }, [visible, auth?.currentUser?.uid]);
+
+  const isCompanyAdminForThisCompany = isSuperadmin || (currentUserCompanyId === cid && currentUserIsAdmin);
 
   const loadPlaneringTabs = useCallback(async () => {
     if (!cid) return;
@@ -717,6 +836,8 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       const resolvedLogo = resolved || p?.logoUrl || '';
       setLogoUrl(resolvedLogo);
 
+      setCompanyAzureTenantIdDraft(String((p && p.azureTenantId) ? p.azureTenantId : '').trim());
+
       const phases = Array.isArray(raw)
         ? raw.filter((k) => [...MODULE_PHASES.map((m) => m.key), 'ai-analys'].includes(k))
         : [...MODULE_PHASES.map((m) => m.key), 'ai-analys'];
@@ -729,6 +850,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
         workerLimit: String((p && p.workerLimit != null) ? p.workerLimit : ''),
         enabledPhases: [...phases],
         logoUrl: resolvedLogo,
+        azureTenantId: String((p && p.azureTenantId) ? p.azureTenantId : '').trim(),
       });
     } catch (e) {
       setError(e?.message || 'Kunde inte ladda företag');
@@ -748,6 +870,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       setEnabledPhases([]);
       setError('');
       setLastSavedSnapshot(null);
+      setCompanyAzureTenantIdDraft('');
     }
   }, [visible, cid, loadProfile]);
 
@@ -764,12 +887,13 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
           && String(workerLimitDraft || '').trim() === String(lastSavedSnapshot.workerLimit || '').trim()
           && JSON.stringify([...enabledPhases].sort()) === JSON.stringify([...(lastSavedSnapshot.enabledPhases || [])].sort())
           && (logoUrl || '') === (lastSavedSnapshot.logoUrl || '')
+          && String(companyAzureTenantIdDraft || '').trim() === String(lastSavedSnapshot.azureTenantId || '').trim()
         )
       : false;
     const planeringDirty = lastSavedPlaneringTabs != null
       && JSON.stringify(planeringTabs) !== JSON.stringify(lastSavedPlaneringTabs);
     return profileDirty || planeringDirty;
-  }, [lastSavedSnapshot, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, enabledPhases, logoUrl, planeringTabs, lastSavedPlaneringTabs]);
+  }, [lastSavedSnapshot, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, enabledPhases, logoUrl, planeringTabs, lastSavedPlaneringTabs, companyAzureTenantIdDraft]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -820,7 +944,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       const current = profile || {};
       const nextProfile = { ...current, updatedAt: new Date().toISOString() };
 
-      nextProfile.enabledPhases = enabledPhases.slice();
+      if (isSuperadmin) nextProfile.enabledPhases = enabledPhases.slice();
       nextProfile.companyName = (companyNameDraft || '').trim() || current.companyName;
       nextProfile.enabled = companyEnabled;
       const adminNum = parseInt(String(adminLimitDraft || '').trim(), 10);
@@ -830,6 +954,8 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
       nextProfile.adminLimit = adminLimit;
       nextProfile.workerLimit = workerLimit;
       nextProfile.userLimit = adminLimit + workerLimit;
+      const tenantIdVal = (companyAzureTenantIdDraft || '').trim();
+      nextProfile.azureTenantId = tenantIdVal || null;
 
       await saveCompanyProfile(cid, nextProfile);
 
@@ -861,6 +987,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
         workerLimit: String(workerLimitDraft || '').trim(),
         enabledPhases: enabledPhases.slice(),
         logoUrl: logoUrl || '',
+        azureTenantId: (companyAzureTenantIdDraft || '').trim(),
       });
       if (lastSavedPlaneringTabs != null) {
         try {
@@ -875,7 +1002,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
     } finally {
       setSaving(false);
     }
-  }, [cid, profile, enabledPhases, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, logoUrl, planeringTabs, lastSavedPlaneringTabs]);
+  }, [cid, profile, enabledPhases, companyNameDraft, companyEnabled, adminLimitDraft, workerLimitDraft, logoUrl, planeringTabs, lastSavedPlaneringTabs, companyAzureTenantIdDraft, isSuperadmin]);
 
   useEffect(() => {
     if (!visible || Platform.OS !== 'web') return;
@@ -999,7 +1126,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
               <Text style={{ fontSize: 16, color: '#64748B', textAlign: 'center' }}>Välj ett företag i listan till vänster.</Text>
             </View>
           ) : loading ? (
-            <LoadingState message="Laddar…" size="large" />
+            <CompanySettingsLoadingView />
           ) : (
             <>
               {/* Statusrad */}
@@ -1106,28 +1233,143 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                   </View>
                 )}
 
+                {effectiveTab === 'microsoft-inloggning' && (() => {
+                  const redirectUri = 'https://www.digitalkontroll.com/';
+                  const adminConsentUrl = AZURE_CONFIG.clientId
+                    ? `https://login.microsoftonline.com/common/adminconsent?client_id=${encodeURIComponent(AZURE_CONFIG.clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=consent`
+                    : '';
+                  const copyAdminConsentLink = () => {
+                    if (!adminConsentUrl) return;
+                    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                      navigator.clipboard.writeText(adminConsentUrl).then(() => {
+                        Alert.alert('Kopierad', 'Länken är kopierad till urklipp. Skicka den till företagets IT för admin consent.');
+                      }).catch(() => {});
+                    } else {
+                      Alert.alert('Länk', adminConsentUrl);
+                    }
+                  };
+                  const openAdminConsentLink = () => {
+                    if (!adminConsentUrl) return;
+                    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
+                      window.open(adminConsentUrl, '_blank', 'noopener,noreferrer');
+                    } else {
+                      Linking.openURL(adminConsentUrl);
+                    }
+                  };
+                  const subHeading = { fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 6 };
+                  const bodyText = { fontSize: 13, color: '#64748b', lineHeight: 20, marginBottom: 12 };
+                  const linkStyle = { fontSize: 13, color: '#1976D2', textDecorationLine: 'underline', ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) };
+                  return (
+                    <View style={styles.section}>
+                      {/* Intro */}
+                      <View style={{ marginBottom: 24 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                          <Ionicons name="log-in-outline" size={24} color="#1976D2" />
+                          <Text style={{ fontSize: 15, fontWeight: '600', color: '#111827' }}>Microsoft-inloggning (SSO)</Text>
+                          <View style={{ paddingVertical: 2, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#E8F5E9', borderWidth: 1, borderColor: '#C8E6C9' }}>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#2E7D32' }}>Aktiverad</Text>
+                          </View>
+                        </View>
+                        <Text style={bodyText}>
+                          DigitalKontroll använder Azure AD / OpenID Connect. När företaget har godkänt appen via admin consent kan användare logga in med arbetsmejl på www.digitalkontroll.com.
+                        </Text>
+                      </View>
+
+                      {/* Admin consent-länk */}
+                      <View style={{ marginBottom: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#E5E7EB' }}>
+                        <Text style={subHeading}>Länk till IT för admin consent</Text>
+                        <Text style={bodyText}>
+                          Skicka länken till företagets IT. De öppnar den, loggar in med administratörskonto och godkänner – sedan kan alla med arbetsmejl logga in.
+                        </Text>
+                        {adminConsentUrl ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                            <Pressable onPress={openAdminConsentLink} style={{ flex: 1, minWidth: 0 }}>
+                              <Text style={[linkStyle, { marginBottom: 4 }]} numberOfLines={2} selectable>
+                                {adminConsentUrl}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={copyAdminConsentLink}
+                              style={({ pressed }) => ({
+                                paddingVertical: 8,
+                                paddingHorizontal: 14,
+                                borderRadius: 8,
+                                backgroundColor: pressed ? '#BFDBFE' : '#EFF6FF',
+                                borderWidth: 1,
+                                borderColor: '#BFDBFE',
+                                ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                              })}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1976D2' }}>Kopiera länk</Text>
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <Text style={[bodyText, { color: '#9CA3AF' }]}>Client ID saknas i konfiguration – länk kan inte skapas.</Text>
+                        )}
+                      </View>
+
+                      {/* Appens konfiguration */}
+                      <View style={{ marginBottom: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#E5E7EB' }}>
+                        <Text style={subHeading}>Appens konfiguration</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 24, marginTop: 8 }}>
+                          <View>
+                            <Text style={[bodyText, { marginBottom: 2, fontSize: 11, color: '#9CA3AF' }]}>Client ID</Text>
+                            <Text style={{ fontSize: 12, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined }} selectable>
+                              {AZURE_CONFIG.clientId || '—'}
+                            </Text>
+                          </View>
+                          <View>
+                            <Text style={[bodyText, { marginBottom: 2, fontSize: 11, color: '#9CA3AF' }]}>Tenant (multitenant)</Text>
+                            <Text style={{ fontSize: 12, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined }} selectable>
+                              {AZURE_CONFIG.tenantId || 'common'}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Företagets Tenant ID */}
+                      <View style={{ paddingTop: 20, borderTopWidth: 1, borderTopColor: '#E5E7EB' }}>
+                        <Text style={subHeading}>Företagets Tenant ID (valfritt)</Text>
+                        <Text style={bodyText}>
+                          Om IT har gett er företagets Microsoft Tenant ID kan ni spara den här för dokumentation. Inloggning fungerar även utan – appen använder &quot;common&quot; för godkända organisationer.
+                        </Text>
+                        <TextInput
+                          style={[styles.input, styles.inputSingleLine, { maxWidth: 420, marginBottom: 6 }]}
+                          value={companyAzureTenantIdDraft}
+                          onChangeText={setCompanyAzureTenantIdDraft}
+                          placeholder="t.ex. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                          placeholderTextColor="#94a3b8"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                        <Text style={[bodyText, { fontSize: 11, color: '#9CA3AF', marginBottom: 0 }]}>
+                          Spara med &quot;Spara ändringar&quot; nedan. Lägg in tenant ID i DigitalKontroll – inte i Azure.
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })()}
+
                 {effectiveTab === 'moduler' && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Aktiverade moduler</Text>
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
-                      Aktivera vilka moduler företaget ska ha. Dessa styr synlighet i rail och tillgängliga funktioner.
+                      {isSuperadmin
+                        ? 'Aktivera vilka moduler företaget ska ha. Dessa styr synlighet i rail och tillgängliga funktioner. Endast superadmin kan ändra.'
+                        : 'Moduler som företaget har aktiverat. Dessa styr synlighet i rail och tillgängliga funktioner. Endast superadmin kan aktivera eller avaktivera moduler.'}
                     </Text>
                     <View style={styles.moduleGrid}>
                       {ALL_MODULES.map((mod) => {
                         const active = enabledPhases.includes(mod.key);
                         const isComingSoon = mod.comingSoon;
+                        const canToggle = isSuperadmin && !isComingSoon;
                         return (
                           <TouchableOpacity
                             key={mod.key}
                             style={[styles.moduleCard, active && styles.moduleCardActive]}
-                            onPress={() => {
-                              if (isComingSoon) {
-                                Alert.alert('Kommer snart', 'Denna modul är under utveckling.');
-                              } else {
-                                handleModuleToggle(mod.key);
-                              }
-                            }}
-                            activeOpacity={0.8}
+                            onPress={canToggle ? () => handleModuleToggle(mod.key) : undefined}
+                            activeOpacity={canToggle ? 0.8 : 1}
+                            disabled={!canToggle}
                           >
                             <View style={styles.moduleCardIcon}>
                               <Ionicons name={mod.icon} size={22} color="#1976D2" />
@@ -1142,12 +1384,18 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                             {!isComingSoon && (
                               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <Text style={styles.infoLabel}>{active ? 'Aktiv' : 'Inaktiv'}</Text>
-                                <View
-                                  {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : {})}
-                                  onStartShouldSetResponder={() => true}
-                                >
-                                  <Switch value={active} onValueChange={() => handleModuleToggle(mod.key)} trackColor={{ false: '#cbd5e1', true: '#86efac' }} thumbColor="#fff" />
-                                </View>
+                                {isSuperadmin ? (
+                                  <View
+                                    {...(Platform.OS === 'web' ? { onClick: (e) => e.stopPropagation() } : {})}
+                                    onStartShouldSetResponder={() => true}
+                                  >
+                                    <Switch value={active} onValueChange={() => handleModuleToggle(mod.key)} trackColor={{ false: '#cbd5e1', true: '#86efac' }} thumbColor="#fff" />
+                                  </View>
+                                ) : (
+                                  <View style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: active ? '#E8F5E9' : '#f1f5f9' }}>
+                                    <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#2E7D32' : '#64748b' }}>{active ? 'Aktiv' : 'Inaktiv'}</Text>
+                                  </View>
+                                )}
                               </View>
                             )}
                           </TouchableOpacity>
@@ -1258,7 +1506,7 @@ export default function AdminCompanyModal({ visible, companyId, initialTab, onCl
                     <Text style={[styles.infoLabel, { marginBottom: 12 }]}>
                       Siter som företaget har tillgång till eller skapat. Hantera och öppna siter här.
                     </Text>
-                    <CompanySharePointContent companyId={cid} companyName={companyName} />
+                    <CompanySharePointContent companyId={cid} companyName={companyName} isCompanyAdminForThisCompany={isCompanyAdminForThisCompany} />
                   </View>
                 )}
 

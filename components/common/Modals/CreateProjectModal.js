@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Animated,
     Modal,
     Platform,
     Pressable,
@@ -49,6 +50,85 @@ const BTN_FONT_SIZE = 12;
 const BTN_FONT_WEIGHT = '500';
 
 // STRUCTURES removed - projects are no longer phase-based
+
+const CREATION_STEPS = [
+  'Skapar projektmapp i SharePoint...',
+  'Bygger mappstruktur (Översikt, Offerter, osv.)...',
+  'Sparar projekt och checklista...',
+];
+
+const SAVING_STEPS = ['Uppdaterar projekt...'];
+
+function CreateProjectLoadingOverlay({ isEditMode }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const [stepIndex, setStepIndex] = useState(0);
+  const steps = isEditMode ? SAVING_STEPS : CREATION_STEPS;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.95, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    const rotate = Animated.loop(
+      Animated.timing(rotateAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
+    );
+    rotate.start();
+    return () => rotate.stop();
+  }, [rotateAnim]);
+
+  useEffect(() => {
+    if (steps.length <= 1) return;
+    const id = setInterval(() => {
+      setStepIndex((i) => (i + 1) % steps.length);
+    }, 2200);
+    return () => clearInterval(id);
+  }, [steps.length]);
+
+  const spin = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={styles.loadingOverlay}>
+      <View style={styles.loadingContent}>
+        <Animated.View style={{ transform: [{ scale: pulseAnim }, { rotate: spin }] }}>
+          <View style={styles.loadingIconWrap}>
+            <Ionicons name="folder-open" size={48} color="#1976D2" />
+            <View style={styles.loadingIconBadge}>
+              <Ionicons name="document-text" size={20} color="#fff" />
+            </View>
+          </View>
+        </Animated.View>
+        <Text style={styles.loadingText}>
+          {isEditMode ? 'Sparar...' : 'Skapar projekt...'}
+        </Text>
+        <Text style={styles.loadingSubtext} key={stepIndex}>
+          {steps[stepIndex % steps.length]}
+        </Text>
+        <View style={styles.loadingDots}>
+          {[0, 1, 2].map((i) => (
+            <Animated.View
+              key={i}
+              style={[
+                styles.loadingDot,
+                i === stepIndex % 3 && styles.loadingDotActive,
+              ]}
+            />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
 
 export default function CreateProjectModal({
   visible,
@@ -106,6 +186,7 @@ export default function CreateProjectModal({
   const [locationRenameValue, setLocationRenameValue] = useState('');
   const [locationDeleting, setLocationDeleting] = useState(false);
   const [locationRenaming, setLocationRenaming] = useState(false);
+  const locationPickerOpenedAtRef = useRef(0);
 
   // State for structure picker (web dropdown)
   
@@ -216,10 +297,25 @@ export default function CreateProjectModal({
           }
         }
 
-        // Undermappar: använd getDriveItems med vald site så att rätt site + nya mappar syns
+        // Undermappar: använd getDriveItems med vald site. För company-tenant (t.ex. Wilzéns) använd tenant-token.
         const { getDriveItems } = await import('../../../services/azure/hierarchyService');
         const siteIdForGraph = normalizeSiteIdForGraph(activeSite?.id || '');
-        const items = await getDriveItems(siteIdForGraph, currentPath || '');
+        let items;
+        if (activeSite?.isCompanyTenant && companyId) {
+          try {
+            const { fetchCompanyProfile } = await import('../../../components/firebase');
+            const { getAccessTokenForTenant } = await import('../../../services/azure/authService');
+            const profile = await fetchCompanyProfile(companyId);
+            const azureTenantId = (profile && profile.azureTenantId) ? String(profile.azureTenantId).trim() : '';
+            const tenantToken = azureTenantId ? await getAccessTokenForTenant(azureTenantId, companyId) : null;
+            items = await getDriveItems(siteIdForGraph, currentPath || '', tenantToken || undefined);
+          } catch (e) {
+            console.warn('[CreateProjectModal] Tenant token for subfolders:', e);
+            items = await getDriveItems(siteIdForGraph, currentPath || '');
+          }
+        } else {
+          items = await getDriveItems(siteIdForGraph, currentPath || '');
+        }
         if (cancelled) return;
 
         const folders = (items || [])
@@ -375,12 +471,7 @@ export default function CreateProjectModal({
       folderPath: folderPath || '',
       folderName: folderName || 'Root',
     });
-    setLocationPickerOpen(false);
-    // Reset picker state
-    setLocationPickerStep('sites');
-    setActiveSite(null);
-    setCurrentPath('');
-    setLocationPathHistory([]);
+    closeLocationPicker();
   };
 
   const handleSelectSite = (site) => {
@@ -531,8 +622,22 @@ export default function CreateProjectModal({
     setLocationError('');
     setLocationShowNewFolderInput(false);
     setLocationNewFolderName('');
+    locationPickerOpenedAtRef.current = Date.now();
     setLocationPickerOpen(true);
   };
+
+  const closeLocationPicker = useCallback(() => {
+    setLocationPickerOpen(false);
+    setLocationPickerStep('sites');
+    setActiveSite(null);
+    setCurrentPath('');
+    setLocationPathHistory([]);
+  }, []);
+
+  const handleLocationPickerBackdropPress = useCallback(() => {
+    if (Date.now() - locationPickerOpenedAtRef.current < 280) return;
+    closeLocationPicker();
+  }, [closeLocationPicker]);
 
   const handleCreate = () => {
     if (!canCreate || !selectedProjectRoot) return;
@@ -588,10 +693,10 @@ export default function CreateProjectModal({
   });
 
   const locModal = useDraggableResizableModal(!!locationPickerOpen, {
-    defaultWidth: 640,
-    defaultHeight: 480,
-    minWidth: 420,
-    minHeight: 360,
+    defaultWidth: 1000,
+    defaultHeight: 680,
+    minWidth: 560,
+    minHeight: 440,
   });
 
   return (
@@ -617,17 +722,9 @@ export default function CreateProjectModal({
             </TouchableOpacity>
           </View>
 
-          {/* Loading overlay */}
+          {/* Loading overlay – roligare animation vid skapa/spara */}
           {(isCreating || (isEditMode && isSaving)) && (
-            <View style={styles.loadingOverlay}>
-              <View style={styles.loadingContent}>
-                <ActivityIndicator size="large" color="#1976D2" />
-                <Text style={styles.loadingText}>{isEditMode ? 'Sparar...' : 'Skapar projekt...'}</Text>
-                <Text style={styles.loadingSubtext}>
-                  {isEditMode ? 'Uppdaterar projekt' : 'Skapar projektmapp och struktur i SharePoint'}
-                </Text>
-              </View>
-            </View>
+            <CreateProjectLoadingOverlay isEditMode={isEditMode} />
           )}
 
           <View style={styles.modalBody}>
@@ -999,53 +1096,82 @@ export default function CreateProjectModal({
             <TouchableOpacity
               style={styles.dropdownBackdrop}
               activeOpacity={1}
-              onPress={() => {
-                setLocationPickerOpen(false);
-                // Reset location picker state when closed
-                setLocationPickerStep('sites');
-                setActiveSite(null);
-                setCurrentPath('');
-                setLocationPathHistory([]);
-              }}
+              onPress={handleLocationPickerBackdropPress}
             />
           )}
 
           {/* Lagringsplats-utforskare – egen modal, golden rules (flyttbar, storleksändring) */}
           {locationPickerOpen && (
-            <Modal visible transparent animationType="fade" onRequestClose={() => setLocationPickerOpen(false)}>
-              <Pressable style={[styles.locationExplorerOverlay, locModal.overlayStyle]} onPress={() => setLocationPickerOpen(false)}>
+            <Modal visible transparent animationType="fade" onRequestClose={closeLocationPicker}>
+              <Pressable style={[styles.locationExplorerOverlay, locModal.overlayStyle]} onPress={handleLocationPickerBackdropPress}>
                 <Pressable style={[styles.locationExplorerBox, locModal.boxStyle]} onPress={(e) => e.stopPropagation()}>
                   <View
                     style={[styles.locationExplorerBanner, locModal.headerProps?.style]}
                     {...(Platform.OS === 'web' && locModal.headerProps?.onMouseDown ? { onMouseDown: locModal.headerProps.onMouseDown } : {})}
                   >
                     <Text style={styles.locationExplorerBannerTitle}>Välj lagringsplats</Text>
-                    <TouchableOpacity onPress={() => setLocationPickerOpen(false)} style={styles.locationExplorerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
+                    <TouchableOpacity onPress={closeLocationPicker} style={styles.locationExplorerClose} accessibilityLabel="Stäng" {...(Platform.OS === 'web' ? { onMouseDown: (e) => e.stopPropagation() } : {})}>
                       <Ionicons name="close" size={BANNER_CLOSE_PX} color="#fff" />
                     </TouchableOpacity>
                   </View>
-                  <View style={styles.locationExplorerBody}>
+                    <View style={styles.locationExplorerBody}>
                     <View style={styles.locationExplorerLeft}>
                       <Text style={styles.locationExplorerPanelTitle}>SharePoint-sites</Text>
                       <ScrollView style={styles.locationExplorerSites} nestedScrollEnabled>
-                        {availableSites.map((site) => {
-                          const isSelected = activeSite?.id === site.id;
+                        {(() => {
+                          const companySites = (availableSites || []).filter((s) => s?.isCompanyTenant);
+                          const dkSites = (availableSites || []).filter((s) => !s?.isCompanyTenant);
                           return (
-                            <Pressable
-                              key={site.id}
-                              onPress={() => handleSelectSite(site)}
-                              style={({ hovered, pressed }) => [
-                                styles.locationExplorerSiteRow,
-                                isSelected && styles.locationExplorerSiteRowSelected,
-                                !isSelected && (hovered || pressed) && styles.locationExplorerSiteRowHover,
-                              ]}
-                              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                            >
-                              <Ionicons name="cloud-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
-                              <Text style={styles.locationExplorerSiteName} numberOfLines={1}>{getSiteDisplayName(site)}</Text>
-                            </Pressable>
+                            <>
+                              {companySites.length > 0 && (
+                                <>
+                                  <Text style={styles.locationExplorerSiteGroupLabel}>Företagets SharePoint</Text>
+                                  {companySites.map((site) => {
+                                    const isSelected = activeSite?.id === site.id;
+                                    return (
+                                      <Pressable
+                                        key={site.id}
+                                        onPress={() => handleSelectSite(site)}
+                                        style={({ hovered, pressed }) => [
+                                          styles.locationExplorerSiteRow,
+                                          isSelected && styles.locationExplorerSiteRowSelected,
+                                          !isSelected && (hovered || pressed) && styles.locationExplorerSiteRowHover,
+                                        ]}
+                                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                      >
+                                        <Ionicons name="business-outline" size={18} color="#0d9488" style={{ marginRight: 8 }} />
+                                        <Text style={styles.locationExplorerSiteName} numberOfLines={1}>{getSiteDisplayName(site)}</Text>
+                                      </Pressable>
+                                    );
+                                  })}
+                                </>
+                              )}
+                              {dkSites.length > 0 && (
+                                <>
+                                  <Text style={[styles.locationExplorerSiteGroupLabel, { marginTop: companySites.length > 0 ? 16 : 0 }]}>DigitalKontroll-siter</Text>
+                                  {dkSites.map((site) => {
+                                    const isSelected = activeSite?.id === site.id;
+                                    return (
+                                      <Pressable
+                                        key={site.id}
+                                        onPress={() => handleSelectSite(site)}
+                                        style={({ hovered, pressed }) => [
+                                          styles.locationExplorerSiteRow,
+                                          isSelected && styles.locationExplorerSiteRowSelected,
+                                          !isSelected && (hovered || pressed) && styles.locationExplorerSiteRowHover,
+                                        ]}
+                                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                      >
+                                        <Ionicons name="cloud-outline" size={18} color="#1976D2" style={{ marginRight: 8 }} />
+                                        <Text style={styles.locationExplorerSiteName} numberOfLines={1}>{getSiteDisplayName(site)}</Text>
+                                      </Pressable>
+                                    );
+                                  })}
+                                </>
+                              )}
+                            </>
                           );
-                        })}
+                        })()}
                       </ScrollView>
                     </View>
                     <View style={styles.locationExplorerRight}>
@@ -1059,9 +1185,6 @@ export default function CreateProjectModal({
                           <View style={styles.locationExplorerRightHeader}>
                             <Text style={styles.locationExplorerPanelTitle}>Innehåll i</Text>
                             <Text style={styles.locationExplorerSiteNameLabel}>{getSiteDisplayName(activeSite)}</Text>
-                            {!currentPath && locationPathHistory.length === 0 && (
-                              <Text style={styles.locationExplorerLocationBadge}>Sitens rot</Text>
-                            )}
                           </View>
                           {(locationPathHistory.length > 0 || (currentPath && currentPath.trim().length > 0)) && (
                             <View style={styles.locationExplorerBreadcrumb}>
@@ -1158,9 +1281,9 @@ export default function CreateProjectModal({
                                     style={({ hovered, pressed }) => [styles.locationExplorerSiteRootCard, (hovered || pressed) && styles.locationExplorerFolderRowHover]}
                                     {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                                   >
-                                    <Ionicons name="business-outline" size={20} color="#1976D2" style={{ marginRight: 10 }} />
+                                    <Ionicons name="folder-open-outline" size={20} color="#1976D2" style={{ marginRight: 10 }} />
                                     <View style={{ flex: 1 }}>
-                                      <Text style={styles.locationExplorerSiteRootTitle}>Sitens rot</Text>
+                                      <Text style={styles.locationExplorerSiteRootTitle}>Rot</Text>
                                       <Text style={styles.locationExplorerSiteRootSubtitle}>Lägg projektet direkt i {getSiteDisplayName(activeSite)}</Text>
                                     </View>
                                   </Pressable>
@@ -1187,7 +1310,7 @@ export default function CreateProjectModal({
                                         <Text style={styles.locationExplorerMapparLabel}>Mappar</Text>
                                       )}
                                       {locationFolders.length === 0 && !currentPath ? (
-                                        <Text style={styles.helperText}>Inga mappar i sitens rot. Välj "Sitens rot" ovan eller skapa en ny mapp.</Text>
+                                        <Text style={styles.helperText}>Inga mappar i rot. Välj rot ovan eller skapa en ny mapp.</Text>
                                       ) : null}
                                       {regularFolders.map((folder) => (
                                         <Pressable
@@ -1210,20 +1333,12 @@ export default function CreateProjectModal({
                                   if (currentIsProject) {
                                     return (
                                       <View style={styles.locationExplorerProjectBlocked}>
-                                        <Text style={styles.locationExplorerProjectBlockedText}>Denna mapp är ett befintligt projekt. Välj sitens rot eller en vanlig mapp.</Text>
+                                        <Text style={styles.locationExplorerProjectBlockedText}>Denna mapp är ett befintligt projekt. Välj rot eller en vanlig mapp och klicka på "Skapa projekt" längst ner.</Text>
                                       </View>
                                     );
                                   }
                                   return (
-                                    <Pressable
-                                      onPress={() => handleSelectLocation(activeSite, currentPath, currentFolderName)}
-                                      style={({ hovered, pressed }) => [styles.selectLocationButton, (hovered || pressed) && styles.locationExplorerSelectBtnHover]}
-                                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                                    >
-                                      <Text style={styles.selectLocationButtonText}>
-                                        Välj "{currentFolderName}"
-                                      </Text>
-                                    </Pressable>
+                                    <Text style={styles.helperText}>Du är i mappen "{currentFolderName}". Bekräfta med "Skapa projekt" längst ner.</Text>
                                   );
                                 })()}
                               </>
@@ -1234,13 +1349,41 @@ export default function CreateProjectModal({
                     </View>
                   </View>
                   <View style={styles.locationExplorerFooter}>
-                    <Pressable
-                      onPress={() => setLocationPickerOpen(false)}
-                      style={({ hovered, pressed }) => [styles.locationExplorerCloseBtn, (hovered || pressed) && styles.locationExplorerCloseBtnHover]}
-                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                    >
-                      <Text style={styles.locationExplorerCloseBtnText}>Stäng</Text>
-                    </Pressable>
+                    <View style={styles.locationExplorerFooterPath}>
+                      <Text style={styles.locationExplorerFooterPathLabel}>Sparplats:</Text>
+                      <Text style={styles.locationExplorerFooterPathValue} numberOfLines={1}>
+                        {!activeSite
+                          ? 'Välj en site till vänster'
+                          : `${getSiteDisplayName(activeSite)}${currentPath ? ` / ${currentPath.replace(/\//g, ' / ')}` : ' / Rot'}`}
+                      </Text>
+                    </View>
+                    <View style={styles.locationExplorerFooterActions}>
+                      <Pressable
+                        onPress={closeLocationPicker}
+                        style={({ hovered, pressed }) => [styles.locationExplorerFooterSecondaryBtn, (hovered || pressed) && styles.locationExplorerCloseBtnHover]}
+                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                      >
+                        <Text style={styles.locationExplorerFooterSecondaryBtnText}>Stäng</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          if (!activeSite) return;
+                          const folderName = currentPath ? currentPath.split('/').pop() || '' : 'Root';
+                          const isProject = currentPath && isProjectFolder({ name: folderName });
+                          if (isProject) return;
+                          handleSelectLocation(activeSite, currentPath || '', folderName || 'Root');
+                        }}
+                        disabled={!activeSite || (currentPath && isProjectFolder({ name: (currentPath.split('/').pop() || '') }))}
+                        style={({ hovered, pressed }) => [
+                          styles.locationExplorerFooterPrimaryBtn,
+                          (!activeSite || (currentPath && isProjectFolder({ name: (currentPath.split('/').pop() || '') }))) && styles.locationExplorerFooterPrimaryBtnDisabled,
+                          (hovered || pressed) && activeSite && !(currentPath && isProjectFolder({ name: (currentPath.split('/').pop() || '') })) && styles.locationExplorerCloseBtnHover,
+                        ]}
+                        {...(Platform.OS === 'web' ? { cursor: (!activeSite || (currentPath && isProjectFolder({ name: (currentPath.split('/').pop() || '') }))) ? 'not-allowed' : 'pointer' } : {})}
+                      >
+                        <Text style={styles.locationExplorerFooterPrimaryBtnText}>Skapa projekt</Text>
+                      </Pressable>
+                    </View>
                   </View>
                   {locationContextMenu && Platform.OS === 'web' && (
                     <Pressable
@@ -2014,8 +2157,8 @@ const styles = StyleSheet.create({
   },
   locationExplorerBox: {
     width: '100%',
-    maxWidth: 640,
-    maxHeight: '85%',
+    maxWidth: '95%',
+    maxHeight: '90%',
     backgroundColor: '#fff',
     borderRadius: 12,
     overflow: 'hidden',
@@ -2298,14 +2441,72 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#b91c1c',
   },
+  locationExplorerSiteGroupLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    paddingHorizontal: 10,
+  },
   locationExplorerFooter: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
+    minHeight: 52,
+  },
+  locationExplorerFooterPath: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 16,
+  },
+  locationExplorerFooterPathLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 2,
+  },
+  locationExplorerFooterPathValue: {
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  locationExplorerFooterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  locationExplorerFooterSecondaryBtn: {
+    paddingVertical: BTN_AVBRYT_PAD.v,
+    paddingHorizontal: BTN_AVBRYT_PAD.h,
+    borderRadius: BTN_RADIUS,
+    backgroundColor: BTN_AVBRYT_BG,
+    borderWidth: 1,
+    borderColor: BTN_AVBRYT_BORDER,
+  },
+  locationExplorerFooterSecondaryBtnText: {
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
+    color: BTN_AVBRYT_TEXT,
+  },
+  locationExplorerFooterPrimaryBtn: {
+    paddingVertical: BTN_PRIM_PAD.v,
+    paddingHorizontal: BTN_PRIM_PAD.h,
+    borderRadius: BTN_RADIUS,
+    backgroundColor: BTN_PRIM_BG,
+  },
+  locationExplorerFooterPrimaryBtnDisabled: {
+    opacity: 0.5,
+  },
+  locationExplorerFooterPrimaryBtnText: {
+    fontSize: BTN_FONT_SIZE,
+    fontWeight: BTN_FONT_WEIGHT,
+    color: BTN_PRIM_TEXT,
   },
   locationExplorerCloseBtn: {
     paddingVertical: BTN_PRIM_PAD.v,
@@ -2337,7 +2538,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(255, 255, 255, 0.97)',
     borderRadius: 12,
     zIndex: 100000,
     justifyContent: 'center',
@@ -2346,20 +2547,55 @@ const styles = StyleSheet.create({
   loadingContent: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 32,
+  },
+  loadingIconWrap: {
+    position: 'relative',
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingIconBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1976D2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   loadingText: {
     fontSize: 18,
-    fontWeight: '500',
-    color: '#1976D2',
-    marginTop: 16,
-    marginBottom: 8,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginTop: 20,
+    marginBottom: 6,
   },
   loadingSubtext: {
     fontSize: 14,
-    color: '#666',
+    color: '#64748b',
     textAlign: 'center',
-    maxWidth: 300,
+    maxWidth: 320,
+  },
+  loadingDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 16,
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#cbd5e1',
+  },
+  loadingDotActive: {
+    backgroundColor: '#1976D2',
+    transform: [{ scale: 1.2 }],
   },
   createBtnLoading: {
     flexDirection: 'row',

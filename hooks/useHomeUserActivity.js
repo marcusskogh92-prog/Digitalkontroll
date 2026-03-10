@@ -40,7 +40,9 @@ export function useHomeUserActivity({ companyId, routeCompanyId, authClaims }) {
     return () => { cancelled = true; };
   }, [companyId, routeCompanyId, authClaims?.companyId]);
 
-  // Se till att nuvarande användare finns i company members-katalogen
+  // Se till att nuvarande användare finns i company members-katalogen.
+  // Använd inte role från profile om den saknas – då lämnas befintlig role i members oförändrad
+  // (annars skulle admin-roll skrivas över till null varje gång användaren laddar Home).
   React.useEffect(() => {
     if (!companyId) return;
     if (!auth?.currentUser?.uid) return;
@@ -50,7 +52,7 @@ export function useHomeUserActivity({ companyId, routeCompanyId, authClaims }) {
         if (!user?.uid) return;
         const profile = await fetchUserProfile(user.uid).catch(() => null);
         const displayName = profile?.displayName || profile?.name || (user.email ? String(user.email).split('@')[0] : null);
-        const role = profile?.role || null;
+        const role = profile?.role ?? authClaims?.role ?? null;
         await upsertCompanyMember({
           companyId: routeCompanyId || null,
           uid: user.uid,

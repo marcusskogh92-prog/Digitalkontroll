@@ -4,7 +4,7 @@
  * This is the single source of truth for all folder/project structure
  */
 
-import { getAccessToken } from './authService';
+import { getAccessToken, isPendingTenantSync } from './authService';
 import { normalizeSiteIdForGraph } from './graphSiteId';
 
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
@@ -62,15 +62,19 @@ async function getCompanySiteId(companyId) {
  * Get drive items (folders and files) from SharePoint
  * @param {string} siteId - SharePoint Site ID
  * @param {string} [itemPath] - Path to item (e.g., "Kalkylskede" or "Kalkylskede/Entreprenad")
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-sites); om angiven används den istället för huvudapp-token
  * @returns {Promise<Array>} Array of drive items
  */
-export async function getDriveItems(siteId, itemPath = '') {
+export async function getDriveItems(siteId, itemPath = '', accessTokenOverride = null) {
   if (!siteId) {
     throw new Error('Site ID is required');
   }
+  if (!accessTokenOverride && isPendingTenantSync()) {
+    return [];
+  }
   siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) {
     throw new Error('Failed to get access token. Please authenticate first.');
   }
@@ -241,6 +245,9 @@ export async function getDriveItems(siteId, itemPath = '') {
 export async function getSharePointHierarchy(companyId, phaseKey = null, maxDepth = 1) {
   if (!companyId) {
     throw new Error('Company ID is required');
+  }
+  if (isPendingTenantSync()) {
+    return [];
   }
 
   const siteId = await getCompanySiteId(companyId);
@@ -897,12 +904,13 @@ export async function deleteItem(companyId, itemPath) {
  * Get a drive item by path within a specific site.
  * @param {string} siteId
  * @param {string} itemPath - Path relative to drive root, e.g. "Projects/2026"
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-site)
  */
-export async function getDriveItemByPath(siteId, itemPath = '') {
+export async function getDriveItemByPath(siteId, itemPath = '', accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
   siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const clean = String(itemPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
@@ -925,14 +933,14 @@ export async function getDriveItemByPath(siteId, itemPath = '') {
   return await res.json();
 }
 
-export async function renameDriveItemById(siteId, itemId, newName) {
+export async function renameDriveItemById(siteId, itemId, newName, accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
   if (!itemId) throw new Error('Item ID is required');
   const name = String(newName || '').trim();
   if (!name) throw new Error('New name is required');
   siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
@@ -953,12 +961,12 @@ export async function renameDriveItemById(siteId, itemId, newName) {
   return await res.json();
 }
 
-export async function deleteDriveItemById(siteId, itemId) {
+export async function deleteDriveItemById(siteId, itemId, accessTokenOverride = null) {
   if (!siteId) throw new Error('Site ID is required');
   if (!itemId) throw new Error('Item ID is required');
   siteId = normalizeSiteIdForGraph(siteId);
 
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token');
 
   const endpoint = `${GRAPH_API_BASE}/sites/${siteId}/drive/items/${itemId}`;
@@ -1010,9 +1018,9 @@ export async function renameDriveItemByPath(siteId, itemPath, newName) {
   return await renameDriveItemById(siteId, item?.id, newName);
 }
 
-export async function deleteDriveItemByPath(siteId, itemPath) {
-  const item = await getDriveItemByPath(siteId, itemPath);
-  return await deleteDriveItemById(siteId, item?.id);
+export async function deleteDriveItemByPath(siteId, itemPath, accessTokenOverride = null) {
+  const item = await getDriveItemByPath(siteId, itemPath, accessTokenOverride);
+  return await deleteDriveItemById(siteId, item?.id, accessTokenOverride);
 }
 
 /**
@@ -1236,6 +1244,9 @@ export async function moveDriveItemAcrossSitesByPath({ sourceSiteId, sourcePath,
 export async function checkSharePointConnection(companyId) {
   if (!companyId) {
     return { connected: false, siteId: null, siteUrl: null, siteName: null, error: 'No company ID provided' };
+  }
+  if (isPendingTenantSync()) {
+    return { connected: false, siteId: null, siteUrl: null, siteName: null, error: null };
   }
 
   try {

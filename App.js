@@ -18,6 +18,8 @@ import { AdminModalContext, AdminModalProvider } from './components/common/Admin
 import { SystemModalProvider } from './components/common/Modals/SystemModalProvider';
 import { UploadManagerProvider } from './components/common/uploads/UploadManagerContext';
 import { BackgroundTasksProvider } from './contexts/BackgroundTasksContext';
+// Ladda authService tidigt så att cacheOauthCodeFromUrl körs och PENDING_SYNC_PICKER_KEY sätts vid tenant-återkomst (bryter loop)
+import './services/azure/authService';
 
 // Importera skärmar
 import AdminAuditLog from './Screens/AdminAuditLog';
@@ -297,6 +299,21 @@ export default function App() {
 
   useEffect(() => {
     if (Platform.OS === 'web') applyGlobalBodyBackground();
+  }, []);
+
+  // Vid återkomst från Microsoft (tenant-inloggning för SharePoint-synk): gör endast tenant-exchange, starta ALDRIG huvudapp-inloggning (bryter loop)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const hash = (window.location.hash || '').slice(1);
+    const search = (window.location.search || '').slice(1);
+    const params = new URLSearchParams(hash || search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (code && state && String(state).startsWith('tenant_')) {
+      import('./services/azure/authService').then(({ processTenantReturnFromUrl }) => {
+        processTenantReturnFromUrl().catch(() => {});
+      });
+    }
   }, []);
 
   // På web: visa appen även om typsnitt hänger sig (useFonts kan aldrig resolva)

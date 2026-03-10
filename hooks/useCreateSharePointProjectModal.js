@@ -81,11 +81,13 @@ export function useCreateSharePointProjectModal({ companyId }) {
           .filter((m) => !isDkBas(m))
           .map((m) => {
             const rawId = String(m.siteId || m.id || '').trim();
+            const role = normalizeRole(m?.role);
             return {
               id: normalizeSiteIdForGraph(rawId),
               name: String(m.siteName || m.siteUrl || m.webUrl || 'SharePoint-site'),
               type: 'meta',
               webUrl: m.siteUrl || m.webUrl || null,
+              isCompanyTenant: role === 'custom' || role === 'extra',
             };
           })
           .filter((s) => !!s.id);
@@ -196,6 +198,39 @@ export function useCreateSharePointProjectModal({ companyId }) {
       
       const { ensureFolderPath, ensureKalkylskedeProjectFolderStructure, getDriveItemByPath } = await import('../services/azure/fileService');
 
+      // För company-tenant (t.ex. Wilzéns Anbud): använd tenant-token så mappar skapas på kundens SharePoint
+      const selectedSite = (availableSites || []).find((s) => String(s?.id || '').trim() === String(siteId || '').trim()) || null;
+      let tenantToken = null;
+      if (selectedSite?.isCompanyTenant && companyId) {
+        try {
+          const { fetchCompanyProfile } = await import('../components/firebase');
+          const { getAccessTokenForTenant } = await import('../services/azure/authService');
+          const profile = await fetchCompanyProfile(companyId);
+          const azureTenantId = (profile && profile.azureTenantId) ? String(profile.azureTenantId).trim() : '';
+          if (azureTenantId) tenantToken = await getAccessTokenForTenant(azureTenantId, companyId);
+          if (!tenantToken) {
+            const msg = 'Kunde inte hämta åtkomst till företagets SharePoint. Kontrollera att företagets Azure-tenant är konfigurerad i Företagsinställningar.';
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              try { window.alert(msg); } catch (_e) {}
+            } else {
+              try { Alert.alert('SharePoint-åtkomst', msg); } catch (_e) {}
+            }
+            throw new Error(msg);
+          }
+        } catch (e) {
+          if (e?.message?.includes('Azure-tenant')) throw e;
+          // eslint-disable-next-line no-console
+          console.warn('[useCreateSharePointProjectModal] Tenant token for project creation:', e?.message || e);
+          const msg = 'Kunde inte ansluta till företagets SharePoint. Försök igen eller kontakta support.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            try { window.alert(msg); } catch (_e) {}
+          } else {
+            try { Alert.alert('SharePoint-fel', msg); } catch (_e) {}
+          }
+          throw e;
+        }
+      }
+
       // Create project folder name: "{projektnummer} – {projektnamn}"
       const projectFolderName = formatSharePointProjectFolderName(projectNumber, projectName);
       if (!projectFolderName) throw new Error('Ogiltigt projektnamn');
@@ -214,7 +249,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] Company ID: "${companyId}"`);
       
-      await ensureFolderPath(projectPath, companyId, siteId, { siteRole: 'projects' });
+      await ensureFolderPath(projectPath, companyId, siteId, { siteRole: 'projects', accessTokenOverride: tenantToken || undefined, strict: true });
       // eslint-disable-next-line no-console
       console.log(`[useCreateSharePointProjectModal] ✅ Project folder created: ${projectPath}`);
 
@@ -222,7 +257,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
       let projectFolderId = null;
       let projectDriveId = null;
       try {
-        const item = await getDriveItemByPath(projectPath, siteId);
+        const item = await getDriveItemByPath(projectPath, siteId, tenantToken || undefined);
         projectFolderId = item?.id || null;
         projectDriveId = item?.parentReference?.driveId || null;
       } catch (_e) {
@@ -328,7 +363,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
       const needsStructure = (structureType === 'system' && systemPhase) || systemPhase === 'kalkyl' || systemPhase === 'kalkylskede';
       if (needsStructure && phaseKey === 'kalkylskede') {
         try {
-          await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
+          await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2', tenantToken || undefined);
           const { copyChecklistMallToProject } = await import('../lib/mallarDkBasService');
           await copyChecklistMallToProject(companyId, siteId, projectPath);
           // eslint-disable-next-line no-console
@@ -377,7 +412,7 @@ export function useCreateSharePointProjectModal({ companyId }) {
 
         try {
           if (phaseKey === 'kalkylskede') {
-            await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2');
+            await ensureKalkylskedeProjectFolderStructure(projectPath, companyId, siteId, 'v2', tenantToken || undefined);
             try {
               const { copyChecklistMallToProject } = await import('../lib/mallarDkBasService');
               await copyChecklistMallToProject(companyId, siteId, projectPath);
@@ -405,12 +440,12 @@ export function useCreateSharePointProjectModal({ companyId }) {
           for (const section of navigation.sections || []) {
             const sectionPath = `${projectPath}/${section.name}`;
             try {
-              await ensureFolderPath(sectionPath, companyId, siteId, { siteRole: 'projects' });
+              await ensureFolderPath(sectionPath, companyId, siteId, { siteRole: 'projects', accessTokenOverride: tenantToken || undefined });
               if (section.items && Array.isArray(section.items)) {
                 const enabled = section.items.filter((i) => i && i.enabled !== false);
                 for (const item of enabled) {
                   try {
-                    await ensureFolderPath(`${sectionPath}/${item.name}`, companyId, siteId, { siteRole: 'projects' });
+                    await ensureFolderPath(`${sectionPath}/${item.name}`, companyId, siteId, { siteRole: 'projects', accessTokenOverride: tenantToken || undefined });
                   } catch (_itemErr) {}
                 }
               }

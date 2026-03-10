@@ -19,15 +19,20 @@ async function upsertCompanySharePointSiteMeta(data, context) {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
-  if (!isGlobalAdmin(context)) {
-    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin kan koppla site till företag.');
-  }
 
   const companyId = (data && data.companyId) ? String(data.companyId).trim() : '';
   const meta = (data && data.meta && typeof data.meta === 'object') ? data.meta : {};
   const siteId = (meta.siteId && String(meta.siteId).trim()) || '';
   if (!companyId || !siteId) {
     throw new functions.https.HttpsError('invalid-argument', 'companyId and meta.siteId are required');
+  }
+
+  const token = context.auth.token || {};
+  const sameCompany = (token.companyId && String(token.companyId).trim()) === companyId;
+  const isCompanyAdmin = sameCompany && (token.admin === true || token.role === 'admin');
+  const canAct = isGlobalAdmin(context) || isCompanyAdmin;
+  if (!canAct) {
+    throw new functions.https.HttpsError('permission-denied', 'Endast superadmin eller företagsadmin för det valda företaget kan koppla site.');
   }
 
   const role = (meta.role && String(meta.role).trim()) || 'custom';
@@ -45,7 +50,8 @@ async function upsertCompanySharePointSiteMeta(data, context) {
     updatedBy: context.auth.uid || null,
   };
 
-  const ref = db.doc(`foretag/${companyId}/sharepoint_sites/${siteId}`);
+  const docId = siteId.replace(/[/\\]/g, '_').replace(/,/g, '_');
+  const ref = db.doc(`foretag/${companyId}/sharepoint_sites/${docId}`);
   await ref.set(payload, { merge: true });
   return { ok: true, companyId, siteId };
 }

@@ -6,7 +6,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
+  Animated,
   Image,
   Platform,
   ScrollView,
@@ -58,6 +58,73 @@ const ALL_PERMISSION_KEYS = [...REGISTER_PERMISSION_KEYS, ...ADMINISTRATION_PERM
 
 const USER_EDIT_MODAL_WIDTH = 680;
 const USER_EDIT_MODAL_HEIGHT = 560;
+
+const SAVING_STEPS_NEW = ['Skapar användare…', 'Sparar behörigheter…', 'Skickar inbjudan…'];
+const SAVING_STEPS_EDIT = ['Sparar ändringar…', 'Uppdaterar behörigheter…', 'Klart snart…'];
+
+function UserEditSavingOverlay({ isNew }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const [stepIndex, setStepIndex] = useState(0);
+  const steps = isNew ? SAVING_STEPS_NEW : SAVING_STEPS_EDIT;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.95, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    const rotate = Animated.loop(
+      Animated.timing(rotateAnim, { toValue: 1, duration: 2500, useNativeDriver: true })
+    );
+    rotate.start();
+    return () => rotate.stop();
+  }, [rotateAnim]);
+
+  useEffect(() => {
+    const id = setInterval(() => setStepIndex((i) => (i + 1) % steps.length), 1800);
+    return () => clearInterval(id);
+  }, [steps.length]);
+
+  const spin = rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <Animated.View style={{ transform: [{ scale: pulseAnim }, { rotate: spin }] }}>
+        <View style={{ position: 'relative', width: 52, height: 52, alignItems: 'center', justifyContent: 'center' }}>
+          <Ionicons name="person" size={44} color="#2D3A4B" />
+          <View style={{
+            position: 'absolute', right: -2, bottom: -2, width: 24, height: 24, borderRadius: 12,
+            backgroundColor: '#2D3A4B', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Ionicons name="key" size={12} color="#fff" />
+          </View>
+        </View>
+      </Animated.View>
+      <Text style={{ fontSize: 16, fontWeight: '600', color: '#1e293b', marginTop: 16, marginBottom: 4, fontFamily: FONT_FAMILY }}>
+        {isNew ? 'Skapar användare' : 'Sparar användare'}
+      </Text>
+      <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 14, fontFamily: FONT_FAMILY }}>{steps[stepIndex]}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={{
+              width: 8, height: 8, borderRadius: 4, backgroundColor: i === stepIndex ? '#2D3A4B' : '#cbd5e1',
+              ...(i === stepIndex ? { transform: [{ scale: 1.2 }] } : {}),
+            }}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
 
 export default function UserEditModal({
   visible,
@@ -640,7 +707,7 @@ export default function UserEditModal({
             right: 0,
             top: 0,
             bottom: 0,
-            backgroundColor: 'rgba(255,255,255,0.92)',
+            backgroundColor: 'rgba(255,255,255,0.96)',
             justifyContent: 'center',
             alignItems: 'center',
             zIndex: 10,
@@ -648,19 +715,7 @@ export default function UserEditModal({
           }}
         >
           {saving ? (
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-              paddingVertical: 16,
-              paddingHorizontal: 24,
-              borderRadius: 12,
-              backgroundColor: D.buttonPrimaryBg ?? '#2D3A4B',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' } : { elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 }),
-            }}>
-              <ActivityIndicator size="large" color="#fff" />
-              <Text style={{ fontSize: 14, fontWeight: '600', color: '#fff', fontFamily: FONT_FAMILY }}>Sparar...</Text>
-            </View>
+            <UserEditSavingOverlay isNew={isNew} />
           ) : saveSuccess ? (
             <View style={{
               flexDirection: 'row',

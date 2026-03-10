@@ -146,11 +146,11 @@ function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
 
 /** Administration: Användare, Roller, Företagsinställningar, SharePoint-kopplingar, Planering */
 const ADMIN_ITEMS = [
-  { key: 'anvandare', label: 'Användare', route: 'ManageUsers' },
-  { key: 'roller', label: 'Roller', route: 'ManageControlTypes' },
-  { key: 'foretagsinstallningar', label: 'Företagsinställningar', route: 'ManageCompany' },
-  { key: 'integrationer', label: 'SharePoint-kopplingar', route: 'ManageCompany', focus: 'sharepoint' },
-  { key: 'planering', label: 'Planering', route: 'Planering' },
+  { key: 'anvandare', label: 'Användare', route: 'ManageUsers', icon: 'people-outline' },
+  { key: 'roller', label: 'Roller', route: 'ManageControlTypes', icon: 'key-outline' },
+  { key: 'foretagsinstallningar', label: 'Företagsinställningar', route: 'ManageCompany', icon: 'business-outline' },
+  { key: 'integrationer', label: 'SharePoint-kopplingar', route: 'ManageCompany', focus: 'sharepoint', icon: 'cloud-outline' },
+  { key: 'planering', label: 'Planering', route: 'Planering', icon: 'calendar-outline' },
 ];
 
 /** SharePoint: Siter, Projekt, Trädstruktur */

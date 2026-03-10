@@ -514,16 +514,17 @@ export async function getFileUrl(path, companyId = null, siteId = null) {
  * List folders in a SharePoint site at a given path
  * @param {string} [basePath] - Relative folder path inside the drive (e.g. "Projects" or "Projects/2026")
  * @param {string} siteId - SharePoint Site ID (required)
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-site)
  * @returns {Promise<Array<{name: string, path: string}>>}
  */
-export async function listFolders(basePath = '', siteId) {
+export async function listFolders(basePath = '', siteId, accessTokenOverride = null) {
   if (!siteId) {
     throw new Error('Site ID is required to list folders');
   }
   siteId = normalizeSiteIdForGraph(siteId);
 
   const config = getAzureConfig();
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
 
   if (!accessToken) {
     throw new Error('Failed to get access token');
@@ -588,15 +589,16 @@ function extractRelativePathFromParentReference(parentReferencePath) {
 /**
  * Get a drive item by path.
  * Returns null if not found (404).
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-site)
  */
-export async function getDriveItemByPath(path, siteId) {
+export async function getDriveItemByPath(path, siteId, accessTokenOverride = null) {
   if (!siteId) throw new Error('siteId is required');
   siteId = normalizeSiteIdForGraph(siteId);
   const rel = normalizeDriveRelativePath(path);
   if (!rel) throw new Error('path is required');
 
   const config = getAzureConfig();
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
 
   const encoded = encodeGraphPathSegments('/' + rel);
@@ -825,16 +827,17 @@ export async function deleteFile(path, companyId = null, siteId = null) {
  * @param {string} path - Folder path in SharePoint
  * @param {string} [companyId] - Company ID (optional)
  * @param {string} [siteId] - SharePoint Site ID (optional)
+ * @param {string} [accessTokenOverride] - Optional token (t.ex. tenant-token för företagets custom-site)
  * @returns {Promise<string>} Folder ID
  */
-export async function ensureFolder(path, companyId = null, siteId = null) {
+export async function ensureFolder(path, companyId = null, siteId = null, accessTokenOverride = null) {
   if (!path) throw new Error('Path is required');
   
   // eslint-disable-next-line no-console
   console.log(`[ensureFolder] Creating folder: "${path}" (siteId: ${siteId}, companyId: ${companyId})`);
   
   const config = getAzureConfig();
-  const accessToken = await getAccessToken();
+  const accessToken = accessTokenOverride || await getAccessToken();
   
   if (!accessToken) {
     // eslint-disable-next-line no-console
@@ -1003,6 +1006,7 @@ export async function ensureFolderPath(path, companyId = null, siteId = null, op
   console.log(`[ensureFolderPath] Creating folder path: ${path} (parts: ${pathParts.length}, siteId: ${siteId}, strict: ${strict})`);
   
   // Build path incrementally: "A", "A/B", "A/B/C"
+  const tokenOverride = options?.accessTokenOverride || null;
   let currentPath = '';
   for (let i = 0; i < pathParts.length; i++) {
     currentPath = currentPath ? `${currentPath}/${pathParts[i]}` : pathParts[i];
@@ -1010,7 +1014,7 @@ export async function ensureFolderPath(path, companyId = null, siteId = null, op
       // eslint-disable-next-line no-console
       console.log(`[ensureFolderPath] Creating folder step ${i + 1}/${pathParts.length}: ${currentPath}`);
       // When companyId is null, we're using Digitalkontroll site (system) for admin files
-      const folderId = await ensureFolder(currentPath, companyId, siteId);
+      const folderId = await ensureFolder(currentPath, companyId, siteId, tokenOverride);
       // eslint-disable-next-line no-console
       console.log(`[ensureFolderPath] ✅ Created folder: ${currentPath} (id: ${folderId})`);
     } catch (error) {
@@ -1253,24 +1257,25 @@ export async function ensureProjectStructure(companyId, projectId, projectName, 
  * @param {string} companyId - Company ID
  * @param {string} siteId - SharePoint site ID (DK Site / role=projects)
  */
-export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, companyId, siteId, structureVersion = null) {
+export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, companyId, siteId, structureVersion = null, accessTokenOverride = null) {
   const root = String(projectRootPath || '').replace(/^\/+/, '').replace(/\/+$/, '').trim();
   if (!root) throw new Error('projectRootPath is required');
   if (!companyId) throw new Error('companyId is required');
   if (!siteId) throw new Error('siteId is required');
+  const token = accessTokenOverride || null;
 
   const renameByPathIfSafe = async ({ fromRel, toName }) => {
     const fromPath = `${root}/${String(fromRel || '').trim()}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
     const toPath = `${root}/${String(toName || '').trim()}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 
-    const oldItem = await getDriveItemByPath(fromPath, siteId);
+    const oldItem = await getDriveItemByPath(fromPath, siteId, token);
     if (!oldItem?.id) return { status: 'missing-old' };
 
-    const newItem = await getDriveItemByPath(toPath, siteId);
+    const newItem = await getDriveItemByPath(toPath, siteId, token);
     if (newItem?.id) return { status: 'already-new' };
 
     const { renameDriveItemById } = await import('./hierarchyService');
-    await renameDriveItemById(siteId, oldItem.id, String(toName || '').trim());
+    await renameDriveItemById(siteId, oldItem.id, String(toName || '').trim(), token);
     return { status: 'renamed' };
   };
 
@@ -1283,14 +1288,14 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
     const fromPath = `${root}/${parent}/${from}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
     const toPath = `${root}/${parent}/${to}`.replace(/\/+/, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 
-    const oldItem = await getDriveItemByPath(fromPath, siteId);
+    const oldItem = await getDriveItemByPath(fromPath, siteId, token);
     if (!oldItem?.id) return { status: 'missing-old' };
 
-    const newItem = await getDriveItemByPath(toPath, siteId);
+    const newItem = await getDriveItemByPath(toPath, siteId, token);
     if (newItem?.id) return { status: 'already-new' };
 
     const { renameDriveItemById } = await import('./hierarchyService');
-    await renameDriveItemById(siteId, oldItem.id, to);
+    await renameDriveItemById(siteId, oldItem.id, to, token);
     return { status: 'renamed' };
   };
 
@@ -1335,12 +1340,12 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
         const nextName = String(t?.next || '').trim();
         if (!nextName) continue;
 
-        const nextItem = await getDriveItemByPath(`${root}/${nextName}`, siteId);
+        const nextItem = await getDriveItemByPath(`${root}/${nextName}`, siteId, token);
         if (nextItem?.id) continue;
 
         const olds = Array.isArray(t?.olds) ? t.olds : [];
         for (const oldName of olds) {
-          const oldItem = await getDriveItemByPath(`${root}/${String(oldName || '').trim()}`, siteId);
+          const oldItem = await getDriveItemByPath(`${root}/${String(oldName || '').trim()}`, siteId, token);
           if (!oldItem?.id) continue;
           await renameByPathIfSafe({ fromRel: String(oldName || '').trim(), toName: nextName });
           break;
@@ -1356,7 +1361,7 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
   // migrate v1 folders to v2 numbering without data loss.
   let resolvedVersion = 'v2';
   try {
-    const existingFolders = await listFolders(root, siteId);
+    const existingFolders = await listFolders(root, siteId, token);
     const names = (existingFolders || []).map((f) => String(f?.name || '').trim()).filter(Boolean);
     const { detectKalkylskedeStructureVersionFromSectionFolderNames } = await import('../../features/project-phases/phases/kalkylskede/kalkylskedeStructureDefinition');
     const detected = detectKalkylskedeStructureVersionFromSectionFolderNames(names);
@@ -1390,7 +1395,7 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
     }
     const checklistaPath = `${root}/${parent}/01 - Checklista`.replace(/\/+/g, '/');
     try {
-      await ensureFolderPath(checklistaPath, companyId, siteId, { siteRole: 'projects' });
+      await ensureFolderPath(checklistaPath, companyId, siteId, { siteRole: 'projects', accessTokenOverride: token });
     } catch (e) {
       console.warn('[ensureKalkylskedeProjectFolderStructure] Översikt 01 - Checklista create failed:', e?.message || e);
     }
@@ -1430,9 +1435,9 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
     ];
 
     for (const pair of sectionPairs) {
-      const oldSection = await getDriveItemByPath(`${root}/${pair.old}`, siteId);
+      const oldSection = await getDriveItemByPath(`${root}/${pair.old}`, siteId, token);
       if (!oldSection?.id) continue;
-      const newSection = await getDriveItemByPath(`${root}/${pair.next}`, siteId);
+      const newSection = await getDriveItemByPath(`${root}/${pair.next}`, siteId, token);
       if (newSection?.id) continue;
       effectiveRelPaths = effectiveRelPaths.map((p) => replacePrefix(p, pair.next, pair.old));
     }
@@ -1455,7 +1460,7 @@ export async function ensureKalkylskedeProjectFolderStructure(projectRootPath, c
       .replace(/^\/+/, '')
       .replace(/\/+$/, '')
       .replace(/\/+/g, '/');
-    await ensureFolderPath(fullPath, companyId, siteId, { siteRole: 'projects' });
+    await ensureFolderPath(fullPath, companyId, siteId, { siteRole: 'projects', accessTokenOverride: token });
   }
 }
 

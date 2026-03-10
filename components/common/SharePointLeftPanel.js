@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { ICON_RAIL } from '../../constants/iconRailTheme';
 import { LEFT_NAV } from '../../constants/leftNavTheme';
 import { DEFAULT_PHASE, getPhaseConfig, getPhaseMeta } from '../../features/projects/constants';
@@ -835,7 +835,7 @@ export function SharePointLeftPanel({
 
   const { addTask, removeTask } = useBackgroundTasks();
 
-  const processDeleteQueue = useCallback(() => {
+  const processDeleteQueue = useCallback(async () => {
     if (deleteInProgressRef.current) return;
     const queue = deleteQueueRef.current;
     if (!queue.length) {
@@ -844,7 +844,7 @@ export function SharePointLeftPanel({
     }
     const job = queue.shift();
     if (!job) return;
-    const { projectId, siteIdForFolder, folderPathForDelete } = job;
+    const { projectId, siteIdForFolder, folderPathForDelete, folderIdForDelete } = job;
     deleteInProgressRef.current = true;
     const remaining = queue.length;
     addTask('delete-projects', 'Raderar projekt', remaining > 0 ? `${remaining + 1} i kö` : 'Raderar…');
@@ -852,6 +852,53 @@ export function SharePointLeftPanel({
     const removeFromPending = () => {
       pendingDeleteProjectIdsRef.current.delete(projectId);
     };
+
+    // För company-tenant (t.ex. Wilzéns): radera projektmappen på SharePoint med tenant-token innan callable.
+    // Retry om någon har mappen öppen (SharePoint kan ge tillfälligt lås).
+    if (siteIdForFolder && (folderPathForDelete || folderIdForDelete)) {
+      try {
+        const { fetchCompanySharePointSiteMetas, fetchCompanyProfile } = await import('../firebase');
+        const { getAccessTokenForTenant } = await import('../../services/azure/authService');
+        const metas = await fetchCompanySharePointSiteMetas(companyId);
+        const meta = (metas || []).find((m) => String(m?.siteId || m?.id || '').trim() === String(siteIdForFolder || '').trim());
+        const role = String(meta?.role || '').trim().toLowerCase();
+        const isCompanyTenant = role === 'custom' || role === 'extra';
+        if (isCompanyTenant) {
+          const profile = await fetchCompanyProfile(companyId);
+          const azureTenantId = (profile && profile.azureTenantId) ? String(profile.azureTenantId).trim() : '';
+          const tenantToken = azureTenantId ? await getAccessTokenForTenant(azureTenantId, companyId) : null;
+          if (tenantToken) {
+            const { deleteDriveItemById, deleteDriveItemByPath } = await import('../../services/azure/hierarchyService');
+            const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+            const maxAttempts = 3;
+            const delayMs = 2500;
+            let lastErr;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              try {
+                if (folderIdForDelete) {
+                  await deleteDriveItemById(siteIdForFolder, folderIdForDelete, tenantToken);
+                } else {
+                  await deleteDriveItemByPath(siteIdForFolder, folderPathForDelete, tenantToken);
+                }
+                lastErr = null;
+                break;
+              } catch (err) {
+                lastErr = err;
+                if (attempt < maxAttempts) {
+                  console.warn(`[SharePointLeftPanel] Mappradering försök ${attempt}/${maxAttempts} misslyckades, försöker igen om ${delayMs / 1000}s...`, err?.message || err);
+                  await delay(delayMs);
+                }
+              }
+            }
+            if (lastErr) {
+              console.warn('[SharePointLeftPanel] Client-side SharePoint folder delete (company-tenant) efter alla försök:', lastErr?.message || lastErr);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[SharePointLeftPanel] Client-side SharePoint folder delete (company-tenant):', e?.message || e);
+      }
+    }
 
     deleteProjectCallable({ companyId, projectId })
       .then(async (res) => {
@@ -928,6 +975,7 @@ export function SharePointLeftPanel({
         const projectId = String(t?.projectId || '').trim();
         const siteIdForFolder = String(t?.siteId || '').trim();
         const folderPathForDelete = normalizeSharePointPath(t?.folderPath || '');
+        const folderIdForDelete = String(t?.folderId || t?.driveItemId || '').trim() || null;
 
         pendingDeleteProjectIdsRef.current.add(projectId);
         forceCloseDeleteConfirm();
@@ -946,7 +994,7 @@ export function SharePointLeftPanel({
         ensureHomeAfterDeleteIfNeeded({ projectId });
         const queue = deleteQueueRef.current;
         const wasEmpty = queue.length === 0;
-        queue.push({ projectId, siteIdForFolder, folderPathForDelete });
+        queue.push({ projectId, siteIdForFolder, folderPathForDelete, folderIdForDelete });
         addTask('delete-projects', 'Raderar projekt', queue.length === 1 ? 'Raderar…' : `${queue.length} i kö`);
         if (wasEmpty) {
           showToast('Projektet raderas i bakgrunden. Detta kan ta upp till en minut.', 5000);
@@ -1875,13 +1923,14 @@ export function SharePointLeftPanel({
 
       const siteId = String(target?.sharePointSiteId || '').trim();
       const folderPath = normalizeSharePointPath(target?.rootFolderPath || target?.path || '');
+      const folderId = String(target?.sharePointFolderId || target?.folderId || '').trim() || null;
 
       setDeleteConfirm({
         visible: true,
         kind: 'project',
         busy: false,
         error: '',
-        target: { projectId: pid, siteId: siteId || null, folderPath: folderPath || '' },
+        target: { projectId: pid, siteId: siteId || null, folderPath: folderPath || '', folderId },
       });
       return;
     }
@@ -3713,9 +3762,20 @@ export function SharePointLeftPanel({
                 {displayHierarchy.map(siteItem => {
                   // Site items have type 'site' and contain folders as children
                   if (siteItem.type === 'site') {
+                    const isCompanyTenantLink = siteItem.isCompanyTenantLink === true && siteItem.webUrl;
                     const isExpanded = expandedSites[siteItem.siteId] === true; // default: stängd vid inloggning
                     const siteSpin = spinSites[siteItem.siteId] || 0;
                     const isSiteHovered = hoveredSiteId === siteItem.siteId;
+
+                    const openCompanySiteUrl = () => {
+                      const url = String(siteItem.webUrl || '').trim();
+                      if (!url) return;
+                      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
+                        try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (_e) {}
+                      } else {
+                        Linking.openURL(url).catch(() => {});
+                      }
+                    };
 
                     const toggleSiteExpanded = () => {
                       setExpandedSites(prev => ({
@@ -3737,10 +3797,10 @@ export function SharePointLeftPanel({
 
                     return (
                       <View key={siteItem.id} style={{ marginBottom: 0, alignSelf: 'stretch', width: '100%' }}>
-                        {/* Site header – moln + chevron vänster, sitnamn alltid synligt (aldrig iconOnly så det inte centreras) */}
+                        {/* Site header – moln + chevron vänster, sitnamn alltid synligt; company-tenant = klick öppnar länk */}
                         <SidebarItem
                           iconOnly={false}
-                          onPress={toggleSiteExpanded}
+                          onPress={isCompanyTenantLink ? openCompanySiteUrl : toggleSiteExpanded}
                           onLongPress={(e) => {
                             try { openSpContextMenu(e, siteItem); } catch (_e) {}
                           }}
@@ -3759,22 +3819,24 @@ export function SharePointLeftPanel({
                                 status={siteSyncStatus}
                                 style={{ marginRight: 6 }}
                               />
-                              <View style={{ marginRight: 4 }}>
-                                <AnimatedChevron
-                                  expanded={isExpanded}
-                                  spinTrigger={siteSpin}
-                                  size={12}
-                                  color={isSiteHovered ? NAV.hoverIcon : NAV.iconDefault}
-                                />
-                              </View>
+                              {!isCompanyTenantLink && (
+                                <View style={{ marginRight: 4 }}>
+                                  <AnimatedChevron
+                                    expanded={isExpanded}
+                                    spinTrigger={siteSpin}
+                                    size={12}
+                                    color={isSiteHovered ? NAV.hoverIcon : NAV.iconDefault}
+                                  />
+                                </View>
+                              )}
                             </>
                           )}
                           label={stripNumberPrefixForDisplay(siteItem.name) || siteItem.siteId || 'SharePoint-site'}
                           labelWeight="600"
                         />
                         
-                        {/* Verklig mappstruktur – ingen fast "Projekt"/"Mappar", bara barn-mappar */}
-                        {isExpanded && (
+                        {/* Verklig mappstruktur – ingen fast "Projekt"/"Mappar", bara barn-mappar; company-tenant har inga barn */}
+                        {!isCompanyTenantLink && isExpanded && (
                           <View style={{ marginLeft: 12, marginTop: 0 }}>
                             {(() => {
                               const children = Array.isArray(siteItem?.children) ? siteItem.children : [];

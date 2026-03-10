@@ -23,7 +23,9 @@ import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
 import { useSharePointStatus } from '../hooks/useSharePointStatus';
 import ContextMenu from './ContextMenu';
 import {
+    fetchCompanyProfile,
     fetchCompanySharePointSiteMetas,
+    getAvailableSharePointSitesWithToken,
     getCompanySharePointSiteId,
     getCompanySharePointSiteIdByRole,
     getSharePointNavigationConfig,
@@ -43,7 +45,7 @@ const normalizeRoleLabel = (role) => {
 
 const STATUS_COLUMN_WIDTH = 100;
 
-export default function CompanySharePointContent({ companyId, companyName }) {
+export default function CompanySharePointContent({ companyId, companyName, isCompanyAdminForThisCompany = true }) {
   const cid = String(companyId || '').trim();
   const searchSpinAnim = useRef(new Animated.Value(0)).current;
   const { sharePointStatus } = useSharePointStatus({ companyId: cid, searchSpinAnim });
@@ -61,7 +63,11 @@ export default function CompanySharePointContent({ companyId, companyName }) {
   const [kebabPosition, setKebabPosition] = useState({ x: 0, y: 0 });
   const [renameSiteId, setRenameSiteId] = useState('');
   const [renameDraft, setRenameDraft] = useState('');
-  const [ensuringStructure, setEnsuringStructure] = useState(false);
+  const [syncToOrgLoading, setSyncToOrgLoading] = useState(false);
+  const [syncPickerVisible, setSyncPickerVisible] = useState(false);
+  const [availableSitesFromGraph, setAvailableSitesFromGraph] = useState([]);
+  const [syncError, setSyncError] = useState('');
+  const [linkingSiteId, setLinkingSiteId] = useState(null);
   const kebabRefs = useRef({});
 
   const reload = useCallback(async (silent = true) => {
@@ -91,6 +97,68 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     if (!cid) return;
     reload(true);
   }, [cid, reload]);
+
+  // Efter återkomst från tenant-inloggning: trigga exchange om URL har code+state=tenant_, sedan öppna picker om PENDING_SYNC_PICKER_KEY matchar detta företag
+  useEffect(() => {
+    if (!cid || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const KEY = 'azure_pending_sync_picker';
+    const tryOpenPickerFromPending = async () => {
+      try {
+        const raw = window.sessionStorage && window.sessionStorage.getItem(KEY);
+        if (!raw) return;
+        const { companyId, tenantId } = JSON.parse(raw);
+        if (companyId !== cid) return;
+        if (typeof console !== 'undefined' && console.info) console.info('[SharePoint Sync] Efter redirect: öppnar picker, companyId=', cid, 'tenantId=', tenantId?.slice(0, 8) + '…');
+        const { getAccessTokenForTenant } = await import('../services/azure/authService');
+        const token = await getAccessTokenForTenant(tenantId, cid);
+        if (!token) {
+          if (typeof console !== 'undefined' && console.warn) console.warn('[SharePoint Sync] Efter redirect: ingen token i lagring.');
+          setSyncError('Kunde inte hämta token efter inloggning. Försök klicka på "Synka mot …" igen.');
+          setSyncToOrgLoading(false);
+          return;
+        }
+        let sites = [];
+        try {
+          sites = await getAvailableSharePointSitesWithToken(token);
+        } catch (graphErr) {
+          const msg = graphErr?.message || String(graphErr);
+          setSyncError('Kunde inte hämta siter efter inloggning: ' + msg);
+          setSyncToOrgLoading(false);
+          return;
+        }
+        const siteList = Array.isArray(sites) ? sites : [];
+        setAvailableSitesFromGraph(siteList);
+        setSyncPickerVisible(true);
+        if (siteList.length === 0) {
+          setSyncError('Inga siter hämtades. Kontrollera att admin consent är gjord för er organisation och att du har åtkomst till SharePoint-siter i Wilzéns tenant.');
+        } else {
+          setSyncError('');
+        }
+        // Rensa INTE nyckeln här – annars anropar useSharePointHierarchy (t.ex. i HomeScreen) getAccessToken(),
+        // får null och startar om inloggning = loop. Rensas istället när användaren stänger Företagsinställningar-modalen.
+      } catch (e) {
+        const msg = e?.message || String(e);
+        setSyncError('Fel vid öppning av sitelista: ' + msg);
+      }
+      setSyncToOrgLoading(false);
+    };
+    const hash = (window.location.hash || '').slice(1);
+    const search = (window.location.search || '').slice(1);
+    const params = new URLSearchParams(hash || search);
+    const code = params.get('code');
+    const state = params.get('state');
+    const isTenantReturn = code && state && String(state).startsWith('tenant_');
+    if (isTenantReturn) {
+      import('../services/azure/authService').then(({ processTenantReturnFromUrl }) => {
+        processTenantReturnFromUrl().then(() => {}).catch(() => {}).finally(tryOpenPickerFromPending);
+      });
+    } else {
+      tryOpenPickerFromPending();
+    }
+    // Fallback: om modalen öppnades av global effekt kan nyckeln sättas precis efter vår mount – försök igen efter kort delay
+    const t = setTimeout(tryOpenPickerFromPending, 800);
+    return () => clearTimeout(t);
+  }, [cid]);
 
   const getMeta = useCallback((siteId) => {
     const id = String(siteId || '').trim();
@@ -165,6 +233,15 @@ export default function CompanySharePointContent({ companyId, companyName }) {
       return String(a.siteName || a.siteId).localeCompare(String(b.siteName || b.siteId), undefined, { sensitivity: 'base' });
     });
   }, [systemMeta, projectMeta, sortedMetas, projectSiteId, systemSiteId, resolvedProjectName, resolvedProjectUrl, resolvedSystemName, resolvedSystemUrl]);
+
+  const displayCompanyName = String(companyName || '').trim() || 'företaget';
+  const entries = buildEntries();
+  const digitalkontrollEntries = entries.filter((e) => e.role === 'system' || e.role === 'projects');
+  const companyTenantEntries = entries.filter((e) => e.role === 'custom');
+  const companyTenantLabel = displayCompanyName === 'företaget' ? 'Företagets SharePoint-siter' : `${displayCompanyName}s SharePoint-siter`;
+  const syncButtonLabel = displayCompanyName === 'företaget'
+    ? 'Synka mot företagets interna SharePoint-miljö'
+    : `Synka mot ${displayCompanyName} interna SharePoint-miljö`;
 
   const typLabel = (entry) => {
     const r = entry?.role;
@@ -299,42 +376,6 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     setKebabSiteId(null);
   }, [cid, reload]);
 
-  const handleEnsureDkBasStructure = useCallback(async () => {
-    if (!cid) return;
-    if (!dkBasSiteId) {
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert(
-          'Ingen DK Bas-site kopplad.\n\n' +
-          'Mappstrukturen ska endast skapas i DK Bas, inte i DK Site (projekt-site). ' +
-          'Lägg till en SharePoint-site med namn som innehåller "DK Bas" eller sätt roll till system under listan ovan.'
-        );
-      }
-      return;
-    }
-    setEnsuringStructure(true);
-    try {
-      const { ensureCompanySiteStructure } = await import('../services/azure/siteService');
-      await ensureCompanySiteStructure(dkBasSiteId, cid, { siteRole: 'system' });
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert(
-          'Mappstrukturen skapad i DK Bas.\n\n' +
-          'Skapade mappar:\n' +
-          '• Company/{företag}/Logos och Company/{företag}/Users\n' +
-          '• Projects/Kalkylskede, Produktion, Avslut, Eftermarknad\n' +
-          '• Företagsmallar/01 - Kalkylskede, 02 - Produktion, 03 - Avslutat, 04 - Eftermarknad (med Arkiv under varje)'
-        );
-      }
-      setRefreshSpin((n) => n + 1);
-    } catch (e) {
-      console.error('[CompanySharePointContent] ensureCompanySiteStructure failed:', e);
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert('Kunde inte skapa mappstruktur: ' + (e?.message || String(e)));
-      }
-    } finally {
-      setEnsuringStructure(false);
-    }
-  }, [cid, dkBasSiteId]);
-
   const handleRenameSave = useCallback(async () => {
     if (!cid || !renameSiteId || !renameDraft.trim()) {
       setRenameSiteId('');
@@ -355,7 +396,100 @@ export default function CompanySharePointContent({ companyId, companyName }) {
     setRenameDraft('');
   }, [cid, renameSiteId, renameDraft, reload]);
 
-  const entries = buildEntries();
+  const handleSyncToOrgSharePoint = useCallback(async () => {
+    if (!cid) return;
+    setSyncToOrgLoading(true);
+    setSyncError('');
+    if (typeof console !== 'undefined' && console.info) console.info('[SharePoint Sync] Klick: synka mot företagets SharePoint, companyId=', cid);
+    try {
+      const profile = await fetchCompanyProfile(cid).catch(() => null);
+      const azureTenantId = (profile && profile.azureTenantId) ? String(profile.azureTenantId).trim() : '';
+      if (!azureTenantId) {
+        setSyncError('Ange Företagets Tenant ID under fliken Microsoft-inloggning i Företagsinställningar. Då kan vi visa er organisations SharePoint-siter.');
+        return;
+      }
+      if (typeof console !== 'undefined' && console.info) console.info('[SharePoint Sync] Tenant ID från profil:', azureTenantId?.slice(0, 8) + '…');
+      const { getAccessTokenForTenant } = await import('../services/azure/authService');
+      const token = await getAccessTokenForTenant(azureTenantId, cid);
+      if (!token) {
+        if (typeof console !== 'undefined' && console.info) console.info('[SharePoint Sync] Ingen token – omdirigerar till Microsoft-inloggning.');
+        setSyncError('Omdirigerar till inloggning – logga in med ert företags Microsoft-konto. Efter inloggning öppnas denna sida igen.');
+        return;
+      }
+      let sites = [];
+      try {
+        sites = await getAvailableSharePointSitesWithToken(token);
+      } catch (graphErr) {
+        const graphMsg = graphErr?.message || String(graphErr);
+        setSyncError('Kunde inte hämta siter: ' + graphMsg + (typeof window !== 'undefined' && window.location?.hostname === 'localhost' ? ' Kontrollera att http://' + window.location.host + '/ är tillagd som Redirect URI i Azure App-registreringen.' : ''));
+        return;
+      }
+      const siteList = Array.isArray(sites) ? sites : [];
+      if (typeof console !== 'undefined' && console.info) console.info('[SharePoint Sync] Graph returnerade', siteList.length, 'siter.');
+      setAvailableSitesFromGraph(siteList);
+      setSyncPickerVisible(true);
+      if (siteList.length === 0) {
+        setSyncError('Inga siter hämtades från Microsoft Graph. Kontrollera att du är inloggad med företagets konto, att admin consent är gjord för er organisation, och att appen har behörighet Sites.Read.All/Sites.ReadWrite.All.');
+      } else {
+        setSyncError('');
+      }
+    } catch (e) {
+      const msg = e?.message || String(e);
+      setSyncError(msg);
+      if (msg.includes('Redirecting') || msg.includes('redirect')) return;
+      Alert.alert('Kunde inte ansluta', msg + '\n\nLogga in med ert företags arbetskonto när Microsoft öppnas.');
+    } finally {
+      setSyncToOrgLoading(false);
+    }
+  }, [cid]);
+
+  const handlePickSiteFromGraph = useCallback(async (site) => {
+    if (!cid || !site?.id) return;
+    const siteId = String(site.id).trim();
+    const siteName = String(site.name || site.displayName || '').trim() || 'SharePoint-site';
+    const siteUrl = site.webUrl ? String(site.webUrl).trim() : null;
+    setLinkingSiteId(siteId);
+    try {
+      await upsertCompanySharePointSiteMeta(cid, {
+        siteId,
+        siteName: siteName || null,
+        siteUrl: siteUrl || null,
+        role: 'custom',
+        visibleInLeftPanel: true,
+      });
+      try {
+        const cfg = await getSharePointNavigationConfig(cid).catch(() => null);
+        const enabledSites = Array.isArray(cfg?.enabledSites) ? cfg.enabledSites : [];
+        const nextEnabled = enabledSites.includes(siteId) ? enabledSites : [...enabledSites, siteId];
+        await saveSharePointNavigationConfig(cid, { ...(cfg || {}), enabledSites: nextEnabled });
+      } catch (navErr) {
+        if (typeof console !== 'undefined' && console.warn) console.warn('[SharePoint] saveSharePointNavigationConfig:', navErr?.message || navErr);
+      }
+      try {
+        await syncSharePointSiteVisibilityRemote({ companyId: cid });
+      } catch (syncErr) {
+        if (typeof console !== 'undefined' && console.warn) console.warn('[SharePoint] syncSharePointSiteVisibilityRemote:', syncErr?.message || syncErr);
+      }
+      await reload(false);
+      setSyncPickerVisible(false);
+      setAvailableSitesFromGraph([]);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
+        window.alert(`"${siteName}" är nu kopplad till företaget och visas under Wilzéns Byggs SharePoint-siter.`);
+      } else {
+        Alert.alert('Kopplad', `"${siteName}" är nu kopplad till företaget.`);
+      }
+    } catch (e) {
+      const msg = e?.message || String(e);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.alert) {
+        window.alert('Kunde inte koppla: ' + msg);
+      } else {
+        Alert.alert('Kunde inte koppla', msg);
+      }
+    } finally {
+      setLinkingSiteId(null);
+    }
+  }, [cid, reload]);
+
   const kebabEntry = kebabSiteId ? entries.find((e) => String(e?.siteId || '').trim() === String(kebabSiteId || '').trim()) : null;
   const kebabRole = kebabEntry ? normalizeRoleLabel(kebabEntry?.role) : null;
   const isCustomRole = kebabRole === 'custom';
@@ -405,6 +539,67 @@ export default function CompanySharePointContent({ companyId, companyName }) {
         </Pressable>
       </Modal>
 
+      {/* Picker: välj befintlig SharePoint-site från organisationen att koppla till företaget */}
+      <Modal visible={syncPickerVisible} transparent animationType="fade">
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 }} onPress={() => setSyncPickerVisible(false)}>
+          <Pressable style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, width: '100%', maxWidth: 480, maxHeight: '80%' }} onPress={(e) => e?.stopPropagation?.()}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#334155', marginBottom: 8 }}>Välj SharePoint-site att koppla</Text>
+            <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 12, lineHeight: 18 }}>
+              Siter som ditt konto har åtkomst till. Välj en för att koppla den till företaget.
+            </Text>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
+              {availableSitesFromGraph.length === 0 ? (
+                <View style={{ paddingVertical: 16, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#334155', fontWeight: '500', marginBottom: 6 }}>Inga siter hittades</Text>
+                  <Text style={{ fontSize: 12, color: '#64748b', lineHeight: 18 }}>
+                    Du ska se de siter du har åtkomst till i företagets SharePoint. Kontrollera att:{'\n'}
+                    • Du är inloggad med ert företags Microsoft-konto (samma organisation som Tenant ID).{'\n'}
+                    • Er IT har godkänt appen (admin consent) för er organisation.{'\n'}
+                    {typeof window !== 'undefined' && window.location?.hostname === 'localhost' ? '• Vid test på localhost: lägg till ' + (window.location.origin + '/') + ' som Redirect URI i Azure App-registreringen (Autentisering).' : ''}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Stäng och klicka igen på "Synka mot …" när ovan är kontrollerat.</Text>
+                </View>
+              ) : (
+                availableSitesFromGraph.map((site) => {
+                  const name = String(site.name || site.displayName || '').trim() || 'SharePoint-site';
+                  const url = site.webUrl ? String(site.webUrl) : '';
+                  const isLinking = linkingSiteId === site.id;
+                  return (
+                    <TouchableOpacity
+                      key={site.id}
+                      onPress={() => handlePickSiteFromGraph(site)}
+                      disabled={isLinking}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        marginBottom: 4,
+                        backgroundColor: isLinking ? '#f1f5f9' : '#f8fafc',
+                        borderWidth: 1,
+                        borderColor: '#e2e8f0',
+                        borderRadius: 8,
+                        ...(Platform.OS === 'web' ? { cursor: isLinking ? 'wait' : 'pointer' } : {}),
+                      }}
+                    >
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#1e293b' }} numberOfLines={1}>{name}</Text>
+                        {url ? <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{url}</Text> : null}
+                      </View>
+                      {isLinking ? <ActivityIndicator size="small" color="#475569" /> : <Ionicons name="link" size={18} color="#0369a1" />}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+            <TouchableOpacity onPress={() => setSyncPickerVisible(false)} style={{ marginTop: 16, paddingVertical: D.buttonPaddingVertical, paddingHorizontal: D.buttonPaddingHorizontal, borderRadius: D.buttonRadius, alignSelf: 'flex-start', borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc' }}>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: '#475569' }}>Avbryt</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Laddningsöverlägg när site skapas – tydlig feedback så att modalen inte kännas "stängd" */}
       {creating ? (
         <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 10, borderRadius: 12 }}>
@@ -420,8 +615,8 @@ export default function CompanySharePointContent({ companyId, companyName }) {
 
       <View
         style={{
-          flexDirection: 'row',
-          alignItems: 'flex-start',
+          flexDirection: 'column',
+          alignItems: 'stretch',
           gap: 10,
           padding: 12,
           marginBottom: 16,
@@ -431,10 +626,41 @@ export default function CompanySharePointContent({ companyId, companyName }) {
           borderRadius: 8,
         }}
       >
-        <Ionicons name="information-circle-outline" size={20} color="#0369a1" style={{ marginTop: 1 }} />
-        <Text style={{ fontSize: 12, color: '#0c4a6e', flex: 1, lineHeight: 20 }}>
-          Kopplingar mot externa SharePoint-siter är under utveckling. Det kommer möjliggöra att koppla Digitalkontroll mot er organisations befintliga SharePoint-miljö.
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+          <Ionicons name="information-circle-outline" size={20} color="#0369a1" style={{ marginTop: 1 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 12, color: '#0c4a6e', lineHeight: 20 }}>
+              Koppla företagets interna SharePoint-miljö så att användare kan nå dokument och listor direkt i appen.
+            </Text>
+            {!isCompanyAdminForThisCompany && (
+              <Text style={{ fontSize: 12, color: '#0c4a6e', lineHeight: 20, marginTop: 8, fontWeight: '500' }}>
+                Denna koppling bör göras av en administratör för {displayCompanyName} med ett Microsoft-konto från företaget. Logga in som företagsadmin i Digitalkontroll och öppna Företagsinställningar → SharePoint. Som superadmin kan du också använda ett konto som tillhör företaget om du har det.
+              </Text>
+            )}
+          </View>
+        </View>
+        <TouchableOpacity
+          onPress={handleSyncToOrgSharePoint}
+          disabled={syncToOrgLoading}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            paddingVertical: D.buttonPaddingVertical,
+            paddingHorizontal: D.buttonPaddingHorizontal,
+            borderRadius: D.buttonRadius,
+            backgroundColor: syncToOrgLoading ? '#e2e8f0' : (D.buttonPrimaryBg ?? '#2D3A4B'),
+            alignSelf: 'flex-start',
+            ...(Platform.OS === 'web' ? { cursor: syncToOrgLoading ? 'not-allowed' : 'pointer' } : {}),
+          }}
+        >
+          {syncToOrgLoading ? <ActivityIndicator size="small" color="#64748b" /> : null}
+          <Text style={{ fontSize: 12, fontWeight: '500', color: syncToOrgLoading ? '#64748b' : '#fff' }}>
+            {syncButtonLabel}
+          </Text>
+        </TouchableOpacity>
+        {syncError ? <Text style={{ fontSize: 12, color: '#b91c1c' }}>{syncError}</Text> : null}
       </View>
 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -476,115 +702,92 @@ export default function CompanySharePointContent({ companyId, companyName }) {
         </View>
       </View>
 
-      <View
-        style={{
-          marginBottom: 16,
-          padding: 12,
-          backgroundColor: '#f8fafc',
-          borderWidth: 1,
-          borderColor: '#e2e8f0',
-          borderRadius: 8,
-        }}
-      >
-        <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 4 }}>DK Bas-mappstruktur</Text>
-        <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 18 }}>
-          {'Skapar standardmappar endast i DK Bas (inte i DK Site): Company/[företag]/Logos och Users, Projects (Kalkylskede, Produktion, Avslut, Eftermarknad), Företagsmallar (01–04 med Arkiv under varje). Kräver att en site är kopplad som DK Bas ovan.'}
+      {syncError && syncError.includes('Omdirigerar') ? (
+        <Text style={{ fontSize: 12, color: '#0369a1', marginBottom: 12 }}>
+          Efter inloggning öppnas denna sida igen – då visas tillgängliga siter. Ser du inte pickern? Öppna Företagsinställningar → SharePoint igen och klicka på knappen ovan.
         </Text>
-        <TouchableOpacity
-          onPress={handleEnsureDkBasStructure}
-          disabled={ensuringStructure || loading || !dkBasSiteId}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            alignSelf: 'flex-start',
-            gap: 6,
-            paddingVertical: D.buttonPaddingVertical,
-            paddingHorizontal: D.buttonPaddingHorizontal,
-            borderRadius: D.buttonRadius,
-            backgroundColor: (ensuringStructure || loading || !dkBasSiteId) ? '#e2e8f0' : (D.buttonPrimaryBg ?? '#2D3A4B'),
-            ...(Platform.OS === 'web' ? { cursor: (ensuringStructure || loading || !dkBasSiteId) ? 'not-allowed' : 'pointer' } : {}),
-          }}
-        >
-          {ensuringStructure ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="folder-open-outline" size={16} color="#fff" />
-          )}
-          <Text style={{ fontSize: 12, fontWeight: '500', color: '#fff' }}>
-            {ensuringStructure ? 'Skapar mappar…' : 'Skapa mappstruktur i DK Bas'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      ) : null}
 
-      <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, backgroundColor: D.tableHeaderBackgroundColor ?? '#f8fafc', borderBottomWidth: 1, borderBottomColor: D.tableHeaderBorderColor ?? '#e2e8f0' }}>
-          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', flex: 1 }}>Site</Text>
-          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: 120 }}>Typ</Text>
-          <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: STATUS_COLUMN_WIDTH }}>Status</Text>
-          <View style={{ width: 48, flexShrink: 0 }} />
-        </View>
-
-        {loading ? (
-          <View style={{ padding: 32, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color="#1e293b" />
-            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Laddar siter…</Text>
-          </View>
-        ) : entries.length === 0 ? (
-          <View style={{ padding: 24 }}>
-            <Text style={{ fontSize: 12, color: '#64748b' }}>Inga siter ännu. Klicka på &quot;Ny site&quot; för att lägga till.</Text>
-          </View>
-        ) : (
-          <ScrollView style={{ maxHeight: 360 }} contentContainerStyle={{ paddingBottom: 8 }}>
-            {entries.map((entry) => {
-              const sid = String(entry?.siteId || '').trim();
-              if (!sid) return null;
-              const status = spStatusInfo(entry);
-              const pill = spStatusPillStyle(status.tone);
-              const siteName = String(entry?.siteName || 'SharePoint-site').trim();
-              return (
-                <View
-                  key={sid}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    borderBottomWidth: 1,
-                    borderBottomColor: '#f1f5f9',
-                    gap: 12,
-                  }}
-                >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontSize: D.tableCellFontSize ?? 13, fontWeight: '500', color: D.tableCellColor ?? '#1e293b' }} numberOfLines={1}>{siteName}</Text>
-                    <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{sid}</Text>
-                  </View>
-                  <Text style={{ fontSize: 12, color: '#475569', width: 120 }} numberOfLines={1}>{typLabel(entry)}</Text>
-                  <View style={{ width: STATUS_COLUMN_WIDTH }}>
-                    <View style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: pill.bg, borderWidth: 1, borderColor: pill.border, alignSelf: 'flex-start' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: pill.color }}>{status.label}</Text>
+      {(() => {
+        const renderSiteTable = (list, emptyMessage) => {
+          if (loading && list.length === 0) return null;
+          if (list.length === 0) {
+            return (
+              <View style={{ padding: 20, backgroundColor: '#f8fafc', borderRadius: 8 }}>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>{emptyMessage}</Text>
+              </View>
+            );
+          }
+          return (
+            <View style={{ borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, backgroundColor: D.tableHeaderBackgroundColor ?? '#f8fafc', borderBottomWidth: 1, borderBottomColor: D.tableHeaderBorderColor ?? '#e2e8f0' }}>
+                <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', flex: 1 }}>Site</Text>
+                <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: 120 }}>Typ</Text>
+                <Text style={{ fontSize: D.tableHeaderFontSize ?? 12, fontWeight: D.tableHeaderFontWeight ?? '500', color: D.tableHeaderColor ?? '#475569', width: STATUS_COLUMN_WIDTH }}>Status</Text>
+                <View style={{ width: 48, flexShrink: 0 }} />
+              </View>
+              <ScrollView style={{ maxHeight: 280 }} contentContainerStyle={{ paddingBottom: 8 }}>
+                {list.map((entry) => {
+                  const sid = String(entry?.siteId || '').trim();
+                  if (!sid) return null;
+                  const status = spStatusInfo(entry);
+                  const pill = spStatusPillStyle(status.tone);
+                  const siteName = String(entry?.siteName || 'SharePoint-site').trim();
+                  return (
+                    <View key={sid} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', gap: 12 }}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: D.tableCellFontSize ?? 13, fontWeight: '500', color: D.tableCellColor ?? '#1e293b' }} numberOfLines={1}>{siteName}</Text>
+                        <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{entry?.siteUrl || sid}</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#475569', width: 120 }} numberOfLines={1}>{typLabel(entry)}</Text>
+                      <View style={{ width: STATUS_COLUMN_WIDTH }}>
+                        <View style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 999, backgroundColor: pill.bg, borderWidth: 1, borderColor: pill.border, alignSelf: 'flex-start' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: pill.color }}>{status.label}</Text>
+                        </View>
+                      </View>
+                      <View style={{ width: 48, alignItems: 'flex-end' }}>
+                        <TouchableOpacity
+                          ref={(el) => { kebabRefs.current[sid] = el; }}
+                          onPress={() => {
+                            const node = kebabRefs.current[sid];
+                            if (node && typeof node.measureInWindow === 'function') node.measureInWindow((x, y, w, h) => setKebabPosition({ x, y: y + (h || 0) + 4 }));
+                            setKebabSiteId(sid);
+                          }}
+                          style={{ padding: 6, borderRadius: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
+                        >
+                          <Ionicons name="ellipsis-vertical" size={18} color="#475569" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                  <View style={{ width: 48, alignItems: 'flex-end' }}>
-                    <TouchableOpacity
-                      ref={(el) => { kebabRefs.current[sid] = el; }}
-                      onPress={() => {
-                        const node = kebabRefs.current[sid];
-                        if (node && typeof node.measureInWindow === 'function') {
-                          node.measureInWindow((x, y, w, h) => setKebabPosition({ x, y: y + (h || 0) + 4 }));
-                        }
-                        setKebabSiteId(sid);
-                      }}
-                      style={{ padding: 6, borderRadius: 8, ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}) }}
-                    >
-                      <Ionicons name="ellipsis-vertical" size={18} color="#475569" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-          </ScrollView>
-        )}
-      </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          );
+        };
+        return (
+          <>
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 8 }}>Siter i Digitalkontroll</Text>
+              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 18 }}>DK Bas, DK Site och övriga siter som skapats eller hanteras i systemet.</Text>
+              {loading && digitalkontrollEntries.length === 0 ? (
+                <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator size="small" color="#1e293b" /><Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Laddar…</Text></View>
+              ) : (
+                renderSiteTable(digitalkontrollEntries, 'Inga Digitalkontroll-siter. DK Bas och DK Site skapas automatiskt.')
+              )}
+            </View>
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 8 }}>{companyTenantLabel}</Text>
+              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10, lineHeight: 18 }}>Siter kopplade från företagets egen SharePoint-miljö (via &quot;Synka mot … interna SharePoint-miljö&quot;). Dessa visas även i SharePoint-menyn i vänsterpanelen.</Text>
+              {loading && companyTenantEntries.length === 0 ? (
+                <View style={{ padding: 24, alignItems: 'center' }}><ActivityIndicator size="small" color="#1e293b" /><Text style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Laddar…</Text></View>
+              ) : (
+                renderSiteTable(companyTenantEntries, 'Inga siter från företagets SharePoint ännu. Klicka på knappen ovan för att synka och välja siter.')
+              )}
+            </View>
+          </>
+        );
+      })()}
 
       <ContextMenu
         visible={!!kebabSiteId && kebabItems.length > 0}

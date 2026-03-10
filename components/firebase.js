@@ -1465,20 +1465,25 @@ export async function fetchUserProfile(uid) {
 
 // Company member directory (scoped under foretag/{companyId}/members/{uid})
 // Used for listing admins and other roles inside a company.
+// OBS: role skrivs bara när det skickas med (inte null/undefined) – så att t.ex. useHomeUserActivity
+// inte skriver över en befintlig admin-roll med null när users/{uid} saknar role.
 export async function upsertCompanyMember({ companyId: companyIdOverride, uid, displayName, email, role }) {
   try {
     if (!uid) return false;
     const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
     if (!companyId) return false;
     const ref = doc(db, 'foretag', companyId, 'members', uid);
-    await setDoc(ref, {
+    const payload = {
       uid,
       companyId,
       displayName: displayName || null,
       email: email || null,
-      role: role || null,
       updatedAt: serverTimestamp(),
-    }, { merge: true });
+    };
+    if (role !== undefined && role !== null) {
+      payload.role = String(role).trim() || null;
+    }
+    await setDoc(ref, payload, { merge: true });
     return true;
   } catch(_e) {
     return false;
@@ -5355,77 +5360,82 @@ export async function saveSharePointNavigationConfig(companyIdOverride, config) 
   }
 }
 
+const GRAPH_SITES_FETCH = async (accessToken) => {
+  const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+  const [followedResponse, searchResponse] = await Promise.allSettled([
+    fetch(`${GRAPH_API_BASE}/me/followedSites`, {
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    }),
+    fetch(`${GRAPH_API_BASE}/sites?search=*`, {
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    }),
+  ]);
+  if (typeof console !== 'undefined' && console.info) {
+    const fOk = followedResponse.status === 'fulfilled' && followedResponse.value?.ok;
+    const sOk = searchResponse.status === 'fulfilled' && searchResponse.value?.ok;
+    if (!fOk && followedResponse.status === 'fulfilled' && followedResponse.value) {
+      console.warn('[Graph] me/followedSites failed:', followedResponse.value.status, followedResponse.value.statusText);
+    }
+    if (!sOk && searchResponse.status === 'fulfilled' && searchResponse.value) {
+      console.warn('[Graph] sites?search=* failed:', searchResponse.value.status, searchResponse.value.statusText);
+    }
+    if (fOk || sOk) console.info('[Graph] Sites fetch:', fOk ? 'followedSites OK' : 'followedSites miss', sOk ? 'sites/search OK' : 'sites/search miss');
+  }
+  const siteMap = new Map();
+  if (followedResponse.status === 'fulfilled' && followedResponse.value.ok) {
+    const followedData = await followedResponse.value.json();
+    if (followedData.value && Array.isArray(followedData.value)) {
+      followedData.value.forEach(site => {
+        if (site.id && !siteMap.has(site.id)) {
+          siteMap.set(site.id, {
+            id: site.id,
+            name: site.displayName || site.name || 'Unnamed Site',
+            webUrl: site.webUrl || '',
+            displayName: site.displayName || site.name || 'Unnamed Site',
+          });
+        }
+      });
+    }
+  }
+  if (searchResponse.status === 'fulfilled' && searchResponse.value.ok) {
+    const searchData = await searchResponse.value.json();
+    if (searchData.value && Array.isArray(searchData.value)) {
+      searchData.value.forEach(site => {
+        if (site.id && !siteMap.has(site.id)) {
+          siteMap.set(site.id, {
+            id: site.id,
+            name: site.displayName || site.name || 'Unnamed Site',
+            webUrl: site.webUrl || '',
+            displayName: site.displayName || site.name || 'Unnamed Site',
+          });
+        }
+      });
+    }
+  }
+  return Array.from(siteMap.values());
+};
+
 /**
- * Get list of SharePoint sites available to the current user
+ * Get list of SharePoint sites using a specific access token (e.g. company tenant token).
+ * @param {string} accessToken - Microsoft Graph access token (for the tenant whose sites to list)
+ * @returns {Promise<Array>} Array of site objects { id, name, webUrl, displayName }
+ */
+export async function getAvailableSharePointSitesWithToken(accessToken) {
+  if (!accessToken) throw new Error('Access token required');
+  return GRAPH_SITES_FETCH(accessToken);
+}
+
+/**
+ * Get list of SharePoint sites available to the current user (app's default token).
  * Uses Microsoft Graph API to fetch sites the user has access to
  * @returns {Promise<Array>} Array of site objects { id, name, webUrl, displayName }
  */
 export async function getAvailableSharePointSites() {
   try {
-    // Dynamic import to avoid circular dependency
     const { getAccessToken } = await import('../services/azure/authService');
     const accessToken = await getAccessToken();
-    
-    if (!accessToken) {
-      throw new Error('Failed to get access token. Please authenticate first.');
-    }
-
-    const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
-    
-    // Fetch sites the user follows or has access to
-    // Using /me/followedSites and /sites/search to get all accessible sites
-    const [followedResponse, searchResponse] = await Promise.allSettled([
-      fetch(`${GRAPH_API_BASE}/me/followedSites`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }),
-      fetch(`${GRAPH_API_BASE}/sites?search=*`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }),
-    ]);
-
-    const siteMap = new Map();
-
-    // Process followed sites
-    if (followedResponse.status === 'fulfilled' && followedResponse.value.ok) {
-      const followedData = await followedResponse.value.json();
-      if (followedData.value && Array.isArray(followedData.value)) {
-        followedData.value.forEach(site => {
-          if (site.id && !siteMap.has(site.id)) {
-            siteMap.set(site.id, {
-              id: site.id,
-              name: site.displayName || site.name || 'Unnamed Site',
-              webUrl: site.webUrl || '',
-              displayName: site.displayName || site.name || 'Unnamed Site',
-            });
-          }
-        });
-      }
-    }
-
-    // Process search results
-    if (searchResponse.status === 'fulfilled' && searchResponse.value.ok) {
-      const searchData = await searchResponse.value.json();
-      if (searchData.value && Array.isArray(searchData.value)) {
-        searchData.value.forEach(site => {
-          if (site.id && !siteMap.has(site.id)) {
-            siteMap.set(site.id, {
-              id: site.id,
-              name: site.displayName || site.name || 'Unnamed Site',
-              webUrl: site.webUrl || '',
-              displayName: site.displayName || site.name || 'Unnamed Site',
-            });
-          }
-        });
-      }
-    }
-
-    return Array.from(siteMap.values());
+    if (!accessToken) throw new Error('Failed to get access token. Please authenticate first.');
+    return GRAPH_SITES_FETCH(accessToken);
   } catch (error) {
     console.error('[getAvailableSharePointSites] Error:', error);
     throw error;
@@ -5498,6 +5508,13 @@ function canBeVisibleInLeftPanelByRole(role) {
   return r === 'projects' || r === 'custom';
 }
 
+/** Firestore document IDs cannot contain /. Graph site IDs use commas. Use a safe id for sharepoint_sites collection. */
+function sharePointSiteDocId(siteId) {
+  const s = String(siteId || '').trim();
+  if (!s) return s;
+  return s.replace(/[/\\]/g, '_').replace(/,/g, '_');
+}
+
 /**
  * Resolve a company's SharePoint site id by role using Digitalkontroll metadata.
  * - role="projects" => DK Site (project-only)
@@ -5553,18 +5570,29 @@ export async function upsertCompanySharePointSiteMeta(companyId, meta) {
   if (!cid || !siteId) throw new Error('companyId and meta.siteId are required');
 
   if (functionsClient) {
-    const fn = httpsCallable(functionsClient, 'upsertCompanySharePointSiteMeta');
-    const res = await fn({
-      companyId: cid,
-      meta: {
-        siteId,
-        siteName: meta?.siteName || meta?.name || null,
-        siteUrl: meta?.siteUrl || meta?.webUrl || null,
-        role: normalizeSharePointSiteRole(meta?.role) || 'custom',
-        visibleInLeftPanel: canBeVisibleInLeftPanelByRole(normalizeSharePointSiteRole(meta?.role) || 'custom') && meta?.visibleInLeftPanel === true,
-      },
-    });
-    return res?.data?.ok === true || true;
+    try {
+      const fn = httpsCallable(functionsClient, 'upsertCompanySharePointSiteMeta');
+      const res = await fn({
+        companyId: cid,
+        meta: {
+          siteId,
+          siteName: meta?.siteName || meta?.name || null,
+          siteUrl: meta?.siteUrl || meta?.webUrl || null,
+          role: normalizeSharePointSiteRole(meta?.role) || 'custom',
+          visibleInLeftPanel: canBeVisibleInLeftPanelByRole(normalizeSharePointSiteRole(meta?.role) || 'custom') && meta?.visibleInLeftPanel === true,
+        },
+      });
+      if (res?.data && res.data.error) throw new Error(res.data.error);
+      if (res?.data?.ok !== true) throw new Error(res?.data?.message || 'Kunde inte spara site-metadata');
+      return true;
+    } catch (e) {
+      if (e?.code === 'unavailable' || e?.message?.includes('NOT_FOUND')) {
+        // Fallback till direkt Firestore om Cloud Function saknas eller inte svarar
+        if (typeof console !== 'undefined' && console.warn) console.warn('[upsertCompanySharePointSiteMeta] Cloud Function misslyckades, skriver direkt till Firestore:', e?.message);
+      } else {
+        throw e;
+      }
+    }
   }
 
   const role = normalizeSharePointSiteRole(meta?.role) || 'system';
@@ -5578,7 +5606,8 @@ export async function upsertCompanySharePointSiteMeta(companyId, meta) {
     updatedAt: serverTimestamp(),
     updatedBy: auth.currentUser?.uid || null,
   };
-  const ref = doc(db, 'foretag', cid, 'sharepoint_sites', siteId);
+  const docId = sharePointSiteDocId(siteId);
+  const ref = doc(db, 'foretag', cid, 'sharepoint_sites', docId);
   await setDoc(ref, sanitizeForFirestore(payload), { merge: true });
   return true;
 }

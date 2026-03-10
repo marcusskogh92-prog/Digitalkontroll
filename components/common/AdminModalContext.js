@@ -3,7 +3,8 @@
  * instead of navigating away. Used by Administration and Register menus in the top banner.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import AdminAIPromptsModal from './AdminAIPromptsModal';
 import AdminByggdelModal from './AdminByggdelModal';
 import AdminCompanyModal from './AdminCompanyModal';
@@ -163,10 +164,51 @@ export function AdminModalProvider({ children, navigationRef: navigationRefProp 
     setCompanyModalOpen(true);
   }, []);
 
+  // Efter återkomst från tenant-inloggning (SharePoint-synk): trigga exchange om URL har code+state=tenant_, öppna sedan Företagsinställningar → SharePoint så att pickern visas
+  const PENDING_SYNC_PICKER_KEY = 'azure_pending_sync_picker';
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const hash = (window.location.hash || '').slice(1);
+    const search = (window.location.search || '').slice(1);
+    const params = new URLSearchParams(hash || search);
+    const code = params.get('code');
+    const state = params.get('state');
+    const isTenantReturn = code && state && String(state).startsWith('tenant_');
+    if (!isTenantReturn) {
+      try {
+        const raw = window.sessionStorage && window.sessionStorage.getItem(PENDING_SYNC_PICKER_KEY);
+        if (raw) {
+          const { companyId } = JSON.parse(raw);
+          if (companyId) openCompanyModal(companyId, 'sharepoint');
+        }
+      } catch (_e) {}
+      return;
+    }
+    import('../../services/azure/authService').then(({ processTenantReturnFromUrl }) => {
+      processTenantReturnFromUrl().then(() => {}).catch(() => {}).finally(() => {
+        setTimeout(() => {
+          try {
+            const raw = window.sessionStorage && window.sessionStorage.getItem(PENDING_SYNC_PICKER_KEY);
+            if (raw) {
+              const { companyId } = JSON.parse(raw);
+              if (companyId) openCompanyModal(companyId, 'sharepoint');
+            }
+          } catch (_e) {}
+        }, 300);
+      });
+    });
+  }, [openCompanyModal]);
+
   const closeCompanyModal = useCallback(() => {
     setCompanyModalOpen(false);
     setCompanyModalCompanyId('');
     setCompanyModalInitialTab(null);
+    // Rensa tenant-synk-nyckel så att huvudappens getAccessToken() inte fastnar i "return null"
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.removeItem('azure_pending_sync_picker');
+      }
+    } catch (_e) {}
   }, []);
 
   const openCreateCompanyModal = useCallback(() => {
