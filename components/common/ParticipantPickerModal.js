@@ -653,10 +653,8 @@ export default function ParticipantPickerModal({
                             borderBottomColor: COLORS.tableBorder,
                             backgroundColor: bg,
                             opacity: 1,
-                            borderLeftWidth: (isSelected || isLocked) ? 4 : 0,
-                            borderLeftColor: isLocked ? '#93C5FD' : (isSelected ? COLORS.blue : 'transparent'),
                           },
-                          Platform.OS === 'web' ? { width: totalTableWidth, cursor: 'pointer' } : null,
+                          Platform.OS === 'web' ? { width: totalTableWidth, minWidth: totalTableWidth, cursor: 'pointer' } : null,
                         ];
                       }}
                     >

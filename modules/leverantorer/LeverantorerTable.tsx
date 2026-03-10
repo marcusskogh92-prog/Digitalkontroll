@@ -13,7 +13,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type ViewStyle, Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { type ViewStyle, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import SelectDropdownOrig from '../../components/common/SelectDropdown';
 /** Cast så att SelectDropdown accepterar våra props (keepOpenOnSelect/visible/onToggleVisible är inte krävda i körning – .js-komponenten). */
 const SelectDropdown = SelectDropdownOrig as unknown as React.ComponentType<Record<string, unknown>>;
@@ -217,6 +217,21 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontWeight: '500',
   },
+  /** Små ikonknappar för Lägg till (bock) och Avbryt (x) på samma rad som kontaktfälten */
+  openContactActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  openContactActionIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
   /** Chips i sektioner – max 2 rader, +X */
   openChipWrap: {
     flexDirection: 'row',
@@ -392,7 +407,7 @@ const styles = StyleSheet.create({
   expanderHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 24,
     paddingVertical: 8,
     paddingHorizontal: 0,
     marginBottom: 0,
@@ -401,6 +416,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  /** "Lägg till kontakt" – extra marginal vänster så den linjerar visuellt med rubriken */
+  expanderHeaderActionLink: {
+    marginLeft: 8,
   },
   expanderChevron: {
     width: 22,
@@ -473,16 +492,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
   },
+  /** "Ändra" som blå textlänk (samma stil som "Lägg till kontakt") */
+  infoAndraLink: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '500',
+    marginTop: 2,
+    alignSelf: 'flex-start' as const,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
+  },
   infoRowHover: {
     backgroundColor: '#f8fafc',
-  },
-  infoAndraBtn: {
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#f1f5f9',
   },
   detailsMeta: {
     fontSize: 12,
@@ -539,6 +559,37 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#fff',
     overflow: 'hidden',
+  },
+  /** Roll-dropdown: flyter över tabellinnehåll så ingen divider skär igenom */
+  roleDropdownWrap: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 2,
+    zIndex: 9999,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 16px rgba(0,0,0,0.12)' } : { elevation: 12 }),
+    maxHeight: 200,
+    overflow: 'hidden',
+  },
+  roleDropdownRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  roleDropdownRowLast: {
+    borderBottomWidth: 0,
+  },
+  roleDropdownRowHighlight: {
+    backgroundColor: '#e0f2fe',
   },
   contactSuggestRow: {
     paddingVertical: 8,
@@ -868,6 +919,8 @@ export default function LeverantorerTable({
   /** Hover på Information-flikens rader (org, address, category, byggdelar, konto) för visuell feedback + högerklick. */
   const [infoRowHover, setInfoRowHover] = useState<string | null>(null);
   const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; email: string; phone: string; workPhone: string }>>({});
+  /** Highlight-index för piltangent-navigering i roll-dropdown (per leverantör). */
+  const [roleDropdownHighlight, setRoleDropdownHighlight] = useState<Record<string, number>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
   const [editDraft, setEditDraft] = useState<{
     companyName: string;
@@ -927,6 +980,19 @@ export default function LeverantorerTable({
   /** När användaren stänger Kategori-modalen återförs fokus till triggern och onFocus körs igen – ignorera det. */
   const categoryModalJustOpenedRef = useRef(false);
   const contactMap = useMemo(() => contactsBySupplierId, [contactsBySupplierId]);
+  /** Unika roller från kontaktregistret + alla kopplade kontakter (för autocomplete i Roll-fältet). */
+  const existingRoles = useMemo(() => {
+    const set = new Set<string>();
+    (contactRegistry || []).forEach((c) => {
+      const r = String(c?.role ?? '').trim();
+      if (r) set.add(r);
+    });
+    Object.values(contactMap || {}).flat().forEach((c) => {
+      const r = String((c as { role?: string })?.role ?? '').trim();
+      if (r) set.add(r);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'sv'));
+  }, [contactRegistry, contactMap]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -1030,7 +1096,7 @@ export default function LeverantorerTable({
     });
   };
 
-  /** Konton som visningstext med benämning (t.ex. "4401 Mark") för expanderad Information. */
+  /** Konton som visningstext med benämning (samma format som Byggdelar: "nummer – benämning"). */
   const getKontoDisplayList = (supplier: Supplier): string[] => {
     const ids = Array.isArray(supplier.konton) ? (supplier.konton as string[]) : [];
     if (!ids.length) return [];
@@ -1038,7 +1104,7 @@ export default function LeverantorerTable({
       const item = companyKontoplan.find((x) => (x.konto ?? x.id) === kontoId);
       const num = item?.konto ?? kontoId;
       const benamning = (item?.benamning ?? '').trim();
-      return benamning ? `${num} ${benamning}` : String(num);
+      return benamning ? `${num} – ${benamning}` : String(num);
     });
   };
 
@@ -1594,7 +1660,7 @@ export default function LeverantorerTable({
 
                       {activeTab === 'information' ? (
                         <View style={styles.infoGrid}>
-                          {/* Organisationsnummer – redigera öppnar leverantörsmodalen */}
+                          {/* Org-nr – redigera öppnar leverantörsmodalen */}
                           <View
                             style={[
                               styles.infoRow,
@@ -1612,12 +1678,12 @@ export default function LeverantorerTable({
                                 }
                               : {})}
                           >
-                            <Text style={styles.infoLabel}>Organisationsnummer</Text>
-                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <Text style={styles.infoLabel}>Org-nr</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
                               <Text style={styles.infoValue}>{formatOrganizationNumber(String(supplier.organizationNumber ?? '')) || '—'}</Text>
                               {onEditSupplier ? (
-                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onEditSupplier(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : null}
                             </View>
@@ -1641,13 +1707,13 @@ export default function LeverantorerTable({
                               : {})}
                           >
                             <Text style={styles.infoLabel}>Adress</Text>
-                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
                               <Text style={styles.infoValue} numberOfLines={2}>
                                 {[supplier.address, [supplier.postalCode, supplier.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
                               </Text>
                               {onEditSupplier ? (
-                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onEditSupplier(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : null}
                             </View>
@@ -1672,24 +1738,19 @@ export default function LeverantorerTable({
                               : {})}
                           >
                             <Text style={styles.infoLabel}>Kategori</Text>
-                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
                               {getCategoryList(supplier).length > 0 ? (
                                 <Text style={styles.infoValue}>{getCategoryList(supplier).join(', ')}</Text>
                               ) : (
                                 <Text style={styles.infoValue}>—</Text>
                               )}
                               {(onOpenKategorier || (companyCategories.length > 0 && onCategoriesChange)) ? (
-                                <TouchableOpacity
-                                  style={styles.infoAndraBtn}
-                                  onPress={() => onOpenKategorier?.(supplier)}
-                                  activeOpacity={0.8}
-                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
-                                >
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onOpenKategorier?.(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : onEditSupplier ? (
-                                <TouchableOpacity style={styles.infoAndraBtn} onPress={() => onEditSupplier(supplier)} activeOpacity={0.8} {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}>
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onEditSupplier(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : null}
                             </View>
@@ -1722,13 +1783,8 @@ export default function LeverantorerTable({
                                 <Text style={styles.infoValue}>—</Text>
                               )}
                               {onOpenByggdelar ? (
-                                <TouchableOpacity
-                                  style={[styles.infoAndraBtn, { alignSelf: 'flex-start', marginTop: 2 }]}
-                                  onPress={() => onOpenByggdelar(supplier)}
-                                  activeOpacity={0.8}
-                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
-                                >
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onOpenByggdelar(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : null}
                             </View>
@@ -1761,13 +1817,8 @@ export default function LeverantorerTable({
                                 <Text style={styles.infoValue}>—</Text>
                               )}
                               {onOpenKonton ? (
-                                <TouchableOpacity
-                                  style={[styles.infoAndraBtn, { alignSelf: 'flex-start', marginTop: 2 }]}
-                                  onPress={() => onOpenKonton(supplier)}
-                                  activeOpacity={0.8}
-                                  {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
-                                >
-                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#475569' }}>Ändra</Text>
+                                <TouchableOpacity onPress={() => onOpenKonton(supplier)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
                                 </TouchableOpacity>
                               ) : null}
                             </View>
@@ -1779,12 +1830,13 @@ export default function LeverantorerTable({
                         <View style={styles.openRelationerSection}>
                           <View style={styles.expanderHeader}>
                             <View style={styles.expanderHeaderTouchable}>
-                              <Text style={styles.openRelationerTitle}>Kontaktpersoner</Text>
+                              <Text style={[styles.openRelationerTitle, { marginBottom: 0 }]}>Kontaktpersoner</Text>
                             </View>
                             {editingSection[supplier.id] !== 'contacts' ? (
                               <TouchableOpacity
                                 onPress={() => setEditingSection((prev) => ({ ...prev, [supplier.id]: 'contacts' }))}
                                 activeOpacity={0.8}
+                                style={styles.expanderHeaderActionLink}
                                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
                               >
                                 <Text style={styles.openRelationerActionLink}>+ Lägg till kontakt</Text>
@@ -1919,33 +1971,101 @@ export default function LeverantorerTable({
                             {supplier.companyName || '—'}
                           </Text>
                         </View>
-                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
-                          <TextInput
-                            value={contactDrafts[supplier.id]?.role ?? ''}
-                            onChangeText={(v) =>
+                        <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role, position: 'relative' as const }]}>
+                          {(() => {
+                            const roleDraft = String(contactDrafts[supplier.id]?.role ?? '').trim();
+                            const roleSuggestions = roleDraft
+                              ? existingRoles.filter((r) => r.toLowerCase().includes(roleDraft.toLowerCase())).slice(0, 8)
+                              : [];
+                            const isExactMatch = roleDraft && existingRoles.some((r) => r.trim().toLowerCase() === roleDraft.toLowerCase());
+                            const highlightIdx = Math.min(Math.max(0, roleDropdownHighlight[supplier.id] ?? 0), Math.max(0, roleSuggestions.length - 1));
+                            const selectRole = (roleStr: string) => {
                               setContactDrafts((prev) => ({
                                 ...prev,
-                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: v, email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
-                              }))
-                            }
-                            placeholder="Roll"
-                            style={[styles.contactInput, { flex: 1 }]}
-                            placeholderTextColor="#94a3b8"
-                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
-                          />
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: roleStr, email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }));
+                              setRoleDropdownHighlight((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
+                            };
+                            const handleRoleKey = (e: React.KeyboardEvent) => {
+                              if (Platform.OS !== 'web') return;
+                              const key = (e.nativeEvent as KeyboardEvent).key ?? (e as unknown as { key?: string }).key;
+                              if (roleSuggestions.length === 0) return;
+                              if (key === 'ArrowDown') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setRoleDropdownHighlight((prev) => ({ ...prev, [supplier.id]: Math.min((prev[supplier.id] ?? 0) + 1, roleSuggestions.length - 1) }));
+                              } else if (key === 'ArrowUp') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setRoleDropdownHighlight((prev) => ({ ...prev, [supplier.id]: Math.max((prev[supplier.id] ?? 0) - 1, 0) }));
+                              } else if (key === 'Enter') {
+                                const sel = roleSuggestions[highlightIdx];
+                                if (sel != null) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  selectRole(sel);
+                                }
+                              }
+                            };
+                            return (
+                              <>
+                                <View
+                                  style={{ flex: 1, minWidth: 0 }}
+                                  {...(Platform.OS === 'web' ? { onKeyDownCapture: handleRoleKey } : {})}
+                                >
+                                  <TextInput
+                                    value={contactDrafts[supplier.id]?.role ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: v, email: prev[supplier.id]?.email ?? '', phone: prev[supplier.id]?.phone ?? '', workPhone: prev[supplier.id]?.workPhone ?? '' },
+                                      }))
+                                    }
+                                    placeholder="Roll (t.ex. V för VD)"
+                                    style={[styles.contactInput, { flex: 1 }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                {roleSuggestions.length > 0 && !isExactMatch ? (
+                                  <View style={styles.roleDropdownWrap}>
+                                    <ScrollView nestedScrollEnabled showsVerticalScrollIndicator style={{ maxHeight: 196 }}>
+                                      {roleSuggestions.map((roleStr, rIdx) => (
+                                        <TouchableOpacity
+                                          key={roleStr}
+                                          style={[
+                                            styles.roleDropdownRow,
+                                            rIdx === roleSuggestions.length - 1 ? styles.roleDropdownRowLast : null,
+                                            rIdx === highlightIdx ? styles.roleDropdownRowHighlight : null,
+                                          ]}
+                                          onPress={() => selectRole(roleStr)}
+                                          activeOpacity={0.7}
+                                          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                        >
+                                          <Text style={[styles.openContactTableCell, { fontSize: 13 }]} numberOfLines={1}>{roleStr}</Text>
+                                        </TouchableOpacity>
+                                      ))}
+                                    </ScrollView>
+                                  </View>
+                                ) : null}
+                              </>
+                            );
+                          })()}
                         </View>
                         <View style={[styles.cellFixed, { width: FIXED_CONTACT.mobile }]}>
                           <TextInput
-                            value={contactDrafts[supplier.id]?.phone ?? ''}
-                            onChangeText={(v) =>
+                            value={formatMobileDisplay(contactDrafts[supplier.id]?.phone ?? '')}
+                            onChangeText={(v) => {
+                              const digits = String(v ?? '').replace(/\D/g, '').slice(0, 10);
                               setContactDrafts((prev) => ({
                                 ...prev,
-                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: prev[supplier.id]?.role ?? '', email: prev[supplier.id]?.email ?? '', phone: v, workPhone: prev[supplier.id]?.workPhone ?? '' },
-                              }))
-                            }
+                                [supplier.id]: { name: prev[supplier.id]?.name ?? '', role: prev[supplier.id]?.role ?? '', email: prev[supplier.id]?.email ?? '', phone: digits, workPhone: prev[supplier.id]?.workPhone ?? '' },
+                              }));
+                            }}
                             placeholder="Mobil"
                             style={[styles.contactInput, { width: FIXED_CONTACT.mobile }]}
                             placeholderTextColor="#94a3b8"
+                            keyboardType="phone-pad"
                             {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
                           />
                         </View>
@@ -1976,30 +2096,42 @@ export default function LeverantorerTable({
                             placeholder="E-post"
                             style={[styles.contactInput, { flex: 1 }]}
                             placeholderTextColor="#94a3b8"
-                            {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                            {...(Platform.OS === 'web' ? {
+                              outlineStyle: 'none',
+                              onKeyDown: (e: React.KeyboardEvent) => {
+                                if ((e.nativeEvent as KeyboardEvent).key === 'Enter') {
+                                  e.preventDefault();
+                                  submitDraft(supplier);
+                                }
+                              },
+                            } : {})}
                           />
                         </View>
-                        <View style={styles.openContactTableKebabCol}>
-                          <TouchableOpacity
-                            style={[styles.openActionBtn, { backgroundColor: '#e0f2fe' }]}
-                            onPress={() => submitDraft(supplier)}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openActionBtnText}>Lägg till</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.openActionBtn, { marginLeft: 6 }]}
-                            onPress={() => {
-                              setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
-                              setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
-                              setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
-                            }}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                          >
-                            <Text style={styles.openActionBtnText}>Avbryt</Text>
-                          </TouchableOpacity>
+                        <View style={[styles.openContactTableKebabCol, { flexDirection: 'row', minWidth: 76, width: undefined, maxWidth: undefined, justifyContent: 'flex-end' }]}>
+                          <View style={styles.openContactActionRow}>
+                            <TouchableOpacity
+                              style={[styles.openContactActionIconBtn, { backgroundColor: '#e0f2fe', borderColor: '#7dd3fc' }]}
+                              onPress={() => submitDraft(supplier)}
+                              activeOpacity={0.8}
+                              accessibilityLabel="Lägg till"
+                              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                            >
+                              <Ionicons name="checkmark" size={18} color="#0369a1" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.openContactActionIconBtn, { backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }]}
+                              onPress={() => {
+                                setEditingSection((prev) => ({ ...prev, [supplier.id]: null }));
+                                setContactDrafts((prev) => ({ ...prev, [supplier.id]: { name: '', role: '', email: '', phone: '', workPhone: '' } }));
+                                setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[supplier.id]; return n; });
+                              }}
+                              activeOpacity={0.8}
+                              accessibilityLabel="Avbryt"
+                              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                            >
+                              <Ionicons name="close" size={18} color="#64748b" />
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       </View>
                       {(() => {

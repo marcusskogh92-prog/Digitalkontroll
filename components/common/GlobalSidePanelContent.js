@@ -73,15 +73,15 @@ const REGISTER_RELATIONER_ITEMS = [
   { key: 'kunder', label: 'Kunder', route: 'Customers' },
 ];
 
-/** Register – Struktur: Byggdelar, Kontoplan, Kategorier, Mallar */
+/** Register – Struktur: Byggdelar, Konto, Kategorier, Mallar */
 const REGISTER_STRUKTUR_ITEMS = [
   { key: 'byggdelar', label: 'Byggdelar', route: 'ManageCompany', focus: 'byggdel' },
-  { key: 'konton', label: 'Kontoplan', route: 'ManageCompany', focus: 'kontoplan' },
+  { key: 'konton', label: 'Konto', route: 'ManageCompany', focus: 'kontoplan' },
   { key: 'kategorier', label: 'Kategorier', route: 'ManageCompany', focus: 'kategorier' },
   { key: 'mallar', label: 'Mallar', openModal: 'openMallarModal' },
 ];
 
-/** Register-panel med grupper: Relationer (Kontakter, Leverantörer, Kunder) och Struktur (Byggdelar, Kontoplan, Kategorier). */
+/** Register-panel med grupper: Relationer (Kontakter, Leverantörer, Kunder) och Struktur (Byggdelar, Konto, Kategorier). */
 function RegisterSection({ activeRouteName, activeItemKey, onPress }) {
   const [hoveredKey, setHoveredKey] = useState(null);
 

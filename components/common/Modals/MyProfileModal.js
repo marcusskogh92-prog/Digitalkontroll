@@ -106,6 +106,7 @@ export default function MyProfileModal({ visible, companyId, onClose, onSaved })
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showCurrentPw, setShowCurrentPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
@@ -566,6 +567,7 @@ export default function MyProfileModal({ visible, companyId, onClose, onSaved })
           <Text style={labelStyle}>Nuvarande lösenord</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <TextInput
+              key={`current-pw-${showCurrentPw ? 'visible' : 'hidden'}`}
               value={currentPassword}
               onChangeText={setCurrentPassword}
               placeholder="Nuvarande lösenord"
@@ -595,6 +597,7 @@ export default function MyProfileModal({ visible, companyId, onClose, onSaved })
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <TextInput
+              key={`new-pw-${showNewPw ? 'visible' : 'hidden'}`}
               value={newPassword}
               onChangeText={setNewPassword}
               placeholder="Minst 6 tecken"
@@ -609,14 +612,20 @@ export default function MyProfileModal({ visible, companyId, onClose, onSaved })
         </View>
         <View>
           <Text style={labelStyle}>Bekräfta nytt lösenord</Text>
-          <TextInput
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Upprepa nytt lösenord"
-            secureTextEntry
-            style={inputStyle}
-            editable={!changingPassword}
-          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput
+              key={`confirm-pw-${showConfirmPw ? 'visible' : 'hidden'}`}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Upprepa nytt lösenord"
+              secureTextEntry={!showConfirmPw}
+              style={[inputStyle, { flex: 1 }]}
+              editable={!changingPassword}
+            />
+            <TouchableOpacity onPress={() => setShowConfirmPw(p => !p)} style={{ padding: 8 }}>
+              <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{showConfirmPw ? 'Dölj' : 'Visa'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         {passwordError ? <Text style={{ fontSize: 12, color: '#b91c1c', fontFamily: FONT_FAMILY }}>{passwordError}</Text> : null}
         {passwordSuccess ? <Text style={{ fontSize: 12, color: '#15803d', fontFamily: FONT_FAMILY }}>{passwordSuccess}</Text> : null}
@@ -648,6 +657,28 @@ export default function MyProfileModal({ visible, companyId, onClose, onSaved })
       contentStyle={{ padding: 0, flex: 1, minHeight: 0 }}
     >
       <View style={{ flex: 1, minHeight: 0 }}>
+        {(loading || saving || changingPassword || cropUploading) ? (
+          <View
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 1000,
+              backgroundColor: 'rgba(255,255,255,0.55)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <View style={{ backgroundColor: '#111827', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, minWidth: 260, maxWidth: 360, alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '800', marginTop: 8, fontSize: 13, textAlign: 'center', fontFamily: FONT_FAMILY }}>
+                {loading ? 'Laddar…' : saving ? 'Sparar…' : changingPassword ? 'Byter lösenord…' : 'Laddar upp profilbild…'}
+              </Text>
+            </View>
+          </View>
+        ) : null}
         {tabBar}
         {error ? (
           <View style={{ margin: D.contentPadding, marginBottom: 0, padding: 12, borderRadius: 8, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>

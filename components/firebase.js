@@ -201,7 +201,7 @@ export async function clearPlaneringPresence(companyId, tabId, userId) {
 }
 
 // Callable wrappers
-export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset, permissions }) {
+export async function createUserRemote({ companyId, email, displayName, role, password, firstName, lastName, avatarPreset, permissions, phone, workPhone }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'createUser');
   const payload = { companyId, email, displayName };
@@ -211,6 +211,8 @@ export async function createUserRemote({ companyId, email, displayName, role, pa
   if (lastName !== undefined) payload.lastName = lastName;
   if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
   if (Array.isArray(permissions)) payload.permissions = permissions;
+  if (phone !== undefined) payload.phone = phone;
+  if (workPhone !== undefined) payload.workPhone = workPhone;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
@@ -222,7 +224,7 @@ export async function deleteUserRemote({ companyId, uid }) {
   return res && res.data ? res.data : res;
 }
 
-export async function updateUserRemote({ companyId, uid, displayName, email, role, password, disabled, photoURL, avatarPreset, permissions }) {
+export async function updateUserRemote({ companyId, uid, displayName, email, role, password, disabled, photoURL, avatarPreset, permissions, phone, workPhone }) {
   if (!functionsClient) throw new Error('Functions client not initialized');
   const fn = httpsCallable(functionsClient, 'updateUser');
   const payload = { companyId, uid };
@@ -234,6 +236,8 @@ export async function updateUserRemote({ companyId, uid, displayName, email, rol
   if (photoURL !== undefined) payload.photoURL = photoURL;
   if (avatarPreset !== undefined) payload.avatarPreset = avatarPreset;
   if (permissions !== undefined) payload.permissions = permissions;
+  if (phone !== undefined) payload.phone = phone;
+  if (workPhone !== undefined) payload.workPhone = workPhone;
   const res = await fn(payload);
   return res && res.data ? res.data : res;
 }
@@ -1492,6 +1496,32 @@ export async function upsertCompanyMember({ companyId: companyIdOverride, uid, d
   } catch(_e) {
     return false;
   }
+}
+
+/**
+ * Bygger visningsnamn från medlemsprofil med stor bokstav i för- och efternamn.
+ * Prioritet: firstName + lastName, sedan displayName/name, sedan email.
+ */
+function formatMemberDisplayNameForProject(profile = {}) {
+  const first = String(profile?.firstName ?? '').trim();
+  const last = String(profile?.lastName ?? '').trim();
+  if (first || last) {
+    const parts = [first, last].filter(Boolean);
+    const capitalized = parts
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+      .join(' ')
+      .trim();
+    if (capitalized) return capitalized;
+  }
+  const dn = String(profile?.displayName ?? profile?.name ?? '').trim();
+  if (dn) {
+    return dn
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ')
+      .trim();
+  }
+  return String(profile?.email ?? '').trim() || '';
 }
 
 /** Hämta en enskild medlemsprofil (t.ex. för Min profil). Firestore: foretag/{companyId}/members/{uid}. */
@@ -5114,6 +5144,17 @@ export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, p
   const title = String(companyName || '').trim() || String(companyId).trim();
   const ref = doc(db, 'foretag', companyId, 'project_organisation', pid);
 
+  // Hämta skaparens visningsnamn från företagsmedlem så för- och efternamn visas korrekt (t.ex. Anders Weineholm).
+  const creatorUidForName = auth?.currentUser?.uid || null;
+  const creatorProfile = creatorUidForName ? await getCompanyMember(companyId, creatorUidForName) : null;
+  const creatorDisplayName =
+    formatMemberDisplayNameForProject(creatorProfile) ||
+    formatMemberDisplayNameForProject({
+      displayName: auth?.currentUser?.displayName,
+      email: auth?.currentUser?.email,
+    }) ||
+    '—';
+
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const current = snap.exists() ? (snap.data() || {}) : {};
@@ -5170,6 +5211,32 @@ export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, p
       updated = true;
     }
 
+    // Alla nya projekt: skapa automatiskt tilldelad – lägg skaparen i interna gruppen om hen inte redan finns.
+    const internalGroup = groups[idx >= 0 ? idx : groups.length - 1];
+    const members = Array.isArray(internalGroup?.members) ? [...internalGroup.members] : [];
+    const creatorUid = auth?.currentUser?.uid || null;
+    if (creatorUid) {
+      const alreadyInGroup = members.some(
+        (m) => String(m?.source || '').trim() === 'internal' && String(m?.refId || '').trim() === creatorUid
+      );
+      if (!alreadyInGroup) {
+        members.push({
+          id: `creator-${creatorUid}`,
+          source: 'internal',
+          refId: creatorUid,
+          name: creatorDisplayName,
+          company: title,
+          email: String(auth.currentUser?.email || '').trim() || '',
+          phone: String(creatorProfile?.phone || '').trim() || '',
+          workPhone: String(creatorProfile?.workPhone || '').trim() || '',
+          roles: [],
+        });
+        const internalIdx = idx >= 0 ? idx : groups.length - 1;
+        groups[internalIdx] = { ...internalGroup, members };
+        updated = true;
+      }
+    }
+
     if (!updated) {
       return { ok: true, created: false, updated: false, skipped: true, reason: 'already_ok' };
     }
@@ -5190,6 +5257,149 @@ export async function ensureDefaultProjectOrganisationGroup(companyIdOverride, p
     const ensuredId = idx >= 0 ? String(groups[idx]?.id || '').trim() : 'internal-main';
     return { ok: true, created, updated, skipped: false, groupId: ensuredId };
   });
+}
+
+/**
+ * Lägg projektets skapare i interna gruppen (för befintliga projekt där skaparen inte lades till automatiskt).
+ * Används t.ex. när någon klickar "Lägg till skaparen" i Organisation och roller.
+ * - Läser createdBy från projektdokumentet
+ * - Hittar interna gruppen i project_organisation och lägger till skaparen om hen inte redan finns
+ */
+export async function addProjectCreatorToInternalGroup(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) throw new Error('Company ID is required');
+  const pid = String(projectId || '').trim();
+  if (!pid) throw new Error('projectId is required');
+
+  const projectRef = doc(db, 'foretag', companyId, 'projects', pid);
+  const projectSnap = await getDoc(projectRef);
+  if (!projectSnap.exists()) throw new Error('Project not found');
+  const project = projectSnap.data() || {};
+  const creatorUid = String(project?.createdBy || '').trim() || null;
+  if (!creatorUid) return { ok: false, reason: 'no_creator' };
+
+  const memberProfile = await getCompanyMember(companyId, creatorUid);
+  const creatorName =
+    formatMemberDisplayNameForProject(memberProfile) ||
+    formatMemberDisplayNameForProject({ displayName: project?.createdByDisplayName }) ||
+    '—';
+  const creatorEmail = String(memberProfile?.email || memberProfile?.mail || '').trim() || '';
+
+  const orgRef = doc(db, 'foretag', companyId, 'project_organisation', pid);
+  let orgSnap = await getDoc(orgRef);
+  let current = orgSnap.exists() ? (orgSnap.data() || {}) : {};
+  let groups = Array.isArray(current?.groups) ? [...current.groups] : (current?.groups && typeof current.groups === 'object' ? Object.keys(current.groups).sort((a, b) => Number(a) - Number(b)).map((k) => current.groups[k]) : []);
+
+  if (groups.length === 0) {
+    await ensureDefaultProjectOrganisationGroup(companyId, pid, { companyName: String(project?.companyName || project?.projectName || companyId).trim() });
+    orgSnap = await getDoc(orgRef);
+    current = orgSnap.exists() ? (orgSnap.data() || {}) : {};
+    groups = Array.isArray(current?.groups) ? [...current.groups] : [];
+  }
+
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  let idx = groups.findIndex((g) => String(g?.id || '').trim() === 'internal-main');
+  if (idx < 0) idx = groups.findIndex((g) => g?.isInternalMainGroup === true);
+  if (idx < 0) idx = groups.findIndex((g) => norm(g?.groupType) === 'internal');
+  if (idx < 0) return { ok: false, reason: 'no_internal_group' };
+
+  const internalGroup = groups[idx] || {};
+  const members = Array.isArray(internalGroup.members) ? [...internalGroup.members] : [];
+  const alreadyInGroup = members.some(
+    (m) => String(m?.source || '').trim() === 'internal' && String(m?.refId || '').trim() === creatorUid
+  );
+  if (alreadyInGroup) return { ok: true, alreadyInGroup: true };
+
+  const companyProfile = await fetchCompanyProfile(companyId);
+  const companyName = String(companyProfile?.companyName || companyProfile?.name || companyId).trim();
+
+  members.push({
+    id: `creator-${creatorUid}`,
+    source: 'internal',
+    refId: creatorUid,
+    name: creatorName,
+    company: companyName,
+    email: creatorEmail,
+    phone: String(memberProfile?.phone || '').trim() || '',
+    workPhone: String(memberProfile?.workPhone || '').trim() || '',
+    roles: [],
+  });
+  groups[idx] = { ...internalGroup, members };
+
+  await updateDoc(orgRef, {
+    groups,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth?.currentUser?.uid || null,
+  });
+  return { ok: true, added: true };
+}
+
+/**
+ * Uppdaterar namn, telefon och företag för interna medlemmar i project_organisation från
+ * företagets medlemsregister. Anropas t.ex. när Organisation och roller laddas, så att
+ * ändringar i Användare (kontaktregister) speglas i projekten.
+ */
+export async function syncInternalMemberNamesFromCompany(companyIdOverride, projectId) {
+  const companyId = await resolveCompanyId(companyIdOverride, { companyId: companyIdOverride });
+  if (!companyId) return { ok: false, reason: 'no_company' };
+  const pid = String(projectId || '').trim();
+  if (!pid) return { ok: false, reason: 'no_project' };
+
+  const orgRef = doc(db, 'foretag', companyId, 'project_organisation', pid);
+  const orgSnap = await getDoc(orgRef);
+  if (!orgSnap.exists()) return { ok: true, updated: 0 };
+  const current = orgSnap.data() || {};
+  const groups = Array.isArray(current?.groups) ? [...current.groups] : [];
+  let updated = false;
+
+  const companyProfile = await fetchCompanyProfile(companyId);
+  const companyName = String(companyProfile?.companyName || companyProfile?.name || companyId).trim();
+
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi] || {};
+    const members = Array.isArray(group.members) ? [...group.members] : [];
+    let groupChanged = false;
+    for (let mi = 0; mi < members.length; mi++) {
+      const m = members[mi];
+      if (String(m?.source || '').trim() !== 'internal' || !String(m?.refId || '').trim()) continue;
+      const refId = String(m.refId).trim();
+      const profile = await getCompanyMember(companyId, refId);
+      const correctName = formatMemberDisplayNameForProject(profile) || formatMemberDisplayNameForProject({ displayName: m?.name, email: m?.email }) || '';
+      const correctPhone = String(profile?.phone ?? m?.phone ?? '').trim();
+      const correctWorkPhone = String(profile?.workPhone ?? m?.workPhone ?? '').trim();
+      const currentName = String(m?.name || '').trim();
+      const currentPhone = String(m?.phone || '').trim();
+      const currentWorkPhone = String(m?.workPhone || '').trim();
+      const currentCompany = String(m?.company || '').trim();
+      const needsUpdate =
+        (correctName && currentName !== correctName) ||
+        currentPhone !== correctPhone ||
+        currentWorkPhone !== correctWorkPhone ||
+        (companyName && currentCompany !== companyName);
+      if (needsUpdate) {
+        members[mi] = {
+          ...m,
+          ...(correctName ? { name: correctName } : {}),
+          phone: correctPhone,
+          workPhone: correctWorkPhone,
+          company: companyName || currentCompany || m?.company,
+        };
+        groupChanged = true;
+      }
+    }
+    if (groupChanged) {
+      groups[gi] = { ...group, members };
+      updated = true;
+    }
+  }
+
+  if (!updated) return { ok: true, updated: 0 };
+  await updateDoc(orgRef, {
+    groups,
+    updatedAt: serverTimestamp(),
+    updatedBy: auth?.currentUser?.uid || null,
+  });
+  return { ok: true, updated: 1 };
 }
 
 /**

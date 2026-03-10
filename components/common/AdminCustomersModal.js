@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: D.footer.borderTopColor,
     marginTop: 12,
     marginHorizontal: -D.contentPadding,
   },
@@ -199,16 +199,16 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: D.inputRadius,
     backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1e293b', padding: 0, marginLeft: 8 },
   iconBtn: {
     minWidth: 28,
     height: 28,
     paddingHorizontal: 8,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#fff',
+    backgroundColor: D.buttonSecondaryBg,
     borderWidth: 1,
     borderColor: '#ddd',
     flexDirection: 'row',
@@ -220,8 +220,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
@@ -883,8 +883,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
       onClose={onClose}
       title="Kunder"
       subtitle="Administrera kunder"
-      headerVariant="neutral"
-      titleIcon={<Ionicons name="people-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="people-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
       boxStyle={[defaultBoxStyle, boxStyle]}
       overlayStyle={overlayStyle}
       headerProps={headerProps}
@@ -914,7 +914,7 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6 }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: D.buttonPaddingVertical, paddingHorizontal: 10, borderRadius: D.buttonRadius }}
                       onPress={() => setShowInlineAddRow((v) => !v)}
                       activeOpacity={0.7}
                       accessibilityLabel={showInlineAddRow ? 'Dölj Lägg till snabbt-rad' : 'Visa Lägg till snabbt-rad'}
@@ -924,8 +924,8 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     >
                       <Ionicons
                         name={showInlineAddRow ? 'checkbox' : 'square-outline'}
-                        size={18}
-                        color={showInlineAddRow ? '#0ea5e9' : '#94a3b8'}
+                        size={16}
+                        color={showInlineAddRow ? '#334155' : '#94a3b8'}
                       />
                       <Text style={{ fontSize: 12, color: '#475569', fontWeight: '500' }} numberOfLines={1}>
                         Lägg till snabbt
@@ -933,7 +933,6 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                     </TouchableOpacity>
                     {Platform.OS === 'web' && (
                       <>
-                        <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                         <TouchableOpacity
                           style={styles.excelBtn}
                           onPress={(ev) => {
@@ -950,12 +949,11 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                           accessibilityLabel="Importera / exportera Excel"
                           {...(Platform.OS === 'web' ? { cursor: 'pointer', title: 'Importera / exportera Excel' } : {})}
                         >
-                          <Ionicons name="document-outline" size={14} color="#167534" />
-                          <Text style={{ fontSize: 12, fontWeight: '500', color: '#167534' }}>Excel</Text>
+                          <Ionicons name="document-outline" size={14} color="#15803d" />
+                          <Text style={{ fontSize: 12, fontWeight: D.buttonPrimaryFontWeight, color: '#15803d' }}>Excel</Text>
                         </TouchableOpacity>
                       </>
                     )}
-                    <View style={{ width: 1, height: 20, backgroundColor: '#cbd5e1' }} />
                     <TouchableOpacity
                       style={[styles.iconBtn, styles.iconBtnPrimary]}
                       onPress={() => { setFormModalEditCustomer(null); setFormModalVisible(true); }}
@@ -1060,6 +1058,10 @@ export default function AdminCustomersModal({ visible, companyId, onClose }) {
                           c.id === customer.id ? { ...c, contactIds: (c.contactIds || []).filter((id) => id !== contactId) } : c
                         )
                       );
+                    }}
+                    onEditCustomer={(customer) => {
+                      setFormModalEditCustomer(customer);
+                      setFormModalVisible(true);
                     }}
                     inlineEnabled={hasCompany && showInlineAddRow}
                     inlineSaving={inlineSaving}

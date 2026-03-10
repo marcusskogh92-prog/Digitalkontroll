@@ -138,7 +138,7 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: D.footer.borderTopColor,
     marginTop: 12,
     marginHorizontal: -D.contentPadding,
   },
@@ -155,18 +155,19 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: D.inputRadius,
     backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  searchInput: { flex: 1, fontSize: 13, color: '#111', padding: 0, marginLeft: 8 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1e293b', padding: 0, marginLeft: 8 },
   iconBtn: {
     minWidth: 28,
     height: 28,
     paddingHorizontal: 8,
     borderRadius: D.buttonRadius,
-    backgroundColor: '#fff',
+    backgroundColor: D.buttonSecondaryBg,
     borderWidth: 1,
     borderColor: '#ddd',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -175,8 +176,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    paddingVertical: D.buttonPaddingVertical,
+    paddingHorizontal: D.buttonPaddingHorizontal,
     borderRadius: D.buttonRadius,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
@@ -675,8 +676,8 @@ export default function AdminKategoriModal({ visible, companyId, selectionContex
       onClose={onClose}
       title="Kategorier"
       subtitle="Register över kategorier"
-      headerVariant="neutral"
-      titleIcon={<Ionicons name="pricetag-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />}
+      headerVariant="neutralCompact"
+      titleIcon={<Ionicons name="pricetag-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />}
       boxStyle={[defaultBoxStyle, boxStyle]}
       overlayStyle={overlayStyle}
       headerProps={headerProps}

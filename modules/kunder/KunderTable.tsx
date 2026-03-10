@@ -35,8 +35,8 @@ const MIN_COLUMN_WIDTH = 60;
 const RESIZE_HANDLE_WIDTH = 6;
 type ColumnKey = keyof typeof DEFAULT_COLUMN_WIDTHS;
 
-/** Kontakt-tabell i öppet läge: samma kolumner som Kontaktregister. */
-const FLEX_CONTACT = { name: 1.2, role: 1.1, email: 2 } as const;
+/** Kontakt-tabell i öppet läge: Namn, Kund (företag), Roll, Mobil, Arbete, E-post (som Leverantörer). */
+const FLEX_CONTACT = { name: 1.2, company: 1.1, role: 1.1, email: 2 } as const;
 const FIXED_CONTACT = { mobile: 130, workPhone: 150, actions: 30 } as const;
 
 function formatMobileDisplay(value: string | undefined): string {
@@ -129,17 +129,85 @@ const styles = StyleSheet.create({
   detailsRow: {
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    backgroundColor: '#fff',
+    paddingVertical: 0,
+    paddingHorizontal: TABLE.tableCellPaddingHorizontal,
     paddingLeft: 22,
   },
   detailsInner: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f1f5f9',
-    padding: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 0,
+  },
+  /** Tydlig avdelare mellan expanderad rad och nästa (golden rule, som Leverantörer) */
+  detailsDivider: {
+    height: 2,
+    backgroundColor: '#cbd5e1',
+    marginVertical: 16,
+    marginHorizontal: 0,
+    borderRadius: 1,
+  },
+  /** Flikar Information / Kontaktpersoner (samma som Leverantörer) */
+  detailsTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  detailsTab: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -1,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
+  },
+  detailsTabActive: {
+    borderBottomColor: '#2563eb',
+  },
+  detailsTabLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  detailsTabLabelActive: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  /** Information-fliken: etikett-värde rader (golden rule) */
+  infoGrid: {
+    marginBottom: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 12,
+  },
+  infoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    minWidth: 130,
+  },
+  infoValue: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  infoAndraLink: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '500',
+    marginTop: 2,
+    alignSelf: 'flex-start' as const,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {}),
+  },
+  infoRowHover: {
+    backgroundColor: '#f8fafc',
   },
   rowMenuBtn: {
     padding: 4,
@@ -288,6 +356,62 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  /** Sektion Kontaktpersoner – rubrik + Lägg till kontakt (som Leverantörer) */
+  openRelationerSection: {
+    marginBottom: 8,
+  },
+  expanderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    marginBottom: 0,
+  },
+  expanderHeaderTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  openRelationerTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  expanderHeaderActionLink: {
+    marginLeft: 8,
+  },
+  openRelationerActionLink: {
+    fontSize: 13,
+    color: '#2563eb',
+    fontWeight: '500',
+  },
+  openSectionContent: {
+    minHeight: 24,
+    marginBottom: 10,
+  },
+  openSectionContentMuted: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  openContactActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  openContactActionIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   openContactEmailLink: {
     fontSize: 13,
     color: '#2563eb',
@@ -434,6 +558,8 @@ interface KunderTableProps {
     contactId: string,
     patch?: { role?: string; phone?: string; workPhone?: string; email?: string; contactCompanyName?: string }
   ) => void;
+  /** Öppnar redigeringsmodalen för kunden (anropas från Information-flikens "Ändra") */
+  onEditCustomer?: (customer: Customer) => void;
   inlineEnabled?: boolean;
   inlineValues?: {
     name: string;
@@ -477,6 +603,7 @@ export default function KunderTable({
   onAddContact,
   onRemoveContact,
   onLinkContact,
+  onEditCustomer,
   inlineEnabled = false,
   inlineValues,
   inlineSaving = false,
@@ -490,8 +617,12 @@ export default function KunderTable({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [hoveredContactKey, setHoveredContactKey] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  /** Aktiv flik i expanderad rad: information | kontaktpersoner (som Leverantörer) */
+  const [detailsTabByCustomerId, setDetailsTabByCustomerId] = useState<Record<string, 'information' | 'kontaktpersoner'>>({});
   const [editingContactSection, setEditingContactSection] = useState<Record<string, boolean>>({});
   const [openContactEmailHoverId, setOpenContactEmailHoverId] = useState<string | null>(null);
+  /** Hover på Information-flikens rader (webb) */
+  const [infoRowHover, setInfoRowHover] = useState<string | null>(null);
   const [contactDrafts, setContactDrafts] = useState<Record<string, { name: string; role: string; phone: string; workPhone: string; email: string }>>({});
   const [duplicatePrompt, setDuplicatePrompt] = useState<Record<string, { contactId: string; label: string }>>({});
   const [editDraft, setEditDraft] = useState<{
@@ -1030,29 +1161,167 @@ export default function KunderTable({
             </View>
           )}
           {expandedIds[customer.id] ? (
+            <>
             <View style={styles.detailsRow}>
               <View style={styles.detailsInner}>
-                <Text style={styles.contactHeader}>Kontaktpersoner</Text>
-                {(contactMap[customer.id] || []).length > 0 ? (
-                  <View style={styles.openContactTableWrap}>
-                    <View style={styles.openContactTableHeader}>
-                      <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
-                        <Text style={styles.openContactTableHeaderCell}>Namn</Text>
+                {(() => {
+                  const activeTab = detailsTabByCustomerId[customer.id] ?? 'information';
+                  return (
+                    <>
+                      {/* Flikar: Information | Kontaktpersoner (som Leverantörer) */}
+                      <View style={styles.detailsTabsRow}>
+                        <TouchableOpacity
+                          style={[styles.detailsTab, activeTab === 'information' && styles.detailsTabActive]}
+                          onPress={() => setDetailsTabByCustomerId((prev) => ({ ...prev, [customer.id]: 'information' }))}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                        >
+                          <Text style={[styles.detailsTabLabel, activeTab === 'information' && styles.detailsTabLabelActive]}>
+                            Information
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.detailsTab, activeTab === 'kontaktpersoner' && styles.detailsTabActive]}
+                          onPress={() => setDetailsTabByCustomerId((prev) => ({ ...prev, [customer.id]: 'kontaktpersoner' }))}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                        >
+                          <Text style={[styles.detailsTabLabel, activeTab === 'kontaktpersoner' && styles.detailsTabLabelActive]}>
+                            Kontaktpersoner ({(contactMap[customer.id] || []).length})
+                          </Text>
+                        </TouchableOpacity>
                       </View>
-                      <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
-                        <Text style={styles.openContactTableHeaderCell}>Roll</Text>
-                      </View>
-                      <View style={[styles.cellFixed, { width: FIXED_CONTACT.mobile }]}>
-                        <Text style={styles.openContactTableHeaderCell}>Mobil</Text>
-                      </View>
-                      <View style={[styles.cellFixed, { width: FIXED_CONTACT.workPhone }]}>
-                        <Text style={styles.openContactTableHeaderCell}>Arbete</Text>
-                      </View>
-                      <View style={[styles.cellFlex, { flex: FLEX_CONTACT.email }]}>
-                        <Text style={styles.openContactTableHeaderCell}>E-post</Text>
-                      </View>
-                    </View>
-                    {(contactMap[customer.id] || []).map((contact, cIdx) => {
+
+                      {activeTab === 'information' ? (
+                        <View style={styles.infoGrid}>
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === `${customer.id}-org` ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onEditCustomer?.(customer);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover(`${customer.id}-org`),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Personnr / Orgnr</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
+                              <Text style={styles.infoValue}>{formatOrganizationNumber(String(customer.personalOrOrgNumber ?? '')) || '—'}</Text>
+                              {onEditCustomer ? (
+                                <TouchableOpacity onPress={() => onEditCustomer(customer)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === `${customer.id}-address` ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onEditCustomer?.(customer);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover(`${customer.id}-address`),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Adress</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
+                              <Text style={styles.infoValue} numberOfLines={2}>
+                                {[customer.address, [customer.postalCode, customer.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'}
+                              </Text>
+                              {onEditCustomer ? (
+                                <TouchableOpacity onPress={() => onEditCustomer(customer)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                          <View
+                            style={[
+                              styles.infoRow,
+                              Platform.OS === 'web' && infoRowHover === `${customer.id}-type` ? styles.infoRowHover : null,
+                            ]}
+                            {...(Platform.OS === 'web'
+                              ? {
+                                  onContextMenu: (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onEditCustomer?.(customer);
+                                  },
+                                  onMouseEnter: () => setInfoRowHover(`${customer.id}-type`),
+                                  onMouseLeave: () => setInfoRowHover(null),
+                                }
+                              : {})}
+                          >
+                            <Text style={styles.infoLabel}>Kundtyp</Text>
+                            <View style={{ flex: 1, flexDirection: 'column', gap: 2 }}>
+                              <Text style={styles.infoValue}>{safeText(customer.customerType)}</Text>
+                              {onEditCustomer ? (
+                                <TouchableOpacity onPress={() => onEditCustomer(customer)} activeOpacity={0.8}>
+                                  <Text style={styles.infoAndraLink}>Ändra</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
+                        </View>
+                      ) : null}
+
+                      {activeTab === 'kontaktpersoner' ? (
+                        <View style={styles.openRelationerSection}>
+                          <View style={styles.expanderHeader}>
+                            <View style={styles.expanderHeaderTouchable}>
+                              <Text style={[styles.openRelationerTitle, { marginBottom: 0 }]}>Kontaktpersoner</Text>
+                            </View>
+                            {!editingContactSection[customer.id] ? (
+                              <TouchableOpacity
+                                onPress={() => setEditingContactSection((prev) => ({ ...prev, [customer.id]: true }))}
+                                activeOpacity={0.8}
+                                style={styles.expanderHeaderActionLink}
+                                {...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : {})}
+                              >
+                                <Text style={styles.openRelationerActionLink}>+ Lägg till kontakt</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                          <View style={styles.openSectionContent}>
+                            {(contactMap[customer.id] || []).length > 0 ? (
+                              <View style={styles.openContactTableWrap}>
+                                <View style={styles.openContactTableHeader}>
+                                  <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>Namn</Text>
+                                  </View>
+                                  <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>Kund</Text>
+                                  </View>
+                                  <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>Roll</Text>
+                                  </View>
+                                  <View style={[styles.cellFixed, { width: FIXED_CONTACT.mobile }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>Mobil</Text>
+                                  </View>
+                                  <View style={[styles.cellFixed, { width: FIXED_CONTACT.workPhone }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>Arbete</Text>
+                                  </View>
+                                  <View style={[styles.cellFlex, { flex: FLEX_CONTACT.email }]}>
+                                    <Text style={styles.openContactTableHeaderCell}>E-post</Text>
+                                  </View>
+                                  <View style={styles.openContactTableKebabCol} />
+                                </View>
+                                {(contactMap[customer.id] || []).map((contact, cIdx) => {
                       const workPhone = (contact as { workPhone?: string }).workPhone;
                       return (
                         <View
@@ -1077,6 +1346,11 @@ export default function KunderTable({
                           <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
                             <Text style={[styles.openContactTableCell, { fontWeight: '500' }]} numberOfLines={1}>
                               {contact.name || '—'}
+                            </Text>
+                          </View>
+                          <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                            <Text style={[styles.openContactTableCell, styles.openContactTableCellMuted]} numberOfLines={1}>
+                              {customer.name || '—'}
                             </Text>
                           </View>
                           <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
@@ -1118,214 +1392,227 @@ export default function KunderTable({
                               </Text>
                             )}
                           </View>
+                          <View style={styles.openContactTableKebabCol} />
                         </View>
                       );
                     })}
-                  </View>
-                ) : (
-                  <Text style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic', marginBottom: 10 }}>Inga kontakter kopplade</Text>
-                )}
-                {!editingContactSection[customer.id] ? (
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc', marginBottom: 10 }}
-                    onPress={() => setEditingContactSection((prev) => ({ ...prev, [customer.id]: true }))}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                  >
-                    <Ionicons name="add" size={14} color="#64748b" />
-                    <Text style={{ fontSize: 13, color: '#475569', fontWeight: '500' }}>Lägg till kontakt</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {editingContactSection[customer.id] ? (
-                <>
-                <View style={styles.contactRow}>
-                  <TextInput
-                    value={contactDrafts[customer.id]?.name ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: v, role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
-                      }))
-                    }
-                    placeholder="Namn"
-                    style={[styles.contactInput, { flex: FLEX_CONTACT.name }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                  <TextInput
-                    value={contactDrafts[customer.id]?.role ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: v, phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
-                      }))
-                    }
-                    placeholder="Roll"
-                    style={[styles.contactInput, { flex: FLEX_CONTACT.role, marginLeft: 8 }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                  <TextInput
-                    value={contactDrafts[customer.id]?.phone ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: v, workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
-                      }))
-                    }
-                    placeholder="Mobil"
-                    style={[styles.contactInput, { width: FIXED_CONTACT.mobile, marginLeft: 8 }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                  <TextInput
-                    value={contactDrafts[customer.id]?.workPhone ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: v, email: prev[customer.id]?.email ?? '' },
-                      }))
-                    }
-                    placeholder="Arbete"
-                    style={[styles.contactInput, { width: FIXED_CONTACT.workPhone, marginLeft: 8 }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="next"
-                    blurOnSubmit={false}
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                  <TextInput
-                    value={contactDrafts[customer.id]?.email ?? ''}
-                    onChangeText={(v) =>
-                      setContactDrafts((prev) => ({
-                        ...prev,
-                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: v },
-                      }))
-                    }
-                    placeholder="E-post"
-                    style={[styles.contactInput, { flex: FLEX_CONTACT.email, marginLeft: 8 }]}
-                    placeholderTextColor="#94a3b8"
-                    {...(Platform.OS === 'web' ? { outline: 'none' } : {})}
-                    returnKeyType="done"
-                    blurOnSubmit
-                    onSubmitEditing={() => submitDraft(customer)}
-                  />
-                </View>
-                {(() => {
-                  const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
-                  const q = String(draft.name || '').trim().toLowerCase();
-                  const linkedIds = new Set((contactMap[customer.id] || []).map((c) => c.id));
-                  const matches = q
-                    ? contactRegistry.filter((c) => {
-                        const name = String(c?.name || '').toLowerCase();
-                        const email = String(c?.email || '').toLowerCase();
-                        return (name.includes(q) || email.includes(q)) && !linkedIds.has(c.id);
-                      })
-                    : [];
-                  if (!matches.length) return null;
-                  return (
-                    <View style={styles.contactSuggestWrap}>
-                      {matches.slice(0, 6).map((m) => (
-                        <TouchableOpacity
-                          key={`match-${m.id}`}
-                          style={styles.contactSuggestRow}
-                          onPress={() => {
-                            onLinkContact?.(customer, m.id, {
-                              role: draft.role,
-                              phone: draft.phone,
-                              workPhone: draft.workPhone,
-                              email: draft.email,
-                              contactCompanyName: customer.name || '',
-                            });
-                            setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
-                            setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
-                          }}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                        >
-                          <Text style={styles.contactSuggestText}>{m.name}</Text>
-                          {m.email ? (
-                            <Text style={[styles.contactSuggestText, { color: '#64748b' }]}>
-                              {m.email}
-                            </Text>
+                              </View>
+                            ) : (
+                              <Text style={styles.openSectionContentMuted}>Inga kontakter kopplade</Text>
+                            )}
+                          </View>
+                          {editingContactSection[customer.id] ? (
+                            <>
+                              <View style={[styles.openContactTableRow, { marginTop: 8 }]}>
+                                <View style={[styles.cellFlex, { flex: FLEX_CONTACT.name }]}>
+                                  <TextInput
+                                    value={contactDrafts[customer.id]?.name ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [customer.id]: { name: v, role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
+                                      }))
+                                    }
+                                    placeholder="Namn"
+                                    style={[styles.contactInput, { flex: 1 }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                <View style={[styles.cellFlex, { flex: FLEX_CONTACT.company }]}>
+                                  <Text style={[styles.openContactTableCell, styles.openContactTableCellMuted]} numberOfLines={1}>
+                                    {customer.name || '—'}
+                                  </Text>
+                                </View>
+                                <View style={[styles.cellFlex, { flex: FLEX_CONTACT.role }]}>
+                                  <TextInput
+                                    value={contactDrafts[customer.id]?.role ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: v, phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
+                                      }))
+                                    }
+                                    placeholder="Roll"
+                                    style={[styles.contactInput, { flex: 1 }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                <View style={[styles.cellFixed, { width: FIXED_CONTACT.mobile }]}>
+                                  <TextInput
+                                    value={contactDrafts[customer.id]?.phone ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: v, workPhone: prev[customer.id]?.workPhone ?? '', email: prev[customer.id]?.email ?? '' },
+                                      }))
+                                    }
+                                    placeholder="Mobil"
+                                    style={[styles.contactInput, { width: FIXED_CONTACT.mobile }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                <View style={[styles.cellFixed, { width: FIXED_CONTACT.workPhone }]}>
+                                  <TextInput
+                                    value={contactDrafts[customer.id]?.workPhone ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: v, email: prev[customer.id]?.email ?? '' },
+                                      }))
+                                    }
+                                    placeholder="Arbete"
+                                    style={[styles.contactInput, { width: FIXED_CONTACT.workPhone }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                <View style={[styles.cellFlex, { flex: FLEX_CONTACT.email }]}>
+                                  <TextInput
+                                    value={contactDrafts[customer.id]?.email ?? ''}
+                                    onChangeText={(v) =>
+                                      setContactDrafts((prev) => ({
+                                        ...prev,
+                                        [customer.id]: { name: prev[customer.id]?.name ?? '', role: prev[customer.id]?.role ?? '', phone: prev[customer.id]?.phone ?? '', workPhone: prev[customer.id]?.workPhone ?? '', email: v },
+                                      }))
+                                    }
+                                    placeholder="E-post"
+                                    style={[styles.contactInput, { flex: 1 }]}
+                                    placeholderTextColor="#94a3b8"
+                                    {...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {})}
+                                  />
+                                </View>
+                                <View style={[styles.openContactTableKebabCol, { flexDirection: 'row', minWidth: 76, width: undefined, maxWidth: undefined, justifyContent: 'flex-end' }]}>
+                                  <View style={styles.openContactActionRow}>
+                                    <TouchableOpacity
+                                      style={[styles.openContactActionIconBtn, { backgroundColor: '#e0f2fe', borderColor: '#7dd3fc' }]}
+                                      onPress={() => submitDraft(customer)}
+                                      activeOpacity={0.8}
+                                      accessibilityLabel="Lägg till"
+                                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                    >
+                                      <Ionicons name="checkmark" size={18} color="#0369a1" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={[styles.openContactActionIconBtn, { backgroundColor: '#f8fafc', borderColor: '#e2e8f0' }]}
+                                      onPress={() => {
+                                        setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
+                                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
+                                        setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
+                                      }}
+                                      activeOpacity={0.8}
+                                      accessibilityLabel="Avbryt"
+                                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                    >
+                                      <Ionicons name="close" size={18} color="#64748b" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              </View>
+                              {(() => {
+                                const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
+                                const q = String(draft.name || '').trim().toLowerCase();
+                                const linkedIds = new Set((contactMap[customer.id] || []).map((c) => c.id));
+                                const matches = q
+                                  ? contactRegistry.filter((c) => {
+                                      const name = String(c?.name || '').toLowerCase();
+                                      const email = String(c?.email || '').toLowerCase();
+                                      return (name.includes(q) || email.includes(q)) && !linkedIds.has(c.id);
+                                    })
+                                  : [];
+                                if (!matches.length) return null;
+                                return (
+                                  <View style={styles.contactSuggestWrap}>
+                                    {matches.slice(0, 6).map((m) => (
+                                      <TouchableOpacity
+                                        key={`match-${m.id}`}
+                                        style={styles.contactSuggestRow}
+                                        onPress={() => {
+                                          onLinkContact?.(customer, m.id, {
+                                            role: draft.role,
+                                            phone: draft.phone,
+                                            workPhone: draft.workPhone,
+                                            email: draft.email,
+                                            contactCompanyName: customer.name || '',
+                                          });
+                                          setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
+                                          setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
+                                        }}
+                                        activeOpacity={0.8}
+                                        {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                                      >
+                                        <Text style={styles.contactSuggestText}>{m.name}</Text>
+                                        {m.email ? (
+                                          <Text style={[styles.contactSuggestText, { color: '#64748b' }]}>
+                                            {m.email}
+                                          </Text>
+                                        ) : null}
+                                      </TouchableOpacity>
+                                    ))}
+                                  </View>
+                                );
+                              })()}
+                              {duplicatePrompt[customer.id] ? (
+                                <View style={styles.contactHint}>
+                                  <Text style={styles.contactHintText}>
+                                    Det finns redan en kontakt som matchar. Vill du använda befintlig eller skapa ny?
+                                  </Text>
+                                  <TouchableOpacity
+                                    style={styles.contactHintBtn}
+                                    onPress={() => {
+                                      const dup = duplicatePrompt[customer.id];
+                                      if (dup) {
+                                        const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
+                                        onLinkContact?.(customer, dup.contactId, {
+                                          role: draft.role,
+                                          phone: draft.phone,
+                                          workPhone: draft.workPhone,
+                                          email: draft.email,
+                                          contactCompanyName: customer.name || '',
+                                        });
+                                      }
+                                      setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
+                                      setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
+                                      setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
+                                    }}
+                                  >
+                                    <Text style={styles.contactHintBtnText}>Använd befintlig</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={styles.contactHintBtn}
+                                    onPress={() => {
+                                      const draft = contactDrafts[customer.id];
+                                      if (draft?.name?.trim()) {
+                                        onAddContact?.(customer, {
+                                          name: draft.name.trim(),
+                                          role: draft.role?.trim(),
+                                          email: draft.email?.trim(),
+                                          phone: draft.phone?.trim(),
+                                          workPhone: draft.workPhone?.trim(),
+                                        });
+                                      }
+                                      setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
+                                      setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
+                                      setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
+                                    }}
+                                  >
+                                    <Text style={styles.contactHintBtnText}>Skapa ny</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ) : null}
+                            </>
                           ) : null}
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                        </View>
+                      ) : null}
+                    </>
                   );
                 })()}
-                {duplicatePrompt[customer.id] ? (
-                  <View style={styles.contactHint}>
-                    <Text style={styles.contactHintText}>
-                      Det finns redan en kontakt som matchar. Vill du använda befintlig eller skapa ny?
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.contactHintBtn}
-                      onPress={() => {
-                        const dup = duplicatePrompt[customer.id];
-                        if (dup) {
-                          const draft = contactDrafts[customer.id] || { name: '', role: '', phone: '', workPhone: '', email: '' };
-                          onLinkContact?.(customer, dup.contactId, {
-                            role: draft.role,
-                            phone: draft.phone,
-                            workPhone: draft.workPhone,
-                            email: draft.email,
-                            contactCompanyName: customer.name || '',
-                          });
-                        }
-                        setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
-                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
-                        setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
-                      }}
-                    >
-                      <Text style={styles.contactHintBtnText}>Använd befintlig</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.contactHintBtn}
-                      onPress={() => {
-                        const draft = contactDrafts[customer.id];
-                        if (draft?.name?.trim()) {
-                          onAddContact?.(customer, {
-                            name: draft.name.trim(),
-                            role: draft.role?.trim(),
-                            email: draft.email?.trim(),
-                            phone: draft.phone?.trim(),
-                            workPhone: draft.workPhone?.trim(),
-                          });
-                        }
-                        setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
-                        setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
-                        setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
-                      }}
-                    >
-                      <Text style={styles.contactHintBtnText}>Skapa ny</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                <TouchableOpacity
-                  style={{ marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', alignSelf: 'flex-start' }}
-                  onPress={() => {
-                    setEditingContactSection((prev) => ({ ...prev, [customer.id]: false }));
-                    setContactDrafts((prev) => ({ ...prev, [customer.id]: { name: '', role: '', phone: '', workPhone: '', email: '' } }));
-                    setDuplicatePrompt((prev) => { const n = { ...prev }; delete n[customer.id]; return n; });
-                  }}
-                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                >
-                  <Text style={{ fontSize: 13, color: '#475569', fontWeight: '500' }}>Avbryt</Text>
-                </TouchableOpacity>
-                </>
-                ) : null}
               </View>
             </View>
+            <View style={styles.detailsDivider} />
+            </>
           ) : null}
         </View>
       ))}

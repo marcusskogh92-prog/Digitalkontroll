@@ -3002,7 +3002,7 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
         onClose={() => setEditingUser(null)}
         saving={savingUser}
         errorMessage={editingUserError}
-        onSave={async ({ firstName, lastName, email, role, password, avatarPreset, avatarFile }) => {
+        onSave={async ({ firstName, lastName, email, role, password, avatarPreset, avatarFile, phone, workPhone }) => {
           if (!editingUser) return;
           const displayName = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim() || (email ? email.split('@')[0] : '');
           setEditingUserError('');
@@ -3019,6 +3019,8 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                 firstName: (firstName || '').trim(),
                 lastName: (lastName || '').trim(),
                 avatarPreset: avatarPreset || undefined,
+                phone: phone || undefined,
+                workPhone: workPhone || undefined,
               });
               const newUid = createRes && (createRes.uid || (createRes.data && createRes.data.uid)) ? (createRes.uid || (createRes.data && createRes.data.uid)) : null;
               const tempPassword = createRes && (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) ? (createRes.tempPassword || (createRes.data && createRes.data.tempPassword)) : null;
@@ -3077,8 +3079,8 @@ function ProjectSidebar({ onSelectProject, onSelectFunction, title = 'Projektlis
                     photoURL = undefined;
                   }
                 }
-                await updateUserRemote({ companyId: editingUser.companyId, uid, displayName, email, role: theRole, password, photoURL, avatarPreset: avatarPreset || undefined });
-                try { await saveUserProfile(uid, { displayName, email, firstName, lastName, avatarPreset: avatarPreset || null, photoURL: photoURL || null }); } catch(_e) {}
+                await updateUserRemote({ companyId: editingUser.companyId, uid, displayName, email, role: theRole, password, photoURL, avatarPreset: avatarPreset || undefined, phone: phone || undefined, workPhone: workPhone || undefined });
+                try { await saveUserProfile(uid, { displayName, email, firstName, lastName, avatarPreset: avatarPreset || null, photoURL: photoURL || null, phone: phone || null, workPhone: workPhone || null }); } catch(_e) {}
                 try {
                   if (auth && auth.currentUser && typeof auth.currentUser.getIdToken === 'function') {
                     await auth.currentUser.getIdToken(true);

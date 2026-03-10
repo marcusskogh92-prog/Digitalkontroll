@@ -16,9 +16,6 @@ function calcSortKey(section) {
   return 10_000;
 }
 
-/** Sektioner markerade som klara under uppbyggnad – radera när alla är klara. */
-const COMPLETED_SECTIONS_DEV = ['forfragningsunderlag', 'bilder', 'fragaSvar', 'anbud', 'kalkyl'];
-
 function sortSections(sections) {
   return [...(sections || [])].sort((a, b) => {
     const ak = calcSortKey(a);
@@ -118,14 +115,6 @@ export default function ProjectTopbar({ sections: sectionsProp, activeSection, o
                       size="small"
                       color={isActive ? (PRIMARY_TOPBAR.textActive || '#1e293b') : '#94a3b8'}
                       style={{ marginLeft: 6 }}
-                    />
-                  ) : COMPLETED_SECTIONS_DEV.includes(sectionId) ? (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={16}
-                      color="#22c55e"
-                      style={{ marginLeft: 6 }}
-                      accessibilityLabel="Klart"
                     />
                   ) : null}
                 </View>

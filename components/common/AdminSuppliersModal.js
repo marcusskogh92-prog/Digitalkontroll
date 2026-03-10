@@ -1031,12 +1031,33 @@ export default function AdminSuppliersModal({ visible, companyId, onClose }) {
 
   const contactsBySupplierId = useMemo(() => {
     const out = {};
+    const contactList = contacts || [];
     (suppliers || []).forEach((s) => {
-      const ids = s.contactIds || [];
-      out[s.id] = ids
-        .map((id) => contacts.find((c) => c.id === id))
-        .filter(Boolean)
-        .map((c) => ({ id: c.id, name: c.name, role: c.role, email: c.email, phone: c.phone }));
+      const seen = new Set();
+      const list = [];
+      const add = (c) => {
+        if (!c || seen.has(c.id)) return;
+        seen.add(c.id);
+        list.push({ id: c.id, name: c.name, role: c.role, email: c.email, phone: c.phone });
+      };
+      // 1) Kontakter som finns i leverantörens contactIds (kopplade från leverantörsmodalen)
+      (s.contactIds || []).forEach((id) => {
+        const c = contactList.find((x) => x.id === id);
+        if (c) add(c);
+      });
+      // 2) Kontakter som har linkedSupplierId = denna leverantör (t.ex. kopplade från Kontaktregistret)
+      contactList.forEach((c) => {
+        if (String(c?.linkedSupplierId || '').trim() === s.id) add(c);
+      });
+      // 3) Kontakter som har contactCompanyName = leverantörens företagsnamn (Kontaktregistret, Företag = Wilzéns Mark)
+      const supplierNameNorm = String(s.companyName || '').trim().toLowerCase();
+      if (supplierNameNorm) {
+        contactList.forEach((c) => {
+          const cn = String(c?.contactCompanyName || '').trim().toLowerCase();
+          if (cn && cn === supplierNameNorm) add(c);
+        });
+      }
+      out[s.id] = list;
     });
     return out;
   }, [suppliers, contacts]);

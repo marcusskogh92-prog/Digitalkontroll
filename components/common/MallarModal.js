@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   },
   toolbarDivider: {
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: D.footer.borderTopColor,
     marginTop: 12,
     marginHorizontal: -D.contentPadding,
   },
@@ -655,9 +655,9 @@ export default function MallarModal({ visible, companyId, onClose }) {
       onClose={onClose}
       title="Mallar"
       subtitle={subtitle}
-      headerVariant="neutral"
+      headerVariant="neutralCompact"
       titleIcon={
-        <Ionicons name="document-text-outline" size={D.headerNeutralIconSize} color={D.headerNeutralTextColor} />
+        <Ionicons name="document-text-outline" size={D.headerNeutralCompactIconPx} color={D.headerNeutralTextColor} />
       }
       boxStyle={[defaultBoxStyle, boxStyle]}
       overlayStyle={overlayStyle}

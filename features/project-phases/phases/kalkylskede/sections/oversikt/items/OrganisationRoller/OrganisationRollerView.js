@@ -16,10 +16,12 @@ import ContextMenu from '../../../../../../../../components/ContextMenu';
 import { MODAL_DESIGN_2026 } from '../../../../../../../../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../../../../../../../../constants/tableLayout';
 import {
+  addProjectCreatorToInternalGroup,
   ensureDefaultProjectOrganisationGroup,
   fetchCompanyCustomers,
   fetchCompanyProfile,
   fetchCompanySuppliers,
+  syncInternalMemberNamesFromCompany,
 } from '../../../../../../../../components/firebase';
 import { useProjectOrganisation } from '../../../../../../../../hooks/useProjectOrganisation';
 
@@ -314,6 +316,8 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   const [pendingByGroup, setPendingByGroup] = useState(() => ({}));
   const [savingGroupId, setSavingGroupId] = useState(null);
   const [savedFlashByGroup, setSavedFlashByGroup] = useState(() => ({}));
+  const [creatorAddInProgress, setCreatorAddInProgress] = useState(false);
+  const syncNamesOnceRef = useRef(false);
 
   /** Justerbara kolumnbredder (golden rule §7) – delas mellan alla grupptabeller. */
   const [orgTableColumnWidths, setOrgTableColumnWidths] = useState(() => ({ ...ORG_TABLE_DEFAULT_WIDTHS }));
@@ -328,6 +332,20 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
     const map = pendingByGroup && typeof pendingByGroup === 'object' ? pendingByGroup : {};
     return Object.keys(map).some((gid) => pendingHasChanges(map[gid]));
   }, [pendingByGroup]);
+
+  const creatorMissing = useMemo(() => {
+    const createdBy = String(project?.createdBy || '').trim();
+    if (!createdBy) return false;
+    const internalGroup = (Array.isArray(groups) ? groups : []).find(
+      (g) => String(g?.id || '').trim() === 'internal-main' || g?.isInternalMainGroup === true
+    );
+    if (!internalGroup) return true;
+    const members = Array.isArray(internalGroup.members) ? internalGroup.members : [];
+    const creatorInGroup = members.some(
+      (m) => String(m?.source || '').trim() === 'internal' && String(m?.refId || '').trim() === createdBy
+    );
+    return !creatorInGroup;
+  }, [project?.createdBy, groups]);
 
   const startOrgTableResize = useCallback((column, e, autoFitFn) => {
     if (Platform.OS !== 'web') return;
@@ -359,6 +377,13 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
   useEffect(() => {
     dirtyRef.current = !!pendingAny;
   }, [pendingAny]);
+
+  // Synka interna medlemmars namn från företagsprofil (t.ex. "anders" -> "Anders Weineholm") en gång när vyn laddats.
+  useEffect(() => {
+    if (!companyId || !projectId || loading || syncNamesOnceRef.current) return;
+    syncNamesOnceRef.current = true;
+    syncInternalMemberNamesFromCompany(companyId, projectId).catch(() => {});
+  }, [companyId, projectId, loading]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -1038,6 +1063,43 @@ export default function OrganisationRollerView({ projectId, companyId, project, 
       {error ? (
         <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#FFEBEE', borderWidth: 1, borderColor: '#FFCDD2', marginBottom: 14 }}>
           <Text style={{ fontSize: 13, color: '#C62828' }}>{error}</Text>
+        </View>
+      ) : null}
+
+      {hasContext && creatorMissing && !loading ? (
+        <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#E3F2FD', borderWidth: 1, borderColor: '#90CAF9', marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <Text style={{ fontSize: 13, color: '#1565C0', flex: 1, minWidth: 0 }}>
+            Projektets skapare är inte tillagd i interna gruppen och har därmed inte åtkomst. Lägg till skaparen så att hen får tillgång.
+          </Text>
+          <Pressable
+            onPress={async () => {
+              if (!companyId || !projectId || creatorAddInProgress) return;
+              setCreatorAddInProgress(true);
+              try {
+                const res = await addProjectCreatorToInternalGroup(companyId, projectId);
+                if (res?.ok && (res?.added || res?.alreadyInGroup)) {
+                  // Hook uppdateras via onSnapshot
+                } else if (res?.ok === false && res?.reason) {
+                  Alert.alert('Kunde inte lägga till skaparen', res.reason === 'no_creator' ? 'Projektet har ingen sparad skapare.' : res.reason);
+                }
+              } catch (e) {
+                Alert.alert('Fel', e?.message || 'Kunde inte lägga till skaparen.');
+              } finally {
+                setCreatorAddInProgress(false);
+              }
+            }}
+            disabled={creatorAddInProgress}
+            style={({ hovered, pressed }) => ({
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 8,
+              backgroundColor: creatorAddInProgress ? '#9CA3AF' : (hovered || pressed ? COLORS.blueHover : COLORS.blue),
+            })}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>
+              {creatorAddInProgress ? 'Lägger till…' : 'Lägg till skaparen'}
+            </Text>
+          </Pressable>
         </View>
       ) : null}
 

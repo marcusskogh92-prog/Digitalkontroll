@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { MODAL_DESIGN_2026 as D } from '../constants/modalDesign2026';
 import { LEFT_NAV } from '../constants/leftNavTheme';
+import { formatMobileDisplay, mobileDigitsOnly } from '../utils/formatPhone';
 import { useDraggableResizableModal } from '../hooks/useDraggableResizableModal';
 import ModalBase from './common/ModalBase';
 
@@ -144,6 +145,8 @@ export default function UserEditModal({
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [workPhone, setWorkPhone] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('user');
   const [showPassword, setShowPassword] = useState(false);
@@ -152,6 +155,7 @@ export default function UserEditModal({
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('');
   const [disabled, setDisabled] = useState(false);
   const [permissions, setPermissions] = useState([]);
+  const [activeTab, setActiveTab] = useState('information'); // 'information' | 'permissions'
   const avatarUploadInputRef = useRef(null);
 
   const { boxStyle: dragBoxStyle, overlayStyle, headerProps, resizeHandles } = useDraggableResizableModal(visible, {
@@ -243,11 +247,14 @@ export default function UserEditModal({
 
   useEffect(() => {
     if (!visible) return;
+    setActiveTab('information');
     const dn = String(member?.displayName || '').trim();
     const parts = dn ? dn.split(' ') : [];
     setFirstName(parts.slice(0, parts.length - 1).join(' ') || (member?.firstName || ''));
     setLastName(parts.length > 1 ? parts.slice(-1).join(' ') : (member?.lastName || ''));
     setEmail(isNew ? '' : (member?.email || ''));
+    setPhone(isNew ? '' : String(member?.phone || '').trim());
+    setWorkPhone(isNew ? '' : String(member?.workPhone || '').trim());
     const isSuperMember = !!(member && (member.role === 'superadmin' || member.superadmin));
     const adminGuess = !!(member && (member.isAdmin || member.admin || member.role === 'admin' || member.access === 'admin' || isSuperMember));
     if (isSuperMember && isMsBygg) setRole('superadmin');
@@ -345,6 +352,8 @@ export default function UserEditModal({
                 firstName,
                 lastName,
                 email,
+                phone: String(phone || '').trim().replace(/\D/g, '') || undefined,
+                workPhone: String(workPhone || '').trim() || undefined,
                 role,
                 password,
                 disabled,
@@ -419,9 +428,41 @@ export default function UserEditModal({
           </View>
         ) : null}
 
-        {/* Layout som Min profil: vänster avatar, höger formulär */}
+        {/* Flikar: Information | Behörigheter */}
+        <View style={{ flexDirection: 'row', marginBottom: D.sectionGap ?? 16, borderBottomWidth: 1, borderColor: '#E2E8F0', gap: 0 }}>
+          <TouchableOpacity
+            onPress={() => setActiveTab('information')}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              borderBottomWidth: 2,
+              borderBottomColor: activeTab === 'information' ? (D.buttonPrimaryBg ?? '#2D3A4B') : 'transparent',
+              marginBottom: -1,
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: activeTab === 'information' ? '#1e293b' : '#64748b', fontFamily: FONT_FAMILY }}>
+              Information
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setActiveTab('permissions')}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              borderBottomWidth: 2,
+              borderBottomColor: activeTab === 'permissions' ? (D.buttonPrimaryBg ?? '#2D3A4B') : 'transparent',
+              marginBottom: -1,
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '600', color: activeTab === 'permissions' ? '#1e293b' : '#64748b', fontFamily: FONT_FAMILY }}>
+              Behörigheter
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {activeTab === 'information' ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20, marginBottom: 14 }}>
-          {/* Vänster: avatar som Min profil – uppladdad bild eller initialer/grå ikon, "+ Byt bild" / "Ta bort bild" */}
+          {/* Vänster: avatar – uppladdad bild eller initialer, "+ Byt bild" / "Ta bort bild" */}
           <View style={{ alignItems: 'center' }}>
             <View
               style={{
@@ -507,105 +548,32 @@ export default function UserEditModal({
               ) : null}
             </View>
 
-            {/* Åtkomst & roll */}
-            <View style={{ marginBottom: 12 }}>
-              <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Åtkomst & roll</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', backgroundColor: '#F1F5F9', borderRadius: D.buttonRadius, padding: 3, alignSelf: 'flex-start' }}>
-                {isMsBygg ? (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setRole('superadmin');
-                      if (role !== 'superadmin') setPermissions([...ALL_PERMISSION_KEYS]);
-                    }}
-                    style={{
-                      paddingVertical: 6,
-                      paddingHorizontal: 12,
-                      borderRadius: D.buttonRadius,
-                      backgroundColor: role === 'superadmin' ? '#1e293b' : 'transparent',
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'superadmin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Superadmin</Text>
-                  </TouchableOpacity>
-                ) : null}
-                <TouchableOpacity
-                  onPress={() => {
-                    setRole('admin');
-                    if (role !== 'admin') setPermissions([...ALL_PERMISSION_KEYS]);
-                  }}
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 12,
-                    borderRadius: D.buttonRadius,
-                    backgroundColor: role === 'admin' ? '#1e293b' : 'transparent',
-                  }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'admin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Admin</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setRole('user')}
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 12,
-                    borderRadius: D.buttonRadius,
-                    backgroundColor: role === 'user' ? '#1e293b' : 'transparent',
-                  }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'user' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Användare</Text>
-                </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={labelStyle}>Mobil</Text>
+                <TextInput
+                  value={formatMobileDisplay(phone)}
+                  onChangeText={(v) => setPhone(mobileDigitsOnly(v))}
+                  placeholder="T.ex. 070 123 45 67"
+                  keyboardType="phone-pad"
+                  style={inputStyle}
+                  editable={!saving}
+                />
               </View>
-              {(role === 'admin' || role === 'superadmin') ? (
-                <View style={{ marginTop: 8, padding: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 10, fontFamily: FONT_FAMILY }}>Admin-behörigheter</Text>
-                  <View style={{ flexDirection: 'row', gap: 20 }}>
-                    {PERMISSION_GROUPS.map((group) => (
-                      <View key={group.title} style={{ flex: 1, minWidth: 0 }}>
-                        <TouchableOpacity
-                          onPress={() => toggleGroup(group.keys)}
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
-                        >
-                          <View style={{
-                            width: 16,
-                            height: 16,
-                            borderRadius: 3,
-                            borderWidth: 1,
-                            borderColor: '#64748b',
-                            backgroundColor: isGroupAllChecked(group.keys) ? '#1e293b' : 'transparent',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                            {isGroupAllChecked(group.keys) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
-                          </View>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#1e293b', fontFamily: FONT_FAMILY }}>{group.title}</Text>
-                        </TouchableOpacity>
-                        {group.keys.map((key) => (
-                          <TouchableOpacity
-                            key={key}
-                            onPress={() => togglePermission(key)}
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, marginLeft: 24 }}
-                          >
-                            <View style={{
-                              width: 16,
-                              height: 16,
-                              borderRadius: 3,
-                              borderWidth: 1,
-                              borderColor: '#94a3b8',
-                              backgroundColor: permissions.includes(key) ? '#1e293b' : 'transparent',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}>
-                              {permissions.includes(key) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
-                            </View>
-                            <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{getPermissionLabel(key)}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
+              <View style={{ flex: 1 }}>
+                <Text style={labelStyle}>Arbete</Text>
+                <TextInput
+                  value={workPhone}
+                  onChangeText={(v) => setWorkPhone(String(v).trim().slice(0, 30))}
+                  placeholder="T.ex. 08-123 456 78"
+                  keyboardType="phone-pad"
+                  style={inputStyle}
+                  editable={!saving}
+                />
+              </View>
             </View>
 
-            {/* Lösenord (endast ny användare) */}
+            {/* Lösenord (endast ny användare) – visas under Information */}
             {isNew ? (
               <View style={{ marginBottom: 12 }}>
                 <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Lösenord</Text>
@@ -690,6 +658,106 @@ export default function UserEditModal({
             ) : null}
           </View>
         </View>
+        ) : (
+        <View style={{ marginBottom: 14 }}>
+          <View style={{ marginBottom: 12 }}>
+            <Text style={[labelStyle, { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }]}>Åtkomst & roll</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', backgroundColor: '#F1F5F9', borderRadius: D.buttonRadius, padding: 3, alignSelf: 'flex-start' }}>
+              {isMsBygg ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    setRole('superadmin');
+                    if (role !== 'superadmin') setPermissions([...ALL_PERMISSION_KEYS]);
+                  }}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 12,
+                    borderRadius: D.buttonRadius,
+                    backgroundColor: role === 'superadmin' ? '#1e293b' : 'transparent',
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'superadmin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Superadmin</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                onPress={() => {
+                  setRole('admin');
+                  if (role !== 'admin') setPermissions([...ALL_PERMISSION_KEYS]);
+                }}
+                style={{
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  borderRadius: D.buttonRadius,
+                  backgroundColor: role === 'admin' ? '#1e293b' : 'transparent',
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'admin' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Admin</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setRole('user')}
+                style={{
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  borderRadius: D.buttonRadius,
+                  backgroundColor: role === 'user' ? '#1e293b' : 'transparent',
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '600', color: role === 'user' ? '#fff' : '#475569', fontFamily: FONT_FAMILY }}>Användare</Text>
+              </TouchableOpacity>
+            </View>
+            {(role === 'admin' || role === 'superadmin') ? (
+              <View style={{ marginTop: 8, padding: 12, borderRadius: D.inputRadius, borderWidth: 1, borderColor: '#E2E8F0', backgroundColor: '#F8FAFC' }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155', marginBottom: 10, fontFamily: FONT_FAMILY }}>Admin-behörigheter</Text>
+                <View style={{ flexDirection: 'row', gap: 20 }}>
+                  {PERMISSION_GROUPS.map((group) => (
+                    <View key={group.title} style={{ flex: 1, minWidth: 0 }}>
+                      <TouchableOpacity
+                        onPress={() => toggleGroup(group.keys)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                      >
+                        <View style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 3,
+                          borderWidth: 1,
+                          borderColor: '#64748b',
+                          backgroundColor: isGroupAllChecked(group.keys) ? '#1e293b' : 'transparent',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          {isGroupAllChecked(group.keys) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                        </View>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#1e293b', fontFamily: FONT_FAMILY }}>{group.title}</Text>
+                      </TouchableOpacity>
+                      {group.keys.map((key) => (
+                        <TouchableOpacity
+                          key={key}
+                          onPress={() => togglePermission(key)}
+                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6, marginLeft: 24 }}
+                        >
+                          <View style={{
+                            width: 16,
+                            height: 16,
+                            borderRadius: 3,
+                            borderWidth: 1,
+                            borderColor: '#94a3b8',
+                            backgroundColor: permissions.includes(key) ? '#1e293b' : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}>
+                            {permissions.includes(key) ? <Ionicons name="checkmark" size={10} color="#fff" /> : null}
+                          </View>
+                          <Text style={{ fontSize: 13, color: '#475569', fontFamily: FONT_FAMILY }}>{getPermissionLabel(key)}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        )}
 
         {errorMessage ? (
           <View style={{ marginTop: 6, padding: 8, borderRadius: D.inputRadius, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' }}>

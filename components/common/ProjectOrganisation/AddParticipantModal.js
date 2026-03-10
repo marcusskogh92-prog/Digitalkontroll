@@ -1,24 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-import { fetchCompanyContacts, fetchCompanyMembers } from '../../firebase';
+import { fetchCompanyContacts, fetchCompanyMembers, fetchCompanyProfile } from '../../firebase';
 import { useSystemModal } from '../Modals/SystemModalProvider';
 
 import ParticipantPickerModal from '../ParticipantPickerModal';
 
-function mapInternalMembers(membersRes, companyId) {
+function mapInternalMembers(membersRes, companyDisplayName) {
   const members = Array.isArray(membersRes?.out) ? membersRes.out : (Array.isArray(membersRes) ? membersRes : []);
   return members
     .map((m) => {
       const refId = String(m?.uid || m?.id || '').trim();
       if (!refId) return null;
+      const first = String(m?.firstName ?? '').trim();
+      const last = String(m?.lastName ?? '').trim();
+      const name = (first || last) ? [first, last].filter(Boolean).join(' ').trim() : String(m?.displayName || m?.name || m?.email || '—').trim();
       return {
         source: 'internal',
         refId,
-        name: String(m?.displayName || m?.name || m?.email || '—').trim(),
-        company: String(companyId || '').trim(),
+        name,
+        company: String(companyDisplayName || '').trim(),
         email: String(m?.email || '').trim(),
-        phone: '',
+        phone: String(m?.phone || '').trim(),
+        workPhone: String(m?.workPhone || '').trim(),
         metaRole: String(m?.role || '').trim(),
       };
     })
@@ -144,8 +148,12 @@ function AddParticipantModalContent({
         setLoadingInternal(true);
         setErrorInternal('');
         try {
-          const membersRes = await fetchCompanyMembers(cid);
-          const mappedMembers = mapInternalMembers(membersRes, cid);
+          const [membersRes, companyProfile] = await Promise.all([
+            fetchCompanyMembers(cid),
+            fetchCompanyProfile(cid),
+          ]);
+          const companyDisplayName = String(companyProfile?.companyName || companyProfile?.name || cid).trim();
+          const mappedMembers = mapInternalMembers(membersRes, companyDisplayName);
           if (!cancelled) setInternalCandidates(mappedMembers);
         } catch (e) {
           if (!cancelled) setErrorInternal(String(e?.message || e || 'Kunde inte ladda interna användare.'));

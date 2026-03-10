@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ContextMenu from './ContextMenu';
 import { formatPersonName } from './formatPersonName';
+import { formatMobileDisplay } from '../utils/formatPhone';
 import { MODAL_DESIGN_2026 } from '../constants/modalDesign2026';
 import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../constants/tableLayout';
 
@@ -10,7 +11,7 @@ import { COLUMN_PADDING_LEFT, COLUMN_PADDING_RIGHT } from '../constants/tableLay
 const STATUS_COLUMN_WIDTH = 80;
 
 /** Justerbara kolumner (golden rules) – endast på webb */
-const DEFAULT_COLUMN_WIDTHS = { name: 180, email: 220, role: 100 };
+const DEFAULT_COLUMN_WIDTHS = { name: 180, email: 220, phone: 200, role: 100 };
 const MIN_COLUMN_WIDTH = 72;
 const RESIZE_HANDLE_WIDTH = 6;
 
@@ -148,6 +149,11 @@ export default function UsersTable({
 
     const getVal = (u) => {
       if (col === 'email') return String(u?.email || '');
+      if (col === 'phone') {
+        const mob = formatMobileDisplay(u?.phone);
+        const work = String(u?.workPhone || '').trim();
+        return [mob ? `Mobil: ${mob}` : '', work ? `Arbete: ${work}` : ''].filter(Boolean).join(' / ') || '';
+      }
       if (col === 'role') return getRoleLabel(u);
       if (col === 'status') return isMemberDisabled(u) ? 'Inaktiv' : 'Aktiv';
       return String(getDisplayNameForUser(u) || '');
@@ -396,6 +402,19 @@ export default function UsersTable({
                 </TouchableOpacity>
                 {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('email', e)}><View style={styles.resizeHandleLine} /></View>}
                 <TouchableOpacity
+                  onPress={() => handleSort('phone')}
+                  style={[styles.headerCell, col('phone'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.headerText} numberOfLines={1}>Telefon</Text>
+                  {sortColumn === 'phone' ? (
+                    <Ionicons name={sortDirection === 'asc' ? 'chevron-up' : 'chevron-down'} size={14} color="#1976D2" />
+                  ) : (
+                    <Ionicons name="swap-vertical-outline" size={14} color="#CBD5E1" />
+                  )}
+                </TouchableOpacity>
+                {isWeb && <View style={styles.resizeHandle} onMouseDown={(e) => startResize('phone', e)}><View style={styles.resizeHandleLine} /></View>}
+                <TouchableOpacity
                   onPress={() => handleSort('role')}
                   style={[styles.headerCell, col('role'), Platform.OS === 'web' && { cursor: 'pointer', userSelect: 'none' }]}
                   activeOpacity={0.7}
@@ -500,6 +519,20 @@ export default function UsersTable({
                         ) : (
                           <Text style={styles.cellMuted}>—</Text>
                         )}
+                      </View>
+                      {isWeb && <View style={styles.resizeHandle} />}
+                      <View style={[styles.cellContent, col('phone')]}>
+                        <Text style={styles.cellText} numberOfLines={2}>
+                          {(() => {
+                            const mob = formatMobileDisplay(u?.phone);
+                            const work = String(u?.workPhone || '').trim();
+                            if (!mob && !work) return '—';
+                            const parts = [];
+                            if (mob) parts.push(`Mobil: ${mob}`);
+                            if (work) parts.push(`Arbete: ${work}`);
+                            return parts.join(' / ');
+                          })()}
+                        </Text>
                       </View>
                       {isWeb && <View style={styles.resizeHandle} />}
                       <View style={[styles.cellContent, col('role'), { flexDirection: 'row', alignItems: 'center' }]}>

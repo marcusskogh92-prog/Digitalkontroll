@@ -49,10 +49,12 @@ async function createUser(data, context) {
     const tempPassword = providedPassword ? null : generateTempPassword();
     const passwordToUse = providedPassword || tempPassword;
 
-    const role = (data && data.role) || 'user';
-    const permissions = Array.isArray(data && data.permissions) ? data.permissions : [];
+  const role = (data && data.role) || 'user';
+  const permissions = Array.isArray(data && data.permissions) ? data.permissions : [];
+  const phone = (data && data.phone) ? String(data.phone).trim().replace(/\D/g, '') || null : null;
+  const workPhone = (data && data.workPhone) ? String(data.workPhone).trim() || null : null;
 
-    let userRecord = null;
+  let userRecord = null;
     try {
       userRecord = await admin.auth().createUser({
         email,
@@ -89,6 +91,8 @@ async function createUser(data, context) {
       createdAt: FieldValue.serverTimestamp(),
     };
     if (permissions.length > 0) memberData.permissions = permissions;
+    if (phone) memberData.phone = phone;
+    if (workPhone) memberData.workPhone = workPhone;
     await memberRef.set(memberData);
 
     try {
@@ -220,6 +224,8 @@ async function updateUser(data, context) {
   const photoURL = (data && Object.prototype.hasOwnProperty.call(data, 'photoURL')) ? (data.photoURL ? String(data.photoURL) : '') : null;
   const avatarPreset = (data && Object.prototype.hasOwnProperty.call(data, 'avatarPreset')) ? (data.avatarPreset ? String(data.avatarPreset) : '') : null;
   const permissions = (data && Array.isArray(data.permissions)) ? data.permissions : null;
+  const phone = (data && Object.prototype.hasOwnProperty.call(data, 'phone')) ? (data.phone ? String(data.phone).trim().replace(/\D/g, '') || null : null) : null;
+  const workPhone = (data && Object.prototype.hasOwnProperty.call(data, 'workPhone')) ? (data.workPhone ? String(data.workPhone).trim() || null : null) : null;
 
   if (!uid) throw new functions.https.HttpsError('invalid-argument', 'uid is required');
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId is required');
@@ -261,6 +267,8 @@ async function updateUser(data, context) {
     if (photoURL !== null) memberUpdate.photoURL = photoURL || null;
     if (avatarPreset !== null) memberUpdate.avatarPreset = avatarPreset || null;
     if (permissions !== null) memberUpdate.permissions = permissions;
+    if (phone !== null) memberUpdate.phone = phone;
+    if (workPhone !== null) memberUpdate.workPhone = workPhone;
     if (Object.keys(memberUpdate).length > 0) {
       await memberRef.set(Object.assign({}, memberUpdate, { updatedAt: FieldValue.serverTimestamp() }), { merge: true });
     }

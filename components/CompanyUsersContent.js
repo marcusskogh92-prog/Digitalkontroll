@@ -228,12 +228,16 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
       const avatarFile = payload?.avatarFile || null;
       const password = String(payload?.password || '');
       const permissions = Array.isArray(payload?.permissions) ? payload.permissions : [];
+      const phone = payload?.phone != null ? String(payload.phone).trim().replace(/\D/g, '') || undefined : undefined;
+      const workPhone = payload?.workPhone != null ? String(payload.workPhone).trim() || undefined : undefined;
 
       if (!modalIsNew) {
         const uid = String(modalMember?.uid || modalMember?.id || '').trim();
         if (!uid) throw new Error('Saknar uid för användaren');
         if (!canEditUser(modalMember)) throw new Error('Inte tillåtet');
         const patch = { displayName, role, disabled, permissions };
+        if (phone !== undefined) patch.phone = phone;
+        if (workPhone !== undefined) patch.workPhone = workPhone;
         if (avatarFile) {
           const photoURL = await uploadUserAvatar({ companyId: cid, uid, file: avatarFile });
           patch.photoURL = photoURL || '';
@@ -254,6 +258,8 @@ export default function CompanyUsersContent({ companyId, companyName: companyNam
           lastName,
           avatarPreset: avatarPreset || undefined,
           permissions,
+          phone: phone || undefined,
+          workPhone: workPhone || undefined,
         });
         const createdUid = String(res?.uid || res?.data?.uid || '').trim();
         const tempPw = String(res?.tempPassword || res?.data?.tempPassword || '').trim();
